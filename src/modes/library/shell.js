@@ -9,8 +9,12 @@ import { debounce } from '../../lib/search.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
-import { renderResults } from './render.js';
-import { runSearch, onSentinelVisible } from './chain.js';
+import {
+  renderResults, renderStatus, updateSentinelStatus, rewindRenderWindow,
+} from './render.js';
+import {
+  runSearch, onSentinelVisible, retrySources, loadMoreNow,
+} from './chain.js';
 import { buildSidebar } from './sidebar.js';
 
 export function buildShell() {
@@ -29,6 +33,7 @@ export function buildShell() {
     className: 'search-input',
     attrs: { type: 'search', placeholder: 'Search radio, TV, archives… try "news", "BBC", "Prelinger"', autocomplete: 'off' },
   });
+  ui.searchInput.value = view.query || '';
   wrap.appendChild(ui.searchInput);
   searchBar.appendChild(wrap);
 
@@ -39,26 +44,42 @@ export function buildShell() {
     className: 'chip',
     attrs: { type: 'text', placeholder: 'Country (e.g. US)', maxlength: '2', size: '6' },
     style: { width: '120px', padding: '4px 10px' },
-    on: { input: (e) => { view.filters.country = e.target.value.trim().toUpperCase(); renderResults(); } },
+    on: { input: (e) => {
+      view.filters.country = e.target.value.trim().toUpperCase();
+      renderResults(); renderStatus(); updateSentinelStatus();
+    } },
   });
+  ui.countryInput.value = view.filters.country || '';
   ui.languageInput = el('input', {
     className: 'chip',
     attrs: { type: 'text', placeholder: 'Lang (e.g. en)', maxlength: '3', size: '6' },
     style: { width: '110px', padding: '4px 10px' },
-    on: { input: (e) => { view.filters.language = e.target.value.trim().toLowerCase(); renderResults(); } },
+    on: { input: (e) => {
+      view.filters.language = e.target.value.trim().toLowerCase();
+      renderResults(); renderStatus(); updateSentinelStatus();
+    } },
   });
+  ui.languageInput.value = view.filters.language || '';
   ui.yearMinInput = el('input', {
     className: 'chip',
     attrs: { type: 'number', placeholder: 'Year ≥', min: '1800', max: '2100' },
     style: { width: '90px', padding: '4px 10px' },
-    on: { input: (e) => { view.filters.yearMin = parseInt(e.target.value, 10) || null; renderResults(); } },
+    on: { input: (e) => {
+      view.filters.yearMin = parseInt(e.target.value, 10) || null;
+      renderResults(); renderStatus(); updateSentinelStatus();
+    } },
   });
+  ui.yearMinInput.value = view.filters.yearMin ?? '';
   ui.yearMaxInput = el('input', {
     className: 'chip',
     attrs: { type: 'number', placeholder: 'Year ≤', min: '1800', max: '2100' },
     style: { width: '90px', padding: '4px 10px' },
-    on: { input: (e) => { view.filters.yearMax = parseInt(e.target.value, 10) || null; renderResults(); } },
+    on: { input: (e) => {
+      view.filters.yearMax = parseInt(e.target.value, 10) || null;
+      renderResults(); renderStatus(); updateSentinelStatus();
+    } },
   });
+  ui.yearMaxInput.value = view.filters.yearMax ?? '';
   ui.chipsHost.appendChild(ui.countryInput);
   ui.chipsHost.appendChild(ui.languageInput);
   ui.chipsHost.appendChild(ui.yearMinInput);
@@ -67,7 +88,16 @@ export function buildShell() {
 
   const main = el('section', { className: 'library-main' }, searchBar);
   const resultsArea = el('div', { className: 'results', attrs: { 'data-role': 'results' } });
-  ui.statusHost = el('div', { className: 'results-status' });
+  ui.statusHost = el('div', {
+    className: 'results-status',
+    attrs: { role: 'status', 'aria-live': 'polite', 'aria-label': 'Source loading status' },
+  });
+  ui.windowBack = el('button', {
+    className: 'btn results-window-back',
+    text: 'Show earlier items',
+    style: { display: 'none' },
+    on: { click: () => rewindRenderWindow() },
+  });
   ui.resultsHost = el('div', { className: 'cards-grid' });
   // Sentinel at the bottom of the results: when it intersects (within
   // 1000 px of) the results scroller, fire the chain. Doubles as a
@@ -82,11 +112,20 @@ export function buildShell() {
     className: 'btn sentinel-loadmore-btn',
     text: 'Load more',
     style: { display: 'none', marginLeft: '12px' },
-    on: { click: () => { view.exhausted = new Set(); onSentinelVisible(); } },
+    on: { click: () => {
+      if (ui.sentinelButton.dataset.action === 'more') {
+        loadMoreNow();
+        return;
+      }
+      retrySources({
+        restartExhausted: ui.sentinelButton.dataset.restartExhausted === 'true',
+      });
+    } },
   });
   ui.sentinel.appendChild(ui.sentinelStatus);
   ui.sentinel.appendChild(ui.sentinelButton);
   resultsArea.appendChild(ui.statusHost);
+  resultsArea.appendChild(ui.windowBack);
   resultsArea.appendChild(ui.resultsHost);
   resultsArea.appendChild(ui.sentinel);
   main.appendChild(resultsArea);
@@ -101,6 +140,7 @@ export function buildShell() {
 
   // Debounced search.
   const debounced = debounce(() => runSearch(), 300);
+  view.searchDebounced = debounced;
   ui.searchInput.addEventListener('input', (e) => {
     view.query = e.target.value;
     debounced();

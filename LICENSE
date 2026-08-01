@@ -19,20 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This license covers the World Media app source code only.
-
-Content surfaced through World Media (radio streams, TV channels, videos,
-audio recordings, audiobooks) retains its original license. Each item shown
-in the app links back to its source — check there for the specific terms
-that apply to the content itself.
-
-Source archives credited:
-  - Radio Browser            (https://www.radio-browser.info)
-  - iptv-org                 (https://iptv-org.github.io)
-  - Internet Archive         (https://archive.org)
-  - NASA Image & Video       (https://images.nasa.gov)        public domain
-  - Wikimedia Commons        (https://commons.wikimedia.org)  CC-BY-SA et al.
-  - LibriVox                 (https://librivox.org)           public domain

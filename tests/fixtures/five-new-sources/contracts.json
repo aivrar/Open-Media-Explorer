@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "captured": "2026-07-14",
+  "appPageSize": 30,
+  "sourceIds": [
+    "media-ccc",
+    "library-of-congress",
+    "gpodder",
+    "peertube",
+    "owncast"
+  ],
+  "stableIdentity": {
+    "media-ccc": "vod=media-ccc:{event-guid}; live=media-ccc:live:{conference-slug}/{room-slug}/{native-language-key}",
+    "library-of-congress": "library-of-congress:{canonical /item/{id}/ path segment}",
+    "gpodder": "gpodder:{lowercase-hex sha256 of UTF-8 normalized-feed-URL + LF + episode-GUID-or-enclosure-URL}",
+    "peertube": "peertube:{lowercase normalized-origin-host}:{lowercase video-uuid}",
+    "owncast": "owncast:{lowercase-hex sha256 of UTF-8 normalized-instance-base-URL with trailing slash}"
+  },
+  "stableIdentityVectors": [
+    {
+      "source": "media-ccc",
+      "input": {"kind": "vod", "guid": "fixture-ccc-event-1"},
+      "id": "media-ccc:fixture-ccc-event-1"
+    },
+    {
+      "source": "media-ccc",
+      "input": {"kind": "live", "conference": "fixture-live", "room": "hall-a", "language": "native"},
+      "id": "media-ccc:live:fixture-live/hall-a/native"
+    },
+    {
+      "source": "library-of-congress",
+      "input": {"url": "HTTP://WWW.LOC.GOV/item/fixture-audio-1/?fo=json#top"},
+      "id": "library-of-congress:fixture-audio-1"
+    },
+    {
+      "source": "gpodder",
+      "input": {"feed": "HTTPS://FEEDS.EXAMPLE.INVALID:443/open-show.xml#fragment", "episodeGuid": "fixture-episode-guid-1"},
+      "canonicalHashInput": "https://feeds.example.invalid/open-show.xml\nfixture-episode-guid-1",
+      "id": "gpodder:ef126605d6aaef319471dedb122dfcb99c6e93749305ce447d73ae71147d9d41"
+    },
+    {
+      "source": "peertube",
+      "input": {"watchUrl": "HTTPS://VIDEO.EXAMPLE.ORG:443/videos/watch/11111111-1111-4111-8111-111111111111", "uuid": "11111111-1111-4111-8111-111111111111"},
+      "id": "peertube:video.example.org:11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "source": "owncast",
+      "input": {"instance": "HTTPS://SAFE.EXAMPLE.ORG:443"},
+      "canonicalHashInput": "https://safe.example.org/",
+      "id": "owncast:577c93a6e4bbde578070e62d246ee98ca48f09f30d956b2917a04a4ad2b97328"
+    }
+  ],
+  "normalization": {
+    "urls": "HTTP(S) only; lowercase scheme and hostname; remove default port and fragment; preserve path/query octets; empty path becomes slash",
+    "hashes": "SHA-256 over UTF-8 bytes, lowercase hexadecimal",
+    "identifiers": "trim surrounding ASCII whitespace; reject control characters and missing values"
+  },
+  "contentRating": {
+    "values": ["explicit", "not-explicit", "unrated"],
+    "setting": "showExplicitContent",
+    "default": false
+  },
+  "persistence": {
+    "favoritesKey": "worldmedia.favorites.v1",
+    "eqKey": "worldmedia.eq.v1",
+    "rule": "Source additions, source disablement, content filtering, resolver failure, and settings migration must never clear or replace saved favorites; unknown future item fields remain round-trippable.",
+    "testIsolation": "Every automated native run sets WORLDMEDIA_STATE_ROOT to a disposable directory and must never open the normal WebView2 profile."
+  },
+  "productionRegistrationPhase": 8
+}

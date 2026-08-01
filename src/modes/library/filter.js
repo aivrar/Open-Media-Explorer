@@ -15,6 +15,8 @@
  */
 
 import { view } from './state.js';
+import { getState } from '../../lib/state.js';
+import { isContentAllowed } from '../../lib/content-rating.js';
 
 export function filterItems(items) {
   return items.filter(itemPassesFilters);
@@ -22,6 +24,13 @@ export function filterItems(items) {
 
 export function itemPassesFilters(it) {
   const onFavorites = view.activeSource === 'favorites';
+
+  if (it.__contentHidden !== true && !isContentAllowed(it, getState().settings)) return false;
+
+  // Disabled sources disappear from the regular Library pool immediately;
+  // favorites remain visible so disabling a catalog never hides saved items.
+  if (!onFavorites && getState().settings.enabledSources[it.source] === false) return false;
+  if (!onFavorites && it.__snapshotOffline === true) return false;
 
   if (!onFavorites) {
     const activeQ = (view.lastQuery || '').trim();

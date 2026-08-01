@@ -22,8 +22,8 @@
           <span class="brand-glyph" aria-hidden="true"></span>
           <span class="brand-name">World Media</span>
         </div>
-        <nav class="modes" id="modes-nav">
-          <button class="mode-btn is-active" data-mode="library">Library</button>
+        <nav class="modes" id="modes-nav" aria-label="Primary views">
+          <button class="mode-btn is-active" data-mode="library" aria-current="page">Library</button>
           <button class="mode-btn" data-mode="tuner">Tuner</button>
           <button class="mode-btn" data-mode="grid">Grid</button>
           <button class="mode-btn" data-mode="discovery">Discovery</button>
@@ -68,7 +68,7 @@
           </button>
         </div>
         <div class="player-controls">
-          <button id="player-play" class="player-btn" aria-label="Play/Pause" title="Play/Pause">
+          <button id="player-play" class="player-btn" aria-label="Play" aria-pressed="false" title="Play">
             <svg id="icon-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             <svg id="icon-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" hidden><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
           </button>
@@ -77,16 +77,38 @@
           </button>
           <button id="player-next-broken" class="player-btn" hidden title="Try next source">Try next</button>
         </div>
+        <div class="player-actions" aria-label="Media actions">
+          <button id="player-capture" class="player-action" type="button" data-state="unavailable" disabled aria-disabled="true">
+            <span class="capture-icon" aria-hidden="true">
+              <svg class="capture-icon-download" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+              <svg class="capture-icon-record" viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
+              <svg class="capture-icon-stop" viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </span>
+            <span id="player-capture-label" class="player-action-label">Unavailable</span>
+          </button>
+          <button id="player-capture-secondary" class="player-action-secondary" type="button" hidden></button>
+          <button id="player-eq" class="player-eq" type="button" aria-pressed="false" disabled>
+            <span class="player-eq-label">EQ</span>
+            <span id="player-eq-state" class="player-eq-state">Bypassed</span>
+          </button>
+        </div>
+        <div id="player-capture-status" class="player-capture-status" hidden>
+          <span id="player-capture-status-text"></span>
+          <div id="player-capture-progress" class="player-capture-progress" role="progressbar" aria-label="Capture progress" aria-valuemin="0" aria-valuemax="100" hidden>
+            <span id="player-capture-progress-bar"></span>
+          </div>
+        </div>
+        <span id="player-capture-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         <div class="player-progress">
           <span id="player-time" class="player-time">--:--</span>
-          <input id="player-seek" class="player-seek" type="range" min="0" max="100" value="0" disabled />
+          <input id="player-seek" class="player-seek" type="range" min="0" max="100" value="0" aria-label="Seek position" disabled />
           <span id="player-dur" class="player-time">--:--</span>
         </div>
         <div class="player-volume">
-          <button id="player-mute" class="player-btn" aria-label="Mute" title="Mute">
+          <button id="player-mute" class="player-btn" aria-label="Mute" aria-pressed="false" title="Mute">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05a4.5 4.5 0 0 0 2.5-4.02z"/></svg>
           </button>
-          <input id="player-volume" type="range" min="0" max="100" value="80" />
+          <input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Volume" />
         </div>
       </footer>
 

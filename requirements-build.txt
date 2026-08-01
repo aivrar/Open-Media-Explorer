@@ -1,3 +1,8 @@
-pyinstaller>=6.20
-pywebview>=6.2
-pythonnet>=3.0
+pywebview==6.2.1
+pythonnet==3.1.0
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+altgraph==0.17.5
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+defusedxml==0.7.1

@@ -2,11 +2,11 @@
 
 .tuner-root {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100%;
   background:
-    radial-gradient(ellipse at 50% 18%, rgba(94, 234, 212, 0.08), transparent 58%),
-    linear-gradient(180deg, #0b0f14, #080a0d);
+    radial-gradient(ellipse at 50% 18%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
+    linear-gradient(180deg, var(--bg-elev-1), var(--bg));
   color: var(--text);
 }
 
@@ -17,7 +17,7 @@
   padding: 14px 20px;
   gap: 24px;
   border-bottom: 1px solid var(--border);
-  background: rgba(17, 21, 27, 0.72);
+  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
   backdrop-filter: blur(12px);
 }
 .tuner-band-switch {
@@ -40,7 +40,7 @@
 }
 .tuner-band-switch button.is-active {
   background: var(--accent);
-  color: #000;
+  color: var(--accent-contrast);
   font-weight: 600;
 }
 
@@ -96,7 +96,7 @@
   font-size: 28px;
   font-weight: 600;
   color: var(--accent);
-  text-shadow: 0 0 12px rgba(94,234,212,0.36);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 36%, transparent);
 }
 .tuner-frequency .freq-unit {
   font-family: var(--font-mono);
@@ -120,7 +120,7 @@
   overflow-x: auto;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
-  background: rgba(17, 21, 27, 0.72);
+  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
 }
 .tuner-strip::-webkit-scrollbar { height: 6px; }
 .station-pill {
@@ -133,11 +133,24 @@
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 1px 8px;
+  text-align: left;
 }
+.station-pill > small {
+  grid-column: 1;
+  color: var(--text-mute);
+  font-size: 9px;
+  font-weight: 500;
+}
+.station-pill > .content-rating-badge { grid-column: 2; grid-row: 1 / span 2; }
+.station-pill.is-active > small { color: color-mix(in srgb, var(--accent-contrast) 72%, transparent); }
 .station-pill:hover { color: var(--text); border-color: var(--border-strong); }
 .station-pill.is-active {
   background: var(--accent);
-  color: #000;
+  color: var(--accent-contrast);
   border-color: transparent;
   font-weight: 600;
 }
@@ -145,6 +158,14 @@
 .tuner-empty {
   color: var(--text-dim);
   text-align: center;
+}
+
+.tuner-source-status {
+  min-height: 26px;
+  padding: 4px 16px 8px;
+  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
+  color: var(--text-mute);
+  font-size: 11px;
 }
 
 .tuner-tick { fill: rgba(255,255,255,0.45); }

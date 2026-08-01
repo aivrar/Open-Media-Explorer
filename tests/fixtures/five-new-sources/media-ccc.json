@@ -1,0 +1,140 @@
+{
+  "recent": {
+    "status": 200,
+    "contentType": "application/json",
+    "headers": {
+      "link": "<https://api.media.ccc.de/public/events/recent?page=2>; rel=\"next\", <https://api.media.ccc.de/public/events/recent?page=168>; rel=\"last\""
+    },
+    "body": {
+      "events": [
+        {
+          "guid": "fixture-ccc-event-1",
+          "title": "Open systems conference fixture",
+          "subtitle": "A sanitized recent-event summary",
+          "slug": "fixture-open-systems",
+          "description": "A bounded description with <strong>HTML</strong> to normalize.",
+          "original_language": "eng",
+          "persons": ["Fixture Speaker"],
+          "date": "2026-06-26T13:00:00.000+02:00",
+          "release_date": "2026-07-10T00:00:00.000+02:00",
+          "tags": ["open source", "fixture"],
+          "duration": 1540,
+          "thumb_url": "https://static.media.ccc.de/media/events/fixture/thumb.jpg",
+          "poster_url": "https://static.media.ccc.de/media/events/fixture/poster.jpg",
+          "frontend_link": "https://media.ccc.de/v/fixture-open-systems",
+          "url": "https://api.media.ccc.de/public/events/fixture-ccc-event-1",
+          "conference_title": "Fixture Conference"
+        }
+      ]
+    }
+  },
+  "detail": {
+    "guid": "fixture-ccc-event-1",
+    "title": "Open systems conference fixture",
+    "original_language": "eng",
+    "frontend_link": "https://media.ccc.de/v/fixture-open-systems",
+    "recordings": [
+      {
+        "mime_type": "video/mp4",
+        "language": "eng",
+        "filename": "fixture-open-systems-hd.mp4",
+        "high_quality": true,
+        "width": 1920,
+        "height": 1080,
+        "recording_url": "https://cdn.media.ccc.de/events/fixture/fixture-open-systems-hd.mp4"
+      },
+      {
+        "mime_type": "video/webm",
+        "language": "eng",
+        "filename": "fixture-open-systems.webm",
+        "high_quality": false,
+        "width": 720,
+        "height": 576,
+        "recording_url": "https://cdn.media.ccc.de/events/fixture/fixture-open-systems.webm"
+      },
+      {
+        "mime_type": "audio/mpeg",
+        "language": "eng",
+        "filename": "fixture-open-systems.mp3",
+        "high_quality": false,
+        "width": 0,
+        "height": 0,
+        "recording_url": "https://cdn.media.ccc.de/events/fixture/fixture-open-systems.mp3"
+      }
+    ]
+  },
+  "graphqlSearch": {
+    "data": {
+      "lectureSearch": [
+        {
+          "guid": "fixture-ccc-search-1",
+          "title": "Linux fixture result",
+          "slug": "fixture-linux-result"
+        }
+      ]
+    }
+  },
+  "graphqlError": {
+    "data": null,
+    "errors": [
+      {
+        "message": "Sanitized provider error",
+        "path": ["lectureSearch"]
+      }
+    ]
+  },
+  "liveEmpty": [],
+  "liveNonEmpty": [
+    {
+      "conference": "Fixture Live Conference",
+      "slug": "fixture-live",
+      "author": "C3VOC",
+      "description": "Published schema example, sanitized for deterministic tests.",
+      "startsAt": "2026-07-14T10:00:00+0000",
+      "endsAt": "2026-07-15T10:00:00+0000",
+      "groups": [
+        {
+          "group": "Lecture Rooms",
+          "rooms": [
+            {
+              "slug": "hall-a",
+              "display": "Hall A",
+              "thumb": "https://streaming.media.ccc.de/streams/thumbs/hall-a.png",
+              "link": "https://streaming.media.ccc.de/fixture-live/hall-a",
+              "streams": [
+                {
+                  "slug": "hd-native",
+                  "display": "Hall A HD",
+                  "type": "video",
+                  "isTranslated": false,
+                  "videoSize": [1280, 720],
+                  "urls": {
+                    "hls": {
+                      "display": "HLS",
+                      "tech": "1280x720, H.264+AAC",
+                      "url": "https://cdn.c3voc.de/hls/fixture-hall-a-native.m3u8"
+                    }
+                  }
+                },
+                {
+                  "slug": "music-native",
+                  "display": "Hall A Radio",
+                  "type": "music",
+                  "isTranslated": false,
+                  "videoSize": null,
+                  "urls": {
+                    "mp3": {
+                      "display": "MP3",
+                      "tech": "MP3 audio",
+                      "url": "https://cdn.c3voc.de/fixture-hall-a.mp3"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

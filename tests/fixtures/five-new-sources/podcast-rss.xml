@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Fixture RSS Show</title>
+    <link>https://publisher.example.invalid/rss</link>
+    <description><![CDATA[A <strong>bounded</strong> fixture description.]]></description>
+    <language>en-US</language>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://media.example.invalid/rss-cover.jpg" />
+    <podcast:license url="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</podcast:license>
+    <item>
+      <title>Audio episode</title>
+      <guid isPermaLink="false">fixture-rss-audio-1</guid>
+      <pubDate>Tue, 14 Jul 2026 12:00:00 GMT</pubDate>
+      <description>Audio episode description.</description>
+      <enclosure url="https://media.example.invalid/episodes/audio-1.mp3" length="123456" type="audio/mpeg" />
+    </item>
+    <item>
+      <title>Video episode</title>
+      <guid isPermaLink="false">fixture-rss-video-1</guid>
+      <pubDate>Mon, 13 Jul 2026 12:00:00 GMT</pubDate>
+      <enclosure url="https://media.example.invalid/episodes/video-1.mp4" length="654321" type="video/mp4" />
+    </item>
+  </channel>
+</rss>

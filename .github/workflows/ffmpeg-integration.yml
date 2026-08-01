@@ -1,0 +1,23 @@
+name: FFmpeg provider integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  verified-managed-install:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download, verify, install, and probe the approved FFmpeg asset
+        env:
+          WORLDMEDIA_FFMPEG_INTEGRATION: '1'
+        run: python tests_python/ffmpeg_real_integration.py

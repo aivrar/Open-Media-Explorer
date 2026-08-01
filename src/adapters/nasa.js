@@ -3,8 +3,8 @@
  * API: https://images-api.nasa.gov
  */
 
-import { get } from '../lib/http.js';
-import { makeItem, prefixId } from '../lib/item-model.js';
+import { getJson } from '../lib/http.js';
+import { makeItem, prefixId, filenameFromUrl } from '../lib/item-model.js';
 
 export const id = 'nasa';
 export const displayName = 'NASA';
@@ -26,6 +26,10 @@ function toItem(entry) {
     type: isVideo ? 'video' : 'audio',
     stream_url: '', // resolved lazily via entry.href manifest
     stream_kind: isVideo ? 'video' : 'audio',
+    delivery: 'on-demand',
+    download_url: '',
+    download_name: '',
+    capture_headers: {},
     thumbnail: thumb,
     year: data.date_created ? parseInt(String(data.date_created).slice(0, 4), 10) || null : null,
     country: 'US',
@@ -68,11 +72,13 @@ function pickBest(urls, isVideo) {
 export async function resolveStream(item) {
   if (!item?._extra?.needsResolve || !item._extra.manifestUrl) return item;
   try {
-    const files = await get(item._extra.manifestUrl);
+    const files = await getJson(item._extra.manifestUrl);
     if (Array.isArray(files)) {
       const best = pickBest(files, item.type === 'video');
       if (best) {
         item.stream_url = best.startsWith('http://') ? best.replace('http://', 'https://') : best;
+        item.download_url = item.stream_url;
+        item.download_name = filenameFromUrl(item.download_url, `${item.title || 'NASA media'}.${item.type === 'video' ? 'mp4' : 'mp3'}`);
         item._extra.needsResolve = false;
       }
     }
@@ -82,30 +88,55 @@ export async function resolveStream(item) {
   return item;
 }
 
-export async function search(query, opts = {}) {
-  const page = Math.floor((opts.offset || 0) / (opts.limit || 20)) + 1;
+async function searchPage(query, opts = {}) {
+  const pageSize = Math.min(opts.limit || 20, 100);
+  const page = opts.page || Math.floor((opts.offset || 0) / pageSize) + 1;
   const params = new URLSearchParams({
     media_type: 'video,audio',
     page: String(page),
-    page_size: String(Math.min(opts.limit || 20, 100)),
+    page_size: String(pageSize),
   });
   if (query) params.set('q', query);
   else params.set('q', 'apollo'); // browse fallback
   const url = `${BASE}/search?${params.toString()}`;
-  try {
-    const data = await get(url);
-    return (data?.collection?.items || []).map(toItem).filter(Boolean);
-  } catch (err) {
-    console.warn('NASA search failed:', err);
-    return [];
+  const data = await getJson(url, { signal: opts.signal, timeoutMs: opts.timeoutMs });
+  if (!data || typeof data !== 'object' || !Array.isArray(data?.collection?.items)) {
+    throw new TypeError('NASA returned an invalid search response');
   }
+  const rawItems = data.collection.items;
+  const total = Number(data?.collection?.metadata?.total_hits || 0);
+  return {
+    items: rawItems.map(toItem).filter(Boolean),
+    rawCount: rawItems.length,
+    total,
+    page,
+    pageSize,
+  };
+}
+
+export async function search(query, opts = {}) {
+  return (await searchPage(query, opts)).items;
 }
 
 export async function browse(opts = {}) {
   // Pick a topical seed each call so browse feels alive.
   const seeds = ['apollo', 'mars', 'hubble', 'ISS', 'shuttle', 'voyager', 'orion', 'jupiter', 'saturn', 'lunar'];
-  const seed = seeds[Math.floor(Math.random() * seeds.length)];
+  const seed = opts.seed || seeds[Math.floor(Math.random() * seeds.length)];
   return search(seed, opts);
+}
+
+export async function browsePage(opts = {}) {
+  const seeds = ['apollo', 'mars', 'hubble', 'ISS', 'shuttle', 'voyager', 'orion', 'jupiter', 'saturn', 'lunar'];
+  const cursor = opts.cursor || {};
+  const seed = cursor.seed || opts.seed || seeds[Math.floor(Math.random() * seeds.length)];
+  const pageNumber = Number(cursor.page || 1);
+  const result = await searchPage(seed, { ...opts, page: pageNumber });
+  const reachedTotal = result.total > 0 && pageNumber * result.pageSize >= result.total;
+  return {
+    items: result.items,
+    cursor: { seed, page: pageNumber + 1 },
+    exhausted: result.rawCount < result.pageSize || reachedTotal,
+  };
 }
 
 export async function random(opts = {}) {

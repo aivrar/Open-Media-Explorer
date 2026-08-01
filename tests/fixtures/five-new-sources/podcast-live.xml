@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Fixture Live Podcast</title>
+    <link>https://publisher.example.invalid/live</link>
+    <description>Podcasting 2.0 live fixture.</description>
+    <podcast:liveItem status="live" start="2026-07-14T18:00:00Z" end="2026-07-14T20:00:00Z">
+      <title>Live audio program</title>
+      <guid>fixture-live-audio-1</guid>
+      <enclosure url="https://media.example.invalid/live/audio.m3u8" length="0" type="application/x-mpegURL" />
+    </podcast:liveItem>
+  </channel>
+</rss>

@@ -1,0 +1,98 @@
+{
+  "audioPage": {
+    "status": 200,
+    "contentType": "application/json",
+    "pagination": {
+      "current": 1,
+      "from": 1,
+      "to": 1,
+      "total": 34410,
+      "next": "https://www.loc.gov/audio/?fo=json&at=results,pagination&c=1&sp=2"
+    },
+    "results": [
+      {
+        "access_restricted": false,
+        "id": "http://www.loc.gov/item/fixture-audio-1/",
+        "title": "Fixture oral history",
+        "date": "1952",
+        "language": ["english"],
+        "online_format": ["audio"],
+        "mime_type": ["audio/mp3"],
+        "image_url": ["https://www.loc.gov/static/images/original-format/personal-narrative.svg"],
+        "url": "https://www.loc.gov/item/fixture-audio-1/"
+      }
+    ]
+  },
+  "videoPage": {
+    "status": 200,
+    "contentType": "application/json",
+    "pagination": {
+      "current": 1,
+      "from": 1,
+      "to": 1,
+      "total": 8800,
+      "next": "https://www.loc.gov/film-and-videos/?fo=json&at=results,pagination&c=1&sp=2"
+    },
+    "results": [
+      {
+        "access_restricted": false,
+        "id": "http://www.loc.gov/item/fixture-video-1/",
+        "title": "Fixture motion picture",
+        "date": "1942",
+        "language": ["english"],
+        "online_format": ["video"],
+        "mime_type": ["video/mp4"],
+        "image_url": ["https://tile.loc.gov/storage-services/service/fixture/poster.jpg"],
+        "url": "https://www.loc.gov/item/fixture-video-1/"
+      }
+    ]
+  },
+  "downloadableItem": {
+    "item": {
+      "id": "http://www.loc.gov/item/fixture-audio-1/",
+      "title": "Fixture oral history",
+      "access_restricted": false,
+      "rights_restricted": false,
+      "rights": "Fixture rights statement"
+    },
+    "resources": [
+      {
+        "type": "audio",
+        "audio": "https://tile.loc.gov/storage-services/service/fixture/audio.mp3",
+        "download_restricted": false,
+        "canDownload": true,
+        "files": [
+          {
+            "url": "https://tile.loc.gov/storage-services/service/fixture/audio.mp3",
+            "mimetype": "audio/mpeg",
+            "size": 123456
+          }
+        ]
+      }
+    ]
+  },
+  "restrictedItem": {
+    "item": {
+      "id": "http://www.loc.gov/item/fixture-video-restricted/",
+      "title": "Restricted fixture film",
+      "access_restricted": false,
+      "rights_restricted": true,
+      "rights": "Streaming access only"
+    },
+    "resources": [
+      {
+        "type": "video",
+        "video_stream": "https://tile.loc.gov/streaming-services/fixture/master.m3u8",
+        "download_restricted": true,
+        "canDownload": false,
+        "files": []
+      }
+    ]
+  },
+  "rateLimit": {
+    "status": 429,
+    "contentType": "application/json",
+    "headers": {"retry-after": "3600"},
+    "body": {"error": "rate limit"}
+  }
+}

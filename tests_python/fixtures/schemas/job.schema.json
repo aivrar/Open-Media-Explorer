@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://worldmedia.local/schemas/job.schema.json",
+  "title": "World Media capture job response data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "state", "title", "media_id", "item_id", "created_at", "updated_at", "progress", "bytes_written", "elapsed_seconds", "output_path", "error"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$"},
+    "kind": {"enum": ["download", "record-audio", "record-video", "ffmpeg-install"]},
+    "state": {"enum": ["queued", "preparing", "running", "stopping", "finalizing", "completed", "cancelled", "failed"]},
+    "title": {"type": "string", "minLength": 1, "maxLength": 512},
+    "media_id": {"type": ["string", "null"]},
+    "item_id": {"type": ["string", "null"], "maxLength": 512},
+    "profile": {"enum": ["compact", "balanced", "high", null]},
+    "created_at": {"type": "number"},
+    "updated_at": {"type": "number"},
+    "progress": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "bytes_written": {"type": "integer", "minimum": 0},
+    "elapsed_seconds": {"type": "number", "minimum": 0},
+    "output_path": {"type": ["string", "null"]},
+    "error": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": {"type": "string", "pattern": "^[A-Z0-9_]+$"},
+            "message": {"type": "string", "maxLength": 512},
+            "retryable": {"type": "boolean"}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+#EXTM3U
+#EXT-X-VERSION:3
+#EXTINF:-1, tvg-ID="Fixture Safe Stream" tvg-logo="https://safe.example.org/logo" tvg-tags="music,open source",Fixture Safe Stream
+https://safe.example.org/hls/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture Explicit Stream" tvg-logo="https://explicit.example.org/logo" tvg-tags="fixture,marked",Fixture Explicit Stream
+https://explicit.example.org/hls/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture HTTP Stream" tvg-logo="http://http-stream.example.org/logo" tvg-tags="community,public",Fixture HTTP Stream
+http://http-stream.example.org:8080/hls/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture Quoted, Comma" tvg-logo="https://comma.example.org/logo" tvg-tags="music,radio,quoted comma",Fixture Quoted, Comma
+https://comma.example.org/hls/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture
+Multiline Stream" tvg-logo="https://multiline.example.org/logo" tvg-tags="streaming,owncast",Fixture Multiline Stream
+https://multiline.example.org/hls/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture Missing Rating" tvg-logo="https://unrated.example.org/logo" tvg-tags="fixture",Fixture Missing Rating
+https://unrated.example.org/hls/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture Malformed Scheme" tvg-logo="https://malformed.example.org/logo" tvg-tags="fixture",Fixture Malformed Scheme
+ftp://malformed.example.org/stream.m3u8
+#EXTINF:-1, tvg-ID="Fixture Missing URI" tvg-logo="https://missing.example.org/logo" tvg-tags="fixture",Fixture Missing URI

@@ -6,8 +6,8 @@
  * lazily on first play, since the audiobooks API only gives us metadata + RSS URL.
  */
 
-import { get } from '../lib/http.js';
-import { makeItem, prefixId } from '../lib/item-model.js';
+import { getJson, getText } from '../lib/http.js';
+import { makeItem, prefixId, filenameFromUrl } from '../lib/item-model.js';
 
 export const id = 'librivox';
 export const displayName = 'LibriVox';
@@ -36,7 +36,14 @@ function toItem(book) {
     type: 'audio',
     stream_url: '', // resolved lazily via RSS
     stream_kind: 'audio',
-    thumbnail: '',
+    delivery: 'on-demand',
+    download_url: typeof book.url_zip_file === 'string' ? book.url_zip_file : '',
+    download_name: book.url_zip_file ? filenameFromUrl(book.url_zip_file, `${book.title || 'LibriVox audiobook'}.zip`) : '',
+    capture_headers: {},
+    // LibriVox returns these only when the catalog request includes
+    // `coverart=1`. Prefer the small card-sized asset and keep the full cover
+    // as a fallback. This avoids one RSS roundtrip per visible audiobook.
+    thumbnail: book.coverart_thumbnail || book.coverart_jpg || '',
     year: book.copyright_year ? parseInt(book.copyright_year, 10) || null : null,
     country: '',
     language: languageCode(book.language || ''),
@@ -50,7 +57,7 @@ function toItem(book) {
 async function fetchRss(url) {
   if (!url) return '';
   if (!rssCache.has(url)) {
-    rssCache.set(url, get(url, { text: true }).catch((err) => {
+    rssCache.set(url, getText(url).catch((err) => {
       rssCache.delete(url);
       throw err;
     }));
@@ -77,13 +84,9 @@ function findArtwork(xml) {
  */
 export async function resolveArtwork(item) {
   if (!item || item.thumbnail || !item._extra?.rssUrl) return item;
-  try {
-    const xml = await fetchRss(item._extra.rssUrl);
-    const img = findArtwork(xml);
-    if (img && !item.thumbnail) item.thumbnail = img;
-  } catch (err) {
-    console.warn('LibriVox artwork fetch failed:', err);
-  }
+  const xml = await fetchRss(item._extra.rssUrl);
+  const img = findArtwork(xml);
+  if (img && !item.thumbnail) item.thumbnail = img;
   return item;
 }
 
@@ -98,6 +101,10 @@ export async function resolveStream(item) {
     const mp3 = findFirstMp3(xml);
     if (mp3) {
       item.stream_url = mp3;
+      if (!item.download_url) {
+        item.download_url = mp3;
+        item.download_name = filenameFromUrl(mp3, `${item.title || 'LibriVox audio'}.mp3`);
+      }
       item._extra.needsResolve = false;
     }
     const img = findArtwork(xml);
@@ -114,23 +121,47 @@ export async function search(query, opts = {}) {
   const params = new URLSearchParams({
     format: 'json',
     extended: '1',
+    coverart: '1',
     limit: String(limit),
     offset: String(offset),
   });
   if (query) params.set('title', query);
   const url = `${BASE}?${params.toString()}`;
-  try {
-    const data = await get(url);
-    const books = data?.books || [];
-    return books.map(toItem).filter(Boolean);
-  } catch (err) {
-    console.warn('LibriVox search failed:', err);
-    return [];
+  const data = await getJson(url, { signal: opts.signal, timeoutMs: opts.timeoutMs });
+  if (!data || typeof data !== 'object' || !Array.isArray(data.books)) {
+    throw new TypeError('LibriVox returned an invalid search response');
   }
+  const books = data.books;
+  return books.map(toItem).filter(Boolean);
 }
 
 export async function browse(opts = {}) {
   return search('', opts);
+}
+
+export async function browsePage(opts = {}) {
+  const limit = Math.min(opts.limit || 20, 50);
+  const offset = Number(opts.cursor?.offset ?? opts.offset ?? 0);
+  const params = new URLSearchParams({
+    format: 'json',
+    extended: '1',
+    coverart: '1',
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const data = await getJson(`${BASE}?${params.toString()}`, {
+    signal: opts.signal,
+    timeoutMs: opts.timeoutMs,
+  });
+  if (!data || typeof data !== 'object' || !Array.isArray(data.books)) {
+    throw new TypeError('LibriVox returned an invalid browse response');
+  }
+  const books = data.books;
+  return {
+    items: books.map(toItem).filter(Boolean),
+    cursor: { offset: offset + books.length },
+    exhausted: books.length < limit,
+  };
 }
 
 export async function random(opts = {}) {

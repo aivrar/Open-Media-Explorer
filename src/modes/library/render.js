@@ -1,9 +1,9 @@
 /**
  * The render layer. Reads state.js + filter.js, writes DOM.
  *
- * All "show something on screen" lives here — the cards grid, the per-source
- * status pills at the top of the results pane, the sentinel-status line at
- * the bottom, the sidebar count badges, and the lazy-DOM render-window logic
+ * All "show something on screen" lives here — the cards grid, the stable
+ * collection summary at the top of the results pane, the sentinel-status line
+ * at the bottom, the sidebar counts/statuses, and the lazy-DOM render-window logic
  * that decides how many cards are actually mounted at once.
  *
  * Pure outputs: no fetching, no state mutation beyond `view.renderLimit`
@@ -12,20 +12,82 @@
  */
 
 import { getState, isFavorite, addFavorite, removeFavorite } from '../../lib/state.js';
-import { SOURCES, getSourceLabel, getSourceColor } from '../../lib/sources.js';
+import { SOURCES, getSourceLabel } from '../../lib/sources.js';
 import { el } from './utils.js';
 import {
   view, renderedIds,
-  RENDER_LIMIT_INITIAL, RENDER_LIMIT_STEP,
+  RENDER_LIMIT_INITIAL, RENDER_LIMIT_STEP, RENDER_WINDOW_MAX,
   thumbHydration,
 } from './state.js';
 import { filterItems } from './filter.js';
-import { insertThumbImage, requestThumbnailHydration, resolveItemArtwork } from './thumbnails.js';
+import {
+  getThumbnailHydrationSignal, insertThumbImage, requestThumbnailHydration,
+  resetThumbnailHydrationScope, resolveItemArtwork,
+  THUMBNAIL_EAGER_CARD_COUNT,
+} from './thumbnails.js';
 import { openDetail } from './detail.js';
 import { playItem } from '../../lib/player.js';
+import {
+  contentBadgeText, favoriteForContentView,
+} from '../../lib/content-rating.js';
 
 // Shared shell refs — set by shell.js once, read here.
 import { ui } from './shell-refs.js';
+
+const SOURCE_ID_SET = new Set(SOURCES.map((source) => source.id));
+
+let filteredCache = {
+  pool: null,
+  poolLength: 0,
+  context: '',
+  revision: -1,
+  items: [],
+};
+
+function filterContextSignature() {
+  const settings = getState().settings;
+  return JSON.stringify([
+    view.activeSource,
+    view.lastQuery,
+    view.filters.type,
+    view.filters.country,
+    view.filters.language,
+    view.filters.yearMin,
+    view.filters.yearMax,
+    settings.showExplicitContent === true,
+    SOURCES.map((source) => settings.enabledSources[source.id] !== false ? 1 : 0).join(''),
+  ]);
+}
+
+/** Cache the current filtered pool and inspect only appended pages while the
+ * filter context is unchanged. Destructive/snapshot mutations force one full
+ * pass, while ordinary continuous collection stays proportional to page size. */
+export function filteredItemsForCurrentView(pool = view.items) {
+  const context = filterContextSignature();
+  const revision = Number(view.catalogRevision) || 0;
+  if (filteredCache.pool === pool && filteredCache.context === context) {
+    if (filteredCache.revision === revision && filteredCache.poolLength === pool.length) {
+      return filteredCache.items;
+    }
+    const appendOnly = filteredCache.revision >= (Number(view.catalogNonAppendRevision) || 0)
+      && pool.length >= filteredCache.poolLength;
+    if (appendOnly) {
+      const appended = filterItems(pool.slice(filteredCache.poolLength));
+      filteredCache.items.push(...appended);
+      filteredCache.poolLength = pool.length;
+      filteredCache.revision = revision;
+      return filteredCache.items;
+    }
+  }
+  filteredCache = {
+    pool,
+    poolLength: pool.length,
+    context,
+    revision,
+    items: filterItems(pool),
+  };
+  return filteredCache.items;
+}
 
 /* ============ Cards grid + render window ============ */
 
@@ -34,10 +96,29 @@ export function renderResults() {
   // and lives outside the regular accumulating view.items. This keeps a
   // visit to Favorites from polluting your browse pool, and means clearing
   // the search box doesn't wipe what you favorited.
-  const pool = view.activeSource === 'favorites' ? getState().favorites : view.items;
-  const filtered = filterItems(pool);
-  if (view.renderLimit == null) view.renderLimit = RENDER_LIMIT_INITIAL;
-  const visible = filtered.slice(0, view.renderLimit);
+  const pool = view.activeSource === 'favorites'
+    ? getState().favorites.map((item) => favoriteForContentView(item, getState().settings))
+    : view.items;
+  const filtered = filteredItemsForCurrentView(pool);
+  const signature = JSON.stringify([
+    view.activeSource, view.lastQuery, view.filters.type, view.filters.country,
+    view.filters.language, view.filters.yearMin, view.filters.yearMax,
+    getState().settings.showExplicitContent === true,
+  ]);
+  if (signature !== view.renderSignature) {
+    view.renderSignature = signature;
+    view.renderStart = 0;
+  }
+  view.renderLimit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
+  const maximumStart = Math.max(0, filtered.length - view.renderLimit);
+  view.renderStart = Math.max(0, Math.min(view.renderStart || 0, maximumStart));
+  const visible = filtered.slice(view.renderStart, view.renderStart + view.renderLimit);
+  if (ui.windowBack) {
+    ui.windowBack.style.display = view.renderStart > 0 ? 'inline-flex' : 'none';
+    ui.windowBack.textContent = view.renderStart > 0
+      ? `Show earlier items (currently ${view.renderStart + 1}-${view.renderStart + visible.length})`
+      : 'Show earlier items';
+  }
   const visibleIds = new Set();
   for (const it of visible) visibleIds.add(it.id);
 
@@ -60,7 +141,8 @@ export function renderResults() {
   if (!needClear) {
     const cards = ui.resultsHost.children;
     for (let i = 0; i < cards.length && i < visible.length; i++) {
-      if (cards[i].dataset && cards[i].dataset.id !== visible[i].id) {
+      if (cards[i].dataset && (cards[i].dataset.id !== visible[i].id
+          || Number(cards[i].dataset.revision || 0) !== Number(visible[i].__revision || 0))) {
         needClear = true;
         break;
       }
@@ -68,6 +150,9 @@ export function renderResults() {
   }
   if (needClear) {
     if (thumbHydration.observer) thumbHydration.observer.disconnect();
+    thumbHydration.observer = null;
+    thumbHydration.observerRoot = null;
+    resetThumbnailHydrationScope();
     ui.resultsHost.innerHTML = '';
     renderedIds.clear();
   }
@@ -94,9 +179,9 @@ export function renderResults() {
   // Append only the items we haven't already mounted. Use a document
   // fragment so one reflow handles the whole batch.
   const frag = document.createDocumentFragment();
-  for (const it of visible) {
+  for (const [index, it] of visible.entries()) {
     if (renderedIds.has(it.id)) continue;
-    frag.appendChild(renderCard(it));
+    frag.appendChild(renderCard(it, { eagerArtwork: index < THUMBNAIL_EAGER_CARD_COUNT }));
     renderedIds.add(it.id);
   }
   if (frag.childNodes.length > 0) ui.resultsHost.appendChild(frag);
@@ -107,11 +192,17 @@ export function renderResults() {
  *  Returns true if there were unrendered items to expose; the sentinel
  *  observer uses that to decide whether to also fetch more from upstream. */
 export function expandRenderWindow() {
-  const pool = view.activeSource === 'favorites' ? getState().favorites : view.items;
-  const filteredCount = filterItems(pool).length;
-  const current = view.renderLimit ?? RENDER_LIMIT_INITIAL;
-  if (filteredCount > current) {
-    view.renderLimit = Math.min(filteredCount, current + RENDER_LIMIT_STEP);
+  const pool = view.activeSource === 'favorites'
+    ? getState().favorites.map((item) => favoriteForContentView(item, getState().settings))
+    : view.items;
+  const filteredCount = filteredItemsForCurrentView(pool).length;
+  const limit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
+  const currentStart = view.renderStart || 0;
+  if (filteredCount > currentStart + limit) {
+    view.renderStart = Math.min(
+      Math.max(0, filteredCount - limit),
+      currentStart + RENDER_LIMIT_STEP,
+    );
     renderResults();
     updateSentinelStatus();
     return true;
@@ -119,40 +210,95 @@ export function expandRenderWindow() {
   return false;
 }
 
+export function rewindRenderWindow() {
+  if ((view.renderStart || 0) <= 0) return false;
+  view.renderStart = Math.max(0, view.renderStart - RENDER_LIMIT_STEP);
+  renderResults();
+  updateSentinelStatus();
+  return true;
+}
+
 /* ============ Individual card ============ */
 
-function renderCard(item) {
+function renderCard(item, opts = {}) {
+  const sourceLabel = getSourceLabel(item.source);
   const card = el('article', {
     className: 'card' + (view.currentId === item.id ? ' is-playing' : ''),
-    attrs: { 'data-id': item.id, role: 'button', tabindex: '0' },
+    attrs: {
+      'data-id': item.id,
+      'data-revision': String(Number(item.__revision) || 0),
+    },
+  });
+  const openButton = el('button', {
+    className: 'card-open',
+    attrs: {
+      type: 'button',
+      'aria-label': `Open ${item.title || 'Untitled'} from ${sourceLabel}`,
+    },
     on: { click: () => onCardClick(item) },
   });
 
   const thumb = el('div', { className: 'card-thumb' });
   const placeholder = el('div', { className: 'placeholder' });
-  placeholder.innerHTML = sourceGlyph(item.source);
+  placeholder.innerHTML = sourceGlyph(item.type);
   placeholder.appendChild(el('div', { className: 'ph-label', text: getSourceLabel(item.source) }));
   thumb.appendChild(placeholder);
   const star = el('button', {
     className: 'card-star' + (isFavorite(item.id) ? ' is-fav' : ''),
-    attrs: { title: 'Favorite', 'aria-label': 'Favorite' },
+    attrs: {
+      title: isFavorite(item.id) ? 'Remove from favorites' : 'Add to favorites',
+      'aria-label': isFavorite(item.id) ? 'Remove from favorites' : 'Add to favorites',
+      'aria-pressed': isFavorite(item.id) ? 'true' : 'false',
+    },
     on: { click: (e) => { e.stopPropagation(); toggleFav(item, star); } },
     html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
   });
-  insertThumbImage(thumb, item);
-  thumb.appendChild(star);
-  requestThumbnailHydration(card, item, thumb, star);
-  card.appendChild(thumb);
+  const artworkOptions = {
+    eager: opts.eagerArtwork === true,
+    signal: getThumbnailHydrationSignal(),
+  };
+  insertThumbImage(thumb, item, null, artworkOptions);
+  const ratingLabel = contentBadgeText(item);
+  if (ratingLabel && item.__contentHidden !== true) {
+    thumb.appendChild(el('span', {
+      className: 'content-rating-badge', text: ratingLabel,
+      attrs: { 'aria-label': 'Content rating: Explicit or NSFW' },
+    }));
+  }
+  requestThumbnailHydration(card, item, thumb, star, artworkOptions);
+  openButton.appendChild(thumb);
 
   const body = el('div', { className: 'card-body' });
-  body.appendChild(el('div', { className: 'card-title', text: item.title || 'Untitled' }));
+  body.appendChild(el('div', {
+    className: 'card-title',
+    text: item.title || 'Untitled',
+    attrs: { title: item.title || 'Untitled' },
+  }));
   const meta = el('div', { className: 'card-meta' });
-  meta.appendChild(el('span', { className: 'source-badge', text: getSourceLabel(item.source) }));
-  if (item.year) meta.appendChild(el('span', { text: String(item.year) }));
-  if (item.country) meta.appendChild(el('span', { text: item.country }));
-  if (item.license && item.license !== 'Unknown') meta.appendChild(el('span', { text: item.license }));
+  meta.appendChild(el('span', {
+    className: 'source-badge',
+    text: sourceLabel,
+    attrs: { title: sourceLabel },
+  }));
+  const facts = el('span', { className: 'card-facts' });
+  if (item.year) facts.appendChild(el('span', {
+    className: 'card-year',
+    text: String(item.year),
+  }));
+  if (item.country) facts.appendChild(el('span', {
+    className: 'card-country',
+    text: item.country,
+  }));
+  if (facts.childElementCount > 0) meta.appendChild(facts);
+  if (item.license && item.license !== 'Unknown') meta.appendChild(el('span', {
+    className: 'card-license',
+    text: item.license,
+    attrs: { title: item.license },
+  }));
   body.appendChild(meta);
-  card.appendChild(body);
+  openButton.appendChild(body);
+  card.appendChild(openButton);
+  card.appendChild(star);
   return card;
 }
 
@@ -161,7 +307,8 @@ function onCardClick(item) {
   for (const card of ui.resultsHost.querySelectorAll('.card')) {
     card.classList.toggle('is-playing', card.dataset.id === item.id);
   }
-  openDetail(item);
+  openDetail(item, { focus: true });
+  if (item.__contentHidden === true) return;
   playItem(item).catch((err) => console.warn('play failed:', err));
 }
 
@@ -169,29 +316,32 @@ function toggleFav(item, btn) {
   if (isFavorite(item.id)) {
     removeFavorite(item.id);
     btn.classList.remove('is-fav');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-label', 'Add to favorites');
+    btn.title = 'Add to favorites';
   } else {
     addFavorite(item);
     btn.classList.add('is-fav');
+    btn.setAttribute('aria-pressed', 'true');
+    btn.setAttribute('aria-label', 'Remove from favorites');
+    btn.title = 'Remove from favorites';
   }
 }
 
-function sourceGlyph(id) {
+function sourceGlyph(type) {
   const map = {
-    'radio-browser':    '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 12a7 7 0 0 1 7-7M5 16a3 3 0 0 1 3-3M19 12a7 7 0 0 0-7-7M19 16a3 3 0 0 0-3-3"/><circle cx="12" cy="18" r="2"/></svg>',
-    'iptv-org':         '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8"/></svg>',
-    'internet-archive': '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 5h16M3 9h18M4 9v10M20 9v10M6 12v5M10 12v5M14 12v5M18 12v5M3 21h18"/></svg>',
-    'nasa':             '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/><path d="M3 14c4 0 6-4 9-4s5 4 9 4"/></svg>',
-    'wikimedia':        '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 5l4 14M11 5l-2 14M13 5l4 14M21 5l-4 14"/></svg>',
-    'librivox':         '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 4h11a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/><path d="M4 4v13"/></svg>',
+    radio: '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 12a7 7 0 0 1 7-7M5 16a3 3 0 0 1 3-3M19 12a7 7 0 0 0-7-7M19 16a3 3 0 0 0-3-3"/><circle cx="12" cy="18" r="2"/></svg>',
+    tv: '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8"/></svg>',
+    video: '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>',
+    audio: '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg>',
   };
-  return map[id] || '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/></svg>';
+  return map[type] || '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/></svg>';
 }
 
-/* ============ Status row (per-source pills) ============ */
+/* ============ Stable collection summary ============ */
 
-/** Which sources show a per-source status pill at the top of the results
- *  area. This DOES respect the sidebar filter so the status row isn't
- *  cluttered with sources the user isn't currently looking at. Note this
+/** Which sources contribute to the fixed summary at the top of the results
+ *  area. This DOES respect the sidebar filter. Note this
  *  is different from `fetchSourcesAllEnabled` in chain.js, which always
  *  returns every enabled source regardless of the sidebar tab. */
 function effectiveStatusSources() {
@@ -207,41 +357,80 @@ function effectiveStatusSources() {
 
 export function setSourceStatus(sourceId, status) {
   view.sourceStatus.set(sourceId, status);
-  renderStatus();
+}
+
+function statusBucket(status) {
+  const finite = status?.state;
+  const snapshot = status?.snapshot?.state;
+  if (['rate-limited', 'retrying', 'error'].includes(finite)
+      || ['stale', 'retrying'].includes(snapshot)) return 'waiting';
+  if (finite === 'complete'
+      && !['live', 'loading', 'refreshing'].includes(snapshot)) return 'done';
+  return 'collecting';
+}
+
+function compactSourceStatus(status, disabled) {
+  if (disabled || status?.state === 'disabled') {
+    return { text: 'Off', kind: 'off', title: 'Source disabled' };
+  }
+  if (status?.state === 'rate-limited') {
+    return { text: 'Wait', kind: 'wait', title: 'Rate limited; retry scheduled' };
+  }
+  if (['retrying', 'error'].includes(status?.state)) {
+    return { text: 'Wait', kind: 'wait', title: status?.error || 'Retry scheduled' };
+  }
+  const snapshot = status?.snapshot;
+  if (snapshot?.state === 'stale' || snapshot?.state === 'retrying') {
+    return { text: 'Stale', kind: 'wait', title: snapshot.error || 'Snapshot retry scheduled' };
+  }
+  if (snapshot?.state === 'live') {
+    return { text: 'Live', kind: 'live', title: 'Live snapshot' };
+  }
+  if (snapshot?.state === 'refreshing' && snapshot.lastGoodAt) {
+    return { text: 'Live', kind: 'live', title: 'Live snapshot refreshing' };
+  }
+  if (['loading', 'refreshing'].includes(snapshot?.state)) {
+    return { text: 'Sync', kind: 'pull', title: 'Loading live snapshot' };
+  }
+  if (status?.state === 'complete') {
+    return { text: 'Done', kind: 'done', title: 'Source complete' };
+  }
+  return { text: 'Pull', kind: 'pull', title: 'Collecting' };
 }
 
 export function renderStatus() {
-  ui.statusHost.innerHTML = '';
-  if (view.activeSource === 'favorites') return;
-
-  // Per-source FILTERED counts: how many items currently match the active
-  // search / type / country / lang / year filters, grouped by source. The
-  // sidebar keeps showing the cumulative pool count (the library total);
-  // this row shows the visible subtotal so the user can see how many hits
-  // each source contributed to the current search.
-  const filteredPerSource = new Map();
-  const filtered = filterItems(view.items);
-  for (const it of filtered) {
-    filteredPerSource.set(it.source, (filteredPerSource.get(it.source) || 0) + 1);
+  if (!ui.statusHost) return;
+  if (view.activeSource === 'favorites') {
+    const summaryText = 'Saved favorites';
+    if (ui.statusHost.dataset.summary === summaryText) return;
+    ui.statusHost.dataset.summary = summaryText;
+    ui.statusHost.replaceChildren(el('span', {
+      className: 'collection-summary collection-summary-favorites',
+      text: summaryText,
+    }));
+    return;
   }
-
   const targets = effectiveStatusSources();
+  const totals = { collecting: 0, waiting: 0, done: 0 };
   for (const id of targets) {
-    const status = view.sourceStatus.get(id);
-    const count = filteredPerSource.get(id) || 0;
-    const wrap = el('span', { className: 'source-status' });
-    wrap.appendChild(el('span', { className: 'source-dot', style: { background: getSourceColor(id), width: '8px', height: '8px', borderRadius: '50%', display: 'inline-block' } }));
-    wrap.appendChild(el('span', { text: getSourceLabel(id) }));
-    if (count > 0) {
-      wrap.appendChild(el('span', { text: ` · ${count}` }));
-    }
-    if (!status || status.state === 'loading') {
-      wrap.appendChild(el('span', { className: 'spinner-inline' }));
-    } else if (status.state === 'error') {
-      wrap.appendChild(el('span', { text: ' · error', style: { color: 'var(--danger)' } }));
-    }
-    ui.statusHost.appendChild(wrap);
+    totals[statusBucket(view.sourceStatus.get(id))] += 1;
   }
+  const summaryText = `Collecting ${totals.collecting} · Waiting ${totals.waiting} · Done ${totals.done}`;
+  if (ui.statusHost.dataset.summary === summaryText) return;
+  ui.statusHost.dataset.summary = summaryText;
+  const summary = el('span', { className: 'collection-summary' });
+  summary.appendChild(el('span', {
+    className: 'collection-summary-part is-collecting', text: `Collecting ${totals.collecting}`,
+  }));
+  summary.appendChild(el('span', { className: 'collection-summary-separator', text: '·' }));
+  summary.appendChild(el('span', {
+    className: 'collection-summary-part is-waiting', text: `Waiting ${totals.waiting}`,
+  }));
+  summary.appendChild(el('span', { className: 'collection-summary-separator', text: '·' }));
+  summary.appendChild(el('span', {
+    className: 'collection-summary-part is-done', text: `Done ${totals.done}`,
+  }));
+  ui.statusHost.replaceChildren(summary);
 }
 
 /* ============ Sentinel status (bottom of results) ============ */
@@ -253,20 +442,37 @@ export function updateSentinelStatus() {
     ui.sentinelButton.style.display = 'none';
     return;
   }
-  const total = view.items.length;
-  const sources = view.activeSource === 'all'
-    ? SOURCES.filter((s) => getState().settings.enabledSources[s.id] !== false).map((s) => s.id)
-    : [view.activeSource];
+  const total = filteredItemsForCurrentView(view.items).length;
+  const sources = effectiveStatusSources();
   const exhausted = view.exhausted || new Set();
   const liveSources = sources.filter((id) => !exhausted.has(id));
-  if (view.loadingMore || view.loading) {
+  const retryingSources = sources.filter((id) => ['retrying', 'rate-limited'].includes(view.sourceStatus.get(id)?.state));
+  const searching = Boolean((view.lastQuery || '').trim());
+  const searchLoading = searching
+    && sources.some((id) => view.sourceStatus.get(id)?.state === 'loading');
+  if (searchLoading) {
+    ui.sentinelStatus.textContent = 'Searching...';
+    ui.sentinelButton.style.display = 'none';
+  } else if (view.loading || (view.loadingMore && !searching)) {
     ui.sentinelStatus.innerHTML = '<span class="spinner-inline"></span> Loading more…';
     ui.sentinelButton.style.display = 'none';
-  } else if (liveSources.length === 0 && total > 0) {
-    ui.sentinelStatus.textContent = `All ${total} items loaded · try a different search for more`;
+  } else if (retryingSources.length > 0) {
+    ui.sentinelStatus.textContent = `${total} items · ${retryingSources.length} ${retryingSources.length === 1 ? 'source' : 'sources'} retrying`;
+    ui.sentinelButton.textContent = 'Retry now';
+    ui.sentinelButton.dataset.action = 'retry';
+    ui.sentinelButton.dataset.restartExhausted = 'false';
+    ui.sentinelButton.style.display = 'inline-flex';
+  } else if (searching) {
+    ui.sentinelStatus.textContent = `${total} search ${total === 1 ? 'result' : 'results'} loaded`;
     ui.sentinelButton.style.display = 'none';
+  } else if (sources.length > 0 && liveSources.length === 0) {
+    ui.sentinelStatus.textContent = `All ${total} matching items loaded`;
+    ui.sentinelButton.textContent = 'Check again';
+    ui.sentinelButton.dataset.action = 'retry';
+    ui.sentinelButton.dataset.restartExhausted = 'true';
+    ui.sentinelButton.style.display = 'inline-flex';
   } else if (total > 0) {
-    ui.sentinelStatus.textContent = `${total} items loaded`;
+    ui.sentinelStatus.textContent = `${total} matching items loaded · more available`;
     ui.sentinelButton.style.display = 'none';
   } else {
     ui.sentinelStatus.textContent = '';
@@ -278,19 +484,54 @@ export function updateSentinelStatus() {
 
 export function updateSidebarCounts() {
   const cum = view.cumulativeCounts;
-  const cumTypes = view.cumulativeTypeCounts;
+  const settings = getState().settings;
+  const enabled = new Set(SOURCES
+    .filter((source) => settings.enabledSources[source.id] !== false)
+    .map((source) => source.id));
   let totalAll = 0;
-  for (const v of cum.values()) totalAll += v;
+  for (const [id, count] of cum.entries()) {
+    if (enabled.has(id)) totalAll += count;
+  }
+  const typeCounts = new Map();
+  for (const id of enabled) {
+    const sourceTypes = view.cumulativeSourceTypeCounts.get(id);
+    if (!sourceTypes) continue;
+    for (const [type, count] of sourceTypes) {
+      typeCounts.set(type, (typeCounts.get(type) || 0) + count);
+    }
+  }
 
   for (const li of ui.sidebar.querySelectorAll('.source-item')) {
     const id = li.dataset.source;
     const span = li.querySelector('[data-role="count"]');
     if (!span) continue;
+    const isDirectSource = SOURCE_ID_SET.has(id);
+    const isDisabled = isDirectSource && !enabled.has(id);
+    const disabledState = isDisabled ? 'true' : 'false';
+    if (li.dataset.disabledState !== disabledState) {
+      li.dataset.disabledState = disabledState;
+      li.classList.toggle('is-disabled', isDisabled);
+      li.setAttribute('aria-disabled', disabledState);
+    }
     let n = 0;
     if (id === 'all') n = totalAll;
     else if (id === 'favorites') n = getState().favorites.length;
-    else if (id.startsWith('type:')) n = cumTypes.get(id.slice('type:'.length)) || 0;
-    else n = cum.get(id) || 0;
-    span.textContent = n > 0 ? String(n) : '';
+    else if (id.startsWith('type:')) n = typeCounts.get(id.slice('type:'.length)) || 0;
+    else if (!isDisabled) n = cum.get(id) || 0;
+    const countText = n > 0 ? String(n) : '';
+    if (span.textContent !== countText) span.textContent = countText;
+
+    const healthSpan = li.querySelector('[data-role="source-health"]');
+    if (healthSpan) {
+      const health = compactSourceStatus(view.sourceStatus.get(id), isDisabled);
+      const signature = `${health.text}\u0000${health.kind}\u0000${health.title}`;
+      if (healthSpan.dataset.signature !== signature) {
+        healthSpan.dataset.signature = signature;
+        healthSpan.textContent = health.text;
+        healthSpan.className = `source-health is-${health.kind}`;
+        healthSpan.title = health.title;
+        healthSpan.setAttribute('aria-label', `${getSourceLabel(id)}: ${health.title}`);
+      }
+    }
   }
 }

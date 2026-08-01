@@ -6,75 +6,10 @@
  * shown are reference values; live counts live in Library's sidebar.
  */
 
-const VERSION = '0.1.1-windows';
+import { SOURCES, getSourceColor } from '../lib/sources.js';
 
-const SOURCES_INFO = [
-  {
-    id: 'radio-browser',
-    name: 'Radio Browser',
-    home: 'https://www.radio-browser.info',
-    api:  'https://api.radio-browser.info',
-    types: 'Live internet radio (audio)',
-    blurb:
-      'A community-curated directory of internet radio stations. Volunteer-run, ' +
-      'no API key, no signup. Around 40,000 stations indexed worldwide.',
-  },
-  {
-    id: 'iptv-org',
-    name: 'iptv-org',
-    home: 'https://iptv-org.github.io',
-    api:  'https://iptv-org.github.io/api/streams.json',
-    types: 'Live IPTV channels (video)',
-    blurb:
-      'A crowd-sourced registry of free-to-air TV streams from around the world, ' +
-      'published as plain JSON on GitHub. No service to sign up for — the data ' +
-      'is just a public file. Around 10,000+ channels listed; many are regional.',
-  },
-  {
-    id: 'internet-archive',
-    name: 'Internet Archive',
-    home: 'https://archive.org',
-    api:  'https://archive.org/services/search/v1/scrape',
-    types: 'On-demand video and audio',
-    blurb:
-      'A non-profit digital library. Millions of films, recordings, books, ' +
-      'magazines, and software — much of it in the public domain or under ' +
-      'open licenses. World Media surfaces the audio/video subsets.',
-  },
-  {
-    id: 'nasa',
-    name: 'NASA Image and Video Library',
-    home: 'https://images.nasa.gov',
-    api:  'https://images-api.nasa.gov',
-    types: 'Public-domain video and audio',
-    blurb:
-      'Official NASA media library — photos, videos, and audio from missions, ' +
-      'astronauts, and ground operations. Public-domain in the U.S. (and most ' +
-      'jurisdictions); attribution requested but not required.',
-  },
-  {
-    id: 'wikimedia',
-    name: 'Wikimedia Commons',
-    home: 'https://commons.wikimedia.org',
-    api:  'https://commons.wikimedia.org/w/api.php',
-    types: 'Free-licensed video and audio',
-    blurb:
-      'The Wikipedia foundation’s shared media repository. Every file is ' +
-      'licensed for free reuse (typically CC-BY-SA or public domain). World ' +
-      'Media filters for video and audio file types only.',
-  },
-  {
-    id: 'librivox',
-    name: 'LibriVox',
-    home: 'https://librivox.org',
-    api:  'https://librivox.org/api/feed/audiobooks',
-    types: 'Public-domain audiobooks (audio)',
-    blurb:
-      'Volunteer recordings of public-domain books, read aloud chapter by ' +
-      'chapter. Around 20,000 titles spanning fiction, poetry, history, ' +
-      'philosophy, and more. Always free; no account needed to listen.',
-  },
-];
+const VERSION = '0.1.2-windows';
+const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {
   host.innerHTML = `
@@ -84,25 +19,27 @@ export function renderAbout(host) {
         <header class="about-hero">
           <h1>World Media</h1>
           <p class="about-tagline">
-            A unified player for free, open media. No accounts. No API keys. No telemetry.
+            Radio, live TV, podcasts, public archives, and independent media in one portable player.
           </p>
+          <a class="about-project-link" href="${PROJECT_URL}" target="_blank" rel="noopener noreferrer">
+            View World Media on GitHub <span aria-hidden="true">↗</span>
+          </a>
         </header>
 
         <section class="about-section">
           <h2>What this is</h2>
           <p>
-            World Media is a desktop app that brings together six open archives of
-            free media — internet radio, live TV, on-demand video and audio — under
-            one consistent search-and-browse interface. Everything you see comes
-            from public sources that anyone can access; the app just removes the
-            friction of visiting six different sites and learning six different
-            search interfaces.
+            Explore internet radio, live TV, podcasts, public-domain films, space media,
+            cultural archives, audiobooks, conference recordings, and independent streams
+            from eleven public sources. Search across them, save favorites, browse the live
+            Grid, spin the Tuner, or let Discovery choose something unexpected.
           </p>
           <p>
-            The app does not host content. It points to the upstream stream URL
-            and plays it directly in the built-in player. If a station or video
-            goes offline at the source, it goes offline in World Media too — but
-            so does everyone else trying to reach it.
+            The app does not host content. Its local Windows runtime relays media
+            to the built-in player through short-lived opaque identifiers, while
+            preserving headers required by the upstream provider. Playback includes a
+            ten-band EQ, finite-media downloads, and optional recording for live streams.
+            If a station or video goes offline at the source, it goes offline here too.
           </p>
         </section>
 
@@ -113,17 +50,17 @@ export function renderAbout(host) {
             Click the home link to visit the source directly.
           </p>
           <div class="about-sources">
-            ${SOURCES_INFO.map(s => `
+            ${SOURCES.map(s => `
               <article class="about-source" data-source="${s.id}">
                 <div class="about-source-head">
-                  <span class="about-source-dot" style="background:${dotColor(s.id)}"></span>
-                  <h3>${escape(s.name)}</h3>
+                  <span class="about-source-dot" style="background:${getSourceColor(s.id)}"></span>
+                  <h3>${escape(s.displayName)}</h3>
                 </div>
-                <div class="about-source-types">${escape(s.types)}</div>
-                <p class="about-source-blurb">${escape(s.blurb)}</p>
+                <div class="about-source-types">${escape(s.types.join(' / '))} · ${escape(s.capabilities.join(' · '))}</div>
+                <p class="about-source-blurb">${escape(s.description)}</p>
                 <dl class="about-source-meta">
-                  <dt>Home</dt><dd><a href="${s.home}" target="_blank" rel="noopener">${escape(stripScheme(s.home))}</a></dd>
-                  <dt>API</dt><dd><code>${escape(stripScheme(s.api))}</code></dd>
+                  <dt>Home</dt><dd><a href="${s.homepage}" target="_blank" rel="noopener">${escape(stripScheme(s.homepage))}</a></dd>
+                  <dt>Rights</dt><dd>${escape(s.rightsNote)}</dd>
                 </dl>
               </article>
             `).join('')}
@@ -133,18 +70,18 @@ export function renderAbout(host) {
         <section class="about-section">
           <h2>Privacy &amp; isolation</h2>
           <ul class="about-bullets">
-            <li><strong>No accounts.</strong> Nothing to sign up for. The app does not have a server side.</li>
+            <li><strong>No accounts.</strong> Nothing to sign up for. There is no remote World Media account service.</li>
             <li><strong>No telemetry.</strong> The app does not phone home. It does not collect usage data.</li>
-            <li><strong>No API keys.</strong> All six sources are accessed using their public, anonymous endpoints.</li>
+            <li><strong>No API keys.</strong> All listed sources are accessed using public, anonymous endpoints.</li>
             <li>
-              <strong>Same-origin proxy.</strong> A few sources (LibriVox, Wikimedia, sometimes Internet Archive)
-              block direct browser requests because of CORS. The Windows app runs a small local Python proxy
-              that whitelists exactly those upstream hosts and forwards your request; nothing else can be proxied,
-              and stream URLs (audio/video) are fetched directly without proxy.
+              <strong>Bounded same-origin relays.</strong> Catalog metadata crosses an HTTPS-only,
+              DNS-pinned allowlist boundary. Artwork, playback, EQ, HLS, DASH, downloads, and recording use
+              separate opaque, expiring local identifiers so required headers can be preserved without exposing
+              upstream URLs to other localhost callers. Redirects, response sizes, and dynamic hosts are validated.
             </li>
             <li>
               <strong>Local runtime.</strong> The app's Python proxy and HTTP server bind only to 127.0.0.1
-              and store logs under LocalAppData. No WSL distro, rootfs, Docker image, or Linux setup step is used.
+              and keep the portable profile, cache, settings, favorites, and logs beside the launcher.
             </li>
           </ul>
         </section>
@@ -157,6 +94,56 @@ export function renderAbout(host) {
             item’s metadata for specifics. The app surfaces license info on every
             card via the source badge and the detail panel.
           </p>
+          <p>
+            MPEG-DASH playback uses
+            <a href="https://github.com/Dash-Industry-Forum/dash.js" target="_blank" rel="noreferrer">dash.js</a>
+            5.2.0, provided by the DASH Industry Forum under the
+            <a href="https://github.com/Dash-Industry-Forum/dash.js/blob/v5.2.0/LICENSE.md" target="_blank" rel="noreferrer">BSD 3-Clause license</a>.
+          </p>
+          <p>
+            HLS playback uses vendored
+            <a href="https://github.com/video-dev/hls.js/tree/v1.5.13" target="_blank" rel="noreferrer">hls.js 1.5.13</a>
+            under the
+            <a href="https://github.com/video-dev/hls.js/blob/v1.5.13/LICENSE" target="_blank" rel="noreferrer">Apache License 2.0</a>.
+            <a href="/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noreferrer">Packaged third-party notices</a>
+            identify all distributed runtime components.
+          </p>
+          <details>
+            <summary>dash.js BSD 3-Clause notice</summary>
+            <p>Copyright (c) 2015, Dash Industry Forum. All rights reserved.</p>
+            <p>Redistribution and use in source and binary forms, with or without
+              modification, are permitted provided that the following conditions are met:</p>
+            <ul>
+              <li>Redistributions of source code must retain the above copyright notice,
+                this list of conditions and the following disclaimer.</li>
+              <li>Redistributions in binary form must reproduce the above copyright notice,
+                this list of conditions and the following disclaimer in the documentation
+                and/or other materials provided with the distribution.</li>
+              <li>Neither the name of the Dash Industry Forum nor the names of its
+                contributors may be used to endorse or promote products derived from this
+                software without specific prior written permission.</li>
+            </ul>
+            <p>THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+              “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+              LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+              A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+              HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+              SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+              TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+              PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+              LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+              NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+              SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.</p>
+          </details>
+          <p>
+            Optional recording support can use a separately downloaded
+            <a href="https://ffmpeg.org/" target="_blank" rel="noreferrer">FFmpeg</a>
+            GPL build supplied by
+            <a href="https://github.com/BtbN/FFmpeg-Builds" target="_blank" rel="noreferrer">BtbN/FFmpeg-Builds</a>.
+            World Media verifies the GitHub SHA-256 digest and retains the downloaded
+            package's license material, manifest, and source link. See
+            <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noreferrer">FFmpeg legal information</a>.
+          </p>
         </section>
 
         <section class="about-section">
@@ -164,6 +151,7 @@ export function renderAbout(host) {
           <p class="about-version">
             World Media v${VERSION}<br>
             Windows-native desktop build.<br>
+            <a href="${PROJECT_URL}/releases" target="_blank" rel="noopener noreferrer">Release history and downloads</a><br>
             <span class="about-build-line">Runtime: bundled Python + localhost HTTP server + WebView2 shell.</span>
           </p>
         </section>
@@ -179,18 +167,4 @@ function escape(s) {
 
 function stripScheme(url) {
   return String(url).replace(/^https?:\/\//, '');
-}
-
-function dotColor(id) {
-  // Keep in sync with SOURCES in lib/sources.js — duplicated here so this
-  // module can render before any adapter is loaded.
-  const map = {
-    'radio-browser':    '#42a5f5',
-    'iptv-org':         '#ef5350',
-    'internet-archive': '#f5a524',
-    'nasa':             '#9c27b0',
-    'wikimedia':        '#26a69a',
-    'librivox':         '#7e57c2',
-  };
-  return map[id] || 'var(--text-mute)';
 }

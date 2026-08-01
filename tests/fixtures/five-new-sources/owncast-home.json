@@ -1,0 +1,117 @@
+{
+  "sections": [
+    {
+      "name": "What's Streaming Now",
+      "description": "",
+      "online": false,
+      "instances": [
+        {
+          "id": 9001,
+          "name": "Fixture Safe Stream",
+          "description": "A sanitized independent live stream.",
+          "streamTitle": "Fixture broadcast",
+          "url": "https://safe.example.org",
+          "logo": "/logo",
+          "tags": ["music", "open source"],
+          "nsfw": false,
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T11:00:00.000Z"
+        },
+        {
+          "id": 9002,
+          "name": "Fixture Explicit Stream",
+          "description": "A marked entry used only to verify explicit filtering.",
+          "streamTitle": "Marked fixture broadcast",
+          "url": "https://explicit.example.org",
+          "logo": "/logo",
+          "tags": ["fixture", "marked"],
+          "nsfw": true,
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T11:30:00.000Z"
+        },
+        {
+          "id": 9003,
+          "name": "Fixture HTTP Stream",
+          "description": "A public HTTP origin that still requires the media relay.",
+          "streamTitle": "HTTP fixture broadcast",
+          "url": "http://http-stream.example.org:8080",
+          "logo": "/logo",
+          "tags": ["community", "public"],
+          "nsfw": false,
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T10:00:00.000Z"
+        },
+        {
+          "id": 9004,
+          "name": "Fixture Quoted, Comma",
+          "description": "Verifies quoted commas in playlist metadata.",
+          "streamTitle": "Comma fixture broadcast",
+          "url": "https://comma.example.org",
+          "logo": "/logo",
+          "tags": ["music", "radio", "quoted comma"],
+          "nsfw": false,
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T09:00:00.000Z"
+        },
+        {
+          "id": 9005,
+          "name": "Fixture Multiline Stream",
+          "description": "Verifies a playlist attribute split over physical lines.",
+          "streamTitle": "Multiline fixture broadcast",
+          "url": "https://multiline.example.org",
+          "logo": "/logo",
+          "tags": ["streaming", "owncast"],
+          "nsfw": false,
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T08:00:00.000Z"
+        },
+        {
+          "id": 9006,
+          "name": "Fixture Missing Rating",
+          "description": "This entry must fail closed because nsfw is absent.",
+          "streamTitle": "Unrated fixture broadcast",
+          "url": "https://unrated.example.org",
+          "logo": "/logo",
+          "tags": ["fixture"],
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T07:00:00.000Z"
+        },
+        {
+          "id": 9007,
+          "name": "Fixture Malformed Rating",
+          "description": "This entry must fail closed because nsfw is not boolean.",
+          "streamTitle": "Malformed fixture broadcast",
+          "url": "https://malformed.example.org",
+          "logo": "/logo",
+          "tags": ["fixture"],
+          "nsfw": "false",
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T06:00:00.000Z"
+        },
+        {
+          "id": 9008,
+          "name": "Fixture Missing URL",
+          "description": "This malformed entry must not join.",
+          "streamTitle": "Missing URL fixture",
+          "logo": "/logo",
+          "tags": ["fixture"],
+          "nsfw": false,
+          "lastSeen": "2026-07-14T12:00:00.000Z",
+          "streamingSince": "2026-07-14T05:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "featured": {
+    "id": 9001,
+    "name": "Fixture Safe Stream",
+    "description": "A sanitized independent live stream.",
+    "streamTitle": "Fixture broadcast",
+    "url": "https://safe.example.org",
+    "logo": "/logo",
+    "tags": ["music", "open source"],
+    "nsfw": false,
+    "lastSeen": "2026-07-14T12:00:00.000Z",
+    "streamingSince": "2026-07-14T11:00:00.000Z"
+  }
+}

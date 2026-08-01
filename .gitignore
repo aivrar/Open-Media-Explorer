@@ -2,28 +2,43 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.coverage
+.coverage.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+*.egg-info/
 
 # Node/Vite
 node_modules/
 npm-debug.log*
+coverage/
 
 # Local runtime state
 cache/
 logs/
 state/
 webview2_data/
+WorldMediaWindows-data/
+downloads/
+tools/
+*.part
+*.working.mp4
+*.finalizing.mp4
+.worldmedia-write-*.tmp
 
 # Build outputs
 build/
 dist/
 *.spec
-!worldmedia_native.spec
 
 # Browser/dev-tool artifacts
 .playwright-mcp/
 playwright-report/
 test-results/
 *.trace.zip
+*.log
 
 # OS/editor noise
 .DS_Store

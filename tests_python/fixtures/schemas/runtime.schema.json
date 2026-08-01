@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://worldmedia.local/schemas/runtime.schema.json",
+  "title": "World Media runtime response data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["portable_root", "state_root", "downloads_root", "tools_root", "portable_writable", "using_fallback"],
+  "properties": {
+    "portable_root": {"type": "string", "minLength": 1},
+    "state_root": {"type": "string", "minLength": 1},
+    "downloads_root": {"type": "string", "minLength": 1},
+    "tools_root": {"type": "string", "minLength": 1},
+    "portable_writable": {"type": "boolean"},
+    "using_fallback": {"type": "boolean"},
+    "fallback_reason": {"type": ["string", "null"]}
+  }
+}

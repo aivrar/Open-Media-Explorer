@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "captured": "2026-07-11",
+  "player": {
+    "root": "player-bar",
+    "mediaElements": ["audio-el", "video-el"],
+    "metadata": ["player-art", "player-title", "player-source"],
+    "controls": [
+      "player-play", "icon-play", "icon-pause", "player-stop",
+      "player-next-broken", "player-seek", "player-time", "player-dur",
+      "player-mute", "player-volume", "player-fav",
+      "player-capture", "player-capture-label", "player-capture-secondary",
+      "player-capture-status", "player-capture-status-text", "player-capture-progress", "player-capture-announcement",
+      "player-capture-progress-bar", "player-eq", "player-eq-state"
+    ],
+    "layouts": {
+      "desktop": {
+        "columns": 5
+      },
+      "compact": {
+        "maxWidthPx": 1000,
+        "areas": ["meta controls", "actions actions", "status status", "progress progress", "volume volume"]
+      },
+      "narrow": {
+        "maxWidthPx": 560
+      }
+    }
+  },
+  "settings": {
+    "fields": ["theme", "defaultMode", "showExplicitContent", "recordingEnabled", "recordingQuality"],
+    "sections": ["Appearance", "Content", "Capture &amp; storage", "Recording tools", "Sources", "Storage", "About"]
+  },
+  "itemModel": {
+    "requiredStringFields": [
+      "id", "title", "description", "source", "type", "stream_url",
+      "stream_kind", "thumbnail", "country", "language", "license", "source_url",
+      "delivery", "download_url", "download_name", "content_rating"
+    ],
+    "otherFields": ["year", "tags", "capture_headers"],
+    "privateFields": ["_extra"]
+  },
+  "adapters": {
+    "ids": ["radio-browser", "iptv-org", "internet-archive", "nasa", "wikimedia", "librivox", "media-ccc", "library-of-congress", "gpodder", "peertube", "owncast"],
+    "requiredExports": ["id", "displayName", "itemTypes", "search", "browse", "browsePage", "random"]
+  },
+  "apiRoutes": [
+    "/api/proxy", "/api/health", "/api/ping", "/api/shutdown",
+    "/api/v1/session", "/api/v1/runtime", "/api/v1/jobs",
+    "/api/v1/media/register", "/api/v1/media/"
+  ],
+  "runtime": {
+    "portableRootSource": "repository root",
+    "bundledFrontend": "<bundle-root>/frontend",
+    "stateRoot": "<launcher-directory>/WorldMediaWindows-data",
+    "stateFolders": ["cache", "state", "logs", "webview2_data"]
+  }
+}

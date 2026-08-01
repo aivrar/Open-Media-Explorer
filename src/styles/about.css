@@ -28,9 +28,31 @@
   color: transparent;
 }
 .about-tagline {
-  margin: 0;
+  margin: 0 0 16px;
   font-size: 15px;
   color: var(--text-dim);
+}
+.about-project-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elev-1));
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.about-project-link:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev-1));
+  border-color: var(--accent);
+}
+.about-project-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .about-section {

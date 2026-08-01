@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://worldmedia.local/schemas/tool-status.schema.json",
+  "title": "World Media FFmpeg status response data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state", "source", "ffmpeg_path", "ffprobe_path", "version", "capabilities", "progress", "error", "managed", "actionable_reason"],
+  "properties": {
+    "state": {"enum": ["missing", "checking", "installing", "ready", "error", "cancelled"]},
+    "source": {"enum": ["override", "portable", "PATH", "LocalAppData", null]},
+    "ffmpeg_path": {"type": ["string", "null"]},
+    "ffprobe_path": {"type": ["string", "null"]},
+    "version": {"type": ["string", "null"]},
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocols", "demuxers", "decoders", "encoders", "muxers", "filters"],
+      "properties": {
+        "protocols": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "demuxers": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "decoders": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "encoders": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "muxers": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "filters": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "progress": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "error": {"type": ["object", "null"]},
+    "managed": {"type": "boolean"},
+    "actionable_reason": {"type": ["string", "null"], "maxLength": 512}
+  }
+}

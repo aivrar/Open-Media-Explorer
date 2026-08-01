@@ -28,12 +28,6 @@
     <div class="controls">
       <label>Adapter:
         <select id="adapter">
-          <option value="radio-browser">Radio Browser</option>
-          <option value="iptv-org">iptv-org</option>
-          <option value="internet-archive">Internet Archive</option>
-          <option value="nasa">NASA</option>
-          <option value="wikimedia">Wikimedia Commons</option>
-          <option value="librivox">LibriVox</option>
         </select>
       </label>
       <label>Mode:
@@ -49,6 +43,7 @@
       <label>Limit:
         <input id="limit" type="number" value="10" min="1" max="50" style="width: 60px;" />
       </label>
+      <label><input id="explicit" type="checkbox" /> Show explicit/NSFW fixtures</label>
       <button id="run">Run</button>
     </div>
     <div class="status" id="status">Ready.</div>
@@ -64,8 +59,15 @@
 
     <script type="module">
       import { validateItem } from './lib/item-model.js';
+      import { SOURCES, loadAdapter } from './lib/sources.js';
 
       const $ = (id) => document.getElementById(id);
+      for (const source of SOURCES) {
+        const option = document.createElement('option');
+        option.value = source.id;
+        option.textContent = source.displayName;
+        $('adapter').appendChild(option);
+      }
       $('run').addEventListener('click', run);
       async function run() {
         const adapterId = $('adapter').value;
@@ -79,9 +81,12 @@
         summary.innerHTML = '';
         status.textContent = `Loading ${adapterId}.${mode}…`;
         try {
-          const mod = await import(`./adapters/${adapterId}.js`);
+          const mod = await loadAdapter(adapterId);
           const start = performance.now();
-          const items = await mod[mode](query, { limit });
+          const opts = { limit, showExplicitContent: $('explicit').checked };
+          const items = mode === 'search'
+            ? await mod.search(query, opts)
+            : await mod[mode](opts);
           const ms = (performance.now() - start).toFixed(0);
           let ok = 0, bad = 0;
           for (const it of items) {

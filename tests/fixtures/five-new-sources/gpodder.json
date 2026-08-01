@@ -1,0 +1,47 @@
+{
+  "toplist": [
+    {
+      "url": "http://feeds.example.invalid/open-show.xml",
+      "title": "Open Show",
+      "author": "Fixture Publisher",
+      "description": "A sanitized toplist result.",
+      "subscribers": 3321,
+      "logo_url": "http://media.example.invalid/open-show.jpg",
+      "scaled_logo_url": "http://gpodder.net/logo/64/fixture",
+      "website": "https://publisher.example.invalid/open-show",
+      "mygpo_link": "https://gpodder.net/podcast/open-show"
+    }
+  ],
+  "search": [
+    {
+      "url": "http://feeds.example.invalid/science.xml",
+      "title": "Fixture Science",
+      "author": "Fixture Publisher",
+      "description": "A sanitized search result.",
+      "subscribers": 1758,
+      "logo_url": null,
+      "scaled_logo_url": "http://gpodder.net/static/logo/podcast-0.png",
+      "website": "https://publisher.example.invalid/science",
+      "mygpo_link": "https://gpodder.net/podcast/fixture-science"
+    }
+  ],
+  "feedOutcomes": [
+    {
+      "url": "http://feeds.example.invalid/redirect.xml",
+      "status": 301,
+      "location": "https://feeds.example.invalid/redirect.xml"
+    },
+    {
+      "url": "https://feeds.example.invalid/dead.xml",
+      "status": 404
+    },
+    {
+      "url": "https://feeds.example.invalid/upstream-failure.xml",
+      "status": 502
+    },
+    {
+      "url": "https://feeds.example.invalid/timeout.xml",
+      "timeout": true
+    }
+  ]
+}

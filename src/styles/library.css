@@ -18,6 +18,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .library-main {
@@ -56,6 +57,8 @@
   margin: 0;
   padding: 0 8px 14px;
   overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
 }
 .source-item {
   display: flex;
@@ -71,12 +74,24 @@
   user-select: none;
 }
 .source-item:hover { background: var(--bg-elev-2); color: var(--text); }
+.source-item:focus-visible { scroll-margin: 8px; }
+.source-item.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.source-item.is-disabled:hover { background: transparent; color: var(--text-dim); }
 .source-item.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 500;
 }
 .source-item .source-name { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.source-item .source-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .source-item .source-dot {
   width: 8px;
   height: 8px;
@@ -88,7 +103,27 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-mute);
+  flex: 0 0 4ch;
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
+.source-item .source-health {
+  flex: 0 0 34px;
+  width: 34px;
+  overflow: hidden;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.15px;
+  color: var(--text-mute);
+}
+.source-item .source-health.is-pull { color: var(--accent); }
+.source-item .source-health.is-live { color: #54d68b; }
+.source-item .source-health.is-wait { color: var(--warning, #f5a524); }
+.source-item .source-health.is-done,
+.source-item .source-health.is-off { color: var(--text-mute); }
 
 .library-search-bar {
   display: flex;
@@ -97,7 +132,7 @@
   flex-wrap: wrap;             /* chips drop to a second row when the
                                   search input can't shrink any further */
   padding: 12px 16px;
-  background: rgba(17, 21, 27, 0.72);
+  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(12px);
   min-width: 0;
@@ -156,7 +191,7 @@
 .chip:hover { color: var(--text); border-color: var(--border-strong); }
 .chip.is-active {
   background: var(--accent);
-  color: #000;
+  color: var(--accent-contrast);
   border-color: transparent;
 }
 
@@ -172,22 +207,46 @@
 
 .results-status {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
   align-items: center;
+  block-size: 26px;
+  min-height: 26px;
   font-size: 12px;
   color: var(--text-dim);
-  flex: 0 0 auto;
+  flex: 0 0 26px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
 }
-.results-status .source-status {
+.collection-summary {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(17, 21, 27, 0.62);
+  gap: 7px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.collection-summary-part {
+  display: inline-flex;
+  align-items: center;
+}
+.collection-summary-part::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--text-mute);
+}
+.collection-summary-part.is-collecting::before { background: var(--accent); }
+.collection-summary-part.is-waiting::before { background: var(--warning, #f5a524); }
+.collection-summary-part.is-done::before { background: #54d68b; }
+.collection-summary-separator { color: var(--text-mute); }
+.collection-summary-favorites { color: var(--text-mute); }
+
+.results-window-back {
+  align-self: flex-start;
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 6px 12px;
 }
 
 .cards-grid {
@@ -198,7 +257,7 @@
 }
 
 .card {
-  background: linear-gradient(180deg, rgba(23, 28, 36, 0.98), rgba(14, 17, 23, 0.98));
+  background: linear-gradient(180deg, var(--bg-elev-2), var(--bg-elev-1));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
@@ -218,10 +277,30 @@
 .card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-2); }
 .card.is-playing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 24px -8px var(--accent); }
 
+.card-open {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+}
+.card-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  border-radius: inherit;
+}
+
 .card-thumb {
   position: relative;
   aspect-ratio: 16 / 9;
-  background: linear-gradient(135deg, #191f28, #222b36);
+  background: linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
   overflow: hidden;
 }
 .card-thumb .placeholder {
@@ -230,8 +309,8 @@
   color: var(--text-mute);
   opacity: 0.74;
   background:
-    radial-gradient(ellipse at center, rgba(94, 234, 212, 0.08) 0%, transparent 70%),
-    linear-gradient(135deg, #171d25, #242c38);
+    radial-gradient(ellipse at center, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 70%),
+    linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
 }
 .card-thumb .placeholder .ph-label {
   font-size: 9px;
@@ -255,42 +334,75 @@
   padding: 28px;
   background:
     radial-gradient(circle at center, rgba(255,255,255,0.04), transparent 62%),
-    linear-gradient(135deg, #18202a, #222a36);
+    linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
 }
 .card-thumb img.loaded { opacity: 1; }
 .card-thumb img.errored { display: none; }
 
 .card-body {
   padding: 12px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: 18px 40px;
   gap: 8px;
+  min-height: 90px;
 }
 .card-title {
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .card-meta {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px minmax(62px, 0.78fr);
   align-items: center;
   gap: 6px;
   font-size: 11px;
   color: var(--text-dim);
   min-width: 0;
-  overflow: hidden;
+  min-height: 40px;
 }
 .source-badge {
+  grid-column: 1;
+  align-self: stretch;
+  min-width: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
   font-size: 10px;
+  line-height: 16px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  padding: 2px 6px;
+  padding: 4px 8px;
   border-radius: 6px;
   background: var(--bg-elev-3);
   color: var(--text-dim);
+}
+.card-facts {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.card-year {
+  font-variant-numeric: tabular-nums;
+}
+.card-license {
+  grid-column: 3;
+  min-width: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  line-height: 16px;
 }
 .card-star {
   position: absolute;
@@ -307,9 +419,34 @@
   align-items: center;
   justify-content: center;
   transition: transform 0.12s ease;
+  z-index: 2;
 }
 .card-star:hover { transform: scale(1.08); }
 .card-star.is-fav { color: var(--accent); }
+
+.content-rating-badge {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--danger) 64%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-elev-1));
+  color: color-mix(in srgb, var(--danger) 72%, var(--text));
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.card-thumb > .content-rating-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3;
+}
 
 .detail-panel {
   border-left: 1px solid var(--border);
@@ -421,8 +558,11 @@
   }
 
   .source-item .source-count {
-    min-width: 12px;
-    text-align: right;
+    flex-basis: 4ch;
+  }
+
+  .source-item .source-health {
+    flex-basis: 34px;
   }
 
   .library-search-bar {
@@ -470,17 +610,6 @@
   .results {
     padding: 12px;
     gap: 12px;
-  }
-
-  .results-status {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 2px;
-    scrollbar-width: none;
-  }
-  .results-status::-webkit-scrollbar { display: none; }
-  .results-status .source-status {
-    flex: 0 0 auto;
   }
 
   .cards-grid {

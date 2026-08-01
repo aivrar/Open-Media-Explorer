@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "captured": "2026-07-14",
+  "hashAlgorithm": "sha256",
+  "lineEndings": "lf",
+  "sanitization": "Provider payloads are reduced to contract-bearing fields; volatile identifiers are synthetic, provider text is bounded, and no credentials, cookies, session tokens, or personal paths are retained.",
+  "files": [
+    {
+      "file": "contracts.json",
+      "provider": "World Media Windows design contract",
+      "endpoint": "local:docs/FIVE_NEW_SOURCES_PHASES.md",
+      "status": "not-applicable",
+      "contentType": "application/json",
+      "sha256": "7f280282a350fd7cc21016e3c38713fa1b4825a26b28ffa161ec1b351f9ce693",
+      "cases": ["source IDs", "stable identity", "content preference default", "favorite and EQ preservation"]
+    },
+    {
+      "file": "media-ccc.json",
+      "provider": "media.ccc.de and C3VOC",
+      "endpoint": [
+        "https://api.media.ccc.de/public/events/recent",
+        "https://api.media.ccc.de/public/events/{guid}",
+        "https://api.media.ccc.de/graphql",
+        "https://streaming.media.ccc.de/streams/v2.json"
+      ],
+      "status": [200, 200, 200, 200],
+      "contentType": "application/json",
+      "sha256": "fb04d48c05970edf74d444e9240eaadd2a45749655d7263c00b51931fa7eecd5",
+      "cases": ["recent page", "event detail", "GraphQL search", "GraphQL error", "empty live", "nonempty published live schema"]
+    },
+    {
+      "file": "loc.json",
+      "provider": "Library of Congress",
+      "endpoint": [
+        "https://www.loc.gov/audio/?fo=json&at=results,pagination",
+        "https://www.loc.gov/film-and-videos/?fo=json&at=results,pagination",
+        "https://www.loc.gov/item/{id}/?fo=json&at=item,resources"
+      ],
+      "status": [200, 200, 200, 429],
+      "contentType": "application/json",
+      "sha256": "445d1875d58a67fec8cacbc70f2578241354969ee6916fdca8b2181f4a3aab18",
+      "cases": ["audio page", "video page", "downloadable resource", "restricted stream", "Retry-After rate limit"]
+    },
+    {
+      "file": "loc-captcha.html",
+      "provider": "Library of Congress",
+      "endpoint": "https://www.loc.gov/{format}/?fo=json",
+      "status": 200,
+      "contentType": "text/html",
+      "sha256": "b63762167679c0abff41ffc42ff5739b51433c5560370a4dacbd6addedc03dc5",
+      "cases": ["CAPTCHA body returned where JSON was expected"]
+    },
+    {
+      "file": "gpodder.json",
+      "provider": "gpodder.net",
+      "endpoint": [
+        "https://gpodder.net/toplist/{count}.json",
+        "https://gpodder.net/search.json?q={query}"
+      ],
+      "status": [200, 301, 404, 502, "timeout"],
+      "contentType": "application/json",
+      "sha256": "a45a5b8de487e4188beaab6829a7721022bbe085cd78e8a8b53455d857c9550a",
+      "cases": ["top list", "search", "HTTP-to-HTTPS redirect", "dead feed", "upstream error", "timeout"]
+    },
+    {
+      "file": "podcast-rss.xml",
+      "provider": "Podcast publisher fixture",
+      "endpoint": "https://feeds.example.invalid/open-show.xml",
+      "status": 200,
+      "contentType": "application/rss+xml",
+      "sha256": "05e2952c5e0306e1b5dc407d451c9771a9d388ec9d01f323bb1fe729401b449c",
+      "cases": ["RSS 2.0", "audio enclosure", "video enclosure", "artwork", "license"]
+    },
+    {
+      "file": "podcast-atom.xml",
+      "provider": "Podcast publisher fixture",
+      "endpoint": "https://feeds.example.invalid/atom-show.xml",
+      "status": 200,
+      "contentType": "application/atom+xml",
+      "sha256": "cdbeeeb1c3fc994c580785207a0f4ba73dba153509c1b38a252cb2d3a4b06202",
+      "cases": ["Atom 1.0 enclosure"]
+    },
+    {
+      "file": "podcast-live.xml",
+      "provider": "Podcast publisher fixture",
+      "endpoint": "https://feeds.example.invalid/live-show.xml",
+      "status": 200,
+      "contentType": "application/rss+xml",
+      "sha256": "e13e88ebadb1128ea37c036c8d11bfd2ae25383c6077faa1bac190986061b2e9",
+      "cases": ["Podcasting 2.0 live item", "HLS audio"]
+    },
+    {
+      "file": "podcast-explicit.xml",
+      "provider": "Podcast publisher fixture",
+      "endpoint": "https://feeds.example.invalid/explicit-show.xml",
+      "status": 200,
+      "contentType": "application/rss+xml",
+      "sha256": "1e6ba7c8b6c3b808a08df87bb29671bf93d068e6e47e442566dfb7d878880823",
+      "cases": ["feed-level explicit marker", "episode-level explicit marker"]
+    },
+    {
+      "file": "podcast-malicious.xml",
+      "provider": "Security fixture",
+      "endpoint": "local:hostile-feed-fixture",
+      "status": 200,
+      "contentType": "application/rss+xml",
+      "sha256": "9f4f4436bbafb1792e2d21b4e99ba63414a09e877aff6a684aa5f09e120738ca",
+      "allowSecurityMarkers": true,
+      "cases": ["DTD", "external entity", "entity expansion", "loopback enclosure"]
+    },
+    {
+      "file": "podcast-malformed.xml",
+      "provider": "Security fixture",
+      "endpoint": "local:malformed-feed-fixture",
+      "status": 200,
+      "contentType": "application/rss+xml",
+      "sha256": "4e9335946cd89fa993d683313c0165b302d0ff7fca82607a50f9847f32b0e2cf",
+      "cases": ["truncated XML"]
+    },
+    {
+      "file": "peertube.json",
+      "provider": "SepiaSearch and PeerTube",
+      "endpoint": [
+        "https://sepiasearch.org/api/v1/search/videos",
+        "https://{origin-host}/api/v1/videos/{uuid}"
+      ],
+      "status": [200, 200, 429],
+      "contentType": "application/json",
+      "sha256": "d0c4533a5074790a78b1fed131cb995c06d024ecc2133323da13a034247793ac",
+      "cases": ["public VOD", "public live", "explicit", "private", "unpublished", "malformed", "HLS", "MP4 download", "rate limit"]
+    },
+    {
+      "file": "owncast-directory.m3u",
+      "provider": "Owncast Directory",
+      "endpoint": "https://directory.owncast.online/api/iptv",
+      "status": 200,
+      "contentType": "application/vnd.apple.mpegurl",
+      "sha256": "f787d04274ef895e719216c4d3065b3aacb2aba5c23e68ed21d6ddc99505d240",
+      "cases": ["safe", "explicit", "HTTP", "quoted comma", "multiline", "missing rating", "bad scheme", "missing URI"]
+    },
+    {
+      "file": "owncast-home.json",
+      "provider": "Owncast Directory",
+      "endpoint": "https://owncast.directory/api/home",
+      "status": 200,
+      "contentType": "application/json",
+      "sha256": "9635879a37ee71011e7fa91b69f48d8b59bb94f6be6c4f5e0c4b27292a4c7cb5",
+      "cases": ["safe rating", "explicit rating", "HTTP origin", "quoted comma", "multiline", "missing rating", "malformed rating", "missing URL", "featured"]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>https://publisher.example.invalid/atom</id>
+  <title>Fixture Atom Show</title>
+  <updated>2026-07-14T12:00:00Z</updated>
+  <link rel="self" href="https://feeds.example.invalid/atom.xml" />
+  <link rel="alternate" href="https://publisher.example.invalid/atom" />
+  <logo>https://media.example.invalid/atom-cover.png</logo>
+  <entry>
+    <id>tag:publisher.example.invalid,2026:atom-1</id>
+    <title>Atom audio episode</title>
+    <updated>2026-07-14T12:00:00Z</updated>
+    <summary type="html">An &lt;em&gt;Atom&lt;/em&gt; fixture.</summary>
+    <link rel="enclosure" type="audio/mpeg" length="123456" href="https://media.example.invalid/episodes/atom-1.mp3" />
+  </entry>
+</feed>

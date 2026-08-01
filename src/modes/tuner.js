@@ -6,9 +6,12 @@
  * is given a cosmetic frequency: 87.5 + (index * 0.1) MHz.
  */
 
-import { browseOne } from '../lib/search.js';
+import { browseLiveOne } from '../lib/search.js';
 import { playItem } from '../lib/player.js';
 import { subscribe, getState } from '../lib/state.js';
+import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
+import { SOURCES, getSourceLabel } from '../lib/sources.js';
+import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -31,7 +34,13 @@ const state = {
   stations: [],
   index: 0,
   loading: false,
+  loadGen: 0,
   rotationDeg: 0,
+  requestAbort: null,
+  sourceFilter: 'all',
+  sourceStates: new Map(),
+  enabledSignature: '',
+  contentPreference: false,
 };
 
 const ui = {};
@@ -53,14 +62,20 @@ function el(tag, opts = {}, ...children) {
 }
 
 function buildShell() {
-  const root = el('div', { className: 'tuner-root', attrs: { tabindex: '0' } });
+  const root = el('div', {
+    className: 'tuner-root',
+    attrs: {
+      tabindex: '0',
+      'aria-label': 'Tuner dial. Use arrow keys to change station and Enter or Space to play.',
+    },
+  });
   // Controls
   const controls = el('div', { className: 'tuner-controls' });
   const band = el('div', { className: 'tuner-band-switch' });
   for (const b of [{ id: 'radio', label: 'Radio' }, { id: 'tv', label: 'TV' }]) {
     const btn = el('button', {
       className: state.band === b.id ? 'is-active' : '',
-      attrs: { 'data-band': b.id },
+      attrs: { 'data-band': b.id, 'aria-pressed': state.band === b.id ? 'true' : 'false' },
       on: { click: () => setBand(b.id) },
       text: b.label,
     });
@@ -77,6 +92,15 @@ function buildShell() {
   ui.countrySel.value = state.country;
   ui.countrySel.addEventListener('change', () => { state.country = ui.countrySel.value; loadStations(); });
   filter.appendChild(ui.countrySel);
+  ui.sourceSel = el('select', {
+    attrs: { 'aria-label': 'Live media source' },
+    on: { change: () => {
+      state.sourceFilter = ui.sourceSel.value;
+      loadStations();
+    } },
+  });
+  filter.appendChild(el('label', { text: 'Source:', style: { color: 'var(--text-dim)', fontSize: '12px' } }));
+  filter.appendChild(ui.sourceSel);
   controls.appendChild(filter);
   root.appendChild(controls);
 
@@ -105,6 +129,8 @@ function buildShell() {
   // Bottom strip of nearby stations
   ui.strip = el('div', { className: 'tuner-strip' });
   root.appendChild(ui.strip);
+  ui.status = el('div', { className: 'tuner-source-status', attrs: { role: 'status', 'aria-live': 'polite' } });
+  root.appendChild(ui.status);
 
   // Keyboard
   root.addEventListener('keydown', (e) => {
@@ -154,7 +180,7 @@ function buildDialSvg() {
       <g class="dial-body" transform="rotate(0 200 200)">
         <circle cx="200" cy="200" r="100" fill="url(#knobGrad)" stroke="rgba(255,255,255,0.05)"/>
         <circle cx="200" cy="200" r="100" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="2"/>
-        <line x1="200" y1="110" x2="200" y2="150" stroke="#5eead4" stroke-width="3" stroke-linecap="round"/>
+        <line x1="200" y1="110" x2="200" y2="150" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
         <circle cx="200" cy="200" r="6" fill="rgba(255,255,255,0.2)"/>
       </g>
       <polygon class="tuner-pointer" points="200,16 196,32 204,32" />
@@ -240,7 +266,52 @@ function updateFrequencyDisplay() {
     ui.freqNum.textContent = String(state.index + 1);
     ui.freqUnit.textContent = 'CH';
   }
-  ui.stationName.textContent = s.title;
+  ui.stationName.textContent = `${s.title} · ${getSourceLabel(s.source)}`;
+}
+
+function liveSources() {
+  return SOURCES.filter((source) => (
+    source.types.includes(state.band)
+    && source.capabilities.some((capability) => capability === 'live' || capability.startsWith('live '))
+    && getState().settings.enabledSources[source.id] !== false
+  ));
+}
+
+function enabledSignature(settings = getState().settings) {
+  return SOURCES.map((source) => (
+    settings.enabledSources[source.id] === false ? '0' : '1'
+  )).join('');
+}
+
+function contentAwareLiveSourceIds() {
+  return new Set(liveSources()
+    .filter((source) => source.capabilities.includes('content ratings'))
+    .map((source) => source.id));
+}
+
+function rebuildSourceSelect() {
+  const sources = liveSources();
+  if (state.sourceFilter !== 'all' && !sources.some(({ id }) => id === state.sourceFilter)) {
+    state.sourceFilter = 'all';
+  }
+  ui.sourceSel.innerHTML = '';
+  ui.sourceSel.appendChild(el('option', { attrs: { value: 'all' }, text: 'All live sources' }));
+  for (const source of sources) {
+    ui.sourceSel.appendChild(el('option', { attrs: { value: source.id }, text: source.displayName }));
+  }
+  ui.sourceSel.value = state.sourceFilter;
+}
+
+function renderSourceStatus() {
+  if (!ui.status) return;
+  const states = [...state.sourceStates.values()];
+  const failures = states.filter(({ state: value }) => value === 'error').length;
+  const completed = states.filter(({ state: value }) => value === 'ready').length;
+  const count = state.stations.length;
+  ui.status.textContent = state.loading
+    ? `Loading ${states.length || liveSources().length} live sources…`
+    : `${count} ${state.band === 'radio' ? 'stations' : 'channels'} from ${completed} sources`
+      + (failures ? ` · ${failures} unavailable` : '');
 }
 
 function step(dir) {
@@ -256,33 +327,134 @@ function tuneCurrent() {
   playItem(s).catch((err) => console.warn('play failed:', err));
 }
 
-async function loadStations() {
+async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
+  const gen = ++state.loadGen;
+  state.requestAbort?.abort();
+  state.requestAbort = null;
   state.loading = true;
-  state.stations = [];
-  state.index = 0;
-  state.rotationDeg = 0;
+  const selectedId = state.stations[state.index]?.id || '';
+  if (!preserve) {
+    state.stations = [];
+    state.index = 0;
+    state.rotationDeg = 0;
+  }
   applyRotation();
   ui.stationName.textContent = 'Loading…';
   renderStrip();
+  rebuildSourceSelect();
+  if (!preserve) state.sourceStates = new Map();
+  renderSourceStatus();
   try {
-    const opts = { limit: 80 };
+    const opts = { limit: 80, type: state.band };
     if (state.country) opts.country = state.country;
-    const sourceId = state.band === 'radio' ? 'radio-browser' : 'iptv-org';
-    const items = await browseOne(sourceId, opts);
-    state.stations = items || [];
+    const candidates = liveSources().filter((source) => (
+      (state.sourceFilter === 'all' || source.id === state.sourceFilter)
+      && (!onlySourceIds || onlySourceIds.has(source.id))
+    ));
+    if (candidates.length === 0) {
+      if (!preserve) state.stations = [];
+      state.loading = false;
+      updateFrequencyDisplay();
+      renderStrip();
+      renderSourceStatus();
+      return;
+    }
+    const controller = new AbortController();
+    state.requestAbort = controller;
+    for (const source of candidates) state.sourceStates.set(source.id, { state: 'loading', count: 0 });
+    const settled = await Promise.allSettled(candidates.map((source) => catalogScheduler.enqueue({
+      sourceId: source.id,
+      key: `tuner:${gen}:${state.band}`,
+      priority: CATALOG_PRIORITY.USER,
+      signal: controller.signal,
+      task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
+    }).then((items) => {
+      if (gen === state.loadGen) state.sourceStates.set(source.id, { state: 'ready', count: items.length });
+      return items;
+    }, (error) => {
+      if (gen === state.loadGen && error?.name !== 'AbortError') {
+        state.sourceStates.set(source.id, { state: 'error', count: 0, error: String(error?.message || error) });
+      }
+      throw error;
+    })));
+    if (gen !== state.loadGen) return;
+    const refreshedIds = new Set(candidates
+      .filter((_source, index) => settled[index]?.status === 'fulfilled')
+      .map((source) => source.id));
+    const preserved = preserve
+      ? state.stations.filter((item) => !refreshedIds.has(item.source))
+      : [];
+    const seen = new Set();
+    state.stations = [...preserved, ...settled.flatMap(
+      (result) => result.status === 'fulfilled' ? result.value : [],
+    )]
+      .filter((item) => item.type === state.band && !seen.has(item.id) && seen.add(item.id));
+    const restoredIndex = selectedId
+      ? state.stations.findIndex((item) => item.id === selectedId)
+      : -1;
+    state.index = restoredIndex >= 0
+      ? restoredIndex
+      : Math.min(state.index, Math.max(0, state.stations.length - 1));
+    state.rotationDeg = state.index * 12;
   } catch (err) {
-    console.warn('Tuner load failed:', err);
-    state.stations = [];
+    if (gen !== state.loadGen) return;
+    if (err?.name !== 'AbortError') console.warn('Tuner load failed:', err);
+    if (!preserve) state.stations = [];
   }
+  if (gen !== state.loadGen) return;
+  state.requestAbort = null;
   state.loading = false;
   updateFrequencyDisplay();
   renderStrip();
+  renderSourceStatus();
+}
+
+function applyContentPreference(showExplicit) {
+  // A policy change owns the active generation. If the initial/all-source
+  // load has not settled, restart that generation under the new policy so
+  // aborting its shared controller cannot strand unrelated live sources.
+  if (state.loading) {
+    loadStations();
+    return;
+  }
+  if (showExplicit) {
+    loadStations({ onlySourceIds: contentAwareLiveSourceIds(), preserve: true });
+    return;
+  }
+  state.loadGen += 1;
+  state.requestAbort?.abort();
+  state.requestAbort = null;
+  state.loading = false;
+  const selectedId = state.stations[state.index]?.id || '';
+  state.stations = filterContentItems(state.stations, false);
+  const restoredIndex = selectedId
+    ? state.stations.findIndex((item) => item.id === selectedId)
+    : -1;
+  state.index = restoredIndex >= 0
+    ? restoredIndex
+    : Math.min(state.index, Math.max(0, state.stations.length - 1));
+  state.rotationDeg = state.index * 12;
+  for (const [sourceId, status] of state.sourceStates) {
+    if (status.state === 'ready') {
+      state.sourceStates.set(sourceId, {
+        ...status,
+        count: state.stations.filter((item) => item.source === sourceId).length,
+      });
+    }
+  }
+  applyRotation();
+  updateFrequencyDisplay();
+  renderStrip();
+  renderSourceStatus();
 }
 
 function setBand(b) {
   state.band = b;
+  state.sourceFilter = 'all';
   for (const btn of document.querySelectorAll('.tuner-band-switch button')) {
-    btn.classList.toggle('is-active', btn.dataset.band === b);
+    const active = btn.dataset.band === b;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
   loadStations();
 }
@@ -300,17 +472,28 @@ function renderStrip() {
   const end = Math.min(state.stations.length, state.index + span + 1);
   for (let i = start; i < end; i++) {
     const s = state.stations[i];
+    const rating = contentBadgeText(s);
     const pill = el('button', {
       className: 'station-pill' + (i === state.index ? ' is-active' : ''),
-      text: s.title,
+      attrs: {
+        title: `${s.title} · ${getSourceLabel(s.source)}`,
+        'aria-pressed': i === state.index ? 'true' : 'false',
+      },
       on: { click: () => { state.index = i; state.rotationDeg = i * 12; applyRotation(); tuneCurrent(); } },
-    });
+    },
+    el('span', { text: s.title }),
+    el('small', { text: getSourceLabel(s.source) }),
+    rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
     ui.strip.appendChild(pill);
   }
 }
 
 const subs = [];
 function tearDown() {
+  state.loadGen += 1;
+  state.requestAbort?.abort();
+  state.requestAbort = null;
+  state.loading = false;
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
   if (ui.unbindDial) { try { ui.unbindDial(); } catch (_) {} ui.unbindDial = null; }
 }
@@ -319,9 +502,25 @@ export function renderTuner(host) {
   tearDown();
   const root = buildShell();
   host.appendChild(root);
+  state.enabledSignature = enabledSignature();
+  state.contentPreference = getState().settings.showExplicitContent === true;
   loadStations();
   root.focus();
+  subs.push(subscribe('settings-change', (settings) => {
+    if (getState().mode !== 'tuner') return;
+    const nextSignature = enabledSignature(settings);
+    const nextPreference = settings.showExplicitContent === true;
+    const sourcesChanged = nextSignature !== state.enabledSignature;
+    const contentChanged = nextPreference !== state.contentPreference;
+    state.enabledSignature = nextSignature;
+    state.contentPreference = nextPreference;
+    if (sourcesChanged) loadStations();
+    else if (contentChanged) applyContentPreference(nextPreference);
+  }));
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'tuner') step(1);
+  }));
+  subs.push(subscribe('mode-change', (mode) => {
+    if (mode !== 'tuner') tearDown();
   }));
 }

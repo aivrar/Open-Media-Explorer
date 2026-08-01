@@ -1,0 +1,207 @@
+{
+  "index": {
+    "status": 200,
+    "contentType": "application/json",
+    "total": 5,
+    "data": [
+      {
+        "id": 1001,
+        "uuid": "11111111-1111-4111-8111-111111111111",
+        "shortUUID": "FixtureVod1111111111",
+        "url": "https://video.example.org/videos/watch/11111111-1111-4111-8111-111111111111",
+        "name": "Public fixture VOD",
+        "description": "A sanitized federated video result.",
+        "duration": 125,
+        "publishedAt": "2026-07-10T12:00:00.000Z",
+        "privacy": {"id": 1, "label": "Public"},
+        "category": {"id": 15, "label": "Science & Technology"},
+        "licence": {"id": 1, "label": "CC BY 4.0"},
+        "language": {"id": "en", "label": "English"},
+        "isLive": false,
+        "nsfw": false,
+        "nsfwFlags": 0,
+        "thumbnailUrl": "https://video.example.org/lazy-static/thumbnails/fixture-vod.jpg",
+        "account": {"displayName": "Fixture Publisher", "host": "video.example.org"},
+        "channel": {"displayName": "Fixture Channel", "host": "video.example.org"}
+      },
+      {
+        "id": 1002,
+        "uuid": "22222222-2222-4222-8222-222222222222",
+        "shortUUID": "FixtureLive222222222",
+        "url": "https://live.example.org/videos/watch/22222222-2222-4222-8222-222222222222",
+        "name": "Public fixture live stream",
+        "description": "A sanitized live result.",
+        "duration": 0,
+        "publishedAt": "2026-07-14T09:00:00.000Z",
+        "privacy": {"id": 1, "label": "Public"},
+        "category": {"id": 10, "label": "Music"},
+        "licence": {"id": 9, "label": "All Rights Reserved"},
+        "language": {"id": "zxx", "label": "No linguistic content"},
+        "isLive": true,
+        "nsfw": false,
+        "nsfwFlags": 0,
+        "thumbnailUrl": "https://live.example.org/lazy-static/thumbnails/fixture-live.jpg",
+        "account": {"displayName": "Live Fixture", "host": "live.example.org"},
+        "channel": {"displayName": "Live Fixture Channel", "host": "live.example.org"}
+      },
+      {
+        "id": 1003,
+        "uuid": "33333333-3333-4333-8333-333333333333",
+        "shortUUID": "FixtureNsfw333333333",
+        "url": "https://video.example.org/videos/watch/33333333-3333-4333-8333-333333333333",
+        "name": "Marked fixture result",
+        "description": "Visible only after the explicit-content setting is enabled.",
+        "duration": 90,
+        "publishedAt": "2026-07-09T12:00:00.000Z",
+        "privacy": {"id": 1, "label": "Public"},
+        "category": {"id": 15, "label": "Science & Technology"},
+        "licence": {"id": 9, "label": "All Rights Reserved"},
+        "language": {"id": "en", "label": "English"},
+        "isLive": false,
+        "nsfw": true,
+        "nsfwFlags": 1,
+        "thumbnailUrl": "https://video.example.org/lazy-static/thumbnails/fixture-marked.jpg",
+        "account": {"displayName": "Marked Fixture", "host": "video.example.org"},
+        "channel": {"displayName": "Marked Fixture Channel", "host": "video.example.org"}
+      },
+      {
+        "id": 1004,
+        "uuid": "44444444-4444-4444-8444-444444444444",
+        "url": "https://video.example.org/videos/watch/44444444-4444-4444-8444-444444444444",
+        "name": "Private fixture summary",
+        "privacy": {"id": 3, "label": "Private"},
+        "isLive": false,
+        "nsfw": false,
+        "nsfwFlags": 0
+      },
+      {
+        "id": 1005,
+        "uuid": "not-a-uuid",
+        "url": "javascript:alert(1)",
+        "name": "Malformed fixture summary",
+        "privacy": {"id": 1, "label": "Public"},
+        "isLive": false,
+        "nsfw": "false",
+        "nsfwFlags": "0"
+      }
+    ]
+  },
+  "originDetails": {
+    "vod": {
+      "status": 200,
+      "contentType": "application/json",
+      "uuid": "11111111-1111-4111-8111-111111111111",
+      "url": "https://video.example.org/videos/watch/11111111-1111-4111-8111-111111111111",
+      "name": "Public fixture VOD",
+      "privacy": {"id": 1, "label": "Public"},
+      "state": {"id": 1, "label": "Published"},
+      "licence": {"id": 1, "label": "CC BY 4.0"},
+      "isLive": false,
+      "nsfw": false,
+      "nsfwFlags": 0,
+      "downloadEnabled": true,
+      "streamingPlaylists": [
+        {
+          "playlistUrl": "https://cdn.example.org/static/streaming-playlists/hls/fixture-vod/master.m3u8",
+          "files": [
+            {
+              "resolution": {"id": 720, "label": "720p"},
+              "size": 73400320,
+              "fileUrl": "https://cdn.example.org/static/streaming-playlists/hls/fixture-vod/720-fragmented.mp4"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "resolution": {"id": 720, "label": "720p"},
+          "size": 73400320,
+          "fileUrl": "https://cdn.example.org/static/web-videos/fixture-vod-720.mp4",
+          "fileDownloadUrl": "https://cdn.example.org/download/videos/fixture-vod-720.mp4"
+        }
+      ]
+    },
+    "live": {
+      "status": 200,
+      "contentType": "application/json",
+      "uuid": "22222222-2222-4222-8222-222222222222",
+      "url": "https://live.example.org/videos/watch/22222222-2222-4222-8222-222222222222",
+      "name": "Public fixture live stream",
+      "privacy": {"id": 1, "label": "Public"},
+      "state": {"id": 1, "label": "Published"},
+      "licence": {"id": 9, "label": "All Rights Reserved"},
+      "isLive": true,
+      "nsfw": false,
+      "nsfwFlags": 0,
+      "downloadEnabled": false,
+      "streamingPlaylists": [
+        {
+          "playlistUrl": "https://live.example.org/static/streaming-playlists/hls/fixture-live/master.m3u8",
+          "files": []
+        }
+      ],
+      "files": []
+    },
+    "explicit": {
+      "status": 200,
+      "contentType": "application/json",
+      "uuid": "33333333-3333-4333-8333-333333333333",
+      "url": "https://video.example.org/videos/watch/33333333-3333-4333-8333-333333333333",
+      "name": "Marked fixture result",
+      "privacy": {"id": 1, "label": "Public"},
+      "state": {"id": 1, "label": "Published"},
+      "isLive": false,
+      "nsfw": true,
+      "nsfwFlags": 1,
+      "downloadEnabled": false,
+      "streamingPlaylists": [],
+      "files": []
+    },
+    "private": {
+      "status": 200,
+      "contentType": "application/json",
+      "uuid": "44444444-4444-4444-8444-444444444444",
+      "url": "https://video.example.org/videos/watch/44444444-4444-4444-8444-444444444444",
+      "name": "Private fixture detail",
+      "privacy": {"id": 3, "label": "Private"},
+      "state": {"id": 1, "label": "Published"},
+      "isLive": false,
+      "nsfw": false,
+      "nsfwFlags": 0,
+      "downloadEnabled": false,
+      "streamingPlaylists": [],
+      "files": []
+    },
+    "unpublished": {
+      "status": 200,
+      "contentType": "application/json",
+      "uuid": "55555555-5555-4555-8555-555555555555",
+      "url": "https://video.example.org/videos/watch/55555555-5555-4555-8555-555555555555",
+      "name": "Unpublished fixture detail",
+      "privacy": {"id": 1, "label": "Public"},
+      "state": {"id": 2, "label": "To transcode"},
+      "isLive": false,
+      "nsfw": false,
+      "nsfwFlags": 0,
+      "downloadEnabled": false,
+      "streamingPlaylists": [],
+      "files": []
+    },
+    "malformed": {
+      "status": 200,
+      "contentType": "application/json",
+      "uuid": 12345,
+      "url": "https://different.example.org/videos/watch/not-the-requested-video",
+      "privacy": {"id": "1"},
+      "state": null,
+      "nsfw": null,
+      "streamingPlaylists": "not-an-array"
+    }
+  },
+  "rateLimit": {
+    "status": 429,
+    "contentType": "application/json",
+    "headers": {"retry-after": "30", "x-ratelimit-remaining": "0"},
+    "body": {"code": "TOO_MANY_REQUESTS", "error": "Rate limit reached"}
+  }
+}

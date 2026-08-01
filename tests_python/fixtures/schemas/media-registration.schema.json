@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://worldmedia.local/schemas/media-registration.schema.json",
+  "title": "World Media media registration response data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["media_id", "relay_url", "expires_at", "delivery", "media_type"],
+  "properties": {
+    "media_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22,128}$"},
+    "relay_url": {"type": "string", "pattern": "^/api/v1/media/[A-Za-z0-9_-]+$"},
+    "expires_at": {"type": "number"},
+    "delivery": {"enum": ["live", "on-demand", "unknown"]},
+    "media_type": {"enum": ["audio", "video", "hls", "dash"]},
+    "content_type": {"type": ["string", "null"]},
+    "content_length": {"type": ["integer", "null"], "minimum": 0}
+  }
+}

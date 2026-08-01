@@ -13,6 +13,7 @@ export const ui = {
   searchInput:    null,
   resultsHost:    null,
   statusHost:     null,
+  windowBack:     null,
   detailPanel:    null,
   chipsHost:      null,
   sentinel:       null,

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://worldmedia.local/schemas/session.schema.json",
+  "title": "World Media session response data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "token", "origin", "poll_interval_ms"],
+  "properties": {
+    "api_version": {"const": "v1"},
+    "token": {"type": "string", "minLength": 32, "maxLength": 256},
+    "origin": {"type": "string", "pattern": "^http://127\\.0\\.0\\.1:[0-9]+$"},
+    "poll_interval_ms": {"type": "integer", "minimum": 500, "maximum": 1000}
+  }
+}

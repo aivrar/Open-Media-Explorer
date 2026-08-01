@@ -1,0 +1,54 @@
+{
+  "session": {
+    "api_version": "v1",
+    "token": "0123456789abcdef0123456789abcdef0123456789abcdef",
+    "origin": "http://127.0.0.1:9124",
+    "poll_interval_ms": 750
+  },
+  "runtime": {
+    "portable_root": "E:\\WorldMediaWindows",
+    "state_root": "C:\\Users\\test\\AppData\\Local\\WorldMediaWindows",
+    "downloads_root": "E:\\WorldMediaWindows\\downloads",
+    "tools_root": "E:\\WorldMediaWindows\\tools\\ffmpeg",
+    "portable_writable": true,
+    "using_fallback": false,
+    "fallback_reason": null
+  },
+  "tool-status": {
+    "state": "missing",
+    "source": null,
+    "ffmpeg_path": null,
+    "ffprobe_path": null,
+    "version": null,
+    "capabilities": {"protocols": [], "demuxers": [], "decoders": [], "encoders": [], "muxers": [], "filters": []},
+    "progress": null,
+    "error": null,
+    "managed": false,
+    "actionable_reason": "Install the verified managed GPL build."
+  },
+  "media-registration": {
+    "media_id": "AbCdEfGhIjKlMnOpQrStUv",
+    "relay_url": "/api/v1/media/AbCdEfGhIjKlMnOpQrStUv",
+    "expires_at": 1783728000,
+    "delivery": "on-demand",
+    "media_type": "audio",
+    "content_type": "audio/mpeg",
+    "content_length": 1048576
+  },
+  "job": {
+    "id": "job_AbCdEfGhIjKlMnOp",
+    "kind": "download",
+    "state": "queued",
+    "title": "Fixture audio",
+    "media_id": "AbCdEfGhIjKlMnOpQrStUv",
+    "item_id": "fixture:audio",
+    "profile": null,
+    "created_at": 1783728000,
+    "updated_at": 1783728000,
+    "progress": 0,
+    "bytes_written": 0,
+    "elapsed_seconds": 0,
+    "output_path": null,
+    "error": null
+  }
+}

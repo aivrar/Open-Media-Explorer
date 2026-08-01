@@ -1,96 +1,115 @@
 /**
- * Mutable view-state for the library mode. ONE place where all per-session
- * library state is declared, including the constants the chain and renderer
- * agree on (page size, render-window growth, throttle, etc.).
- *
- * No DOM access here. No fetching here. Only data.
- *
- * Other library/* files import what they need from this module and mutate
- * `view` directly. That isn't ideal encapsulation, but the trade-off is
- * deliberate: this is a refactor for organisation, not a behaviour change.
- * Encapsulating state behind setters/actions is a v0.3 concern.
+ * Mutable per-session Library state and its catalog-pool wrapper.
+ * No DOM is created here; render-layer ids are only used as eviction pins.
  */
 
+import { getState } from '../../lib/state.js';
+import { artworkRequests } from '../../lib/artwork.js';
+import {
+  ensureCatalogStore,
+  evictResidentItems,
+  mergeCatalogItems,
+} from './catalog-store.js';
+
 export const PAGE_SIZE = 30;
-
-// Lazy DOM rendering. View.items grows unbounded as the auto-chain fetches,
-// but only the first `view.renderLimit` filtered items are actually mounted
-// as cards in the DOM. The rest live in memory only. As the user scrolls
-// near the bottom, the sentinel observer bumps renderLimit so the next
-// batch of cards mounts. This is what lets us hold tens of thousands of
-// items without DOM weight crushing scroll performance.
 export const RENDER_LIMIT_INITIAL = 300;
-export const RENDER_LIMIT_STEP    = 200;
-
-// Minimum gap between consecutive auto-chained loadMore calls. The chain
-// fires "as soon as the previous returned" would be a firehose — six sources
-// in parallel × pagination = hundreds of HTTP requests in seconds, which
-// trips the local proxy's 60 req/sec ceiling AND Wikimedia's upstream rate
-// limit (429s observed in production). 250 ms gives the browser breathing
-// room to actually render the new cards and lets upstream pacing settle.
-export const AUTO_CHAIN_MIN_GAP_MS = 250;
+export const RENDER_LIMIT_STEP = 200;
+export const RENDER_WINDOW_MAX = 300;
+// Preserve the original Library contract: every unique item collected during
+// this app session remains searchable/browsable and its source count cannot
+// disappear. DOM work is still bounded independently by RENDER_WINDOW_MAX.
+export const RESIDENT_ITEM_LIMIT = Number.POSITIVE_INFINITY;
+export const AUTO_CHAIN_MIN_GAP_MS = 100;
+export const CHAIN_RENDER_MIN_GAP_MS = 100;
 
 export const view = {
   query: '',
   activeSource: 'all', // 'all' | adapter id | 'favorites' | 'type:radio' | ...
   filters: { type: '', country: '', language: '', yearMin: null, yearMax: null },
   items: [],
-  itemIndex: new Map(),       // id -> item
+  itemIndex: new Map(),
   currentId: null,
-  sourceStatus: new Map(),    // sourceId -> { state, count, error? }
-  sourceCounts: new Map(),    // sourceId -> browse pagination offset
-  cumulativeCounts: new Map(),     // sourceId -> total seen this session
-  cumulativeTypeCounts: new Map(), // type     -> total seen this session
-  loading: false,             // initial-batch fetch in flight
-  loadingMore: false,         // paginated loadMore in flight
+  detailItemId: null,
+  sourceStatus: new Map(),
+  sourceCounts: new Map(),
+  sourceProgress: new Map(),
+  enabledSourcesSnapshot: new Set(),
+  cumulativeCounts: new Map(),       // complete session source counts
+  cumulativeTypeCounts: new Map(),   // complete session type counts
+  cumulativeSourceTypeCounts: new Map(),
+  sessionCounts: new Map(),          // accepted new items this session
+  catalogRevision: 0,
+  catalogNonAppendRevision: 0,
+  finiteItemIds: new Set(),
+  snapshotIdsBySource: new Map(),
+  snapshotState: new Map(),
+  loading: false,
+  loadingMore: false,
   loadAbort: null,
+  searchDebounced: null,
+  catalogActive: false,
+  chainTimer: null,
   sentinel: null,
   infiniteObserver: null,
   searchGen: 0,
   lastQuery: '',
   exhausted: new Set(),
   renderLimit: RENDER_LIMIT_INITIAL,
+  renderStart: 0,
+  renderSignature: '',
+  contentPreference: null,
 };
 
-/** Module-level set of currently-mounted card ids. Lives outside `view`
- *  because it's a render-layer artefact, not query state. */
+/** IDs of the card objects currently mounted by renderResults(). */
 export const renderedIds = new Set();
 
-/** Hydration observer + per-item promise dedupe. Same: render-layer state. */
+/** Hydration observer + per-item promise dedupe. */
 export const thumbHydration = {
-  requests: new Map(), // item id -> in-flight resolveArtwork promise
+  requests: artworkRequests,
   observer: null,
+  observerRoot: null,
+  abortController: null,
 };
 
-/** Append items to the pool, tagging each with the query that fetched it.
- *  Re-encountered items adopt the most-recent query tag so the display
- *  filter for the active search still surfaces them. Updates per-source
- *  and per-type cumulative counts.
- *
- *  Returns nothing — caller invokes render after. */
-export function addItems(items, queryTag = view.lastQuery) {
-  const currentQ = (queryTag || '').trim();
-  for (const it of items) {
-    if (!it || !it.id) continue;
-    const existing = view.itemIndex.get(it.id);
-    if (existing) {
-      if (currentQ) {
-        const tags = new Set(existing.__queries || (existing.__query ? [existing.__query] : []));
-        tags.add(currentQ);
-        existing.__queries = [...tags];
-        existing.__query = currentQ;
-      }
-      continue;
-    }
-    it.__query = currentQ;
-    it.__queries = currentQ ? [currentQ] : [];
-    view.itemIndex.set(it.id, it);
-    view.items.push(it);
-    const c = view.cumulativeCounts.get(it.source) || 0;
-    view.cumulativeCounts.set(it.source, c + 1);
-    if (it.type) {
-      const tc = view.cumulativeTypeCounts.get(it.type) || 0;
-      view.cumulativeTypeCounts.set(it.type, tc + 1);
-    }
+export function getCatalogPinnedIds(extra = []) {
+  const appState = getState();
+  const ids = new Set(extra);
+  for (const favorite of appState.favorites || []) if (favorite?.id) ids.add(favorite.id);
+  if (appState.currentItem?.id) ids.add(appState.currentItem.id);
+  if (view.currentId) ids.add(view.currentId);
+  if (view.detailItemId) ids.add(view.detailItemId);
+  return ids;
+}
+
+export function enforceResidentCeiling(extraPinned = []) {
+  return evictResidentItems(view, {
+    limit: RESIDENT_ITEM_LIMIT,
+    pinnedIds: getCatalogPinnedIds(extraPinned),
+    visibleIds: renderedIds,
+    activeQuery: view.lastQuery,
+  });
+}
+
+/** Track catalog changes so the renderer can append-filter new pages without
+ * rescanning a 40,000+ item session after every source completion. */
+export function markCatalogMutation({ appendOnly = false } = {}) {
+  view.catalogRevision += 1;
+  if (!appendOnly) view.catalogNonAppendRevision = view.catalogRevision;
+  return view.catalogRevision;
+}
+
+/** Add/update items while retaining the complete per-session catalog. */
+export function addItems(items, queryTag = view.lastQuery, options = {}) {
+  ensureCatalogStore(view);
+  const result = mergeCatalogItems(view, items, {
+    queryTag,
+    kind: options.kind || 'finite',
+  });
+  const evicted = enforceResidentCeiling(options.pinnedIds || []);
+  if (result.added > 0 || result.updated > 0 || evicted.length > 0) {
+    markCatalogMutation({
+      appendOnly: result.added > 0 && result.updated === 0 && evicted.length === 0,
+    });
   }
+  return { ...result, evicted };
 }

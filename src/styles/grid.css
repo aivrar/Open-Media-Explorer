@@ -2,7 +2,7 @@
 
 .grid-root {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
 }
 
@@ -12,7 +12,7 @@
   gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
-  background: rgba(17, 21, 27, 0.72);
+  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
   backdrop-filter: blur(12px);
   flex-wrap: wrap;
 }
@@ -25,8 +25,17 @@
   gap: 16px;
 }
 
+.grid-source-status {
+  min-height: 28px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
 .channel-tile {
-  background: linear-gradient(180deg, rgba(23, 28, 36, 0.98), rgba(14, 17, 23, 0.98));
+  background: linear-gradient(180deg, var(--bg-elev-2), var(--bg-elev-1));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px 12px;

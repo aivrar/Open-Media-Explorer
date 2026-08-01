@@ -1,41 +1,45 @@
 # Repository Setup
 
-This directory is prepared for a new GitHub repository.
+This directory is the source for the public GitHub repository.
 
 Suggested repository name:
 
 ```text
-WorldMediaWindows
+Open-Media-Explorer
 ```
 
 Suggested repository description:
 
 ```text
-Lighter Windows-native single-exe build of World Media. Open radio, live TV, and public media archives with no WSL, Docker, Node, or Python required for users.
+Portable Windows app for internet radio, live TV, podcasts, public-domain films, archives, and independent streams from eleven public sources, with favorites, EQ, downloads, and live recording.
 ```
 
 Suggested topics:
 
 ```text
-windows desktop-app portable webview2 pyinstaller python vite media-player internet-radio iptv public-domain open-media local-first no-install no-telemetry
+windows desktop-app portable media-player internet-radio iptv podcasts public-domain internet-archive peertube owncast hls open-media local-first no-telemetry
 ```
 
-## Manual GitHub Creation
+## Repository Metadata
 
-Create an empty GitHub repo, then run:
+Keep the GitHub About description and topics aligned with the values above.
+The website field should remain the stable latest-release page:
 
-```powershell
-git remote add origin https://github.com/aivrar/WorldMediaWindows.git
-git push -u origin main
+```text
+https://github.com/aivrar/Open-Media-Explorer/releases/latest
 ```
 
 ## Release
 
 ```powershell
 python .\build_windows.py
-git tag v0.1.0
-git push origin v0.1.0
-gh release create v0.1.0 .\dist\WorldMediaWindows.exe#WorldMediaWindows.exe `
-  --title "World Media Windows v0.1.0" `
-  --notes "Single portable Windows exe. No WSL, Docker, Node, Git, Rust, or system Python required for users."
+python .\build_single_exe.py --skip-frontend
+git tag -a v0.1.2 -m "World Media Windows v0.1.2"
+git push origin main
+git push origin v0.1.2
+gh release create v0.1.2 .\dist\WorldMediaWindows.exe `
+  .\dist\WorldMediaWindows-0.1.2-portable.zip `
+  --title "World Media Windows v0.1.2" `
+  --notes-file .\docs\RELEASE_NOTES_0.1.2.md `
+  --verify-tag
 ```

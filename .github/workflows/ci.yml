@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - run: npm test
+      - name: Run Python tests
+        run: python -m unittest discover -s tests_python -p "test_*.py"
+      - run: npm run build
+      - name: Parse Python entry points
+        shell: python
+        run: |
+          import ast
+          from pathlib import Path
+          paths = [
+              Path('build_windows.py'),
+              Path('build_single_exe.py'),
+              Path('dev_environment.py'),
+              *sorted(Path('.').glob('worldmedia*.py')),
+          ]
+          for path in paths:
+              ast.parse(path.read_text(encoding='utf-8'), filename=str(path))

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE rss [
+  <!ENTITY local SYSTEM "file:///private-fixture">
+  <!ENTITY expand "1234567890">
+]>
+<rss version="2.0">
+  <channel>
+    <title>&local;</title>
+    <description>&expand;&expand;&expand;&expand;</description>
+    <item>
+      <title>Must never normalize</title>
+      <enclosure url="http://127.0.0.1/private.mp3" type="audio/mpeg" />
+    </item>
+  </channel>
+</rss>

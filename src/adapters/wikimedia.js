@@ -3,7 +3,7 @@
  * API: https://commons.wikimedia.org/w/api.php
  */
 
-import { get } from '../lib/http.js';
+import { getJson } from '../lib/http.js';
 import { makeItem, prefixId, detectStreamKind } from '../lib/item-model.js';
 
 export const id = 'wikimedia';
@@ -46,6 +46,10 @@ function pickItem(pageId, page) {
     type: isVideo ? 'video' : 'audio',
     stream_url: info.url,
     stream_kind: detectStreamKind(info.url, isVideo ? 'video' : 'audio'),
+    delivery: 'on-demand',
+    download_url: info.url,
+    download_name: title,
+    capture_headers: {},
     thumbnail: info.thumburl || '',
     year,
     country: '',
@@ -61,7 +65,7 @@ function stripHtml(s) {
   return String(s).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 }
 
-async function _searchOneType(query, filetype, limit, offset) {
+async function _searchOneType(query, filetype, limit, offset, opts = {}) {
   // CirrusSearch (Wikimedia's search backend) doesn't support boolean OR
   // between filter keywords — `(filetype:video OR filetype:audio) X` is
   // parsed as a literal phrase, not as a compound filter, and returns
@@ -80,15 +84,37 @@ async function _searchOneType(query, filetype, limit, offset) {
     origin: '*',
   });
   const url = `${BASE}?${params.toString()}`;
-  try {
-    const data = await get(url, {
-      headers: { 'User-Agent': 'WorldMedia/1.0 (contact: project on GitHub)' },
-    });
-    return data?.query?.pages || {};
-  } catch (err) {
-    console.warn(`Wikimedia ${filetype} search failed:`, err);
-    return {};
+  const data = await getJson(url, {
+    headers: { 'User-Agent': 'WorldMedia/1.0 (contact: project on GitHub)' },
+    signal: opts.signal,
+    timeoutMs: opts.timeoutMs,
+  });
+  if (!data || typeof data !== 'object' || data.error) {
+    throw new TypeError(`Wikimedia returned an invalid response${data?.error?.info ? `: ${data.error.info}` : ''}`);
   }
+  return {
+    pages: data?.query?.pages || {},
+    nextOffset: Number.isFinite(Number(data?.continue?.gsroffset))
+      ? Number(data.continue.gsroffset)
+      : null,
+  };
+}
+
+function itemsFromPages(pageSets) {
+  const pages = {};
+  for (const set of pageSets) Object.assign(pages, set || {});
+
+  const out = [];
+  for (const [pageId, page] of Object.entries(pages)) {
+    const it = pickItem(pageId, page);
+    if (it) out.push(it);
+  }
+  out.sort((a, b) => {
+    const ai = pages[a.id.split(':').pop()]?.index ?? 0;
+    const bi = pages[b.id.split(':').pop()]?.index ?? 0;
+    return ai - bi;
+  });
+  return out;
 }
 
 export async function search(query, opts = {}) {
@@ -100,25 +126,10 @@ export async function search(query, opts = {}) {
   // Fire video + audio searches in parallel — they hit the same API but
   // the user shouldn't wait 2× longer for both to return serially.
   const tasks = [];
-  if (want === 'video' || want === 'both') tasks.push(_searchOneType(q, 'video', limit, offset));
-  if (want === 'audio' || want === 'both') tasks.push(_searchOneType(q, 'audio', limit, offset));
+  if (want === 'video' || want === 'both') tasks.push(_searchOneType(q, 'video', limit, offset, opts));
+  if (want === 'audio' || want === 'both') tasks.push(_searchOneType(q, 'audio', limit, offset, opts));
   const responses = await Promise.all(tasks);
-  const pages = {};
-  for (const r of responses) Object.assign(pages, r);
-
-  const out = [];
-  for (const [pageId, page] of Object.entries(pages)) {
-    const it = pickItem(pageId, page);
-    if (it) out.push(it);
-  }
-  // Sort by the page's search-result `index` so the order is stable
-  // (rather than however Object.assign happened to merge the two responses).
-  out.sort((a, b) => {
-    const ai = pages[a.id.split(':').pop()]?.index ?? 0;
-    const bi = pages[b.id.split(':').pop()]?.index ?? 0;
-    return ai - bi;
-  });
-  return out;
+  return itemsFromPages(responses.map((r) => r.pages));
 }
 
 export async function browse(opts = {}) {
@@ -144,6 +155,53 @@ export async function browse(opts = {}) {
     if (offset > 0) return items;
   }
   return [];
+}
+
+export async function browsePage(opts = {}) {
+  const seeds = [
+    'nature', 'space', 'history', 'wildlife',
+    'music', 'speech', 'lecture', 'animation',
+    'orchestra', 'concert', 'documentary',
+  ];
+  const cursor = opts.cursor || {};
+  const seed = cursor.seed || opts.seed || seeds[Math.floor(Math.random() * seeds.length)];
+  const limit = Math.min(opts.limit || 20, 50);
+  const videoDone = cursor.videoDone === true;
+  const audioDone = cursor.audioDone === true;
+  const videoOffset = Number(cursor.videoOffset || 0);
+  const audioOffset = Number(cursor.audioOffset || 0);
+
+  const requests = [];
+  if (!videoDone) requests.push({
+    type: 'video',
+    promise: _searchOneType(seed, 'video', limit, videoOffset, opts),
+  });
+  if (!audioDone) requests.push({
+    type: 'audio',
+    promise: _searchOneType(seed, 'audio', limit, audioOffset, opts),
+  });
+
+  const responses = await Promise.all(requests.map(async (request) => ({
+    type: request.type,
+    result: await request.promise,
+  })));
+  const next = {
+    seed,
+    videoOffset,
+    audioOffset,
+    videoDone,
+    audioDone,
+  };
+  for (const { type, result } of responses) {
+    next[`${type}Done`] = result.nextOffset == null;
+    if (result.nextOffset != null) next[`${type}Offset`] = result.nextOffset;
+  }
+
+  return {
+    items: itemsFromPages(responses.map(({ result }) => result.pages)),
+    cursor: next,
+    exhausted: next.videoDone && next.audioDone,
+  };
 }
 
 export async function random(opts = {}) {

@@ -1,6 +1,13 @@
-import { initState, getState } from './lib/state.js';
+import {
+  initState, getState, setMode as setStateMode, subscribe,
+} from './lib/state.js';
+import { catalogScheduler } from './lib/catalog-scheduler.js';
+import { setArtworkPlaybackPriority } from './lib/artwork.js';
+import { SOURCE_IDS } from './lib/sources.js';
 import { initPlayer } from './lib/player.js';
+import { initCaptureUi } from './lib/capture-ui.js';
 import { initSettings, openSettings } from './lib/settings.js';
+import { initEqOverlay } from './lib/eq-overlay.js';
 import { initSleepTimer } from './lib/sleep-timer.js';
 import { initShutdownButton } from './lib/shutdown.js';
 import { renderLibrary } from './modes/library.js';
@@ -17,12 +24,31 @@ const MODES = {
   about: renderAbout,
 };
 
+let unbindCatalogSettings = null;
+let unbindMediaPriority = null;
+
+function syncCatalogSourceSettings(settings) {
+  for (const sourceId of SOURCE_IDS) {
+    catalogScheduler.setSourceEnabled(
+      sourceId, settings?.enabledSources?.[sourceId] !== false,
+    );
+  }
+}
+
+function syncMediaPriority(active) {
+  const enabled = active === true;
+  catalogScheduler.setPlaybackPriority(enabled);
+  setArtworkPlaybackPriority(enabled);
+}
+
 function setMode(mode) {
-  const state = getState();
   if (!(mode in MODES)) return;
-  state.mode = mode;
+  setStateMode(mode);
   for (const btn of document.querySelectorAll('.mode-btn')) {
-    btn.classList.toggle('is-active', btn.dataset.mode === mode);
+    const active = btn.dataset.mode === mode;
+    btn.classList.toggle('is-active', active);
+    if (active) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
   }
   const host = document.getElementById('view-host');
   host.innerHTML = '';
@@ -51,28 +77,28 @@ function bindTopBar() {
 async function boot() {
   await initState();
   initPlayer();
+  initCaptureUi();
   initSettings();
+  initEqOverlay();
   initSleepTimer();
-  initShutdownButton();
   bindTopBar();
   const state = getState();
+  syncCatalogSourceSettings(state.settings);
+  if (!unbindCatalogSettings) {
+    unbindCatalogSettings = subscribe('settings-change', syncCatalogSourceSettings);
+  }
+  if (!unbindMediaPriority) {
+    syncMediaPriority(false);
+    unbindMediaPriority = subscribe('media-priority-change', syncMediaPriority);
+  }
   const startMode = state.settings.defaultMode || 'library';
   setMode(startMode);
-
-  // Pre-warm the iptv-org adapter in the background. Its three JSON files
-  // (streams + channels + logos) total ~19 MB and dominate the latency of
-  // Grid mode's first open. Kick it off here so by the time the user
-  // navigates to Grid (or to a TV-filtered Library view), the cache is
-  // already warm. Errors are swallowed; if it can't pre-fetch the user
-  // will hit the same load on demand.
-  if (state.settings.enabledSources?.['iptv-org'] !== false) {
-    import('./lib/sources.js').then(({ loadAdapter }) =>
-      loadAdapter('iptv-org').then((m) => m.browse?.({ limit: 1 })).catch(() => {})
-    );
-  }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  // The shutdown control must work even while persisted state or a source is
+  // still starting. initShutdownButton is idempotent for tests/hot reloads.
+  initShutdownButton();
   boot().catch((err) => {
     console.error('Boot failed:', err);
     const host = document.getElementById('view-host');
@@ -81,4 +107,3 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
-
