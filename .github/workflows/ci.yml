@@ -18,6 +18,7 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
+          cache-dependency-path: requirements-build.txt
       - name: Install Python dependencies
         run: python -m pip install --disable-pip-version-check -r requirements-build.txt
       - run: npm ci
