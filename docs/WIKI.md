@@ -1,4 +1,4 @@
-# World Media Windows documentation
+# Open Media Explorer documentation
 
 The full user/developer wiki is in [`docs/wiki/`](wiki/README.md).
 

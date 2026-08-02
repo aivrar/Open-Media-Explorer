@@ -1,6 +1,6 @@
-# World Media Windows 0.1.2
+# Open Media Explorer 0.1.2
 
-This is the largest World Media Windows update yet: eleven concurrent public
+This is the largest Open Media Explorer update yet: eleven concurrent public
 media sources, stronger live playback, portable data, downloads, recording,
 equalization, new themes, and a complete end-to-end guide.
 

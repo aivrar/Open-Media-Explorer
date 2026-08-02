@@ -1,4 +1,4 @@
-World Media Windows 0.1.2 - Third-Party Notices
+Open Media Explorer 0.1.2 - Third-Party Notices
 ================================================
 
 This notice is distributed inside the World Media portable folder and is served

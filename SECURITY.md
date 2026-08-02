@@ -1,6 +1,6 @@
 # Security
 
-World Media Windows runs a local HTTP server bound to `127.0.0.1`.
+Open Media Explorer runs a local HTTP server bound to `127.0.0.1`.
 
 The `/api/proxy` endpoint is restricted to a hard-coded allowlist for the
 public media sources used by the app. It rejects non-HTTPS URLs, private or

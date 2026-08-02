@@ -8,7 +8,7 @@
 
 import { SOURCES, getSourceColor } from '../lib/sources.js';
 
-const VERSION = '0.1.2-windows';
+const VERSION = '0.1.2';
 const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {

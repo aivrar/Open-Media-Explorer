@@ -2,7 +2,7 @@
 
 Status: architecture approved for phased implementation
 Research date: 2026-07-10
-Target: World Media Windows 0.2.x
+Target: Open Media Explorer 0.2.x
 Companion execution plan: [PLAYER_CAPTURE_EQ_PHASES.md](PLAYER_CAPTURE_EQ_PHASES.md)
 
 ## Purpose

@@ -1,7 +1,7 @@
-# World Media Windows — User Wiki
+# Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.2-windows` behavior in this repository: how to
+It describes the shipped `0.1.2` behavior in this repository: how to
 install and run it, browse all eleven public sources, play media, use the
 equalizer, download finite files, record live streams, preserve portable data,
 and diagnose provider or runtime problems.

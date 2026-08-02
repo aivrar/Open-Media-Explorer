@@ -3,3 +3,5 @@
 *.ico binary
 *.PNG binary
 tests/fixtures/five-new-sources/** text eol=lf
+src/index.html text eol=lf
+frontend/*.html text eol=lf

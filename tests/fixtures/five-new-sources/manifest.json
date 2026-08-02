@@ -7,7 +7,7 @@
   "files": [
     {
       "file": "contracts.json",
-      "provider": "World Media Windows design contract",
+      "provider": "Open Media Explorer design contract",
       "endpoint": "local:docs/FIVE_NEW_SOURCES_PHASES.md",
       "status": "not-applicable",
       "contentType": "application/json",

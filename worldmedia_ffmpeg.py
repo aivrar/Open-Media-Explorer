@@ -774,7 +774,7 @@ def install_managed(
         if cancellation.is_set():
             raise InstallCancelled("FFmpeg installation was cancelled.")
         source_text = (
-            f"FFmpeg managed by World Media Windows\n"
+            f"FFmpeg managed by Open Media Explorer\n"
             f"Provider: https://github.com/{GITHUB_REPOSITORY}\n"
             f"Release API: {GITHUB_RELEASE_API}\n"
             f"Asset: {asset.download_url}\n"

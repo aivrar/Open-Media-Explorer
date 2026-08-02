@@ -22,7 +22,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.2-windows';
+const VERSION = '0.1.2';
 
 function buildModal() {
   const state = getState();
@@ -86,7 +86,7 @@ function buildModal() {
               <button class="btn" type="button" data-act="save-server-port">Save for next launch</button>
             </div>
           </div>
-          <p id="settings-server-port-status" class="description" data-server-port-status role="status" aria-live="polite">Checking current portâ€¦</p>
+          <p id="settings-server-port-status" class="description" data-server-port-status role="status" aria-live="polite">Checking current port…</p>
         </section>
         <section data-capture-settings>
           <h3>Capture &amp; storage</h3>

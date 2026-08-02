@@ -7,7 +7,7 @@ Research basis: [FIVE_NEW_SOURCES_RESEARCH.md](FIVE_NEW_SOURCES_RESEARCH.md)
 ## Mission outcome
 
 Add media.ccc.de/C3VOC, Library of Congress, gPodder podcasts, PeerTube, and
-Owncast as complete World Media Windows sources, with no API keys and no gaps
+Owncast as complete Open Media Explorer sources, with no API keys and no gaps
 across discovery, search, cards, details, thumbnails, favorites, playback,
 download/record, EQ, settings, accessibility, caching, packaging, and shutdown.
 

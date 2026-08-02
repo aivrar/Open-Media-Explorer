@@ -1,4 +1,4 @@
-# World Media Windows
+# Open Media Explorer
 
 ![Latest release](https://img.shields.io/github/v/release/aivrar/Open-Media-Explorer?display_name=tag&sort=semver)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2022H2%2F11-0078D4)
@@ -21,7 +21,7 @@ API key, or telemetry.
 · [Full documentation](docs/wiki/README.md)
 · [Release history](https://github.com/aivrar/Open-Media-Explorer/releases)
 
-![World Media Windows - Library view](screenshots/updated%20screenshots/all_sources.PNG)
+![Open Media Explorer - Library view](screenshots/updated%20screenshots/all_sources.PNG)
 
 | Tune live radio and TV | Discover something unexpected |
 |---|---|

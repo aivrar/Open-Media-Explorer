@@ -1,6 +1,6 @@
 # Catalog Providers
 
-World Media Windows uses eleven public, anonymous catalogs. None requires an
+Open Media Explorer uses eleven public, anonymous catalogs. None requires an
 API key. This file records the production endpoints, refresh/cache behavior,
 and user-visible limits represented by the shipped adapters.
 

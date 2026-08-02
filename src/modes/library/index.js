@@ -82,9 +82,9 @@ function tryNext() {
 
 // Marker for cache-bust verification (build id changes whenever this string
 // changes, so the WebView2 has to fetch a fresh bundle on next launch).
-  // build-id: 2026-07-10-v0.1.2-windows
+  // build-id: 2026-08-01-v0.1.2
 export function renderLibrary(host) {
-  console.info('[library] build 2026-07-10-v0.1.2-windows loaded');
+  console.info('[library] build 2026-08-01-v0.1.2 loaded');
   tearDown();
   resetThumbnailHydrationScope();
   host.appendChild(buildShell());

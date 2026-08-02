@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the classic single-file World Media Windows executable."""
+"""Build the classic single-file Open Media Explorer executable."""
 from __future__ import annotations
 
 import argparse

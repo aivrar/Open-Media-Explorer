@@ -2,7 +2,7 @@
 
 Status: implementation and release-evidence Phases 0-11 complete on 2026-07-15
 Research date: 2026-07-14
-Target application: World Media Windows 0.1.2 working tree
+Target application: Open Media Explorer 0.1.2 working tree
 Companion execution plan: [FIVE_NEW_SOURCES_PHASES.md](FIVE_NEW_SOURCES_PHASES.md)
 
 ## Purpose
