@@ -1,6 +1,6 @@
 # Open Media Explorer
 
-![Latest release](https://img.shields.io/github/v/release/aivrar/Open-Media-Explorer?display_name=tag&sort=semver)
+[![Latest release](https://img.shields.io/github/v/release/aivrar/Open-Media-Explorer?display_name=tag&sort=semver)](https://github.com/aivrar/Open-Media-Explorer/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2022H2%2F11-0078D4)
 ![Portable](https://img.shields.io/badge/portable-single%20EXE-2ea44f)
 ![Sources](https://img.shields.io/badge/public%20sources-11-F28C52)
