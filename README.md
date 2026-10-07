@@ -17,6 +17,11 @@ discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
 
+**New in v0.1.3:** bring your own M3U/M3U8 channel lists or paste a direct
+TV/radio link in **Library → My Playlists**. Search Favorites and separate
+Radio, TV, Video, and Audio with the media filter. Includes shutdown,
+thumbnail-queue, and saved-profile reliability fixes.
+
 [**Download the latest EXE**](https://github.com/aivrar/Open-Media-Explorer/releases/latest/download/WorldMediaWindows.exe)
 · [Full documentation](docs/wiki/README.md)
 · [Release history](https://github.com/aivrar/Open-Media-Explorer/releases)
@@ -42,7 +47,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.2-portable.zip
+WorldMediaWindows-0.1.3-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -95,12 +100,34 @@ play it.
 
 **Discovery** - random open media from the enabled sources.
 
-Library discovery is intentionally bounded. It fetches fairly from every
-enabled source, pauses when roughly 660 not-yet-viewed items are already ready,
-and resumes as you scroll. The source row says **more available**, **retrying**,
-**rate limited**, **stale**, or **complete** so a protective pause is not
-mistaken for a provider failure. **Check again** restarts completed finite
-catalogs and immediately retries eligible sources.
+Library discovery collects concurrently from enabled sources, with independent
+provider pacing and backoff. There is no fixed total-item cap. Only 300 cards
+are mounted at a time to keep scrolling responsive; collected items are kept.
+Compact sidebar statuses and hover details distinguish pulling, rate limits,
+stale snapshots, and completed catalogs. Playback gets priority over background
+collection and artwork; normal background priority returns when playback stops.
+
+### Your own channels and organized Favorites
+
+Open **Library → My Playlists → Add link**, paste a stream URL, optionally
+name it, and press **Add**. Choose **Online M3U playlist** for a channel-list
+URL, or use **Import M3U** for a local `.m3u`/`.m3u8` file. A direct HLS
+`.m3u8` stream belongs under **Single channel**. These are Library collections,
+not subscriptions: importing the same link again updates the saved list.
+
+In **Favorites**, use **All media / Radio / TV / Video / Audio** and local
+search to find saved channels. Removing a playlist keeps its favorites.
+Playlist URLs may contain access tokens: keep your data folder private.
+
+![My Playlists and the Add link form, shown with public sample channels](screenshots/v0.1.3/my-playlists.png)
+
+### Updating without losing data
+
+Shut down the app, back up `WorldMediaWindows-data`, and replace only the EXE
+for a single-file update. Keep the same adjacent data folder, downloads, and
+tools. For ZIP updates, extract the new package separately and copy your backed-up
+data, downloads, and tools beside its launcher. Never overwrite your profile
+with a fresh test profile. See the [portability guide](docs/wiki/05-data-cache-and-portability.md).
 
 ## Appearance
 
@@ -228,7 +255,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.2-portable.zip
+dist\WorldMediaWindows-0.1.3-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

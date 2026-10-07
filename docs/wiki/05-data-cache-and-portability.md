@@ -8,7 +8,7 @@ For a normal portable launch, the executable's directory is the portable root:
 WorldMediaWindows.exe
 WorldMediaWindows-data\
   cache\                 catalog/provider cache records
-  state\                 launcher.json and profile-preferences.json
+  state\                 launcher.json, profile-preferences.json, playlists.json
   logs\                  native.log and runtime diagnostics
   webview2_data\         WebView2 browser profile and localStorage
 downloads\               finite downloads and completed recordings
@@ -21,6 +21,14 @@ directory, but persistent state remains beside the EXE. The local server binds
 only to `127.0.0.1`; it does not create a network-facing service.
 
 ## What is persisted
+
+Version 0.1.3 and newer store imported M3U channel lists and direct links in
+`state/playlists.json`. This is user data, not catalog cache: clearing local or
+provider caches does not remove playlists. Remove a list from **My Playlists**
+instead. The file follows the portable folder across moves and port changes.
+Playlist URLs and optional headers are stored as plain text and can contain
+provider tokens. Keep this file and the original playlists private; do not
+include them in bug reports or GitHub commits.
 
 The browser profile stores:
 
@@ -53,6 +61,14 @@ bounded `profile-preferences.json` handoff containing only the allowed browser
 keys. The next launch restores those keys under the new origin. This is safer
 than copying arbitrary browser storage, but a full data-directory copy remains
 the best backup.
+
+If Favorites cannot be saved, the app leaves the previous list/star state intact
+and displays a warning. Retry after checking free disk space; never delete your
+profile to clear the warning. Settings-save failures are also reported.
+The native cross-port backup has a 2 MiB raw-value safety limit. If backup fails
+or exceeds that limit, a warning asks you to keep the same port and make a full
+data-folder backup. A manual port change refuses an incomplete backup. Favorites
+are still stored in WebView2, not a separate unlimited native favorites database.
 
 Older `%LOCALAPPDATA%\\WorldMediaWindows` state can be migrated once when no
 portable state directory exists. The legacy source is copied, not deleted.

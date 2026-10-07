@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.3 - 2026-10-07
+
+- Keep the playlist toolbar and Add link form usable in narrow windows.
+- Update vulnerable transitive build dependencies; npm audit reports no vulnerabilities.
+- Keep the previous Favorites list and star state if saving fails; display an
+  accessible warning for failed Favorites/settings saves and native profile backups.
+
+- Add a friendly Add link form for named direct TV/radio streams or online M3U
+  playlists, including safe remote fetching and relative stream/logo URLs.
+- Acknowledge shutdown before background cleanup and exit; prevent a UI cleanup
+  error from displaying Retry after the server already accepted the request.
+
+- Add local M3U/M3U8 live-channel imports in Library's My Playlists, with portable
+  native storage, playlist selection, safe artwork/playback, deduplication, and
+  explicit replacement/removal that preserves favorites.
+- Add local Favorites search and All/Radio/TV/Video/Audio filters.
+- Reject incomplete/oversized port-change profile snapshots instead of silently
+  dropping saved values; roll back partial restores and allow escaped JSON backups.
+- Add an image-load watchdog so stalled artwork cannot hold a queue slot forever.
+- Always schedule exit after an authenticated shutdown, even if the client
+  disconnects during the response.
+- Show zero counts explicitly instead of blank sidebar counts.
+
 ## 0.1.2
 
 - Add five no-key sources: media.ccc.de/C3VOC, Library of Congress, gPodder

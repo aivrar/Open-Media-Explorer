@@ -33,7 +33,9 @@ import {
 import { cancelThumbnailHydration, resetThumbnailHydrationScope } from './thumbnails.js';
 import { openDetail, closeDetail, getRestorableDetailItem } from './detail.js';
 import { filterItems } from './filter.js';
-import { favoriteForContentView } from '../../lib/content-rating.js';
+import { libraryPool } from './personal.js';
+import { getPlaylistItems, loadPlaylists } from '../../lib/playlists.js';
+import { syncPersonalControls } from './personal-controls.js';
 import { ui } from './shell-refs.js';
 
 const subs = [];
@@ -63,9 +65,7 @@ function tearDown() {
 /** Skip to the next item from the current pool. Used by the player's
  *  "Try next" button when a stream fails. */
 function tryNext() {
-  const pool = view.activeSource === 'favorites'
-    ? getState().favorites.map((item) => favoriteForContentView(item, getState().settings))
-    : view.items;
+  const pool = libraryPool();
   const filtered = filterItems(pool).filter((item) => item.__contentHidden !== true);
   if (filtered.length === 0) return;
   const idx = filtered.findIndex((it) => it.id === view.currentId);
@@ -82,9 +82,9 @@ function tryNext() {
 
 // Marker for cache-bust verification (build id changes whenever this string
 // changes, so the WebView2 has to fetch a fresh bundle on next launch).
-  // build-id: 2026-08-01-v0.1.2
+  // build-id: 2026-10-07-v0.1.3
 export function renderLibrary(host) {
-  console.info('[library] build 2026-08-01-v0.1.2 loaded');
+  console.info('[library] build 2026-10-07-v0.1.3 loaded');
   tearDown();
   resetThumbnailHydrationScope();
   host.appendChild(buildShell());
@@ -120,7 +120,7 @@ export function renderLibrary(host) {
 
   const state = getState();
   const restoredDetail = getRestorableDetailItem(
-    state.currentItem, view.itemIndex, state.favorites,
+    state.currentItem, view.itemIndex, [...state.favorites, ...getPlaylistItems()],
   );
   if (restoredDetail) openDetail(restoredDetail);
 
@@ -132,8 +132,16 @@ export function renderLibrary(host) {
   }));
   subs.push(subscribe('favorites-change', () => {
     updateSidebarCounts();
-    if (view.activeSource === 'favorites') renderResults();
+    if (view.activeSource === 'favorites') { renderResults(); renderStatus(); }
   }));
+  subs.push(subscribe('playlists-change', () => {
+    syncPersonalControls(); updateSidebarCounts();
+    if (view.activeSource === 'playlists') { renderResults(); renderStatus(); updateSentinelStatus(); }
+  }));
+  const mountedRoot = ui.root;
+  void loadPlaylists().catch((error) => {
+    if (ui.root === mountedRoot && ui.playlistMessage) ui.playlistMessage.textContent = error.message || 'Could not load playlists.';
+  });
   subs.push(subscribe('settings-change', (settings) => {
     const nextPreference = settings.showExplicitContent === true;
     const contentChanged = view.contentPreference !== nextPreference;
@@ -154,7 +162,7 @@ export function renderLibrary(host) {
     updateSentinelStatus();
     if (view.detailItemId) {
       const nextDetail = getRestorableDetailItem(
-        getState().currentItem, view.itemIndex, getState().favorites,
+        getState().currentItem, view.itemIndex, [...getState().favorites, ...getPlaylistItems()],
       );
       if (nextDetail) openDetail(nextDetail);
       else closeDetail();

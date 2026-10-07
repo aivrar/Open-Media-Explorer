@@ -8,7 +8,7 @@
 
 import { SOURCES, getSourceColor } from '../lib/sources.js';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {
@@ -33,6 +33,8 @@ export function renderAbout(host) {
             cultural archives, audiobooks, conference recordings, and independent streams
             from eleven public sources. Search across them, save favorites, browse the live
             Grid, spin the Tuner, or let Discovery choose something unexpected.
+            Import your own M3U/M3U8 channel lists or paste a direct stream link
+            in Library's My Playlists, and organize Favorites by media type.
           </p>
           <p>
             The app does not host content. Its local Windows runtime relays media

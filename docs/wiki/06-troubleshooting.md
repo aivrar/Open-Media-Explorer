@@ -146,8 +146,10 @@ storm. Downloads and ordinary playback remain available.
 ## Shutdown does not finish
 
 Shutdown is terminal and gives catalog, asset, media, jobs, downloads, and
-FFmpeg workers a bounded grace period. A stream or provider socket can take a
-moment to release. If the button reports a retry:
+FFmpeg workers a bounded grace period. Starting with v0.1.3, the server
+acknowledges promptly and finishes cleanup in the background. An accepted
+request does not show Retry just because window cleanup failed. A stream or
+provider socket can take a moment to release. If the request itself reports a retry:
 
 1. Stop playback and active recording/download jobs from the UI.
 2. Wait a few seconds and try Shutdown again.

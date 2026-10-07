@@ -1,5 +1,22 @@
 /* World Media — base styles. Theme via CSS custom properties. */
 
+.persistence-notice {
+  position: fixed;
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  width: min(680px, calc(100vw - 32px));
+  padding: 14px 18px;
+  border: 2px solid var(--warm);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  box-shadow: 0 4px 24px #0006;
+  font-size: 14px;
+}
+.persistence-notice[hidden] { display: none; }
+
 :root {
   color-scheme: light dark;
   --bg: #090b0f;

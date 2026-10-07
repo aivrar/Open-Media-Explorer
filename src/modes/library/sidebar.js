@@ -3,11 +3,11 @@
  * markup once; `selectSource` mutates state + re-renders on click.
  *
  * `selectSource` is the only place that handles sidebar-tab transitions.
- * It deliberately does NOT trigger a fresh fetch — the chain runs from
+ * It normally does NOT trigger a fresh fetch — the chain runs from
  * all enabled sources regardless of the active tab, and refetching on
  * tab click was the cause of a rapid-click race that wiped the pool.
- * The only case that needs `runSearch` is when the pool is still empty
- * (e.g. an enabled-source toggle hasn't had its first batch yet).
+ * Public tabs resume an unsubmitted query or start an empty pool. Personal
+ * collection filters never start a provider search.
  */
 
 import { SOURCES } from '../../lib/sources.js';
@@ -18,12 +18,15 @@ import { view } from './state.js';
 import { renderResults, renderStatus, updateSentinelStatus } from './render.js';
 import { runSearch } from './chain.js';
 import { closeDetail } from './detail.js';
+import { isPersonalSource } from './personal.js';
+import { syncPersonalControls } from './personal-controls.js';
 
 export function buildSidebar() {
   const sections = [
     { header: 'Browse', items: [
       { id: 'all',       name: 'All Sources', color: 'var(--text-mute)' },
       { id: 'favorites', name: 'Favorites',   color: 'var(--accent)'    },
+      { id: 'playlists', name: 'My Playlists', color: 'var(--accent)' },
     ]},
     { header: 'By type', items: [
       { id: 'type:radio', name: 'Radio',  color: '#42a5f5' },
@@ -98,6 +101,8 @@ export function selectSource(sourceId) {
   if (SOURCES.some((source) => source.id === sourceId)
       && getState().settings.enabledSources[sourceId] === false) return;
   view.activeSource = sourceId;
+  view.searchDebounced?.cancel?.();
+  syncPersonalControls();
   if (sourceId && sourceId.startsWith('type:')) {
     view.filters.type = sourceId.slice('type:'.length);
   } else {
@@ -116,8 +121,9 @@ export function selectSource(sourceId) {
   // the chain (view.items is empty AND we're not entering favorites where
   // the pool is irrelevant), kick off a fresh runSearch.
   const poolIsEmpty = view.items.length === 0;
-  const headingNonFav = sourceId !== 'favorites';
-  if (poolIsEmpty && headingNonFav) {
+  const headingNonFav = !isPersonalSource(sourceId);
+  const pendingQuery = (view.query || '').trim() !== (view.lastQuery || '').trim();
+  if (headingNonFav && (poolIsEmpty || pendingQuery)) {
     runSearch();
     return;
   }

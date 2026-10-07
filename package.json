@@ -1,7 +1,7 @@
 {
   "name": "worldmediawindows",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Portable Windows player for internet radio, live TV, podcasts, public archives, and independent open media.",
   "homepage": "https://github.com/aivrar/Open-Media-Explorer#readme",
   "repository": {

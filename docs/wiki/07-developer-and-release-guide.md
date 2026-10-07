@@ -14,6 +14,7 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 | Player and failover | `src/lib/player.js`, `src/lib/media-failover.js`, `src/lib/hls-recovery.js`, `src/lib/dash-player.js` |
 | Artwork | `src/lib/artwork.js`, `src/modes/library/thumbnails.js` |
 | EQ | `src/lib/audio-engine.js`, `src/lib/eq-store.js`, `src/lib/eq-overlay.js` |
+| Personal playlists | `src/lib/playlists.js`, `src/modes/library/personal-controls.js`, `worldmedia_playlists.py` |
 | Capture UI/client | `src/lib/capture-ui.js`, `src/lib/capture-client.js`, `src/lib/download-client.js`, `src/lib/recording-client.js` |
 | Native server/security | `worldmedia_server.py`, `worldmedia_security.py`, `worldmedia_catalog.py`, `worldmedia_media.py` |
 | Jobs/downloads/recording | `worldmedia_jobs.py`, `worldmedia_downloads.py`, `worldmedia_recording.py`, `worldmedia_ffmpeg.py` |
@@ -73,7 +74,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.2-portable.zip
+dist\WorldMediaWindows-0.1.3-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -99,6 +100,13 @@ Before replacing the EXE:
 
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
+
+For v0.1.3 evidence and limitations, see the
+[release record](../RELEASE_RECORD_0.1.3.md). The optional
+`tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
+Edge to test the packaged app with disposable state. To prepare the GitHub wiki
+from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review
+the resulting diff before committing/pushing that checkout.
 
 ## Tests worth running after source/runtime changes
 

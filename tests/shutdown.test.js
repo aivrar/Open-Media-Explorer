@@ -22,6 +22,25 @@ function shutdownDom() {
   return { button, host, audio, video, document };
 }
 
+test('an accepted shutdown never shows Retry if UI cleanup or native close fails', async () => {
+  resetControlSession();
+  const previousDocument = globalThis.document;
+  const { button, document } = shutdownDom();
+  globalThis.document = document;
+  document.querySelectorAll = () => { throw new Error('view already detached'); };
+  try {
+    const shutdown = await import(`../src/lib/shutdown.js?ui-failure=${Date.now()}`);
+    await shutdown.requestShutdown({
+      fetchImpl: async (path) => response(path === '/api/v1/session' ? 200 : 202, {
+        ok: true, data: path === '/api/v1/session' ? { token: 'test-token' } : { shutdown: 'in_progress' },
+      }),
+      flushEqImpl: () => {}, delayImpl: async () => {}, closeImpl: () => { throw new Error('window closing'); },
+    });
+    assert.equal(button.disabled, true);
+    assert.doesNotMatch(button.textContent, /Retry/);
+  } finally { globalThis.document = previousDocument; }
+});
+
 test('Shutdown uses authenticated JSON control and closes only after backend acceptance', async () => {
   resetControlSession();
   const previousDocument = globalThis.document;

@@ -15,6 +15,7 @@ import { renderTuner } from './modes/tuner.js';
 import { renderGrid } from './modes/grid.js';
 import { renderDiscovery } from './modes/discovery.js';
 import { renderAbout } from './modes/about.js';
+import { initPersistenceNotice } from './lib/persistence-notice.js';
 
 const MODES = {
   library: renderLibrary,
@@ -75,6 +76,7 @@ function bindTopBar() {
 }
 
 async function boot() {
+  initPersistenceNotice();
   await initState();
   initPlayer();
   initCaptureUi();

@@ -26,6 +26,7 @@ import {
 import { DEFAULT_RECORDING_QUALITY, normalizeRecordingQuality } from './recording-profiles.js';
 import { repairFiniteMediaFields } from './media-capabilities.js';
 import { applyTheme, normalizeTheme } from './themes.js';
+import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 import {
   cancelScheduledProfileHandoff,
   clearProfileHandoff,
@@ -215,11 +216,13 @@ export function addFavorite(item) {
   if (!normalized) return;
   const eqState = loadEqState();
   const effectiveCurve = getEffectiveEq(eqState, item.id, false);
+  const next = [normalized, ...state.favorites];
+  if (!persistFavorites(next)) return false;
+  state.favorites = next;
   persistFavoriteEq(item.id, effectiveCurve);
-  state.favorites.unshift(normalized);
-  persistFavorites();
   emit('favorites-change', state.favorites);
   if (state.currentItem?.id === item.id) emit('eq-scope-change', { itemId: item.id, scope: 'favorite' });
+  return true;
 }
 
 export function removeFavorite(itemId) {
@@ -227,13 +230,15 @@ export function removeFavorite(itemId) {
   if (state.favorites.some((f) => f.id === itemId)) {
     emit('eq-before-scope-change', { itemId, scope: 'global' });
   }
-  state.favorites = state.favorites.filter((f) => f.id !== itemId);
-  if (state.favorites.length !== before) {
+  const next = state.favorites.filter((f) => f.id !== itemId);
+  if (next.length !== before) {
+    if (!persistFavorites(next)) return false;
+    state.favorites = next;
     deleteFavoriteEq(itemId);
-    persistFavorites();
     emit('favorites-change', state.favorites);
     if (state.currentItem?.id === itemId) emit('eq-scope-change', { itemId, scope: 'global' });
   }
+  return true;
 }
 
 export function isFavorite(itemId) {
@@ -252,17 +257,25 @@ export function persistFavoriteMetadata(item) {
   // same object with the restart-safe copy would erase the fresh stream before
   // it can be attached. Detach the persisted copy while playback keeps owning
   // the resolved runtime object; stable IDs preserve favorite/EQ identity.
+  const next = [...state.favorites];
+  next[index] = normalized;
+  if (!persistFavorites(next)) return false;
   if (state.favorites[index] === item) state.favorites[index] = normalized;
   else Object.assign(state.favorites[index], normalized);
-  persistFavorites();
   return true;
 }
 
-function persistFavorites() {
+function persistFavorites(favorites = state.favorites) {
   try {
-    localStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(state.favorites));
+    localStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites));
+    clearPersistenceFailure('favorites');
     scheduleProfileHandoff();
-  } catch (e) { console.warn('Could not persist favorites:', e); }
+    return true;
+  } catch (e) {
+    console.warn('Could not persist favorites:', e);
+    reportPersistenceFailure('favorites', 'Favorites could not be saved. Your previous saved list is unchanged. Check available disk space and retry; do not delete your app data.');
+    return false;
+  }
 }
 
 function loadFavorites() {
@@ -293,8 +306,12 @@ export function saveSettings(partial, authorization = null) {
   state.settings = normalizeSettings({ ...state.settings, ...requested });
   try {
     localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(state.settings));
+    clearPersistenceFailure('settings');
     scheduleProfileHandoff();
-  } catch (e) { console.warn('Could not persist settings:', e); }
+  } catch (e) {
+    console.warn('Could not persist settings:', e);
+    reportPersistenceFailure('settings', 'Settings could not be saved and may revert after restart. Check available disk space and retry.');
+  }
   const nextExplicit = state.settings.showExplicitContent === true;
   if (nextExplicit !== previousExplicit) {
     emit('content-policy-change', {

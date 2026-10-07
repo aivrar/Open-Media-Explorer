@@ -2,21 +2,16 @@
  * Pure filter pipeline. Given an item and the current view state, decide
  * whether the item should be shown. No DOM, no mutation, no side effects.
  *
- * Two facts drive the predicates:
- *   - The favorites POOL is rendered separately from view.items. When the
- *     active sidebar tab is 'favorites', the items here came from
- *     state.favorites and have no `__query` tag — so we skip the query
- *     filter and the source filter entirely (otherwise a search active
- *     when the user clicks Favorites would hide every favorite).
- *   - For every other tab, activeSource is either 'all', a specific source
- *     id, or 'type:x'. Type-tabs are translated into view.filters.type by
- *     selectSource, so itemPassesFilters only has to check the type filter
- *     directly.
+ * Favorites and imported playlists use independent local search/type filters,
+ * without public-catalog query tags. Other tabs select the public catalog by
+ * query generation, source, and type. Shared country/language/year filters
+ * apply to both pools. Disabled providers never hide saved favorites.
  */
 
 import { view } from './state.js';
 import { getState } from '../../lib/state.js';
 import { isContentAllowed } from '../../lib/content-rating.js';
+import { isPersonalSource, personalFilters } from './personal.js';
 
 export function filterItems(items) {
   return items.filter(itemPassesFilters);
@@ -24,6 +19,7 @@ export function filterItems(items) {
 
 export function itemPassesFilters(it) {
   const onFavorites = view.activeSource === 'favorites';
+  const personal = isPersonalSource();
 
   if (it.__contentHidden !== true && !isContentAllowed(it, getState().settings)) return false;
 
@@ -32,7 +28,11 @@ export function itemPassesFilters(it) {
   if (!onFavorites && getState().settings.enabledSources[it.source] === false) return false;
   if (!onFavorites && it.__snapshotOffline === true) return false;
 
-  if (!onFavorites) {
+  if (personal) {
+    const query = personalFilters().query.trim().toLocaleLowerCase();
+    const haystack = [it.title, it.description, ...(it.tags || [])].join(' ').toLocaleLowerCase();
+    if (query && !haystack.includes(query)) return false;
+  } else {
     const activeQ = (view.lastQuery || '').trim();
     if (activeQ) {
       const tags = Array.isArray(it.__queries)
@@ -42,12 +42,13 @@ export function itemPassesFilters(it) {
     }
   }
 
-  if (!onFavorites
+  if (!personal
       && view.activeSource && view.activeSource !== 'all'
       && !view.activeSource.startsWith('type:')
       && it.source !== view.activeSource) return false;
 
-  if (view.filters.type && it.type !== view.filters.type) return false;
+  const type = personal ? personalFilters().type : view.filters.type;
+  if (type && it.type !== type) return false;
   if (view.filters.country) {
     if (!it.country || it.country.toUpperCase() !== view.filters.country.toUpperCase()) return false;
   }

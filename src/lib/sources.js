@@ -103,6 +103,7 @@ export function getSource(id) {
 }
 
 export function getSourceLabel(id) {
+  if (id === 'playlist') return 'My Playlists';
   return getSource(id)?.displayName || id;
 }
 
@@ -128,6 +129,7 @@ const ADAPTER_LOADERS = Object.freeze({
 const adapterCache = new Map();
 
 export async function loadAdapter(id) {
+  if (id === 'playlist') return {}; // Imported channels already carry their canonical URLs.
   if (adapterCache.has(id)) return adapterCache.get(id);
   const loader = ADAPTER_LOADERS[id];
   if (!loader) throw new Error(`Unknown adapter: ${id}`);

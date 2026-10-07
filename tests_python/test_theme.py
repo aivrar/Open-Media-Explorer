@@ -115,7 +115,7 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual(SUPPORTED_THEMES, (
             "system", "dark", "light", "midnight", "forest", "ember", "amethyst",
         ))
-        root_block = css.split("}", 1)[0]
+        root_block = css.split(":root {", 1)[1].split("}", 1)[0]
         for theme, palette in NATIVE_THEME_PALETTES.items():
             if theme == "dark":
                 block = root_block
@@ -136,7 +136,7 @@ class ThemeTests(unittest.TestCase):
 
     def test_palette_text_and_accent_pairs_meet_normal_text_contrast(self) -> None:
         css = (ROOT / "src" / "styles" / "base.css").read_text(encoding="utf-8")
-        root_block = css.split("}", 1)[0]
+        root_block = css.split(":root {", 1)[1].split("}", 1)[0]
         for theme in NATIVE_THEME_PALETTES:
             if theme == "dark":
                 block = root_block

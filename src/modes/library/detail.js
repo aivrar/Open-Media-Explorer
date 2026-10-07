@@ -137,11 +137,11 @@ export function openDetail(item, options = {}) {
       attrs: { 'aria-pressed': isFavorite(item.id) ? 'true' : 'false' },
       on: { click: () => {
         if (isFavorite(item.id)) {
-          removeFavorite(item.id);
+          if (removeFavorite(item.id) === false) return;
           favBtn.textContent = '☆ Favorite';
           favBtn.setAttribute('aria-pressed', 'false');
         } else if (item.__contentHidden !== true) {
-          addFavorite(item);
+          if (addFavorite(item) === false) return;
           favBtn.textContent = '★ Favorited';
           favBtn.setAttribute('aria-pressed', 'true');
         }

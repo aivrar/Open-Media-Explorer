@@ -16,6 +16,8 @@ import {
   runSearch, onSentinelVisible, retrySources, loadMoreNow,
 } from './chain.js';
 import { buildSidebar } from './sidebar.js';
+import { buildPersonalControls } from './personal-controls.js';
+import { isPersonalSource, personalFilters } from './personal.js';
 
 export function buildShell() {
   ui.root = el('div', { className: 'library-root' });
@@ -85,6 +87,7 @@ export function buildShell() {
   ui.chipsHost.appendChild(ui.yearMinInput);
   ui.chipsHost.appendChild(ui.yearMaxInput);
   searchBar.appendChild(ui.chipsHost);
+  searchBar.appendChild(buildPersonalControls());
 
   const main = el('section', { className: 'library-main' }, searchBar);
   const resultsArea = el('div', { className: 'results', attrs: { 'data-role': 'results' } });
@@ -139,9 +142,14 @@ export function buildShell() {
   ui.detailPanel = null;
 
   // Debounced search.
-  const debounced = debounce(() => runSearch(), 300);
+  const debounced = debounce(() => { if (!isPersonalSource()) runSearch(); }, 300);
   view.searchDebounced = debounced;
   ui.searchInput.addEventListener('input', (e) => {
+    if (isPersonalSource()) {
+      personalFilters().query = e.target.value;
+      renderResults(); renderStatus(); updateSentinelStatus();
+      return;
+    }
     view.query = e.target.value;
     debounced();
   });

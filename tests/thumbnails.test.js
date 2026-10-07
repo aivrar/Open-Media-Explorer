@@ -13,11 +13,35 @@ import {
   THUMBNAIL_PREFETCH_MARGIN_PX,
 } from '../src/modes/library/thumbnails.js';
 import {
-  artworkRequests, canonicalArtworkUrl, isArtworkRelayUrl, resolveArtworkRelay,
+  artworkRequests, canonicalArtworkUrl, isArtworkRelayUrl, resolveArtworkRelay, loadArtworkImage,
 } from '../src/lib/artwork.js';
 import { thumbHydration } from '../src/modes/library/state.js';
 
 const realFetch = globalThis.fetch;
+
+test('a stalled image times out and releases its queue slot; a loaded image cancels its watchdog', async () => {
+  class ImageDouble extends EventTarget {
+    isConnected = true;
+    naturalWidth = 0;
+    complete = false;
+    get src() { return this.url; }
+    set src(value) { this.url = value; }
+    getAttribute(name) { return name === 'src' ? this.url : null; }
+    removeAttribute(name) { if (name === 'src') this.url = ''; }
+  }
+  const url = '/api/v1/assets/opaque_token_long_enough';
+  const stalled = new ImageDouble();
+  await assert.rejects(loadArtworkImage(stalled, url, { attempts: 1, imageTimeoutMs: 5 }), /timed out/);
+  assert.equal(stalled.src, '');
+  const loaded = new ImageDouble();
+  const promise = loadArtworkImage(loaded, url, { attempts: 1, imageTimeoutMs: 50 });
+  await new Promise((resolve) => setImmediate(resolve));
+  loaded.naturalWidth = 100;
+  loaded.dispatchEvent(new Event('load'));
+  assert.equal(await promise, loaded);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(loaded.src, url);
+});
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {

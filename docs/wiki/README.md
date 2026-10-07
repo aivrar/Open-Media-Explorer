@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.2` behavior in this repository: how to
+It describes the shipped `0.1.3` behavior in this repository: how to
 install and run it, browse all eleven public sources, play media, use the
 equalizer, download finite files, record live streams, preserve portable data,
 and diagnose provider or runtime problems.
@@ -49,6 +49,8 @@ providers at run time and can change without an app update.
    source supports that action.
 6. Use the gear for appearance, content, recorder, quality, source toggles,
    server-port handoff, FFmpeg, downloads, and cache controls.
+7. Bring your own channels with **Library → My Playlists → Add link / Import M3U**.
+   In Favorites, choose Radio, TV, Video, or Audio and search your saved items.
 
 ## What the screens mean
 

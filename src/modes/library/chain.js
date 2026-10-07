@@ -577,6 +577,10 @@ export function pauseCatalogWork() {
 }
 
 export function onSentinelVisible() {
+  if (view.activeSource === 'playlists') {
+    expandRenderWindow();
+    return;
+  }
   const poolSize = view.activeSource === 'favorites'
     ? (getState().favorites || []).length
     : view.items.length;

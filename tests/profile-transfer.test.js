@@ -16,6 +16,39 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(key); }
 }
 
+test('oversize or unreadable profiles never replace the native backup with a partial snapshot', async () => {
+  let sent = false;
+  const requestImpl = async () => { sent = true; };
+  await assert.rejects(saveProfileHandoff({
+    storage: new MemoryStorage({ 'worldmedia.favorites.v1': 'x'.repeat(2 * 1024 * 1024 + 1) }), requestImpl,
+  }), /too large/);
+  let reads = 0;
+  await assert.rejects(saveProfileHandoff({ storage: { getItem() {
+    if (++reads > 1) throw new Error('Storage blocked');
+    return '[]';
+  } }, requestImpl }), /Storage blocked/);
+  assert.equal(sent, false);
+});
+
+test('failed fresh-origin restore rolls back keys and can be retried', () => {
+  const storage = new MemoryStorage();
+  const setItem = storage.setItem.bind(storage);
+  storage.setItem = (key, value) => {
+    if (key.includes('settings')) throw new Error('Quota exceeded');
+    setItem(key, value);
+  };
+  const values = { 'worldmedia.favorites.v1': '[]', 'worldmedia.settings.v1': '{}' };
+  assert.equal(restoreProfileStorageValues(values, storage), false);
+  assert.equal(storage.values.size, 0);
+  storage.setItem = setItem;
+  assert.equal(restoreProfileStorageValues(values, storage), true);
+});
+
+test('oversize backup does not prevent app initialization or overwrite existing preferences', async () => {
+  const storage = new MemoryStorage({ 'worldmedia.favorites.v1': 'x'.repeat(2 * 1024 * 1024 + 1) });
+  assert.equal(await restoreProfileHandoff({ storage, requestImpl: async () => { throw new Error('must not request'); } }), false);
+});
+
 test('profile handoff sends only the supported local browser keys before a port move', async () => {
   const storage = new MemoryStorage({
     'worldmedia.favorites.v1': '[{"id":"saved:1"}]',

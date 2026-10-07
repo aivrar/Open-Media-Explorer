@@ -14,6 +14,93 @@ from worldmedia_security import MAX_JSON_BODY
 
 
 class ControlApiTests(unittest.TestCase):
+    def test_shutdown_response_precedes_cleanup_and_worker_exits_after_cleanup(self) -> None:
+        with mock.patch.object(worldmedia_server, 'shutdown_services') as cleanup, \
+             mock.patch.object(worldmedia_server, 'schedule_process_exit') as schedule:
+            response, payload = self.request('POST', '/api/shutdown', headers=self.mutation_headers(), body=b'{}')
+            self.assertEqual(response.status, 202)
+            self.assertEqual(payload['data']['shutdown'], 'in_progress')
+            self.assertIsNone(payload['data']['graceful'])
+            cleanup.assert_not_called()  # The response handler never waits for cleanup.
+            # HTTP response can win the race with finally on the request thread.
+            for _ in range(100):
+                if schedule.called:
+                    break
+                threading.Event().wait(0.001)
+            schedule.assert_called_once_with()
+        order = []
+        with mock.patch.object(worldmedia_server, 'shutdown_services', side_effect=lambda **_: order.append('cleanup')), \
+             mock.patch.object(worldmedia_server.time, 'sleep'), \
+             mock.patch.object(worldmedia_server.os, '_exit', side_effect=lambda _: order.append('exit')):
+            worldmedia_server.finish_process_shutdown(0)
+        self.assertEqual(order, ['cleanup', 'exit'])
+
+    def test_shutdown_worker_exits_even_if_cleanup_raises(self) -> None:
+        with mock.patch.object(worldmedia_server, 'shutdown_services', side_effect=RuntimeError('cleanup failed')), \
+             mock.patch.object(worldmedia_server.time, 'sleep'), \
+             mock.patch.object(worldmedia_server.os, '_exit') as exited:
+            with self.assertRaises(RuntimeError):
+                worldmedia_server.finish_process_shutdown(0)
+            exited.assert_called_once_with(0)
+
+    def test_repeated_shutdown_schedules_only_one_worker(self) -> None:
+        with mock.patch.object(worldmedia_server, '_exit_scheduled', False), \
+             mock.patch.object(worldmedia_server.threading, 'Thread') as thread:
+            worldmedia_server.schedule_process_exit()
+            worldmedia_server.schedule_process_exit()
+            thread.assert_called_once()
+            thread.return_value.start.assert_called_once_with()
+
+    def test_shutdown_disconnect_still_schedules_exit(self) -> None:
+        handler = object.__new__(worldmedia_server.WorldMediaHandler)
+        handler.path = '/api/shutdown'
+        handler.client_address = ('127.0.0.1', 1234)
+        handler.server = mock.Mock(server_port=1234)
+        handler.headers = {}
+        handler.rfile = io.BytesIO(b'{}')
+        handler._send_api_success = mock.Mock(side_effect=BrokenPipeError('Client disconnected'))
+        with mock.patch.object(worldmedia_server, 'rate_limit', return_value=True), \
+             mock.patch.object(worldmedia_server, 'validate_mutation', return_value={}), \
+             mock.patch.object(worldmedia_server, 'shutdown_services', return_value=True), \
+             mock.patch.object(worldmedia_server, 'schedule_process_exit') as schedule:
+            with self.assertRaises(BrokenPipeError):
+                handler._dispatch_api('POST')
+            schedule.assert_called_once_with()
+
+    def test_playlist_routes_require_auth_and_use_only_the_native_store(self) -> None:
+        store = mock.Mock()
+        store.list.return_value = []
+        store.import_file.return_value = {'playlist': {'id': 'example', 'items': []}, 'replaced': False}
+        store.import_link.return_value = {'playlist': {'id': 'link', 'items': []}, 'replaced': False, 'kind': 'stream'}
+        with mock.patch.object(worldmedia_server, 'PLAYLIST_STORE', store):
+            response, payload = self.request('GET', '/api/v1/playlists')
+            self.assertEqual(response.status, 403)
+            store.list.assert_not_called()
+            response, payload = self.request('GET', '/api/v1/playlists', headers={'X-WorldMedia-Token': self.token})
+            self.assertEqual(response.status, 200)
+            self.assertEqual(payload['data']['playlists'], [])
+            body = json.dumps({'name': 'test.m3u', 'text': '#EXTM3U\nhttps://example.org/live', 'default_type': 'tv'}).encode()
+            response, _ = self.request('POST', '/api/v1/playlists/import', headers={'Content-Type': 'application/json'}, body=body)
+            self.assertEqual(response.status, 403)
+            store.import_file.assert_not_called()
+            response, _ = self.request('POST', '/api/v1/playlists/import', headers=self.mutation_headers(), body=body)
+            self.assertEqual(response.status, 200)
+            store.import_file.assert_called_once_with(json.loads(body))
+            link_body = b'{"url":"https://example.org/live","name":"Radio","kind":"stream","default_type":"radio"}'
+            response, _ = self.request('POST', '/api/v1/playlists/link', headers={'Content-Type': 'application/json'}, body=link_body)
+            self.assertEqual(response.status, 403)
+            store.import_link.assert_not_called()
+            response, _ = self.request('POST', '/api/v1/playlists/link', headers=self.mutation_headers(), body=link_body)
+            self.assertEqual(response.status, 200)
+            store.import_link.assert_called_once_with(json.loads(link_body))
+            store.import_file.side_effect = ValueError('Invalid playlist')
+            response, payload = self.request('POST', '/api/v1/playlists/import', headers=self.mutation_headers(), body=body)
+            self.assertEqual(response.status, 400)
+            self.assertEqual(payload['error']['code'], 'INVALID_PLAYLIST')
+            response, _ = self.request('POST', '/api/v1/playlists/remove', headers=self.mutation_headers(), body=b'{"id":"example"}')
+            self.assertEqual(response.status, 200)
+            store.remove.assert_called_once_with('example')
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.server = worldmedia_server.ThreadingServer(

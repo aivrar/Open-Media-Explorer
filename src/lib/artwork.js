@@ -155,7 +155,7 @@ function imageLoadError(message = 'Artwork image could not load.') {
   return error;
 }
 
-function waitForArtworkImage(image, source, signal, requireConnected = true) {
+function waitForArtworkImage(image, source, signal, requireConnected = true, timeoutMs = 20_000) {
   return new Promise((resolve, reject) => {
     if (!image || typeof image.addEventListener !== 'function') {
       reject(imageLoadError('Artwork image target is unavailable.'));
@@ -167,9 +167,11 @@ function waitForArtworkImage(image, source, signal, requireConnected = true) {
     }
 
     let settled = false;
+    let timer;
     const finish = (error) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       image.removeEventListener('load', onLoad);
       image.removeEventListener('error', onError);
       signal?.removeEventListener('abort', onAbort);
@@ -197,6 +199,10 @@ function waitForArtworkImage(image, source, signal, requireConnected = true) {
     image.addEventListener('load', onLoad);
     image.addEventListener('error', onError);
     signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => {
+      finish(imageLoadError('Artwork image timed out.'));
+      if (image.getAttribute('src') === source) image.removeAttribute('src');
+    }, Math.max(1, Number(timeoutMs) || 20_000));
     image.src = source;
     // Cached images can complete before the browser dispatches a new event.
     queueMicrotask(() => {
@@ -222,7 +228,7 @@ export async function loadArtworkImage(image, relayUrl, opts = {}) {
     if (signal?.aborted) throw artworkAbortError(signal.reason);
     try {
       return await artworkImageQueue.enqueue(
-        () => waitForArtworkImage(image, source, signal, opts.requireConnected !== false),
+        () => waitForArtworkImage(image, source, signal, opts.requireConnected !== false, opts.imageTimeoutMs),
         opts.priority || 0,
         { signal },
       );

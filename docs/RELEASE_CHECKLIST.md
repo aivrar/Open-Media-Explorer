@@ -3,6 +3,14 @@
 Record date, commit, operator, commands, result, artifact SHA-256, and any
 expected upstream outage for every checked release.
 
+## Current release: v0.1.3 (2026-10-07)
+
+See [the v0.1.3 release record](RELEASE_RECORD_0.1.3.md) for the current
+checks, artifact hashes, and explicit verification limitations.
+
+The completed matrix below is the **historical v0.1.2 record from August 1**.
+It is not a claim that every historical test was repeated for v0.1.3.
+
 ## Clean build and automated gates
 
 - [x] Verify Windows 10 22H2/11 x64, Edge WebView2, Python 3.13, Node 20+, and

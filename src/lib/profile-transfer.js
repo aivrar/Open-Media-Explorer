@@ -6,6 +6,7 @@
 
 import { controlRequest } from './capture-client.js';
 import { EQ_STORAGE_KEY } from './eq-store.js';
+import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 
 export const PROFILE_STORAGE_KEYS = Object.freeze([
   'worldmedia.favorites.v1',
@@ -20,6 +21,15 @@ const MAX_PROFILE_BYTES = 2 * 1024 * 1024;
 const AUTO_SYNC_DELAY_MS = 350;
 
 let automaticSyncTimer = null;
+
+async function syncAutomatically(options) {
+  try {
+    await saveProfileHandoff(options);
+    clearPersistenceFailure('profile-backup');
+  } catch (_) {
+    reportPersistenceFailure('profile-backup', 'The portable profile backup could not be updated. Keep using the same port and back up your data folder before moving the app. Your existing saved browser data has not been deleted.');
+  }
+}
 
 function resolveStorage(storage) {
   return storage || globalThis.localStorage;
@@ -38,7 +48,9 @@ function validValues(value) {
     const entry = value[key];
     if (typeof entry !== 'string') continue;
     const size = new TextEncoder().encode(entry).byteLength;
-    if (size > MAX_PROFILE_BYTES || total + size > MAX_PROFILE_BYTES) continue;
+    if (size > MAX_PROFILE_BYTES || total + size > MAX_PROFILE_BYTES) {
+      throw new Error('Profile backup is too large. Port change cancelled to protect your saved data.');
+    }
     total += size;
     output[key] = entry;
   }
@@ -49,13 +61,10 @@ function validValues(value) {
 export function captureProfileStorage(storage) {
   const selected = resolveStorage(storage);
   const output = {};
-  try {
-    for (const key of PROFILE_STORAGE_KEYS) {
-      const value = selected?.getItem?.(key);
-      if (typeof value === 'string') output[key] = value;
-    }
-  } catch (_) {
-    // Browser privacy/storage failures must not interfere with the app itself.
+  if (typeof selected?.getItem !== 'function') throw new Error('Saved profile storage is unavailable.');
+  for (const key of PROFILE_STORAGE_KEYS) {
+    const value = selected.getItem(key);
+    if (typeof value === 'string') output[key] = value;
   }
   return validValues(output);
 }
@@ -63,13 +72,21 @@ export function captureProfileStorage(storage) {
 /** Apply a server handoff only into a truly fresh localhost origin. */
 export function restoreProfileStorageValues(values, storage) {
   const selected = resolveStorage(storage);
-  const safeValues = validValues(values);
-  if (Object.keys(captureProfileStorage(selected)).length > 0) return false;
-  if (Object.keys(safeValues).length === 0) return false;
+  const written = [];
   try {
-    for (const [key, value] of Object.entries(safeValues)) selected?.setItem?.(key, value);
+    const safeValues = validValues(values);
+    if (Object.keys(captureProfileStorage(selected)).length > 0) return false;
+    if (Object.keys(safeValues).length === 0 || typeof selected?.setItem !== 'function') return false;
+    for (const [key, value] of Object.entries(safeValues)) {
+      selected.setItem(key, value);
+      written.push(key);
+    }
     return true;
   } catch (_) {
+    // Leave a fresh origin retryable if a quota/storage error interrupts restore.
+    for (const key of written) {
+      try { selected.removeItem(key); } catch (_) { /* Storage may be unavailable. */ }
+    }
     return false;
   }
 }
@@ -102,12 +119,12 @@ export function scheduleProfileHandoff(options = {}) {
   if (automaticSyncTimer !== null) return true;
   const schedule = globalThis.setTimeout;
   if (typeof schedule !== 'function') {
-    void saveProfileHandoff(requestOptions).catch(() => {});
+    void syncAutomatically(requestOptions);
     return true;
   }
   automaticSyncTimer = schedule(() => {
     automaticSyncTimer = null;
-    void saveProfileHandoff(requestOptions).catch(() => {});
+    void syncAutomatically(requestOptions);
   }, Math.max(0, Number(delayMs) || 0));
   return true;
 }
@@ -127,9 +144,9 @@ export async function restoreProfileHandoff(options = {}) {
     ...requestOptions
   } = options;
   const selected = resolveStorage(storage);
-  if (Object.keys(captureProfileStorage(selected)).length > 0) return false;
   if (!canUseNativeProfileService(requestImpl)) return false;
   try {
+    if (Object.keys(captureProfileStorage(selected)).length > 0) return false;
     const data = await requestImpl(PROFILE_ROUTE, requestOptions);
     return restoreProfileStorageValues(data?.values, selected);
   } catch (_) {

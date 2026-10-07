@@ -180,7 +180,8 @@ def load_profile_transfer(paths: RuntimePaths | None = None) -> dict[str, str]:
 
     path = profile_transfer_path(paths)
     try:
-        if not path.is_file() or path.stat().st_size > PROFILE_TRANSFER_MAX_BYTES + 8 * 1024:
+        # JSON can expand each byte to a six-byte escape (ensure_ascii=True).
+        if not path.is_file() or path.stat().st_size > PROFILE_TRANSFER_MAX_BYTES * 6 + 8 * 1024:
             return {}
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict) or raw.get("version") != PROFILE_TRANSFER_VERSION:

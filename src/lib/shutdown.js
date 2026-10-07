@@ -82,9 +82,6 @@ export async function requestShutdown({
   }
   try {
     await postShutdown(fetchImpl);
-    renderGoodbye();
-    await delayImpl(250);
-    closeImpl();
   } catch (error) {
     shuttingDown = false;
     if (button) {
@@ -94,7 +91,12 @@ export async function requestShutdown({
       button.title = `${message} Try again.`;
       button.setAttribute('aria-label', `Retry shutdown. ${message}`);
     }
+    return;
   }
+  // Acceptance is terminal. A DOM/native close error is not a rejected request
+  // and must never offer Retry while the backend is already shutting down.
+  try { renderGoodbye(); } catch (_) { /* Native exit remains scheduled. */ }
+  try { await delayImpl(250); closeImpl(); } catch (_) { /* Native exit remains scheduled. */ }
 }
 
 export function initShutdownButton() {

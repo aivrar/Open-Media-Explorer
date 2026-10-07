@@ -1,5 +1,8 @@
 # Using the application
 
+My Playlists, Add link, and Favorites media/local-search filters require v0.1.3
+or newer.
+
 ## Window layout
 
 The top bar is shared by every mode:
@@ -39,7 +42,11 @@ continuous browse chain.
 
 - **Browse → All Sources** shows the enabled-source pool.
 - **Browse → Favorites** switches to the separately persisted favorite pool.
-  Search/source filters do not hide favorites accidentally.
+  Its **All media / Radio / TV / Video / Audio** selector filters only favorites.
+  Its search box searches saved titles, descriptions, and groups locally, without
+  sending a provider search. This search and type choice are kept separate from
+  public-catalog filters during the session. Country/language/year filters still apply.
+- **Browse → My Playlists** opens imported channel lists and direct links.
 - **By Type** selects Radio, TV, Video, or Audio.
 - **By Archive** selects one of the eleven source adapters.
 
@@ -64,6 +71,50 @@ hovering a source exposes the longer reason.
 Selecting a sidebar row changes the local filter and re-renders the collected
 pool; it does not start a duplicate fetch. The background chain continues for
 all enabled sources, so rapidly switching tabs cannot wipe the catalog.
+
+### Import your own channel playlists
+
+![My Playlists and Add link with public sample channels](<../../screenshots/v0.1.3/my-playlists.png>)
+
+1. Open **Library → My Playlists**.
+2. Set **Add as** to **TV** or **Radio**.
+3. Click **Add link**, paste the URL, optionally enter a name, and click **Add**.
+   Leave **Single channel** selected for a direct stream (including HLS `.m3u8`
+   or DASH `.mpd`). Choose **Online M3U playlist** to fetch a list of channels.
+   To use a local file instead, click **Import M3U** and select the file.
+4. Choose that playlist (or **All playlists**), search titles/groups, or filter by
+   media type. Click a channel to play; star it to save it in Favorites.
+
+Import supports UTF-8 and legacy Windows-1252 text, `#EXTINF` names, `tvg-name`,
+`tvg-logo`, `tvg-country`, `tvg-language`, `group-title`, `#EXTGRP`, and `radio`
+metadata. Audio filename extensions are recognized when no explicit `radio`
+attribute is present. VLC-style HTTP referrer/user-agent options are accepted
+when safe. Local file entries must be absolute HTTP(S) URLs; relative stream and
+logo URLs in online playlists resolve against the playlist's final URL after
+redirects. Unsupported entries and
+duplicates are counted in the import result; a wholly invalid list is rejected.
+Channel IDs stay stable when only their display names change.
+
+Importing the same filename replaces that saved playlist after confirmation.
+**Remove playlist** removes only the selected imported list; it preserves the
+original file, saved favorites, and current playback. Imports are snapshots:
+reimport the file or add the same online link to update its entries. Links are
+identified by URL, so two different links with the same display name do not
+overwrite each other. A direct channel is saved without opening a connection;
+availability is checked when you play it. They currently appear in Library and
+Favorites, not the provider catalogs in Grid, Tuner, or Discovery.
+
+The importer is for live TV/radio channel lists, not local media files, private
+network streams, DRM, provider login/cookie workflows, or Kodi/pipe-URL options.
+An HLS `.m3u8` containing segments or variants is a playback manifest, not a
+channel list; use **Add link → Single channel** for its public URL. Logos and streams
+use the same defended relays as built-in sources. Import does not grant any
+viewing or recording rights; provider terms and availability still apply.
+
+Files and online playlist responses are limited to 8 MiB and the saved playlist
+document to 64 MiB, with a
+visible error before saving if exceeded. These are input/storage safeguards,
+not limits on the continuously collected public catalog or mounted-card window.
 
 ### Continuous collection and large catalogs
 

@@ -1,5 +1,30 @@
 /* Library mode */
 
+.personal-controls, .playlist-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.personal-controls { flex-basis: 100%; align-items: flex-start; }
+.personal-controls select { max-width: 260px; padding: 8px 12px; appearance: auto; }
+.playlist-message { flex-basis: 100%; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.playlist-message:empty { display: none; }
+.playlist-actions { flex: 1 1 400px; max-width: 100%; }
+.playlist-media-type { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.playlist-link-form {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 10px;
+  flex-basis: 100%; padding: 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg-elev-1);
+  min-width: 0; max-width: 100%;
+}
+.playlist-link-form[hidden] { display: none; }
+.playlist-link-form label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; font-size: 12px; color: var(--text-dim); }
+.playlist-link-form label:first-child { flex: 2 1 250px; }
+.playlist-link-form input, .playlist-link-form select { width: 100%; min-width: 0; max-width: none; padding: 8px; box-sizing: border-box; }
+.playlist-link-help { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--text-dim); }
+
 .library-root {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr) 0;
@@ -567,9 +592,19 @@
 
   .library-search-bar {
     flex-direction: column;
+    flex-wrap: nowrap;
     align-items: stretch;
     gap: 10px;
-    overflow: hidden;
+    max-height: 55vh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .library-search-bar > .search-input-wrap,
+  .library-search-bar > .personal-controls {
+    flex: 0 0 auto;
+    min-width: 0;
+    width: 100%;
   }
 
   .filter-chips {

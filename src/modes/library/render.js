@@ -20,6 +20,8 @@ import {
   thumbHydration,
 } from './state.js';
 import { filterItems } from './filter.js';
+import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
+import { getPlaylistItems } from '../../lib/playlists.js';
 import {
   getThumbnailHydrationSignal, insertThumbImage, requestThumbnailHydration,
   resetThumbnailHydrationScope, resolveItemArtwork,
@@ -28,7 +30,7 @@ import {
 import { openDetail } from './detail.js';
 import { playItem } from '../../lib/player.js';
 import {
-  contentBadgeText, favoriteForContentView,
+  contentBadgeText,
 } from '../../lib/content-rating.js';
 
 // Shared shell refs — set by shell.js once, read here.
@@ -49,6 +51,8 @@ function filterContextSignature() {
   return JSON.stringify([
     view.activeSource,
     view.lastQuery,
+    view.playlistId,
+    isPersonalSource() ? personalFilters() : null,
     view.filters.type,
     view.filters.country,
     view.filters.language,
@@ -96,12 +100,11 @@ export function renderResults() {
   // and lives outside the regular accumulating view.items. This keeps a
   // visit to Favorites from polluting your browse pool, and means clearing
   // the search box doesn't wipe what you favorited.
-  const pool = view.activeSource === 'favorites'
-    ? getState().favorites.map((item) => favoriteForContentView(item, getState().settings))
-    : view.items;
+  const pool = libraryPool();
   const filtered = filteredItemsForCurrentView(pool);
   const signature = JSON.stringify([
     view.activeSource, view.lastQuery, view.filters.type, view.filters.country,
+    view.playlistId, isPersonalSource() ? personalFilters() : null,
     view.filters.language, view.filters.yearMin, view.filters.yearMax,
     getState().settings.showExplicitContent === true,
   ]);
@@ -158,13 +161,14 @@ export function renderResults() {
   }
 
   if (visible.length === 0) {
-    if (!view.loading && !view.loadingMore) {
+    if (isPersonalSource() || (!view.loading && !view.loadingMore)) {
       if (!ui.resultsHost.querySelector('.empty-state')) {
         ui.resultsHost.innerHTML = '';
         renderedIds.clear();
         const empty = el('div', { className: 'empty-state' });
-        empty.appendChild(el('h3', { text: view.query ? 'No results' : 'Nothing here yet' }));
-        empty.appendChild(el('p', { text: view.query
+        empty.appendChild(el('h3', { text: 'No matching items' }));
+        empty.appendChild(el('p', { text: isPersonalSource()
+          ? (view.activeSource === 'playlists' ? 'Import an M3U channel list above, or clear your filters.' : 'Star items to save them here, or clear your filters.') : view.query
           ? `Try a different search term, or pick a different source.`
           : `Type a search above, or browse a single source on the left.` }));
         ui.resultsHost.appendChild(empty);
@@ -192,9 +196,7 @@ export function renderResults() {
  *  Returns true if there were unrendered items to expose; the sentinel
  *  observer uses that to decide whether to also fetch more from upstream. */
 export function expandRenderWindow() {
-  const pool = view.activeSource === 'favorites'
-    ? getState().favorites.map((item) => favoriteForContentView(item, getState().settings))
-    : view.items;
+  const pool = libraryPool();
   const filteredCount = filteredItemsForCurrentView(pool).length;
   const limit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
   const currentStart = view.renderStart || 0;
@@ -314,13 +316,13 @@ function onCardClick(item) {
 
 function toggleFav(item, btn) {
   if (isFavorite(item.id)) {
-    removeFavorite(item.id);
+    if (removeFavorite(item.id) === false) return;
     btn.classList.remove('is-fav');
     btn.setAttribute('aria-pressed', 'false');
     btn.setAttribute('aria-label', 'Add to favorites');
     btn.title = 'Add to favorites';
   } else {
-    addFavorite(item);
+    if (addFavorite(item) === false) return;
     btn.classList.add('is-fav');
     btn.setAttribute('aria-pressed', 'true');
     btn.setAttribute('aria-label', 'Remove from favorites');
@@ -347,7 +349,7 @@ function sourceGlyph(type) {
 function effectiveStatusSources() {
   const all = SOURCES.filter((s) => getState().settings.enabledSources[s.id] !== false);
   if (view.activeSource === 'all') return all.map((s) => s.id);
-  if (view.activeSource === 'favorites') return [];
+  if (isPersonalSource()) return [];
   if (view.activeSource && view.activeSource.startsWith('type:')) {
     const t = view.activeSource.slice('type:'.length);
     return all.filter((s) => s.types.includes(t)).map((s) => s.id);
@@ -400,8 +402,8 @@ function compactSourceStatus(status, disabled) {
 
 export function renderStatus() {
   if (!ui.statusHost) return;
-  if (view.activeSource === 'favorites') {
-    const summaryText = 'Saved favorites';
+  if (isPersonalSource()) {
+    const summaryText = view.activeSource === 'favorites' ? 'Saved favorites' : 'Imported channels (stored locally; provider terms apply)';
     if (ui.statusHost.dataset.summary === summaryText) return;
     ui.statusHost.dataset.summary = summaryText;
     ui.statusHost.replaceChildren(el('span', {
@@ -437,7 +439,7 @@ export function renderStatus() {
 
 export function updateSentinelStatus() {
   if (!ui.sentinelStatus || !ui.sentinelButton) return;
-  if (view.activeSource === 'favorites') {
+  if (isPersonalSource()) {
     ui.sentinelStatus.textContent = '';
     ui.sentinelButton.style.display = 'none';
     return;
@@ -516,9 +518,10 @@ export function updateSidebarCounts() {
     let n = 0;
     if (id === 'all') n = totalAll;
     else if (id === 'favorites') n = getState().favorites.length;
+    else if (id === 'playlists') n = getPlaylistItems().length;
     else if (id.startsWith('type:')) n = typeCounts.get(id.slice('type:'.length)) || 0;
     else if (!isDisabled) n = cum.get(id) || 0;
-    const countText = n > 0 ? String(n) : '';
+    const countText = String(n);
     if (span.textContent !== countText) span.textContent = countText;
 
     const healthSpan = li.querySelector('[data-role="source-health"]');

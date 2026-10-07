@@ -107,6 +107,11 @@ These are local implementation routes, not a public API contract:
 | `GET /api/health`, `/api/ping` | Local liveness check |
 | `GET /api/v1/session` | Obtain the current control-session token/origin |
 | `GET /api/v1/runtime` | Runtime roots, writability, current/next port |
+| `GET /api/v1/playlists` | Load locally saved channel lists |
+| `POST /api/v1/playlists/import` | Parse and save a local M3U/M3U8 list |
+| `POST /api/v1/playlists/link` | Save a direct link or safely fetch an online list |
+| `POST /api/v1/playlists/remove` | Remove a list, keeping favorites |
+| `GET` / `POST /api/v1/profile/preferences` | Bounded cross-port preference backup |
 | `GET /api/v1/jobs` | Capture job snapshots |
 | `GET /api/v1/ffmpeg/status` | Toolchain status |
 | `POST /api/v1/catalog/feed/resolve` | Native podcast feed resolution |
@@ -120,6 +125,11 @@ These are local implementation routes, not a public API contract:
 
 Control routes reject query strings and unexpected fields. Never expose the
 session token or use these routes as a network service.
+
+The playlist store writes atomically beside the executable; invalid existing
+data is not overwritten. Online imports use bounded, DNS-pinned public HTTP(S)
+fetching, not an unrestricted localhost proxy. Imports are snapshots and have
+separate file/storage safety limits; they do not cap the public catalog.
 
 ## Extension points
 

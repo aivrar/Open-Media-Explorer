@@ -142,7 +142,8 @@ test('the eleven-source paging, UI, settings, and packaged-chunk connections sha
     assert.match(`${chain}\n${render}`, new RegExp(`['"]${state}['"]`), `missing source state ${state}`);
   }
   assert.match(sidebar, /items:\s*SOURCES\.map/);
-  assert.match(sidebar, /poolIsEmpty\s*&&\s*headingNonFav/);
+  assert.match(sidebar, /headingNonFav\s*&&\s*\(poolIsEmpty\s*\|\|\s*pendingQuery\)/);
+  assert.match(sidebar, /const headingNonFav = !isPersonalSource\(sourceId\)/);
   assert.match(sidebar, /renderResults\(\);\s*renderStatus\(\);\s*updateSentinelStatus\(\);/s);
   assert.match(about, /import \{ SOURCES, getSourceColor \} from ['"]\.\.\/lib\/sources\.js['"]/);
   assert.match(about, /SOURCES\.map/);

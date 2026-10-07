@@ -44,6 +44,7 @@ from worldmedia_media import (
     rewrite_hls_manifest,
 )
 from worldmedia_recording import RecordingError, RecordingService, normalize_recording_eq
+from worldmedia_playlists import PlaylistStore
 from worldmedia_runtime import (
     DEFAULT_SERVER_PORT,
     get_runtime_paths,
@@ -69,7 +70,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.2 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.3 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 TIMEOUT_SEC = 20
 
@@ -103,6 +104,7 @@ SESSION_TOKEN = new_session_token()
 JOB_REGISTRY = JobRegistry()
 MEDIA_REGISTRY = MediaRegistry()
 RUNTIME_PATHS = get_runtime_paths()
+PLAYLIST_STORE = PlaylistStore(RUNTIME_PATHS.state_root / "state" / "playlists.json")
 CATALOG_SERVICE = CatalogService(RUNTIME_PATHS.state_root / "cache")
 ASSET_REGISTRY = AssetRegistry(RUNTIME_PATHS.state_root / "cache")
 FFMPEG_SERVICE = FfmpegService(RUNTIME_PATHS)
@@ -112,12 +114,14 @@ RELAY_SLOTS = threading.BoundedSemaphore(16)
 ASSET_SLOTS = threading.BoundedSemaphore(16)
 
 CATALOG_BODY_LIMITS = {
+    "/api/v1/playlists/import": 48 * 1024 * 1024 + 8 * 1024,
     "/api/v1/catalog/feed/resolve": 12 * 1024,
     "/api/v1/catalog/peertube/resolve": 16 * 1024,
     "/api/v1/catalog/cache/clear": 1024,
     "/api/v1/assets/register": 24 * 1024,
     "/api/v1/runtime/server-port": 1024,
-    "/api/v1/profile/preferences": 2 * 1024 * 1024,
+    # Preferences are JSON strings inside JSON: escaping expands the payload.
+    "/api/v1/profile/preferences": 12 * 1024 * 1024 + 8 * 1024,
 }
 
 
@@ -145,10 +149,27 @@ def rate_limit(client_ip: str) -> bool:
     return True
 
 
-def schedule_process_exit(delay: float = 0.25) -> None:
-    def exit_later() -> None:
+_exit_schedule_lock = threading.Lock()
+_exit_scheduled = False
+
+
+def finish_process_shutdown(delay: float = 0.25) -> None:
+    try:
+        graceful = shutdown_services(timeout=3.0)
+        print(f"Shutdown cleanup finished: graceful={graceful}", file=sys.stderr, flush=True)
+    finally:
         time.sleep(delay)
         os._exit(0)
+
+
+def schedule_process_exit(delay: float = 0.25) -> None:
+    global _exit_scheduled
+    with _exit_schedule_lock:
+        if _exit_scheduled:
+            return
+        _exit_scheduled = True
+    def exit_later() -> None:
+        finish_process_shutdown(delay)
 
     threading.Thread(target=exit_later, daemon=True).start()
 
@@ -355,12 +376,18 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             # been closed.  That former "retry shutdown" path stranded the
             # UI with catalog/artwork services disabled, so thumbnails and
             # subsequent catalog requests could only return 503.
-            graceful = shutdown_services(timeout=3.0)
-            self._send_api_success(
-                {"shutdown": "in_progress", "graceful": graceful},
-                status=HTTPStatus.ACCEPTED,
-            )
-            schedule_process_exit()
+            try:
+                self._send_api_success(
+                    {"shutdown": "in_progress", "graceful": None},
+                    status=HTTPStatus.ACCEPTED,
+                )
+            finally:
+                # Acknowledge before cleanup so a busy worker cannot make the
+                # browser time out and display a false Retry shutdown state.
+                # Once an authenticated shutdown is accepted, a disconnected
+                # WebView (or cleanup exception) must not strand stopped services
+                # in a still-running process.
+                schedule_process_exit()
             return None
         return self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -382,6 +409,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
 
             if method == "GET":
                 validate_authenticated_get(self.headers, self.server.server_port, SESSION_TOKEN)
+                if path == "/api/v1/playlists":
+                    try:
+                        return self._send_api_success({"playlists": PLAYLIST_STORE.list()})
+                    except ValueError as error:
+                        raise ApiError(HTTPStatus.CONFLICT, "PLAYLIST_STORE_ERROR", str(error)) from error
                 if path == "/api/v1/runtime":
                     return self._send_api_success(
                         runtime_status(RUNTIME_PATHS, active_port=self.server.server_port)
@@ -425,6 +457,18 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     SESSION_TOKEN,
                     max_bytes=body_limit,
                 )
+                if path in {"/api/v1/playlists/import", "/api/v1/playlists/link", "/api/v1/playlists/remove"}:
+                    try:
+                        if path.endswith("/link"):
+                            return self._send_api_success(PLAYLIST_STORE.import_link(body))
+                        if path.endswith("/import"):
+                            return self._send_api_success(PLAYLIST_STORE.import_file(body))
+                        if set(body) != {"id"}:
+                            raise ValueError("Playlist removal requires only its ID.")
+                        PLAYLIST_STORE.remove(body["id"])
+                        return self._send_api_success({"removed": True})
+                    except ValueError as error:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_PLAYLIST", str(error)) from error
                 if path == "/api/v1/catalog/feed/resolve":
                     return self._send_api_success(CATALOG_SERVICE.resolve_feed(body))
                 if path == "/api/v1/catalog/peertube/resolve":
