@@ -3,13 +3,14 @@
 Record date, commit, operator, commands, result, artifact SHA-256, and any
 expected upstream outage for every checked release.
 
-## Current release: v0.1.3 (2026-10-07)
+## Current release: v0.1.4 (2026-11-08)
 
-See [the v0.1.3 release record](RELEASE_RECORD_0.1.3.md) for the current
-checks, artifact hashes, and explicit verification limitations.
+See [the v0.1.4 release record](RELEASE_RECORD_0.1.4.md) for the current
+checks, artifact hashes, and explicit verification limitations. The previous
+[v0.1.3 record](RELEASE_RECORD_0.1.3.md) is kept for reference.
 
 The completed matrix below is the **historical v0.1.2 record from August 1**.
-It is not a claim that every historical test was repeated for v0.1.3.
+It is not a claim that every historical test was repeated for later releases.
 
 ## Clean build and automated gates
 
@@ -80,8 +81,8 @@ It is not a claim that every historical test was repeated for v0.1.3.
 
 The final production bundle passed its installed-Edge keyboard, focus, theme,
 zoom, HLS, player, EQ, settings, and visual checks. Native launcher/theme and
-shutdown ownership were independently exercised in the packaged smoke. See
-`docs/FINAL_COMPLETION_AUDIT.md` for the exact evidence boundary.
+shutdown ownership were independently exercised in the packaged smoke. To
+repeat the browser acceptance run, see `tests_python/production_ui_harness.py`.
 
 ## Alternate and failure matrix
 

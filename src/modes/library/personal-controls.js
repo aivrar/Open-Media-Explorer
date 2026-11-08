@@ -124,6 +124,8 @@ export function syncPersonalControls() {
   if (!ui.personalControls) return;
   const personal = isPersonalSource();
   const playlist = view.activeSource === 'playlists';
+  // Saved collections use the compact card layout (see library.css).
+  ui.root?.classList.toggle('is-personal-view', personal);
   ui.personalControls.style.display = personal ? 'flex' : 'none';
   ui.playlistSelect.style.display = playlist ? '' : 'none';
   ui.playlistActions.style.display = playlist ? 'flex' : 'none';

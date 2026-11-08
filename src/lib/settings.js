@@ -22,7 +22,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 
 function buildModal() {
   const state = getState();
@@ -62,6 +62,13 @@ function buildModal() {
               <option value="grid">Grid</option>
               <option value="discovery">Discovery</option>
             </select>
+          </div>
+          <div class="row">
+            <div>
+              <label for="settings-tech-details">Show technical source details</label>
+              <span class="description">Shows per-source status labels (Pull, Wait, Done, Live, Stale), full source badges, and license notes on cards. Off keeps the screen simpler; hover a source for its status either way.</span>
+            </div>
+            <input id="settings-tech-details" type="checkbox" class="switch" data-field="showTechnicalDetails" />
           </div>
         </section>
         <section data-content-settings>
@@ -204,6 +211,10 @@ function buildModal() {
   const modeSel = root.querySelector('select[data-field="defaultMode"]');
   modeSel.value = state.settings.defaultMode;
   modeSel.addEventListener('change', () => saveSettings({ defaultMode: modeSel.value }));
+
+  const techToggle = root.querySelector('input[data-field="showTechnicalDetails"]');
+  techToggle.checked = state.settings.showTechnicalDetails === true;
+  techToggle.addEventListener('change', () => saveSettings({ showTechnicalDetails: techToggle.checked }));
 
   const explicitToggle = root.querySelector('input[data-field="showExplicitContent"]');
   explicitToggle.checked = state.settings.showExplicitContent === true;

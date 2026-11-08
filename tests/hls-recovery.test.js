@@ -58,6 +58,40 @@ test('hls.js wins over WebView2 native HLS claims', () => {
   assert.equal(selectHlsPlaybackEngine({ hlsSupported: false, nativeSupport: '' }), 'unavailable');
 });
 
+test('a short HLS clip that is fully buffered starts without waiting for the cushion', async () => {
+  const clip = new EventTarget();
+  clip.currentTime = 0;
+  clip.duration = Number.POSITIVE_INFINITY;
+  let end = 1;
+  clip.buffered = { length: 1, start: () => 0, end: () => end };
+  let timer = null;
+  const waiting = waitForHlsStartupBuffer(clip, {
+    targetSeconds: 6,
+    setTimer(fn) { timer = { fn, cleared: false }; return timer; },
+    clearTimer(t) { t.cleared = true; },
+  });
+  // hls.js ends the MediaSource once the last fragment is appended, which sets
+  // the real duration to the buffered end.
+  clip.duration = 1;
+  clip.dispatchEvent(new Event('durationchange'));
+  assert.equal(await waiting, true);
+  assert.equal(timer.cleared, true);
+
+  // A live stream (infinite duration) with a thin buffer still waits.
+  const live = new EventTarget();
+  live.currentTime = 0;
+  live.duration = Number.POSITIVE_INFINITY;
+  live.buffered = { length: 1, start: () => 0, end: () => 1 };
+  let liveTimer = null;
+  const liveWait = waitForHlsStartupBuffer(live, {
+    targetSeconds: 6,
+    setTimer(fn) { liveTimer = { fn }; return liveTimer; },
+    clearTimer() {},
+  });
+  liveTimer.fn();
+  assert.equal(await liveWait, false);
+});
+
 test('HLS startup waits for a bounded playback cushion', async () => {
   let bufferedSeconds = 2;
   let timeout = null;

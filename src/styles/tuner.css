@@ -83,7 +83,11 @@
 }
 .tuner-dial.dragging svg { cursor: grabbing; }
 
+/* The dial body is always drawn dark, so its text stays light in every
+   theme (in the light theme, --text is near-black and was unreadable here). */
 .tuner-frequency {
+  --dial-text: #eef2f6;
+  --dial-text-dim: #a3adba;
   position: absolute;
   left: 50%;
   top: 50%;
@@ -101,18 +105,21 @@
 .tuner-frequency .freq-unit {
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--text-dim);
+  color: var(--dial-text-dim);
   letter-spacing: 1px;
 }
 .tuner-frequency .station-name {
   margin-top: 6px;
   font-size: 13px;
-  color: var(--text);
+  color: var(--dial-text);
   max-width: 220px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* The light theme's teal is tuned for white pages; use a brighter teal on the dark dial. */
+:root[data-theme='light'] .tuner-frequency .freq-num { color: #2dd4bf; }
 
 .tuner-strip {
   display: flex;
@@ -148,6 +155,11 @@
 .station-pill > .content-rating-badge { grid-column: 2; grid-row: 1 / span 2; }
 .station-pill.is-active > small { color: color-mix(in srgb, var(--accent-contrast) 72%, transparent); }
 .station-pill:hover { color: var(--text); border-color: var(--border-strong); }
+/* Saved stations stand out in the strip even when browsing all sources. */
+.station-pill.is-favorite:not(.is-active) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
 .station-pill.is-active {
   background: var(--accent);
   color: var(--accent-contrast);

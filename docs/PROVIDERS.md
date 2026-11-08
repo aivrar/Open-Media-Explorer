@@ -42,6 +42,3 @@ records, never favorites, EQ state, downloads, recordings, or settings.
   addresses, malformed schemas, or unverified Owncast entries.
 - Opt-in live probes are diagnostic because public providers change. A live
   failure is recorded separately from deterministic fixture/test failures.
-
-See `docs/FIVE_NEW_SOURCES_RESEARCH.md` for the official-source research and
-`docs/FIVE_NEW_SOURCES_EXECUTION_LOG.md` for the implementation evidence.

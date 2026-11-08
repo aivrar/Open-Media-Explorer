@@ -343,19 +343,25 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--danger);
-  color: #fff;
-  border: 0;
+  /* Used once per session: a quiet outline that only turns red on hover. */
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  padding: 6px 12px;
+  padding: 5px 11px;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.3px;
   cursor: pointer;
-  transition: background 0.12s ease, transform 0.06s ease;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
 }
-.shutdown-btn:hover  { background: #d93b3b; }
+.shutdown-btn:hover,
+.shutdown-btn:focus-visible {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
+}
 .shutdown-btn:active { transform: scale(0.97); }
 .shutdown-btn[disabled] { opacity: 0.5; cursor: default; }
 

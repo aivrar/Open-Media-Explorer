@@ -108,7 +108,62 @@ class ThemeTests(unittest.TestCase):
             apply.assert_called_once_with(window, "forest")
             result = bridge.set_theme("light")
             self.assertTrue(result["nativeApplied"])
-            apply.assert_called_with(window, "light")
+            apply.assert_called_with(window, "light", system_update=None)
+
+    def test_caption_is_repainted_after_each_change(self) -> None:
+        window = _Window()
+        repainted: list[int] = []
+        setter = lambda *_: True  # noqa: E731
+        apply_window_theme(window, "dark", set_attribute=setter, refresh=repainted.append)
+        apply_window_theme(window, "system", set_attribute=setter, refresh=repainted.append)
+        self.assertEqual(repainted, [1234, 1234])
+        failing = lambda *_: False  # noqa: E731
+        window.native.update_title_bar_theme = mock.Mock(side_effect=OSError("no"))
+        apply_window_theme(window, "dark", set_attribute=failing, refresh=repainted.append)
+        self.assertEqual(len(repainted), 2, "nothing changed, so nothing to repaint")
+
+    def test_windows_preference_broadcasts_keep_the_app_theme(self) -> None:
+        class _Handlers(list):
+            def __iadd__(self, handler):
+                self.append(handler)
+                return self
+
+        class _Events:
+            def __init__(self) -> None:
+                self.before_show = _Handlers()
+
+        window = _Window()
+        window.events = _Events()
+        bridge = NativeThemeBridge("dark")
+        with mock.patch.object(worldmedia_theme, "apply_window_theme", return_value=True) as apply:
+            bridge._bind_window(window)
+            apply.assert_called_once_with(window, "dark")
+            [on_created] = window.events.before_show
+            original = window.native.update_title_bar_theme
+            on_created()
+            # pywebview's "follow the Windows app theme" repaint now re-applies dark.
+            window.native.update_title_bar_theme()
+            self.assertEqual(apply.call_count, 3)
+            apply.assert_called_with(window, "dark", system_update=original)
+            self.assertEqual(window.native.system_updates, 0)
+        # Choosing "System" still uses pywebview's original Windows-theme repaint.
+        bridge.set_theme("system")
+        self.assertEqual(window.native.system_updates, 1)
+
+    def test_saved_theme_is_read_from_the_profile_backup(self) -> None:
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(worldmedia_theme.saved_theme(folder), "system")
+            path = Path(folder) / "profile-preferences.json"
+            for stored, expected in (('{"theme":"forest"}', "forest"), ('{"theme":"neon"}', "system"), ("not json", "system")):
+                path.write_text(json.dumps({"version": 1, "values": {"worldmedia.settings.v1": stored}}), encoding="utf-8")
+                self.assertEqual(worldmedia_theme.saved_theme(folder), expected, stored)
+            path.write_text("{broken", encoding="utf-8")
+            self.assertEqual(worldmedia_theme.saved_theme(folder), "system")
+        self.assertEqual(worldmedia_theme.saved_theme(None), "system")
+        self.assertEqual(NativeThemeBridge("neon")._theme, "system")
 
     def test_native_caption_palettes_match_css_chrome_and_text(self) -> None:
         css = (ROOT / "src" / "styles" / "base.css").read_text(encoding="utf-8")

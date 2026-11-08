@@ -22,7 +22,7 @@ from worldmedia_runtime import (
     migrate_legacy_state,
     normalize_server_port,
 )
-from worldmedia_theme import NativeThemeBridge
+from worldmedia_theme import NativeThemeBridge, saved_theme
 
 
 APP_TITLE = "World Media"
@@ -142,7 +142,7 @@ def main() -> int:
         try:
             import webview
 
-            theme_bridge = NativeThemeBridge()
+            theme_bridge = NativeThemeBridge(saved_theme(os.environ.get("WORLDMEDIA_STATE_DIR")))
             window = webview.create_window(
                 APP_TITLE,
                 url,

@@ -345,6 +345,24 @@
   color: var(--text-mute);
   opacity: 0.9;
 }
+/* No artwork: the item's initials on a colour picked from its name. */
+.card-thumb .placeholder.has-initials { opacity: 1; }
+.card-thumb .ph-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 56px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: hsl(var(--ph-hue, 200) 42% 38%);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
 .card-thumb img {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
@@ -656,3 +674,110 @@
     padding: 11px;
   }
 }
+
+/* ============ Simple presentation (Settings → Show technical source details off) ============
+   Technical status labels, boxed source badges, and license notes are for
+   people debugging sources. By default they step back; the same information
+   stays available on hover, in the detail panel, or by turning the setting on. */
+:root:not([data-tech-details="on"]) .source-item .source-health { display: none; }
+:root:not([data-tech-details="on"]) .source-item .source-health.is-wait {
+  display: block;
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning, #f5a524);
+  color: transparent;
+}
+:root:not([data-tech-details="on"]) .card-body {
+  grid-template-rows: 18px 16px;
+  min-height: 0;
+  gap: 4px;
+}
+:root:not([data-tech-details="on"]) .card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 0;
+  color: var(--text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+}
+:root:not([data-tech-details="on"]) .source-badge {
+  height: auto;
+  padding: 0;
+  background: none;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  color: var(--text-mute);
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:root:not([data-tech-details="on"]) .card-facts {
+  flex-direction: row;
+  gap: 0;
+  line-height: inherit;
+}
+:root:not([data-tech-details="on"]) .card-facts > span::before { content: ' · '; white-space: pre; }
+:root:not([data-tech-details="on"]) .card-license { display: none; }
+:root:not([data-tech-details="on"]) .card { contain-intrinsic-size: auto 220px; }
+
+/* ============ Compact cards for saved collections (Favorites / My Playlists) ============
+   Most saved radio stations have no artwork, so big 16:9 placeholders waste
+   the screen. Saved items are for finding again, so show more of them. */
+.library-root.is-personal-view .cards-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.library-root.is-personal-view .card { contain-intrinsic-size: auto 80px; }
+.library-root.is-personal-view .card:hover { transform: none; }
+.library-root.is-personal-view .card-open {
+  flex-direction: row;
+  align-items: center;
+}
+.library-root.is-personal-view .card-thumb {
+  flex: 0 0 60px;
+  width: 60px;
+  height: 60px;
+  aspect-ratio: auto;
+  margin: 8px 0 8px 8px;
+  border-radius: 6px;
+}
+.library-root.is-personal-view .card-thumb .placeholder svg { width: 26px; height: 26px; }
+.library-root.is-personal-view .card-thumb .placeholder .ph-label { display: none; }
+.library-root.is-personal-view .card-thumb .placeholder.has-initials { background: none; }
+.library-root.is-personal-view .card-thumb .ph-initials {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border-radius: inherit;
+  font-size: 18px;
+}
+.library-root.is-personal-view .card-thumb img.logo-art { padding: 6px; }
+.library-root.is-personal-view .card-thumb > .content-rating-badge {
+  left: 2px;
+  bottom: 2px;
+  padding: 1px 4px;
+  font-size: 8px;
+}
+.library-root.is-personal-view .card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 44px 8px 12px;
+  grid-template-rows: auto auto;
+  gap: 4px;
+}
+.library-root.is-personal-view .card-meta { min-height: 0; }
+.library-root.is-personal-view .source-badge { height: auto; }
+.library-root.is-personal-view .card-license { height: auto; }
+.library-root.is-personal-view .card-star {
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  background: transparent;
+}
+.library-root.is-personal-view .card-star:hover { transform: translateY(-50%) scale(1.08); }

@@ -1,7 +1,8 @@
 # Using the application
 
 My Playlists, Add link, and Favorites media/local-search filters require v0.1.3
-or newer.
+or newer. Opening on Favorites, the Tuner's **★ My favorites** source, compact
+saved-item cards, and the simplified source labels require v0.1.4 or newer.
 
 ## Window layout
 
@@ -21,7 +22,10 @@ without showing a video element.
 
 ## Library
 
-Library is the main browse and search surface.
+Library is the main browse and search surface. When you have saved favorites,
+the first Library visit of a session opens on **Favorites**; the full catalog
+still loads in the background for **All Sources**. Favorites and My Playlists
+use compact one-line cards so many saved items fit on screen.
 
 ### Search and filters
 
@@ -51,8 +55,10 @@ continuous browse chain.
 - **By Archive** selects one of the eleven source adapters.
 
 The number beside a row is the session count for the selected catalog (or the
-persisted favorite count). The status word beside a source is a compact health
-indicator:
+persisted favorite count). By default the sidebar stays quiet: a source that
+needs attention (rate limited or retrying) shows a small amber dot, and
+hovering any source shows its status. With **Settings → Appearance → Show
+technical source details** on, each source instead shows a compact status word:
 
 | Label | Meaning |
 |---|---|
@@ -133,8 +139,10 @@ including sessions well above 40,000 items.
 
 Each card can contain artwork, title, source, year/country, license, and a star.
 Artwork is lazy: the first visible/nearby cards are prioritized and off-screen
-cards wait for the viewport. A missing logo leaves a source-branded placeholder
-and can be retried without affecting the catalog item.
+cards wait for the viewport. An item without artwork shows its initials on a
+coloured square (the same colour every time); a logo that fails can be retried
+without affecting the catalog item. Source badges and license notes are shown
+when technical source details are switched on.
 
 Click the card body to open its detail panel and start playback. The panel can
 show:
@@ -158,7 +166,9 @@ category, country, source, and the text **Filter…** box. The built-in category
 list includes News, Music, Sports, Movies, Documentary, Kids, Entertainment,
 and Education.
 
-Click a tile or press Enter/Space while it is focused to play it. Tile logos are
+Tiles appear as each live source answers; a source that does not answer within
+20 seconds is marked unavailable. Click a tile or press Enter/Space while it is
+focused to play it. Tile logos are
 viewport hydrated, so the first visible rows load before far-away rows. The Grid
 and Library share the same artwork relay and playback priority rules.
 
@@ -171,14 +181,18 @@ items they report at refresh time.
 Tuner provides a radio-style way to step through live media:
 
 1. Choose **Radio** or **TV**.
-2. Filter by country and source.
+2. Filter by country and source. Source **★ My favorites** puts only your
+   starred stations for that band on the dial; the choice is remembered.
 3. Drag the dial, use Left/Up or Right/Down, or focus the dial and use arrow
    keys.
 4. Press Enter or Space to play the selected item.
 
-The MHz/CH number is cosmetic navigation feedback. It is not a promise that a
-station broadcasts on that terrestrial frequency. Tuner reuses the live
-adapter/snapshot lane and content-rating preference.
+The dial shows the selected station's place in the current list ("12 of 80"),
+not a broadcast frequency. Starred stations are marked with ★ in the station
+strip and on the dial. Stations appear as each live source answers; a source
+that does not answer within 20 seconds is marked unavailable instead of holding
+the dial on "Loading". Tuner reuses the live adapter/snapshot lane and
+content-rating preference.
 
 ## Discovery
 
@@ -210,8 +224,13 @@ restart; the local server port is explicitly marked **for next launch**.
   Ember · Orange, or Amethyst · Violet.
 - **Default mode on launch:** Library, Tuner, Grid, or Discovery (About is
   accepted by the state normalizer but is not offered as a default selector).
+- **Show technical source details:** off by default. Turn it on to see the
+  per-source status words (Pull, Wait, Done, Live, Stale), boxed source badges,
+  and license notes on cards.
 
-The native caption bar mirrors the selected palette when Windows permits it.
+The native title bar starts in the saved theme and follows theme changes
+immediately, including on Windows 10 (where only its dark/light mode can be
+set, not the exact palette colour).
 
 ### Content
 

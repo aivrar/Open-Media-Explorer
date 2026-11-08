@@ -70,9 +70,8 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.3 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.4 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
-TIMEOUT_SEC = 20
 
 ALLOWED_HOSTS = frozenset(
     {

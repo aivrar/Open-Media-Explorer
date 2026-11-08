@@ -3,15 +3,20 @@
  *
  * v1 simplification: dial rotation maps linearly to a 1D index into the current
  * station array. Mouse-drag rotates the dial. Arrow keys also work. Each station
- * is given a cosmetic frequency: 87.5 + (index * 0.1) MHz.
+ * shows its honest position in the current list ("12 of 80"), not a made-up
+ * frequency that would change whenever the list reloads.
+ *
+ * Source "★ My favorites" puts only the user's starred stations for the band
+ * on the dial (no network needed). That choice is remembered in settings.
  */
 
 import { browseLiveOne } from '../lib/search.js';
 import { playItem } from '../lib/player.js';
-import { subscribe, getState } from '../lib/state.js';
+import { subscribe, getState, saveSettings, isFavorite } from '../lib/state.js';
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
+import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -37,7 +42,7 @@ const state = {
   loadGen: 0,
   rotationDeg: 0,
   requestAbort: null,
-  sourceFilter: 'all',
+  sourceFilter: 'all', // 'all' | 'favorites' | source id
   sourceStates: new Map(),
   enabledSignature: '',
   contentPreference: false,
@@ -96,6 +101,10 @@ function buildShell() {
     attrs: { 'aria-label': 'Live media source' },
     on: { change: () => {
       state.sourceFilter = ui.sourceSel.value;
+      const favoritesOnly = state.sourceFilter === FAVORITES;
+      if ((getState().settings.tunerFavoritesOnly === true) !== favoritesOnly) {
+        saveSettings({ tunerFavoritesOnly: favoritesOnly });
+      }
       loadStations();
     } },
   });
@@ -116,7 +125,7 @@ function buildShell() {
 
   const freq = el('div', { className: 'tuner-frequency' });
   ui.freqNum = el('div', { className: 'freq-num', text: '—' });
-  ui.freqUnit = el('div', { className: 'freq-unit', text: 'MHz' });
+  ui.freqUnit = el('div', { className: 'freq-unit', text: '' });
   ui.stationName = el('div', { className: 'station-name', text: state.loading ? 'Loading…' : 'No station' });
   freq.appendChild(ui.freqNum);
   freq.appendChild(ui.freqUnit);
@@ -256,17 +265,13 @@ function updateFrequencyDisplay() {
   const s = state.stations[state.index];
   if (!s) {
     ui.freqNum.textContent = '—';
+    ui.freqUnit.textContent = '';
     ui.stationName.textContent = state.loading ? 'Loading…' : 'No station';
     return;
   }
-  if (state.band === 'radio') {
-    ui.freqNum.textContent = (87.5 + state.index * 0.1).toFixed(1);
-    ui.freqUnit.textContent = 'MHz';
-  } else {
-    ui.freqNum.textContent = String(state.index + 1);
-    ui.freqUnit.textContent = 'CH';
-  }
-  ui.stationName.textContent = `${s.title} · ${getSourceLabel(s.source)}`;
+  ui.freqNum.textContent = String(state.index + 1);
+  ui.freqUnit.textContent = `of ${state.stations.length}`;
+  ui.stationName.textContent = `${isFavorite(s.id) ? '★ ' : ''}${s.title} · ${getSourceLabel(s.source)}`;
 }
 
 function liveSources() {
@@ -289,13 +294,17 @@ function contentAwareLiveSourceIds() {
     .map((source) => source.id));
 }
 
+const FAVORITES = 'favorites';
+
 function rebuildSourceSelect() {
   const sources = liveSources();
-  if (state.sourceFilter !== 'all' && !sources.some(({ id }) => id === state.sourceFilter)) {
+  if (state.sourceFilter !== 'all' && state.sourceFilter !== FAVORITES
+      && !sources.some(({ id }) => id === state.sourceFilter)) {
     state.sourceFilter = 'all';
   }
   ui.sourceSel.innerHTML = '';
   ui.sourceSel.appendChild(el('option', { attrs: { value: 'all' }, text: 'All live sources' }));
+  ui.sourceSel.appendChild(el('option', { attrs: { value: FAVORITES }, text: '★ My favorites' }));
   for (const source of sources) {
     ui.sourceSel.appendChild(el('option', { attrs: { value: source.id }, text: source.displayName }));
   }
@@ -308,10 +317,31 @@ function renderSourceStatus() {
   const failures = states.filter(({ state: value }) => value === 'error').length;
   const completed = states.filter(({ state: value }) => value === 'ready').length;
   const count = state.stations.length;
-  ui.status.textContent = state.loading
-    ? `Loading ${states.length || liveSources().length} live sources…`
-    : `${count} ${state.band === 'radio' ? 'stations' : 'channels'} from ${completed} sources`
-      + (failures ? ` · ${failures} unavailable` : '');
+  if (state.sourceFilter === FAVORITES) {
+    ui.status.textContent = `${count} favorite ${state.band === 'radio' ? 'stations' : 'channels'}`;
+    return;
+  }
+  const noun = state.band === 'radio' ? 'stations' : 'channels';
+  if (state.loading && count === 0) {
+    ui.status.textContent = `Loading ${states.length || liveSources().length} live sources…`;
+    return;
+  }
+  ui.status.textContent = `${count} ${noun} from ${completed} sources`
+    + (failures ? ` · ${failures} unavailable` : '')
+    + (state.loading ? pendingSourcesText(state.sourceStates) : '');
+}
+
+/** Put one source's stations on the dial without moving the user's place. */
+function publishStations(sourceId, items, fallbackId = '') {
+  const keepId = state.stations[state.index]?.id || fallbackId;
+  state.stations = mergeSourceItems(state.stations, sourceId, items, state.band);
+  const kept = keepId ? state.stations.findIndex((item) => item.id === keepId) : -1;
+  state.index = kept >= 0 ? kept : Math.min(state.index, Math.max(0, state.stations.length - 1));
+  // Re-anchor the dial: the station count changed, so the old angle would
+  // map to a different station.
+  state.rotationDeg = state.index * 12;
+  applyRotation();
+  renderSourceStatus();
 }
 
 function step(dir) {
@@ -327,7 +357,43 @@ function tuneCurrent() {
   playItem(s).catch((err) => console.warn('play failed:', err));
 }
 
+/** Starred stations for the current band (and country, when one is chosen),
+ *  in the order they were saved. Purely local: no source requests. */
+export function favoriteStations(favorites, { band, country = '', settings = {} } = {}) {
+  const seen = new Set();
+  const matches = (favorites || []).filter((item) => (
+    item?.id && item.type === band
+    && (!country || String(item.country || '').toUpperCase() === country)
+    && !seen.has(item.id) && seen.add(item.id)
+  ));
+  return filterContentItems(matches, settings);
+}
+
+function loadFavoriteStations() {
+  state.loadGen += 1;
+  state.requestAbort?.abort();
+  state.requestAbort = null;
+  state.loading = false;
+  state.sourceStates = new Map();
+  const selectedId = state.stations[state.index]?.id || getState().currentItem?.id || '';
+  state.stations = favoriteStations(getState().favorites, {
+    band: state.band, country: state.country, settings: getState().settings,
+  });
+  const restored = selectedId ? state.stations.findIndex((item) => item.id === selectedId) : -1;
+  state.index = restored >= 0 ? restored : 0;
+  state.rotationDeg = state.index * 12;
+  rebuildSourceSelect();
+  applyRotation();
+  updateFrequencyDisplay();
+  renderStrip();
+  renderSourceStatus();
+}
+
 async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
+  if (state.sourceFilter === FAVORITES) {
+    loadFavoriteStations();
+    return;
+  }
   const gen = ++state.loadGen;
   state.requestAbort?.abort();
   state.requestAbort = null;
@@ -362,40 +428,29 @@ async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
     const controller = new AbortController();
     state.requestAbort = controller;
     for (const source of candidates) state.sourceStates.set(source.id, { state: 'loading', count: 0 });
-    const settled = await Promise.allSettled(candidates.map((source) => catalogScheduler.enqueue({
-      sourceId: source.id,
-      key: `tuner:${gen}:${state.band}`,
-      priority: CATALOG_PRIORITY.USER,
-      signal: controller.signal,
-      task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
-    }).then((items) => {
-      if (gen === state.loadGen) state.sourceStates.set(source.id, { state: 'ready', count: items.length });
-      return items;
-    }, (error) => {
-      if (gen === state.loadGen && error?.name !== 'AbortError') {
-        state.sourceStates.set(source.id, { state: 'error', count: 0, error: String(error?.message || error) });
-      }
-      throw error;
-    })));
-    if (gen !== state.loadGen) return;
-    const refreshedIds = new Set(candidates
-      .filter((_source, index) => settled[index]?.status === 'fulfilled')
-      .map((source) => source.id));
-    const preserved = preserve
-      ? state.stations.filter((item) => !refreshedIds.has(item.source))
-      : [];
-    const seen = new Set();
-    state.stations = [...preserved, ...settled.flatMap(
-      (result) => result.status === 'fulfilled' ? result.value : [],
-    )]
-      .filter((item) => item.type === state.band && !seen.has(item.id) && seen.add(item.id));
-    const restoredIndex = selectedId
-      ? state.stations.findIndex((item) => item.id === selectedId)
-      : -1;
-    state.index = restoredIndex >= 0
-      ? restoredIndex
-      : Math.min(state.index, Math.max(0, state.stations.length - 1));
-    state.rotationDeg = state.index * 12;
+    // Each source goes on the dial as soon as it answers; a slow or stalled
+    // source no longer holds the others back (see lib/live-load.js).
+    await Promise.allSettled(candidates.map((source) => {
+      const deadline = sourceDeadline(controller.signal);
+      return catalogScheduler.enqueue({
+        sourceId: source.id,
+        key: `tuner:${gen}:${state.band}`,
+        priority: CATALOG_PRIORITY.USER,
+        signal: deadline.signal,
+        task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
+      }).then((items) => {
+        if (gen !== state.loadGen) return;
+        state.sourceStates.set(source.id, { state: 'ready', count: items.length });
+        publishStations(source.id, items, selectedId);
+      }, (error) => {
+        if (gen !== state.loadGen) return;
+        if (deadline.timedOut() || error?.name !== 'AbortError') {
+          const message = deadline.timedOut() ? 'Timed out' : String(error?.message || error);
+          state.sourceStates.set(source.id, { state: 'error', count: 0, error: message });
+          renderSourceStatus();
+        }
+      }).finally(() => deadline.done());
+    }));
   } catch (err) {
     if (gen !== state.loadGen) return;
     if (err?.name !== 'AbortError') console.warn('Tuner load failed:', err);
@@ -450,7 +505,8 @@ function applyContentPreference(showExplicit) {
 
 function setBand(b) {
   state.band = b;
-  state.sourceFilter = 'all';
+  // "My favorites" applies to both bands; a specific source may not.
+  if (state.sourceFilter !== FAVORITES) state.sourceFilter = 'all';
   for (const btn of document.querySelectorAll('.tuner-band-switch button')) {
     const active = btn.dataset.band === b;
     btn.classList.toggle('is-active', active);
@@ -463,7 +519,14 @@ function renderStrip() {
   if (!ui.strip) return;
   ui.strip.innerHTML = '';
   if (state.stations.length === 0) {
-    ui.strip.appendChild(el('div', { className: 'tuner-empty', text: state.loading ? 'Loading stations…' : 'No stations found for this country.' }));
+    let text = state.loading ? 'Loading stations…' : 'No stations found for this country.';
+    if (state.sourceFilter === FAVORITES) {
+      const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
+      text = state.country
+        ? `No favorite ${what} for this country.`
+        : `No favorite ${what} yet. Choose All live sources, tune around, and star (☆) the ones you like.`;
+    }
+    ui.strip.appendChild(el('div', { className: 'tuner-empty', text }));
     return;
   }
   // Window of ~30 stations centered on current
@@ -473,15 +536,16 @@ function renderStrip() {
   for (let i = start; i < end; i++) {
     const s = state.stations[i];
     const rating = contentBadgeText(s);
+    const saved = isFavorite(s.id);
     const pill = el('button', {
-      className: 'station-pill' + (i === state.index ? ' is-active' : ''),
+      className: 'station-pill' + (i === state.index ? ' is-active' : '') + (saved ? ' is-favorite' : ''),
       attrs: {
-        title: `${s.title} · ${getSourceLabel(s.source)}`,
+        title: `${saved ? '★ Favorite · ' : ''}${s.title} · ${getSourceLabel(s.source)}`,
         'aria-pressed': i === state.index ? 'true' : 'false',
       },
       on: { click: () => { state.index = i; state.rotationDeg = i * 12; applyRotation(); tuneCurrent(); } },
     },
-    el('span', { text: s.title }),
+    el('span', { text: saved ? `★ ${s.title}` : s.title }),
     el('small', { text: getSourceLabel(s.source) }),
     rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
     ui.strip.appendChild(pill);
@@ -500,6 +564,8 @@ function tearDown() {
 
 export function renderTuner(host) {
   tearDown();
+  if (getState().settings.tunerFavoritesOnly === true) state.sourceFilter = FAVORITES;
+  else if (state.sourceFilter === FAVORITES) state.sourceFilter = 'all';
   const root = buildShell();
   host.appendChild(root);
   state.enabledSignature = enabledSignature();
@@ -514,8 +580,15 @@ export function renderTuner(host) {
     const contentChanged = nextPreference !== state.contentPreference;
     state.enabledSignature = nextSignature;
     state.contentPreference = nextPreference;
-    if (sourcesChanged) loadStations();
+    if (state.sourceFilter === FAVORITES) {
+      if (sourcesChanged || contentChanged) loadFavoriteStations();
+    } else if (sourcesChanged) loadStations();
     else if (contentChanged) applyContentPreference(nextPreference);
+  }));
+  subs.push(subscribe('favorites-change', () => {
+    if (getState().mode !== 'tuner') return;
+    if (state.sourceFilter === FAVORITES) loadFavoriteStations();
+    else { updateFrequencyDisplay(); renderStrip(); }
   }));
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'tuner') step(1);

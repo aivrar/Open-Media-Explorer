@@ -26,7 +26,7 @@ MAX_REDIRECTS = 5
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_REGISTRATIONS = 4096
 DEFAULT_TTL_SECONDS = 6 * 60 * 60
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.3"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.4"
 MAX_CHILDREN_PER_ROOT = 2048
 MAX_DASH_REPRESENTATIONS = 256
 RELAY_CHUNK_SIZE = 64 * 1024
@@ -46,7 +46,6 @@ _OUTBOUND_HEADER_NAMES = {
     "referer": "Referer",
     "user-agent": "User-Agent",
 }
-_RANGE = re.compile(r"^bytes=(?:\d+-\d*|-\d+)$")
 _URI_ATTRIBUTE = re.compile(r'(?i)\bURI\s*=\s*("([^"]+)"|([^,\s]+))')
 _HLS_ATTRIBUTE = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)', re.IGNORECASE)
 _HLS_VIDEO_CODEC = re.compile(r'(?:avc|hvc|hev|vp0?9|vp8|av01|theora|mpeg2video)', re.IGNORECASE)

@@ -35,7 +35,6 @@ from worldmedia_security import (
     MAX_JSON_BODY,
     error_envelope,
     redact_text,
-    reserve_output_path,
     sanitize_filename,
     success_envelope,
     new_session_token,
@@ -173,18 +172,6 @@ class SecurityRuntimeTests(unittest.TestCase):
         self.assertLessEqual(len(sanitize_filename("x" * 1000, "mp3")), 124)
         with self.assertRaises(ValueError):
             sanitize_filename("title", "../exe")
-
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            first = reserve_output_path(root, "../CON", "mp3", timestamp="20260710-120000")
-            second = reserve_output_path(root, "../CON", "mp3", timestamp="20260710-120000")
-            third = reserve_output_path(root, "../CON", "mp3", timestamp="20260710-120000")
-            self.assertEqual(first.name, "_CON.mp3")
-            self.assertEqual(second.name, "_CON (20260710-120000).mp3")
-            self.assertEqual(third.name, "_CON (20260710-120000-2).mp3")
-            for candidate in (first, second, third):
-                self.assertTrue(candidate.is_file())
-                candidate.resolve().relative_to(root.resolve())
 
     def test_redaction_and_versioned_envelopes_are_bounded(self) -> None:
         first_token = new_session_token()

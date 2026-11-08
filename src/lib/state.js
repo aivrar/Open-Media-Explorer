@@ -13,6 +13,8 @@
  *     recordingEnabled: bool,
  *     enabledSources: Record<adapterId, bool>,
  *     showExplicitContent: bool,
+ *     tunerFavoritesOnly: bool,
+ *     showTechnicalDetails: bool,
  *   },
  *   sleepTimer: { until: number | null }
  * }
@@ -67,6 +69,8 @@ const DEFAULT_SETTINGS = {
   recordingEnabled: true,
   recordingQuality: DEFAULT_RECORDING_QUALITY,
   showExplicitContent: false,
+  tunerFavoritesOnly: false,
+  showTechnicalDetails: false,
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
 
@@ -103,6 +107,8 @@ export function normalizeSettings(value) {
     recordingEnabled: source.recordingEnabled !== false,
     recordingQuality: normalizeRecordingQuality(source.recordingQuality),
     showExplicitContent: source.showExplicitContent === true,
+    tunerFavoritesOnly: source.tunerFavoritesOnly === true,
+    showTechnicalDetails: source.showTechnicalDetails === true,
     enabledSources,
   };
 }

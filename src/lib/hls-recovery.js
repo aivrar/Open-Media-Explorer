@@ -47,6 +47,18 @@ function bufferedSecondsAhead(media) {
   return Math.max(0, ahead);
 }
 
+/** True when everything left to play is already buffered (a short or ending
+ *  VOD). Such a clip can never build the full cushion, so waiting for it would
+ *  only add the whole timeout before playback. */
+function bufferedToEnd(media) {
+  const duration = Number(media?.duration);
+  if (!Number.isFinite(duration) || duration <= 0) return false;
+  const rawTime = Number(media?.currentTime);
+  const currentTime = Number.isFinite(rawTime) ? Math.max(0, rawTime) : 0;
+  const remaining = duration - currentTime;
+  return remaining > 0 && bufferedSecondsAhead(media) >= remaining - 0.25;
+}
+
 /** Let public HLS build a small cushion before playback starts.
  *
  * Many community IPTV origins deliver a two-second fragment in nearly two
@@ -66,7 +78,7 @@ export function waitForHlsStartupBuffer(media, {
   }
   const target = Math.max(0, Number(targetSeconds) || 0);
   const timeout = Math.max(0, Number(timeoutMs) || 0);
-  if (bufferedSecondsAhead(media) >= target) return Promise.resolve(true);
+  if (bufferedSecondsAhead(media) >= target || bufferedToEnd(media)) return Promise.resolve(true);
   return new Promise((resolve) => {
     let settled = false;
     let timer = null;
@@ -83,7 +95,7 @@ export function waitForHlsStartupBuffer(media, {
     };
     const check = (event) => {
       if (!owns() || event?.type === 'error') return finish(false);
-      if (bufferedSecondsAhead(media) >= target) return finish(true);
+      if (bufferedSecondsAhead(media) >= target || bufferedToEnd(media)) return finish(true);
       return undefined;
     };
     for (const event of events) media.addEventListener(event, check);

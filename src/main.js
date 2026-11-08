@@ -36,6 +36,11 @@ function syncCatalogSourceSettings(settings) {
   }
 }
 
+/** Simple vs. technical presentation is pure CSS keyed off this attribute. */
+function syncTechnicalDetails(settings) {
+  document.documentElement.dataset.techDetails = settings?.showTechnicalDetails === true ? 'on' : 'off';
+}
+
 function syncMediaPriority(active) {
   const enabled = active === true;
   catalogScheduler.setPlaybackPriority(enabled);
@@ -86,8 +91,10 @@ async function boot() {
   bindTopBar();
   const state = getState();
   syncCatalogSourceSettings(state.settings);
+  syncTechnicalDetails(state.settings);
   if (!unbindCatalogSettings) {
     unbindCatalogSettings = subscribe('settings-change', syncCatalogSourceSettings);
+    subscribe('settings-change', syncTechnicalDetails);
   }
   if (!unbindMediaPriority) {
     syncMediaPriority(false);

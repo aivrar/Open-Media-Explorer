@@ -17,10 +17,12 @@ discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
 
-**New in v0.1.3:** bring your own M3U/M3U8 channel lists or paste a direct
-TV/radio link in **Library → My Playlists**. Search Favorites and separate
-Radio, TV, Video, and Audio with the media filter. Includes shutdown,
-thumbnail-queue, and saved-profile reliability fixes.
+**New in v0.1.4:** your favorites come first. The Library opens on
+**Favorites**, saved items use compact cards, and the Tuner can spin through
+only your starred stations with **★ My favorites**. Tuner and Grid show stations
+as each source answers, more station logos load, items without artwork show
+their initials, and the source labels are simpler (a Settings switch brings the
+technical details back).
 
 [**Download the latest EXE**](https://github.com/aivrar/Open-Media-Explorer/releases/latest/download/WorldMediaWindows.exe)
 · [Full documentation](docs/wiki/README.md)
@@ -47,7 +49,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.3-portable.zip
+WorldMediaWindows-0.1.4-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -87,7 +89,8 @@ and Owncast.
 ![Library - TV channels with sidebar counts](screenshots/1.PNG)
 
 **Tuner** - a radio-style dial for live radio and live TV. Drag the dial or use
-arrow keys; each station gets a cosmetic frequency.
+arrow keys; the dial shows each station's place in the list ("12 of 80"). Pick
+**★ My favorites** as the source to spin through only your starred stations.
 
 ![Tuner - analog dial](screenshots/2.PNG)
 
@@ -255,7 +258,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.3-portable.zip
+dist\WorldMediaWindows-0.1.4-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

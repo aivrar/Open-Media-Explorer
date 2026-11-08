@@ -9,6 +9,7 @@ import { isArtworkRelayUrl, loadArtworkImage, resolveArtworkRelay } from '../lib
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
+import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
 
 const ui = {};
 const state = {
@@ -211,9 +212,12 @@ function renderSourceStatus() {
   const statuses = [...state.sourceStates.values()];
   const ready = statuses.filter(({ state: value }) => value === 'ready').length;
   const failed = statuses.filter(({ state: value }) => value === 'error').length;
-  ui.status.textContent = state.loading
-    ? `Loading ${statuses.length || liveSources().length} live sources…`
-    : `${state.tiles.length} live items from ${ready} sources${failed ? ` · ${failed} unavailable` : ''}`;
+  if (state.loading && state.tiles.length === 0) {
+    ui.status.textContent = `Loading ${statuses.length || liveSources().length} live sources…`;
+    return;
+  }
+  ui.status.textContent = `${state.tiles.length} live items from ${ready} sources${failed ? ` · ${failed} unavailable` : ''}`
+    + (state.loading ? pendingSourcesText(state.sourceStates) : '');
 }
 
 function setBand(b) {
@@ -257,33 +261,31 @@ async function load({ onlySourceIds = null, preserve = false } = {}) {
     const controller = new AbortController();
     state.requestAbort = controller;
     for (const source of candidates) state.sourceStates.set(source.id, { state: 'loading', count: 0 });
-    const settled = await Promise.allSettled(candidates.map((source) => catalogScheduler.enqueue({
-      sourceId: source.id,
-      key: `grid:${gen}:${state.band}`,
-      priority: CATALOG_PRIORITY.USER,
-      signal: controller.signal,
-      task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
-    }).then((items) => {
-      if (gen === state.loadGen) state.sourceStates.set(source.id, { state: 'ready', count: items.length });
-      return items;
-    }, (error) => {
-      if (gen === state.loadGen && error?.name !== 'AbortError') {
-        state.sourceStates.set(source.id, { state: 'error', count: 0, error: String(error?.message || error) });
-      }
-      throw error;
-    })));
-    if (gen !== state.loadGen) return;
-    const refreshedIds = new Set(candidates
-      .filter((_source, index) => settled[index]?.status === 'fulfilled')
-      .map((source) => source.id));
-    const preserved = preserve
-      ? state.tiles.filter((item) => !refreshedIds.has(item.source))
-      : [];
-    const seen = new Set();
-    state.tiles = [...preserved, ...settled.flatMap(
-      (result) => result.status === 'fulfilled' ? result.value : [],
-    )]
-      .filter((item) => item.type === state.band && !seen.has(item.id) && seen.add(item.id));
+    // Show each source's tiles as soon as it answers; a slow or stalled
+    // source no longer holds the others back (see lib/live-load.js).
+    await Promise.allSettled(candidates.map((source) => {
+      const deadline = sourceDeadline(controller.signal);
+      return catalogScheduler.enqueue({
+        sourceId: source.id,
+        key: `grid:${gen}:${state.band}`,
+        priority: CATALOG_PRIORITY.USER,
+        signal: deadline.signal,
+        task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
+      }).then((items) => {
+        if (gen !== state.loadGen) return;
+        state.sourceStates.set(source.id, { state: 'ready', count: items.length });
+        state.tiles = mergeSourceItems(state.tiles, source.id, items, state.band);
+        renderTiles();
+        renderSourceStatus();
+      }, (error) => {
+        if (gen !== state.loadGen) return;
+        if (deadline.timedOut() || error?.name !== 'AbortError') {
+          const message = deadline.timedOut() ? 'Timed out' : String(error?.message || error);
+          state.sourceStates.set(source.id, { state: 'error', count: 0, error: message });
+          renderSourceStatus();
+        }
+      }).finally(() => deadline.done());
+    }));
   } catch (err) {
     if (gen !== state.loadGen) return;
     if (err?.name !== 'AbortError') console.warn('Grid load failed:', err);

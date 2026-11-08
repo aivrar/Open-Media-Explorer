@@ -96,7 +96,6 @@ _ALLOWED_IMAGE_TYPES = {
     "image/webp": "webp",
 }
 _PODCAST_NS = "https://podcastindex.org/namespace/1.0"
-_ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ATOM_NS = "http://www.w3.org/2005/Atom"
 
 
@@ -1777,6 +1776,203 @@ def validate_image(data: bytes, content_type: str) -> tuple[int, int]:
     return width, height
 
 
+# Station favicons are often Windows .ico files, or PNGs served with an icon
+# MIME type. Neither is relayed as-is: icons are decoded and re-encoded as a
+# fresh PNG, and the result still passes the strict validate_image() check.
+_ICON_IMAGE_TYPES = frozenset({"image/x-icon", "image/vnd.microsoft.icon", "image/ico", "image/icon"})
+_GENERIC_BINARY_TYPES = frozenset({"application/octet-stream", "binary/octet-stream"})
+_ARTWORK_FETCH_TYPES = (*_ALLOWED_IMAGE_TYPES, *_ICON_IMAGE_TYPES, *_GENERIC_BINARY_TYPES)
+_KIND_MIME = {kind: mime for mime, kind in _ALLOWED_IMAGE_TYPES.items()}
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_ICO_SIGNATURE = b"\x00\x00\x01\x00"
+MAX_ICON_ENTRIES = 64
+MAX_ICON_DIMENSION = 256
+
+
+def _icon_error() -> CatalogError:
+    return _error(HTTPStatus.BAD_GATEWAY, "ASSET_ICON_REJECTED", "Artwork icon could not be decoded.")
+
+
+def _encode_png_rgba(width: int, height: int, rows: list[bytes]) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        crc = zlib.crc32(kind + payload) & 0xFFFFFFFF
+        return len(payload).to_bytes(4, "big") + kind + payload + crc.to_bytes(4, "big")
+
+    raw = b"".join(b"\x00" + row for row in rows)
+    return (
+        _PNG_SIGNATURE
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 6))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _dib_icon_to_png(blob: bytes) -> bytes:
+    """Decode an uncompressed BMP-style icon image (1/4/8/24/32 bpp) to PNG."""
+
+    if len(blob) < 40:
+        raise _icon_error()
+    header_size = int.from_bytes(blob[0:4], "little")
+    width = int.from_bytes(blob[4:8], "little", signed=True)
+    double_height = int.from_bytes(blob[8:12], "little", signed=True)
+    bpp = int.from_bytes(blob[14:16], "little")
+    compression = int.from_bytes(blob[16:20], "little")
+    colors_used = int.from_bytes(blob[32:36], "little")
+    if (
+        header_size < 40 or header_size > len(blob) or compression != 0
+        or bpp not in {1, 4, 8, 24, 32} or double_height <= 0 or double_height % 2
+        or not 1 <= width <= MAX_ICON_DIMENSION or not 1 <= double_height // 2 <= MAX_ICON_DIMENSION
+    ):
+        raise _icon_error()
+    height = double_height // 2
+    offset = header_size
+    palette: list[bytes] = []
+    if bpp <= 8:
+        entries = colors_used or (1 << bpp)
+        if entries > (1 << bpp) or offset + 4 * entries > len(blob):
+            raise _icon_error()
+        palette = [bytes((blob[o + 2], blob[o + 1], blob[o])) for o in range(offset, offset + 4 * entries, 4)]
+        offset += 4 * entries
+    stride = ((width * bpp + 31) // 32) * 4
+    mask_stride = ((width + 31) // 32) * 4
+    pixels_end = offset + stride * height
+    if pixels_end > len(blob):
+        raise _icon_error()
+    has_mask = pixels_end + mask_stride * height <= len(blob)
+    use_alpha = bpp == 32 and any(blob[offset + i] for i in range(3, stride * height, 4))
+
+    rows: list[bytes] = []
+    for y in range(height):
+        source_row = height - 1 - y  # DIB rows are stored bottom-up
+        start = offset + source_row * stride
+        mask_start = pixels_end + source_row * mask_stride
+        out = bytearray()
+        for x in range(width):
+            if bpp == 32:
+                b, g, r, a = blob[start + 4 * x:start + 4 * x + 4]
+                rgb = bytes((r, g, b))
+            elif bpp == 24:
+                b, g, r = blob[start + 3 * x:start + 3 * x + 3]
+                rgb, a = bytes((r, g, b)), 255
+            else:
+                bit = x * bpp
+                byte = blob[start + bit // 8]
+                index = (byte >> (8 - bpp - bit % 8)) & ((1 << bpp) - 1)
+                if index >= len(palette):
+                    raise _icon_error()
+                rgb, a = palette[index], 255
+            if not use_alpha:
+                transparent = has_mask and (blob[mask_start + x // 8] >> (7 - x % 8)) & 1
+                a = 0 if transparent else 255
+            out += rgb + bytes((a,))
+        rows.append(bytes(out))
+    return _encode_png_rgba(width, height, rows)
+
+
+def _ico_to_png(data: bytes) -> bytes:
+    """Pick the largest, deepest image in an .ico file and return it as PNG bytes."""
+
+    if len(data) < 6 or not data.startswith(_ICO_SIGNATURE):
+        raise _icon_error()
+    count = int.from_bytes(data[4:6], "little")
+    directory_end = 6 + 16 * count
+    if not 1 <= count <= MAX_ICON_ENTRIES or directory_end > len(data):
+        raise _icon_error()
+    best: tuple[tuple[int, int], int, int] | None = None
+    for index in range(count):
+        entry = data[6 + 16 * index:6 + 16 * (index + 1)]
+        width = entry[0] or 256
+        height = entry[1] or 256
+        bpp = int.from_bytes(entry[6:8], "little")
+        size = int.from_bytes(entry[8:12], "little")
+        start = int.from_bytes(entry[12:16], "little")
+        if size <= 0 or start < directory_end or start + size > len(data):
+            continue
+        rank = (width * height, bpp)
+        if best is None or rank > best[0]:
+            best = (rank, start, size)
+    if best is None:
+        raise _icon_error()
+    image = data[best[1]:best[1] + best[2]]
+    if image.startswith(_PNG_SIGNATURE):
+        return bytes(image)
+    return _dib_icon_to_png(image)
+
+
+def _sniff_image_kind(data: bytes) -> str:
+    if data.startswith(_PNG_SIGNATURE):
+        return "png"
+    if data.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if data[:6] in {b"GIF87a", b"GIF89a"}:
+        return "gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return ""
+
+
+def _trim_trailing_bytes(data: bytes, kind: str) -> bytes:
+    """Drop junk some servers append after a complete PNG or JPEG.
+
+    Browsers ignore it; validate_image() requires the file to end at its
+    terminator. Only the bytes after the image's own end marker are removed.
+    """
+
+    if kind == "png":
+        offset = len(_PNG_SIGNATURE)
+        for _ in range(10_000):
+            if offset + 12 > len(data):
+                return data
+            length = int.from_bytes(data[offset:offset + 4], "big")
+            end = offset + 12 + length
+            if end > len(data):
+                return data
+            if data[offset + 4:offset + 8] == b"IEND":
+                return data[:end]
+            offset = end
+        return data
+    if kind == "jpeg" and not data.endswith(b"\xff\xd9"):
+        marker = data.rfind(b"\xff\xd9")
+        if marker > 2:
+            return data[:marker + 2]
+    return data
+
+
+def normalize_artwork(data: bytes, content_type: str) -> tuple[bytes, str]:
+    """Repair common favicon/logo serving mistakes; anything else is unchanged.
+
+    - .ico icons (or PNGs served with an icon MIME type) become PNG;
+    - images served as application/octet-stream get their real image type;
+    - junk after a complete PNG/JPEG is trimmed.
+    The returned pair must still pass validate_image(); this never relaxes the
+    MIME/magic agreement (a PNG labelled image/jpeg is still rejected).
+    """
+
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if not isinstance(data, bytes) or len(data) > MAX_ASSET_BYTES:
+        return data, content_type
+    if media_type in _ICON_IMAGE_TYPES:
+        if data.startswith(_PNG_SIGNATURE):
+            return _trim_trailing_bytes(data, "png"), "image/png"
+        if data.startswith(_ICO_SIGNATURE):
+            return _ico_to_png(data), "image/png"
+        raise _error(HTTPStatus.BAD_GATEWAY, "ASSET_TYPE_REJECTED", "Artwork response is not a supported image.")
+    # A common favicon mistake: an .ico file served as image/png.
+    if media_type == "image/png" and data.startswith(_ICO_SIGNATURE):
+        return _ico_to_png(data), "image/png"
+    if media_type in _GENERIC_BINARY_TYPES:
+        kind = _sniff_image_kind(data)
+        if kind:
+            return _trim_trailing_bytes(data, kind), _KIND_MIME[kind]
+        if data.startswith(_ICO_SIGNATURE):
+            return _ico_to_png(data), "image/png"
+        raise _error(HTTPStatus.BAD_GATEWAY, "ASSET_TYPE_REJECTED", "Artwork response is not a supported image.")
+    expected = _ALLOWED_IMAGE_TYPES.get(media_type)
+    if expected and _sniff_image_kind(data) == expected:
+        return _trim_trailing_bytes(data, expected), content_type
+    return data, content_type
+
+
 class AssetCache:
     """Bounded binary cache stored only under native cache/assets-v1."""
 
@@ -2163,18 +2359,18 @@ class AssetRegistry:
                 cache_epoch = self._cache_epoch
             fetched = BoundedFetcher(self.connector, clock=self.clock, cancel=self._cancel).fetch(
                 registration.url,
-                accept="image/webp,image/png,image/jpeg,image/gif;q=0.9",
-                allowed_types=_ALLOWED_IMAGE_TYPES,
+                accept="image/webp,image/png,image/jpeg,image/gif;q=0.9,image/x-icon;q=0.5",
+                allowed_types=_ARTWORK_FETCH_TYPES,
                 max_compressed=MAX_ASSET_BYTES,
                 max_decoded=MAX_ASSET_BYTES,
             )
-            content_type = fetched.content_type
-            width, height = validate_image(fetched.data, content_type)
+            data, content_type = normalize_artwork(fetched.data, fetched.content_type)
+            width, height = validate_image(data, content_type)
             with self._lock:
                 if cache_epoch != self._cache_epoch or self._closed:
-                    etag = '"' + hashlib.sha256(fetched.data).hexdigest() + '"'
+                    etag = '"' + hashlib.sha256(data).hexdigest() + '"'
                     return AssetBlob(
-                        fetched.data,
+                        data,
                         content_type,
                         width,
                         height,
@@ -2182,11 +2378,11 @@ class AssetRegistry:
                         float(self.clock.time()) + self.ttl_seconds,
                     )
                 try:
-                    return self.cache.put(registration.url, fetched.data, content_type, ttl=self.ttl_seconds)
+                    return self.cache.put(registration.url, data, content_type, ttl=self.ttl_seconds)
                 except OSError:
-                    etag = '"' + hashlib.sha256(fetched.data).hexdigest() + '"'
+                    etag = '"' + hashlib.sha256(data).hexdigest() + '"'
                     return AssetBlob(
-                        fetched.data,
+                        data,
                         content_type,
                         width,
                         height,

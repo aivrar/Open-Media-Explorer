@@ -9,7 +9,6 @@ import secrets
 import shutil
 import stat
 import subprocess
-import tempfile
 import threading
 import time
 import zipfile
@@ -376,7 +375,7 @@ def query_release_asset(
         try:
             upstream = selected.open(
                 GITHUB_RELEASE_API,
-                headers={"User-Agent": "WorldMediaWindows/0.1.3"},
+                headers={"User-Agent": "WorldMediaWindows/0.1.4"},
                 cancel=cancellation,
             )
             try:
@@ -664,7 +663,7 @@ def download_asset(
         try:
             upstream = selected.open(
                 asset.download_url,
-                headers={"User-Agent": "WorldMediaWindows/0.1.3"},
+                headers={"User-Agent": "WorldMediaWindows/0.1.4"},
                 cancel=cancellation,
             )
             try:
@@ -698,7 +697,7 @@ def download_asset(
         except InstallCancelled:
             destination.unlink(missing_ok=True)
             raise
-        except MediaError as error:
+        except MediaError:
             last_error = FfmpegError("FFmpeg asset download failed.", code="ASSET_HTTP_ERROR", retryable=True)
             destination.unlink(missing_ok=True)
         except FfmpegError as error:

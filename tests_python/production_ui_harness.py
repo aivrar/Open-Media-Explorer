@@ -4,6 +4,16 @@ This file is test-only. It serves ``frontend/index.html`` with two inline
 diagnostic scripts added around the unchanged, hashed production entrypoint.
 The browser uses an isolated profile and loopback media, so the user's saved
 World Media state is never read or changed.
+
+How to run (needs FFmpeg on PATH to build the loopback test media):
+
+1. ``npm run build`` so ``frontend/`` holds the bundle under test.
+2. ``python tests_python/production_ui_harness.py`` (serves on port 19836).
+3. Open ``http://127.0.0.1:19836/production-ui-test`` in Microsoft Edge started
+   with ``--autoplay-policy=no-user-gesture-required`` (the checks start
+   playback from script, which the default autoplay policy blocks).
+4. Within about a minute, ``http://127.0.0.1:19836/api/test/ui-result``
+   reports ``{"passed": true, "checks": [...]}`` or the first failing check.
 """
 from __future__ import annotations
 
@@ -13,7 +23,6 @@ import math
 import struct
 import sys
 import tempfile
-import threading
 import urllib.parse
 import wave
 from pathlib import Path

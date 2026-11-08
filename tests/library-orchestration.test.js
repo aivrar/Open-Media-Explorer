@@ -67,8 +67,13 @@ test('all interactive catalog modes share the scheduler and cancel on mode chang
   for (const source of [discovery, grid, tuner]) {
     assert.match(source, /catalogScheduler\.enqueue\(/);
     assert.match(source, /CATALOG_PRIORITY\.USER/);
-    assert.match(source, /signal:\s*controller\.signal/);
+    // Either the view's controller directly, or a per-source deadline chained to it.
+    assert.match(source, /signal:\s*(?:controller|deadline)\.signal/);
     assert.match(source, /subscribe\(['"]mode-change['"]/);
+  }
+  for (const source of [grid, tuner]) {
+    assert.match(source, /const deadline = sourceDeadline\(controller\.signal\)/);
+    assert.match(source, /\.finally\(\(\) => deadline\.done\(\)\)/);
   }
   assert.match(discovery, /key:\s*`discovery:\$\{requestGen\}`/);
   assert.match(discovery, /DISCOVERY_ATTEMPT_DEADLINE_MS/);

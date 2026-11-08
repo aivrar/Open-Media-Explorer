@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.4 - 2026-11-08
+
+- Library opens on Favorites when you have saved items (the full catalog still
+  loads in the background for All Sources).
+- Tuner: new "★ My favorites" choice in the Source menu puts only your starred
+  stations on the dial; the choice is remembered.
+- Favorites and My Playlists use compact cards, so about three times as many
+  saved items fit on screen.
+- Tuner marks your starred stations with ★ in the station strip and on the dial.
+- Simpler cards and sidebar by default: source status labels (Pull/Wait/Done/
+  Live/Stale), boxed source badges, and license notes are hidden; a source that
+  needs attention shows an amber dot, and hovering a source shows its status.
+  Settings → Appearance → "Show technical source details" restores the full view.
+- Tuner and Grid show stations as each source answers instead of waiting for
+  the slowest one, and a source that does not answer within 20 seconds is marked
+  unavailable rather than holding the view on "Loading".
+- More station logos appear: .ico favicons are converted to PNG, and common
+  serving mistakes are repaired (images labelled as generic downloads, and
+  extra bytes after the end of a PNG or JPEG). SVG logos and web pages returned
+  in place of an image are still refused.
+- Items without artwork show their initials on a coloured square instead of a
+  grey icon, so saved lists are easier to scan.
+- Tuner shows the station's place in the list ("12 of 80") instead of a made-up
+  FM frequency that changed whenever the list reloaded.
+- Tuner dial text is readable in the light theme.
+- The window title bar now starts in the app's saved theme and repaints right
+  away on Windows 10, instead of showing white until focus changed; Windows
+  "settings changed" broadcasts no longer reset it to the Windows app theme.
+- The Shutdown button is a quiet outline that turns red on hover, instead of a
+  bright red button.
+- Short HLS clips that are fully buffered start at once instead of waiting up to
+  30 seconds for a six-second playback cushion they can never build.
+- Update Vite to 8.3.6 (development server advisory); npm audit reports no
+  vulnerabilities.
+- Repository cleanup: remove completed planning/research logs, duplicate
+  screenshots, one-off phase probes, and small unused code; refresh the user
+  guide, file tree, and acceptance-harness instructions.
+
 ## 0.1.3 - 2026-10-07
 
 - Keep the playlist toolbar and Add link form usable in narrow windows.

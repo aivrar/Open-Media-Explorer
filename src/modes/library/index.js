@@ -80,13 +80,29 @@ function tryNext() {
   playItem(next).catch(() => {});
 }
 
+let startTabChosen = false;
+
+/** The first time Library opens in a session, show the user's Favorites when
+ *  they have any, so saved stations are one click away. The full catalog still
+ *  loads in the background, so switching to All Sources stays instant. Later
+ *  visits keep whatever tab the user last picked. */
+export function chooseLibraryStartTab(favoriteCount = getState().favorites.length) {
+  if (startTabChosen) return;
+  startTabChosen = true;
+  if (view.activeSource === 'all' && favoriteCount > 0) {
+    view.activeSource = 'favorites';
+    view.filters.type = '';
+  }
+}
+
 // Marker for cache-bust verification (build id changes whenever this string
 // changes, so the WebView2 has to fetch a fresh bundle on next launch).
-  // build-id: 2026-10-07-v0.1.3
+  // build-id: 2026-11-08-favorites-first
 export function renderLibrary(host) {
-  console.info('[library] build 2026-10-07-v0.1.3 loaded');
+  console.info('[library] build 2026-11-08-favorites-first loaded');
   tearDown();
   resetThumbnailHydrationScope();
+  chooseLibraryStartTab();
   host.appendChild(buildShell());
 
   // buildShell() created a fresh resultsHost — so any ids we tracked as

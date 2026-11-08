@@ -10,7 +10,7 @@ import uuid
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE = ROOT / 'dist/Release-v0.1.3/WorldMediaWindows.exe'
+EXE = ROOT / 'dist/Release-v0.1.4/WorldMediaWindows.exe'
 SCRATCH = ROOT / 'build' / ('release-ui-' + uuid.uuid4().hex)
 SCRATCH.mkdir()
 with socket.socket() as sock:

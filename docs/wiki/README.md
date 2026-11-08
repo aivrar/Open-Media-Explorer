@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.3` behavior in this repository: how to
+It describes the shipped `0.1.4` behavior in this repository: how to
 install and run it, browse all eleven public sources, play media, use the
 equalizer, download finite files, record live streams, preserve portable data,
 and diagnose provider or runtime problems.
@@ -58,7 +58,8 @@ providers at run time and can change without an app update.
   identities in memory for the session; only the number of mounted DOM cards is
   limited for performance.
 - **Tuner** is a live station/channel selector with a rotary presentation.
-  Frequencies are a convenient UI index, not broadcaster frequencies.
+  The dial shows the station's place in the list, not a broadcast frequency,
+  and can be limited to your starred stations.
 - **Grid** is a guide-style view for live TV and radio. It uses the same live
   adapters as Tuner but presents tiles, category/country/source filters, and a
   text filter.
@@ -119,5 +120,3 @@ useful for implementation detail:
 - [Windows build guide](../BUILD_WINDOWS.md)
 - [Repository file tree](../FILE_TREE.md)
 - [Release checklist](../RELEASE_CHECKLIST.md)
-- [Five-source research notes](../FIVE_NEW_SOURCES_RESEARCH.md)
-- [Player/capture/EQ research notes](../PLAYER_CAPTURE_EQ_RESEARCH.md)

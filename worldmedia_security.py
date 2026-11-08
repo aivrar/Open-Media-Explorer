@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import hmac
 import json
-import os
 import re
 import secrets
 import unicodedata
 import urllib.parse
 from dataclasses import dataclass
 from http import HTTPStatus
-from pathlib import Path
 from typing import Any, BinaryIO, Mapping
 
 
@@ -214,49 +212,6 @@ def sanitize_filename(title: str, extension: str, *, fallback: str = "media") ->
     if device_stem in _RESERVED_WINDOWS_NAMES:
         text = f"_{text}"
     return f"{text}{suffix}"
-
-
-def reserve_output_path(
-    root: Path,
-    title: str,
-    extension: str,
-    *,
-    timestamp: str | None = None,
-    max_attempts: int = 1000,
-) -> Path:
-    """Atomically reserve a collision-safe final path inside *root*."""
-
-    resolved_root = Path(root).resolve()
-    resolved_root.mkdir(parents=True, exist_ok=True)
-    base_name = sanitize_filename(title, extension)
-    stem = Path(base_name).stem
-    suffix = Path(base_name).suffix
-    stamp = timestamp or __import__("time").strftime("%Y%m%d-%H%M%S")
-    for attempt in range(max_attempts):
-        if attempt == 0:
-            candidate_name = base_name
-        elif attempt == 1:
-            candidate_name = f"{stem} ({stamp}){suffix}"
-        else:
-            candidate_name = f"{stem} ({stamp}-{attempt}){suffix}"
-        candidate = (resolved_root / candidate_name).resolve()
-        try:
-            candidate.relative_to(resolved_root)
-        except ValueError:
-            raise ValueError("reserved output escaped its root") from None
-        try:
-            descriptor = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            continue
-        try:
-            os.close(descriptor)
-        except Exception:
-            try:
-                candidate.unlink(missing_ok=True)
-            finally:
-                raise
-        return candidate
-    raise FileExistsError("could not reserve a unique output filename")
 
 
 def redact_url(value: str) -> str:

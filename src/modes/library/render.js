@@ -14,6 +14,7 @@
 import { getState, isFavorite, addFavorite, removeFavorite } from '../../lib/state.js';
 import { SOURCES, getSourceLabel } from '../../lib/sources.js';
 import { el } from './utils.js';
+import { artworkInitials, initialsHue } from '../../lib/initials.js';
 import {
   view, renderedIds,
   RENDER_LIMIT_INITIAL, RENDER_LIMIT_STEP, RENDER_WINDOW_MAX,
@@ -242,7 +243,17 @@ function renderCard(item, opts = {}) {
 
   const thumb = el('div', { className: 'card-thumb' });
   const placeholder = el('div', { className: 'placeholder' });
-  placeholder.innerHTML = sourceGlyph(item.type);
+  const initials = artworkInitials(item.title);
+  if (initials) {
+    placeholder.classList.add('has-initials');
+    placeholder.appendChild(el('div', {
+      className: 'ph-initials',
+      text: initials,
+      attrs: { 'aria-hidden': 'true', style: `--ph-hue: ${initialsHue(item.title)}` },
+    }));
+  } else {
+    placeholder.innerHTML = sourceGlyph(item.type);
+  }
   placeholder.appendChild(el('div', { className: 'ph-label', text: getSourceLabel(item.source) }));
   thumb.appendChild(placeholder);
   const star = el('button', {
@@ -534,6 +545,9 @@ export function updateSidebarCounts() {
         healthSpan.className = `source-health is-${health.kind}`;
         healthSpan.title = health.title;
         healthSpan.setAttribute('aria-label', `${getSourceLabel(id)}: ${health.title}`);
+        // With technical details off the label is hidden; keep the status
+        // one hover away on the whole row.
+        li.title = `${getSourceLabel(id)}: ${health.text} (${health.title})`;
       }
     }
   }

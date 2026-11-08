@@ -32,7 +32,6 @@ PROFILES = {
     "balanced": {"audio": 160, "height": 720, "crf": 23, "video_audio": 160},
     "high": {"audio": 256, "height": 1080, "crf": 20, "video_audio": 192},
 }
-DEFAULT_PROFILE = "balanced"
 PROBE_TIMEOUT = 30
 # Some live HLS origins publish short rolling windows but occasionally stall a
 # segment for longer than their advertised target duration. Keep preparation
