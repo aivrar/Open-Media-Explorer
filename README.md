@@ -17,6 +17,9 @@ discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
 
+**New in v0.1.5:** the portable ZIP opens its window again after being
+extracted from a download (it failed to start in v0.1.2 to v0.1.4).
+
 **New in v0.1.4:** your favorites come first. The Library opens on
 **Favorites**, saved items use compact cards, and the Tuner can spin through
 only your starred stations with **★ My favorites**. Tuner and Grid show stations
@@ -49,7 +52,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.4-portable.zip
+WorldMediaWindows-0.1.5-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -258,7 +261,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.4-portable.zip
+dist\WorldMediaWindows-0.1.5-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

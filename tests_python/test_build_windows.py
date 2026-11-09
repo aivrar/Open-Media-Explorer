@@ -45,25 +45,36 @@ class PortableBuildTests(unittest.TestCase):
         self.assertEqual(build_windows.RUNTIME_SOURCE_PACKAGES, ("proxy_tools==0.1.0",))
         self.assertIn("defusedxml==0.7.1", build_windows.RUNTIME_WHEELS)
 
-    def test_pruning_removes_only_unused_platform_payloads(self) -> None:
+    def test_pruning_keeps_every_webview2_runtime_platform(self) -> None:
+        # pywebview's EdgeChromium backend looks up win-arm64, win-x64 and
+        # win-x86 at import time and refuses to start if any is missing
+        # (issue #3: "Cannot find win-arm64" on x64 Windows).
         with tempfile.TemporaryDirectory() as directory:
             site_packages = Path(directory)
             library = site_packages / "webview" / "lib"
-            x64 = library / "runtimes" / "win-x64" / "native" / "WebView2Loader.dll"
+            required = tuple(
+                library / "runtimes" / platform / "native" / "WebView2Loader.dll"
+                for platform in ("win-arm64", "win-x64", "win-x86")
+            )
             unwanted = (
                 library / "pywebview-android.jar",
                 library / "WebBrowserInterop.x86.dll",
-                library / "runtimes" / "win-arm64" / "native" / "WebView2Loader.dll",
-                library / "runtimes" / "win-x86" / "native" / "WebView2Loader.dll",
             )
-            for path in (x64, *unwanted):
+            for path in (*required, *unwanted):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"test")
 
             build_windows.prune_unused_payloads(site_packages)
 
-            self.assertTrue(x64.is_file())
+            self.assertTrue(all(path.is_file() for path in required))
             self.assertTrue(all(not path.exists() for path in unwanted))
+
+    def test_embedded_launcher_exits_instead_of_opening_a_prompt(self) -> None:
+        launcher = (Path(build_windows.__file__).resolve().parent / "assets" / "embedded" / "sitecustomize.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("_code = main()", launcher)
+        self.assertIn("os._exit(", launcher)
 
     def test_runtime_configuration_is_isolated_and_records_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

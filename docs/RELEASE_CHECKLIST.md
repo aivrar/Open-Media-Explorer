@@ -3,11 +3,12 @@
 Record date, commit, operator, commands, result, artifact SHA-256, and any
 expected upstream outage for every checked release.
 
-## Current release: v0.1.4 (2026-11-08)
+## Current release: v0.1.5 (2026-11-08)
 
-See [the v0.1.4 release record](RELEASE_RECORD_0.1.4.md) for the current
+See [the v0.1.5 release record](RELEASE_RECORD_0.1.5.md) for the current
 checks, artifact hashes, and explicit verification limitations. The previous
-[v0.1.3 record](RELEASE_RECORD_0.1.3.md) is kept for reference.
+[v0.1.4](RELEASE_RECORD_0.1.4.md) and [v0.1.3](RELEASE_RECORD_0.1.3.md)
+records are kept for reference.
 
 The completed matrix below is the **historical v0.1.2 record from August 1**.
 It is not a claim that every historical test was repeated for later releases.
@@ -38,6 +39,19 @@ It is not a claim that every historical test was repeated for later releases.
   and `/THIRD_PARTY_NOTICES.txt`.
 - [x] Submit authenticated shutdown and verify the process, listening port,
   FFmpeg/ffprobe children, staging archives, partials, and locks are gone.
+
+## Portable ZIP windowed launch gate
+
+Headless launches skip the window component, so they cannot catch a portable
+ZIP that never opens its window (issue #3).
+
+- [ ] Extract the final ZIP into two new folders. In one, mark every file as
+  downloaded (`Zone.Identifier` with `ZoneId=3`, as Explorer does for a zip
+  from the internet).
+- [ ] Launch `WorldMediaWindows.exe` from each folder with disposable state and
+  confirm a visible "World Media" window opens.
+- [ ] Confirm `webview\lib\runtimes\` contains `win-arm64`, `win-x64` and
+  `win-x86`.
 
 ## Writable portable functional matrix
 

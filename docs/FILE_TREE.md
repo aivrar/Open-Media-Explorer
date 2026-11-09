@@ -22,8 +22,10 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.2.md
 |   |-- RELEASE_NOTES_0.1.3.md
 |   |-- RELEASE_NOTES_0.1.4.md
+|   |-- RELEASE_NOTES_0.1.5.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
+|   |-- RELEASE_RECORD_0.1.5.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -126,4 +128,4 @@ WorldMediaWindows/
 | `build_single_exe.py` | Builds the classic unsigned one-file `dist\WorldMediaWindows.exe` with the current frontend, icon, and WebView bridge. |
 | `assets/` | App icon, Windows metadata, and embedded-runtime launcher assets. |
 | `docs/PROVIDERS.md` | All eleven public endpoints, cache/refresh rules, limitations, and content/retry behavior. |
-| `docs/RELEASE_NOTES_0.1.4.md` | GitHub release notes for the `v0.1.4` tag and its release assets. |
+| `docs/RELEASE_NOTES_0.1.5.md` | GitHub release notes for the `v0.1.5` tag and its release assets. |

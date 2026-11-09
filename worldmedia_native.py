@@ -97,6 +97,38 @@ def configure_environment(port: int, paths=None) -> tuple[Path, Path]:
     return root, runtime
 
 
+_BUNDLED_ASSEMBLY_PACKAGES = ("pythonnet", "clr_loader", "webview")
+
+
+def unblock_bundled_assemblies(root: Path | None = None) -> int:
+    """Clear the downloaded-file mark from the app's own .NET assemblies.
+
+    Explorer copies a zip's "downloaded from the internet" mark
+    (the ``Zone.Identifier`` stream) onto every extracted file. .NET Framework
+    then refuses to load Python.Runtime.dll, and the window never opens
+    ("Failed to resolve Python.Runtime.Loader.Initialize"). This is the same
+    as ticking Unblock in the file's Properties, limited to the DLLs shipped
+    inside this app's own pythonnet/clr_loader/pywebview folders. The single
+    EXE unpacks to a fresh temporary folder and never has the mark.
+    """
+
+    if os.name != "nt":
+        return 0
+    base = Path(root) if root is not None else Path(__file__).resolve().parent / "Lib" / "site-packages"
+    cleared = 0
+    for package in _BUNDLED_ASSEMBLY_PACKAGES:
+        folder = base / package
+        if not folder.is_dir():
+            continue
+        for dll in folder.rglob("*.dll"):
+            try:
+                os.remove(f"{dll}:Zone.Identifier")
+                cleared += 1
+            except OSError:
+                pass
+    return cleared
+
+
 def main() -> int:
     global _LOG_HANDLE
 
@@ -140,6 +172,7 @@ def main() -> int:
     server_thread.start()
     try:
         try:
+            unblock_bundled_assemblies()
             import webview
 
             theme_bridge = NativeThemeBridge(saved_theme(os.environ.get("WORLDMEDIA_STATE_DIR")))

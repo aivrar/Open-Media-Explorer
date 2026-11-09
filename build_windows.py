@@ -21,7 +21,7 @@ DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 LOCAL_CACHE_DIR = BUILD_DIR / "local-cache"
 OUTPUT_DIR = DIST_DIR / "WorldMediaWindows"
-ARCHIVE_PATH = DIST_DIR / "WorldMediaWindows-0.1.4-portable.zip"
+ARCHIVE_PATH = DIST_DIR / "WorldMediaWindows-0.1.5-portable.zip"
 PYTHON_VERSION = "3.13.14"
 PYTHON_ARCHIVE = f"python-{PYTHON_VERSION}-embed-amd64.zip"
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{PYTHON_ARCHIVE}"
@@ -131,11 +131,12 @@ def install_runtime_dependencies(target: Path) -> None:
 
 def prune_unused_payloads(site_packages: Path) -> None:
     webview = site_packages / "webview"
+    # Keep every lib/runtimes/<platform> folder: pywebview's EdgeChromium backend
+    # resolves win-arm64, win-x64, and win-x86 at import time and refuses to
+    # start if any is missing, even on x64.
     for path in (
         webview / "lib" / "pywebview-android.jar",
         webview / "lib" / "WebBrowserInterop.x86.dll",
-        webview / "lib" / "runtimes" / "win-arm64",
-        webview / "lib" / "runtimes" / "win-x86",
     ):
         if path.is_dir():
             shutil.rmtree(path)
@@ -152,7 +153,7 @@ def write_runtime_configuration() -> None:
     shutil.copy2(ASSET_DIR / "embedded" / "sitecustomize.py", site_packages / "sitecustomize.py")
     manifest = {
         "application": "World Media",
-        "version": "0.1.4",
+        "version": "0.1.5",
         "python": PYTHON_VERSION,
         "python_archive": PYTHON_ARCHIVE,
         "python_archive_sha256": PYTHON_SHA256,

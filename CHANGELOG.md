@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5 - 2026-11-08
+
+- Fixed the portable ZIP not opening a window (issue #3). The ZIP was missing
+  two window-component runtime folders that pywebview checks for at startup.
+  The app's own bundled .NET DLLs are also now unblocked when they were
+  extracted from a downloaded zip, which Windows otherwise refused to load.
+  Affected the portable ZIP since 0.1.2; the single EXE was not affected.
+- A portable startup failure now exits cleanly and is written to
+  `logs\native.log`, instead of leaving a hidden process running.
+
 ## 0.1.4 - 2026-11-08
 
 - Library opens on Favorites when you have saved items (the full catalog still
