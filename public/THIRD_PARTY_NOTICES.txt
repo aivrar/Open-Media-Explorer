@@ -67,10 +67,10 @@ Optional separately acquired tool
 
 FFmpeg is not embedded in the World Media portable folder. If the user explicitly
 installs the managed ffmpeg-n8.1-latest-win64-gpl-8.1.zip build supplied by
-BtbN/FFmpeg-Builds, World Media retains the package's own license files,
+FFmpeg-Builds/FFmpeg-Builds, World Media retains the package's own license files,
 manifest, SHA-256 provenance, and SOURCE.txt beside that managed installation.
 
-Provider/source: https://github.com/BtbN/FFmpeg-Builds
+Provider/source: https://github.com/FFmpeg-Builds/FFmpeg-Builds
 FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/n8.1
 FFmpeg legal information: https://ffmpeg.org/legal.html
 

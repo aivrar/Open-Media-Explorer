@@ -2,7 +2,7 @@
 
 import { controlRequest } from './capture-client.js';
 
-export const FFMPEG_PROVIDER = 'BtbN/FFmpeg-Builds';
+export const FFMPEG_PROVIDER = 'FFmpeg-Builds/FFmpeg-Builds';
 export const FFMPEG_VERSION_FAMILY = 'FFmpeg n8.1 win64 GPL 8.1';
 export const FFMPEG_APPROX_SIZE = 'about 160 MB';
 

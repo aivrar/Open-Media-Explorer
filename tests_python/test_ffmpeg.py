@@ -72,7 +72,7 @@ def make_package(*, entries: dict[str, bytes] | None = None, compression=zipfile
 
 def release_json(content: bytes, *, digest: str | None = None) -> dict:
     return {
-        "url": "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/123",
+        "url": "https://api.github.com/repos/FFmpeg-Builds/FFmpeg-Builds/releases/123",
         "id": 123,
         "tag_name": "latest",
         "name": "Latest Auto-Build",
@@ -87,7 +87,7 @@ def release_json(content: bytes, *, digest: str | None = None) -> dict:
             "digest": digest or f"sha256:{hashlib.sha256(content).hexdigest()}",
             "content_type": "application/zip",
             "browser_download_url": (
-                "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
+                "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/latest/"
                 "ffmpeg-n8.1-latest-win64-gpl-8.1.zip"
             ),
         }],
@@ -223,6 +223,11 @@ class ReleaseAndDownloadTests(unittest.TestCase):
         self.assertEqual(asset.asset_id, 456)
         mutations = [
             ("wrong repository", lambda value: value.update(url="https://api.github.com/repos/evil/repo/releases/123")),
+            ("former repository name", lambda value: value.update(
+                url="https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/123")),
+            ("former download address", lambda value: value["assets"][0].update(
+                browser_download_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
+                                     "ffmpeg-n8.1-latest-win64-gpl-8.1.zip")),
             ("wrong tag", lambda value: value.update(tag_name="nightly")),
             ("draft", lambda value: value.update(draft=True)),
             ("duplicate", lambda value: value["assets"].append(dict(value["assets"][0]))),

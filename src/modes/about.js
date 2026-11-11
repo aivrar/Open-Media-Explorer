@@ -141,7 +141,7 @@ export function renderAbout(host) {
             Optional recording support can use a separately downloaded
             <a href="https://ffmpeg.org/" target="_blank" rel="noreferrer">FFmpeg</a>
             GPL build supplied by
-            <a href="https://github.com/BtbN/FFmpeg-Builds" target="_blank" rel="noreferrer">BtbN/FFmpeg-Builds</a>.
+            <a href="https://github.com/FFmpeg-Builds/FFmpeg-Builds" target="_blank" rel="noreferrer">FFmpeg-Builds/FFmpeg-Builds</a>.
             World Media verifies the GitHub SHA-256 digest and retains the downloaded
             package's license material, manifest, and source link. See
             <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noreferrer">FFmpeg legal information</a>.

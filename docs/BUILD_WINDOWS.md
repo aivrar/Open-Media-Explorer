@@ -179,7 +179,7 @@ portable copy, the system `PATH`, and a managed LocalAppData fallback. Both
 encoder, and muxer required by the fixed recording profiles.
 
 The Settings dialog can install the pinned FFmpeg n8.1 win64 GPL 8.1 build from
-[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). Installation requires
+[FFmpeg-Builds/FFmpeg-Builds](https://github.com/FFmpeg-Builds/FFmpeg-Builds). Installation requires
 explicit confirmation and no administrator rights. The downloader verifies the
 GitHub repository, exact asset name, size, content type, and SHA-256 digest;
 rejects unsafe ZIP entries; and stages and probes the binaries before atomically

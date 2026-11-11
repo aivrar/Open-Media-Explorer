@@ -11,6 +11,10 @@
 - The floating video grows with the window (320 px wide on a 1080p-wide window,
   up to 640 px at 4K), and a button in its corner switches to a larger size;
   the choice is remembered.
+- Fixed the managed FFmpeg install in Settings. The provider's GitHub project
+  moved from `BtbN/FFmpeg-Builds` to `FFmpeg-Builds/FFmpeg-Builds`, and the app
+  refused the new address ("GitHub release repository identity is invalid").
+  Existing FFmpeg installs were not affected.
 
 ## 0.1.5 - 2026-11-08
 

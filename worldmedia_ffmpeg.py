@@ -21,7 +21,11 @@ from worldmedia_runtime import RuntimePaths, get_runtime_paths, probe_writable
 from worldmedia_security import safe_message
 
 
-GITHUB_REPOSITORY = "BtbN/FFmpeg-Builds"
+# The provider's GitHub address. The project moved from BtbN/FFmpeg-Builds to
+# this organization in November 2026 (same repository, same maintainer). GitHub
+# redirects the old name, but its API answers with the new one, and the release
+# parser below accepts only an exact match.
+GITHUB_REPOSITORY = "FFmpeg-Builds/FFmpeg-Builds"
 GITHUB_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
 MANAGED_ASSET_NAME = "ffmpeg-n8.1-latest-win64-gpl-8.1.zip"
 ASSET_MIN_BYTES = 100 * 1024 * 1024

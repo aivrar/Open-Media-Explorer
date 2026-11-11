@@ -5,9 +5,16 @@ Release scope: three interface changes from
 switched off in Settings are left out of the Library sidebar; the Tuner dial
 accepts the mouse wheel and no longer jumps when dragged across the 9 o'clock
 position; and the floating video scales with the window and has a larger-size
-button whose state is a saved setting (`videoSize`). No backend, packaging, or
-network changes beyond the version number. See
+button whose state is a saved setting (`videoSize`). It also restores the
+managed FFmpeg install, whose provider moved to a new GitHub address. See
 [release notes](RELEASE_NOTES_0.1.6.md).
+
+**Republished the same day.** v0.1.6 was first published on 2026-11-10 from
+commit `f92eb26` without the FFmpeg fix. A few hours later the tag was moved
+and all three release files were replaced with the build recorded here. The
+first upload's hashes were EXE `F2BFE7DA...B15EAC7D` and ZIP
+`20FFA977...259D365A`; each file had been downloaded at most twice, including
+this project's own verification download.
 
 ## What changed and why
 
@@ -23,6 +30,15 @@ network changes beyond the version number. See
   width, held between 320 px and 640 px (and at most 32% of a narrow window),
   so a 1080p-wide window is unchanged. The larger size is 40% of the window
   width, held between 480 px and 1400 px.
+- The managed FFmpeg provider moved from `BtbN/FFmpeg-Builds` to
+  `FFmpeg-Builds/FFmpeg-Builds` (same repository ID 292087234, same
+  maintainer; GitHub redirects the old name). GitHub's API now answers with the
+  new name, which the release parser rejected as "GitHub release repository
+  identity is invalid", so the install in Settings failed in v0.1.2 to v0.1.5.
+  The scheduled provider check caught it on 2026-11-09. The pinned repository
+  is now the new name; the former name is rejected and has a test.
+  Existing installs are not affected, because the manifest's recorded
+  repository is not checked when an installed copy is loaded.
 
 ## Evidence
 
@@ -42,12 +58,20 @@ network changes beyond the version number. See
     at the larger size; position unchanged (16 px from the right edge, 8 px
     above the player bar); the size choice saved, restored after a reload, and
     other settings untouched; nothing drawn while no video is playing.
+- `tests_python/ffmpeg_real_integration.py` (real provider): release 440369099
+  queried at the new address, the 194,054,566-byte archive downloaded, its
+  SHA-256 digest verified, and ffmpeg and ffprobe installed and probed
+  (`n8.1.3-34-ga35157abb9-20261110`).
+- `tests_python/packaged_release_real_smoke.py` against the final ZIP: the
+  packaged app installed managed FFmpeg through its own API, then recorded
+  live audio (MP3, 17.3 s) and live video (MP4, 720p, 13.9 s) that ffprobe and
+  Windows could open, and shut down cleanly with no partial files.
 - Portable ZIP windowed launch gate: extracted twice into new folders, one with
   every file marked as downloaded (`ZoneId=3`); both opened a visible window
-  (5.1 s and 7.3 s). All three `webview\lib\runtimes` folders are present.
+  (6.1 s and 6.3 s). All three `webview\lib\runtimes` folders are present.
 - ZIP integrity: 450 entries; bundled frontend byte-identical to `frontend/`;
   no profiles, logs, or repository metadata.
-- Single EXE marked as downloaded opened a visible window (6.1 s) and served
+- Single EXE marked as downloaded opened a visible window (4.8 s) and served
   the 0.1.6 frontend bundle and notices.
 - `tests_python/playlist_release_browser_smoke.py` against the packaged EXE:
   every check passed (radio, M3U import, HLS and DASH playback, Favorites, all
@@ -57,8 +81,8 @@ network changes beyond the version number. See
 
 | Artifact | Bytes | SHA-256 |
 |---|---:|---|
-| `WorldMediaWindows.exe` | 18,945,098 | `F2BFE7DADF52A2C7336C1D556C6EB20A8A6AC25520792F77029A698CB15EAC7D` |
-| `WorldMediaWindows-0.1.6-portable.zip` | 14,775,485 | `20FFA9771E8E1E3A0AD208C24A6A73E361613C87E8704F3D077464F5259D365A` |
+| `WorldMediaWindows.exe` | 18,945,146 | `C117EDA062D382CCF69B303AD22C21AD416D73EAA1EDFC39E13087BBAB7AFD3D` |
+| `WorldMediaWindows-0.1.6-portable.zip` | 14,775,624 | `A47601308C532CAE0258C4CA82058DDCE2A3F53D4CBB2E4A44223615187FD2FC` |
 
 The classic one-file EXE is unsigned. The ZIP's unmodified Python launcher has
 a valid Python Software Foundation Authenticode signature (launcher SHA-256

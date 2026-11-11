@@ -118,7 +118,7 @@ def verify_managed_install(app_root: Path, status: dict) -> dict:
     manifest = json.loads((release / "manifest.json").read_text(encoding="utf-8"))
     if manifest["asset_digest"] != manifest["verified_digest"]:
         raise AssertionError("managed manifest digest was not verified")
-    if manifest["repository"] != "BtbN/FFmpeg-Builds":
+    if manifest["repository"] != "FFmpeg-Builds/FFmpeg-Builds":
         raise AssertionError("unexpected FFmpeg provider")
     if not (release / "SOURCE.txt").is_file():
         raise AssertionError("managed FFmpeg source provenance is missing")

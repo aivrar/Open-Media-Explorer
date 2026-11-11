@@ -14,6 +14,10 @@ Three small interface improvements from user feedback.
   is the same 320 px on a 1080p-wide window and up to 640 px on a 4K-wide one.
   Hover the video and use the button in its top-right corner to switch to a
   larger size; the choice is remembered.
+- **FFmpeg install works again:** the optional FFmpeg install in Settings (used
+  for recording) failed with "GitHub release repository identity is invalid"
+  because the FFmpeg build project moved to a new GitHub address. The app now
+  uses the new address. An FFmpeg you already have installed was not affected.
 
 Thanks to TaxicabMessiah for the observations in
 [issue #4](https://github.com/aivrar/Open-Media-Explorer/issues/4).
@@ -28,6 +32,9 @@ Thanks to TaxicabMessiah for the observations in
 Close the old app and back up **WorldMediaWindows-data** first. For the single-file
 version, replace only the EXE; keep your data, downloads, and tools. v0.1.5
 remains available for rollback.
+
+The v0.1.6 downloads were replaced later on 10 November 2026 to add the FFmpeg
+install fix. If your copy does not match `SHA256SUMS.txt`, download it again.
 
 [User wiki](https://github.com/aivrar/Open-Media-Explorer/wiki)
 and [full changelog](https://github.com/aivrar/Open-Media-Explorer/blob/main/CHANGELOG.md).

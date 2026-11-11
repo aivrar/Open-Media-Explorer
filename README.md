@@ -19,7 +19,8 @@ API key, or telemetry.
 
 **New in v0.1.6:** sources you switch off in Settings disappear from the
 Library sidebar, the mouse wheel turns the Tuner dial, and the floating video
-grows with the window and has a button for a larger size.
+grows with the window and has a button for a larger size. The optional FFmpeg
+install in Settings works again after its provider moved on GitHub.
 
 **New in v0.1.5:** the portable ZIP opens its window again after being
 extracted from a download (it failed to start in v0.1.2 to v0.1.4).
@@ -296,7 +297,7 @@ The packaged app exposes its complete third-party notice at
 World Media does not bundle FFmpeg in its EXE. Recording features can use an
 existing capable `ffmpeg`/`ffprobe` pair or, after explicit confirmation, install
 the exact `ffmpeg-n8.1-latest-win64-gpl-8.1.zip` asset from
-[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). The managed archive
+[FFmpeg-Builds/FFmpeg-Builds](https://github.com/FFmpeg-Builds/FFmpeg-Builds). The managed archive
 is downloaded without administrator access, checked against GitHub's SHA-256
 digest, inspected before extraction, capability-probed in staging, and only then
 selected atomically. Its license files, install manifest, and `SOURCE.txt` are
