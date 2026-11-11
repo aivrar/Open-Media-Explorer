@@ -54,7 +54,8 @@ continuous browse chain.
   public-catalog filters during the session. Country/language/year filters still apply.
 - **Browse → My Playlists** opens imported channel lists and direct links.
 - **By Type** selects Radio, TV, Video, or Audio.
-- **By Archive** selects one of the eleven source adapters.
+- **By Archive** selects one of the eleven source adapters. A source switched
+  off in **Settings** is left out of this list until it is switched back on.
 
 The number beside a row is the session count for the selected catalog (or the
 persisted favorite count). By default the sidebar stays quiet: a source that
@@ -70,7 +71,6 @@ technical source details** on, each source instead shows a compact status word:
 | **Wait** | The source is rate limited or retrying after an error. |
 | **Stale** | A prior live snapshot is still shown while refresh retries. |
 | **Done** | A finite cursor reached an authoritative end. |
-| **Off** | The source is disabled in Settings. |
 
 The full status summary above the cards groups the currently relevant sources as
 **Collecting**, **Waiting**, and **Done**. Status words are intentionally short;
