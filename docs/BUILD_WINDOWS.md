@@ -5,7 +5,7 @@ The classic single-file artifact and signed-runtime portable fallback are:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.7-portable.zip
+dist\WorldMediaWindows-0.1.8-portable.zip
 ```
 
 `dist\WorldMediaWindows.exe` is the owner-preferred one-file PyInstaller build.

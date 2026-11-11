@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.8 - 2026-11-10
+
+- Tuner: with only one station on the dial, the dial stays put. Arrow keys,
+  the mouse wheel and dragging no longer turn it or restart the station
+  (issue #6). An arrow key still starts the station when nothing is playing.
+- Tuner: the knob now rests at the same angle for the same station, so the
+  first station is always at the top. Going round a list, or letting go of a
+  drag between two stations, used to leave the marker at an arbitrary angle.
+- Tuner: clicking or releasing the dial on the station that is already playing
+  no longer restarts it.
+- Tuner: the dial shrinks to fit a short window instead of being cut off at
+  the top and bottom, and the station name stays inside the knob. The small
+  dot behind the station number is gone.
+- Playlist import wording: the drop hint now names both accepted file types
+  (`.m3u` and `.m3u8`), and the button is **Import playlist**.
+- The player bar shows the item's initials when it has no artwork, the same as
+  the cards.
+- Settings: the Local port box matches the other controls.
+
 ## 0.1.7 - 2026-11-10
 
 - Dropping a local `.m3u`/`.m3u8` file on the window imports it into My

@@ -4,12 +4,12 @@
  * Without these handlers the WebView treats a dropped file like a link and
  * hands it to Windows, which opens an .m3u in Notepad. Any file drop is now
  * kept inside the app: a .m3u/.m3u8 file is imported through the same path as
- * Library > My Playlists > Import M3U, and anything else is ignored with a
+ * Library > My Playlists > Import playlist, and anything else is ignored with a
  * short message.
  */
 
 const PLAYLIST_NAME = /\.m3u8?$/i;
-const HINT_TEXT = 'Drop an M3U playlist to import it into My Playlists';
+const HINT_TEXT = 'Drop a playlist file (.m3u or .m3u8) to import it into My Playlists';
 const REJECT_TEXT = 'Only .m3u or .m3u8 playlist files can be dropped here.';
 const REJECT_SHOW_MS = 3500;
 

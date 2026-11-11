@@ -90,7 +90,7 @@ all enabled sources, so rapidly switching tabs cannot wipe the catalog.
 3. Click **Add link**, paste the URL, optionally enter a name, and click **Add**.
    Leave **Single channel** selected for a direct stream (including HLS `.m3u8`
    or DASH `.mpd`). Choose **Online M3U playlist** to fetch a list of channels.
-   To use a local file instead, click **Import M3U** and select the file, or
+   To use a local file instead, click **Import playlist** and select the file, or
    drop the `.m3u`/`.m3u8` file anywhere on the window. A drop opens My
    Playlists and shows the result; dropped on the Tuner, new channels are added
    as the band the dial is on.
@@ -196,6 +196,8 @@ Tuner provides a radio-style way to step through live media:
 The dial shows the selected station's place in the current list ("12 of 80"),
 not a broadcast frequency. Starred stations are marked with ★ in the station
 strip and on the dial, and the strip keeps the current station in view.
+The knob's marker rests at the same angle for the same station, with the first
+station at the top. With a single station on the dial, the dial does not turn.
 Stations appear as each live source answers; a source
 that does not answer within 20 seconds is marked unavailable instead of holding
 the dial on "Loading". Tuner reuses the live adapter/snapshot lane and

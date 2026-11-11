@@ -26,7 +26,7 @@ from tests_python.recording_real_smoke import (
 )
 
 
-ARCHIVE = ROOT / "dist" / "WorldMediaWindows-0.1.7-portable.zip"
+ARCHIVE = ROOT / "dist" / "WorldMediaWindows-0.1.8-portable.zip"
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
 
 

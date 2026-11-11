@@ -67,11 +67,17 @@
   padding: 18px;
   position: relative;
   overflow: hidden;
+  /* Lets the dial size itself from the stage's height as well as its width. */
+  container-type: size;
 }
 
+/* Fit the dial inside the stage both ways: a short window (or the player
+   bar taking room) used to cut off its top and bottom. */
 .tuner-dial {
-  width: min(540px, 78%);
+  width: min(540px, 78cqw, 100cqh);
   aspect-ratio: 1;
+  /* The station name below is limited to the knob's width at any dial size. */
+  container-type: inline-size;
   position: relative;
   filter: drop-shadow(0 12px 32px rgba(0,0,0,0.5));
 }
@@ -112,7 +118,7 @@
   margin-top: 6px;
   font-size: 13px;
   color: var(--dial-text);
-  max-width: 220px;
+  max-width: min(220px, 46cqw);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -215,7 +221,7 @@
   }
 
   .tuner-dial {
-    width: min(420px, 92vw);
+    width: min(420px, 92vw, 100cqh);
   }
 
   .tuner-frequency .freq-num {
@@ -223,7 +229,7 @@
   }
 
   .tuner-frequency .station-name {
-    max-width: 170px;
+    max-width: min(170px, 46cqw);
     font-size: 12px;
   }
 

@@ -74,7 +74,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.7-portable.zip
+dist\WorldMediaWindows-0.1.8-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -101,8 +101,8 @@ Before replacing the EXE:
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For v0.1.7 evidence and limitations, see the
-[release record](../RELEASE_RECORD_0.1.7.md). The optional
+For v0.1.8 evidence and limitations, see the
+[release record](../RELEASE_RECORD_0.1.8.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review

@@ -190,7 +190,6 @@ function buildDialSvg() {
         <circle cx="200" cy="200" r="100" fill="url(#knobGrad)" stroke="rgba(255,255,255,0.05)"/>
         <circle cx="200" cy="200" r="100" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="2"/>
         <line x1="200" y1="110" x2="200" y2="150" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
-        <circle cx="200" cy="200" r="6" fill="rgba(255,255,255,0.2)"/>
       </g>
       <polygon class="tuner-pointer" points="200,16 196,32 204,32" />
     </svg>
@@ -200,6 +199,19 @@ function buildDialSvg() {
 /** Shortest signed turn in degrees between two pointer angles. atan2 jumps
  *  from +180 to -180 at 9 o'clock; without this a drag across that point
  *  reads as a full reverse turn and skips 30 stations. */
+/** Angle the knob rests at for a place in the list: 12 degrees per station,
+ *  so the first station is always back at the top. Without this, going
+ *  round a list whose length is not a multiple of 30, or letting go of a
+ *  drag between two stations, left the marker at an arbitrary angle. */
+export function restingRotation(index) {
+  return index * 12;
+}
+
+/** A dial holding one station (or none) has nowhere to turn to. */
+export function dialCanTurn(count) {
+  return count > 1;
+}
+
 export function dialTurn(fromDeg, toDeg) {
   let delta = (toDeg - fromDeg) % 360;
   if (delta > 180) delta -= 360;
@@ -224,6 +236,7 @@ export function wheelSteps(pool, event) {
 function bindDialEvents(wrap) {
   let dragging = false;
   let lastAngle = 0;
+  let downIndex = 0;
   const wheelPool = { px: 0 };
   let wheelTuneTimer = null;
 
@@ -239,12 +252,13 @@ function bindDialEvents(wrap) {
   function onDown(e) {
     if (state.stations.length === 0) return;
     dragging = true;
+    downIndex = state.index;
     wrap.classList.add('dragging');
     lastAngle = angleFromEvent(e);
     e.preventDefault();
   }
   function onMove(e) {
-    if (!dragging) return;
+    if (!dragging || !dialCanTurn(state.stations.length)) return;
     const a = angleFromEvent(e);
     state.rotationDeg += dialTurn(lastAngle, a);
     lastAngle = a;
@@ -256,10 +270,12 @@ function bindDialEvents(wrap) {
   function onWheel(e) {
     if (state.stations.length === 0) return;
     e.preventDefault();
+    if (!dialCanTurn(state.stations.length)) return;
     const steps = wheelSteps(wheelPool, e);
     if (steps === 0) return;
     state.rotationDeg = (state.index + steps) * 12;
     applyRotation();
+    settleDial();
     clearTimeout(wheelTuneTimer);
     wheelTuneTimer = setTimeout(() => { wheelTuneTimer = null; tuneCurrent(); }, WHEEL_TUNE_DELAY_MS);
   }
@@ -267,7 +283,9 @@ function bindDialEvents(wrap) {
     if (!dragging) return;
     dragging = false;
     wrap.classList.remove('dragging');
-    tuneCurrent();
+    settleDial();
+    // Letting go on the station that is already playing must not restart it.
+    tuneCurrent({ restart: state.index !== downIndex });
   }
 
   wrap.addEventListener('mousedown', onDown);
@@ -299,6 +317,13 @@ function applyRotation() {
   state.index = idx;
   updateFrequencyDisplay();
   renderStrip();
+}
+
+/** Bring the knob to its resting angle for the current station. */
+function settleDial() {
+  if (state.stations.length === 0) return;
+  state.rotationDeg = restingRotation(state.index);
+  ui.dialBody?.setAttribute('transform', `rotate(${state.rotationDeg} 200 200)`);
 }
 
 function updateFrequencyDisplay() {
@@ -384,16 +409,29 @@ function publishStations(sourceId, items, fallbackId = '') {
   renderSourceStatus();
 }
 
+/** True when `station` is the item the player is playing right now. */
+export function alreadyPlaying(station, appState) {
+  return Boolean(station?.id && appState?.isPlaying && appState.currentItem?.id === station.id);
+}
+
 function step(dir) {
   if (state.stations.length === 0) return;
+  // One station: the dial stays put. Start it if it is not playing, but
+  // never spin the dial or restart the stream for a "change" to itself.
+  if (!dialCanTurn(state.stations.length)) {
+    tuneCurrent({ restart: false });
+    return;
+  }
   state.rotationDeg += dir * 12;
   applyRotation();
+  settleDial();
   tuneCurrent();
 }
 
-function tuneCurrent() {
+function tuneCurrent({ restart = true } = {}) {
   const s = state.stations[state.index];
   if (!s) return;
+  if (!restart && alreadyPlaying(s, getState())) return;
   playItem(s).catch((err) => console.warn('play failed:', err));
 }
 

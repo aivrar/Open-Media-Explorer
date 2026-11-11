@@ -8,7 +8,7 @@ import { renderResults, renderStatus, updateSentinelStatus } from './render.js';
 function refresh() { renderResults(); renderStatus(); updateSentinelStatus(); }
 
 // Set while the Library is mounted; lets a dropped file use the same import
-// path, busy state and messages as the Import M3U button.
+// path, busy state and messages as the Import playlist button.
 let importLocal = null;
 
 /** Import a local .m3u/.m3u8 file into My Playlists. `type` ('tv' or 'radio')
@@ -39,8 +39,8 @@ export function buildPersonalControls() {
   const file = el('input', { attrs: { type: 'file', accept: '.m3u,.m3u8', 'aria-label': 'Choose channel playlist' }, style: { display: 'none' } });
   const message = el('span', { className: 'playlist-message', attrs: { role: 'status', 'aria-live': 'polite' } });
   ui.playlistMessage = message;
-  const importButton = el('button', { className: 'btn', text: 'Import M3U',
-    attrs: { type: 'button', title: 'Import a local channel list. A matching filename replaces that playlist; favorites are kept.' },
+  const importButton = el('button', { className: 'btn', text: 'Import playlist',
+    attrs: { type: 'button', title: 'Import a local .m3u or .m3u8 channel list. A matching filename replaces that playlist; favorites are kept.' },
     on: { click: () => file.click() } });
   const linkForm = el('form', { className: 'playlist-link-form', attrs: { 'aria-label': 'Add a channel or playlist link' } });
   linkForm.hidden = true;

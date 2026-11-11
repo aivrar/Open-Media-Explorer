@@ -95,7 +95,7 @@ test('a dropped playlist is imported and never handed to Windows', async () => {
   assert.equal(fire('dragover', drag).prevented, true);
   assert.equal(drag.dropEffect, 'copy');
   assert.equal(hint.hidden, false);
-  assert.match(hint.textContent, /Drop an M3U playlist/);
+  assert.match(hint.textContent, /Drop a playlist file \(\.m3u or \.m3u8\)/);
 
   // Leaving the window hides the hint; moving between elements does not.
   fire('dragleave', drag, { relatedTarget: {} });

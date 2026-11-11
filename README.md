@@ -17,6 +17,11 @@ discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
 
+**New in v0.1.8:** Tuner dial fixes. A dial with one station stays put, the
+knob always rests at the same angle for the same station, the dial is no longer
+cut off in a short window, and playing items without artwork show initials in
+the player bar.
+
 **New in v0.1.7:** drop an `.m3u` playlist file anywhere on the window to
 import it, radio stations that stream without a picture no longer open an empty
 video square, and the Tuner keeps the current station in view under the dial.
@@ -61,7 +66,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.7-portable.zip
+WorldMediaWindows-0.1.8-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -127,7 +132,7 @@ collection and artwork; normal background priority returns when playback stops.
 
 Open **Library → My Playlists → Add link**, paste a stream URL, optionally
 name it, and press **Add**. Choose **Online M3U playlist** for a channel-list
-URL, or use **Import M3U** for a local `.m3u`/`.m3u8` file. You can also drop
+URL, or use **Import playlist** for a local `.m3u`/`.m3u8` file. You can also drop
 a local playlist file anywhere on the window. A direct HLS
 `.m3u8` stream belongs under **Single channel**. These are Library collections,
 not subscriptions: importing the same link again updates the saved list.
@@ -272,7 +277,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.7-portable.zip
+dist\WorldMediaWindows-0.1.8-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

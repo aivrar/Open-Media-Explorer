@@ -3,13 +3,13 @@
 Record date, commit, operator, commands, result, artifact SHA-256, and any
 expected upstream outage for every checked release.
 
-## Current release: v0.1.7 (2026-11-10)
+## Current release: v0.1.8 (2026-11-10)
 
-See [the v0.1.7 release record](RELEASE_RECORD_0.1.7.md) for the current
+See [the v0.1.8 release record](RELEASE_RECORD_0.1.8.md) for the current
 checks, artifact hashes, and explicit verification limitations. The previous
-[v0.1.6](RELEASE_RECORD_0.1.6.md), [v0.1.5](RELEASE_RECORD_0.1.5.md),
-[v0.1.4](RELEASE_RECORD_0.1.4.md) and [v0.1.3](RELEASE_RECORD_0.1.3.md)
-records are kept for reference.
+[v0.1.7](RELEASE_RECORD_0.1.7.md), [v0.1.6](RELEASE_RECORD_0.1.6.md),
+[v0.1.5](RELEASE_RECORD_0.1.5.md), [v0.1.4](RELEASE_RECORD_0.1.4.md) and
+[v0.1.3](RELEASE_RECORD_0.1.3.md) records are kept for reference.
 
 The completed matrix below is the **historical v0.1.2 record from August 1**.
 It is not a claim that every historical test was repeated for later releases.

@@ -9,6 +9,7 @@ import { getState, setCurrentItem, setPlaying, emit, subscribe, loadVolume, save
 import { getSourceLabel, loadAdapter } from './sources.js';
 import { postSilent } from './http.js';
 import { isArtworkRelayUrl, resolveArtworkRelay } from './artwork.js';
+import { artworkInitials, initialsHue } from './initials.js';
 import { createPlaybackState } from './player-state.js';
 import { repairFiniteMediaFields, resolveMediaAction } from './media-capabilities.js';
 import { expireMedia } from './capture-client.js';
@@ -83,6 +84,7 @@ function bindElements() {
     title:    $('player-title'),
     source:   $('player-source'),
     art:      $('player-art'),
+    artInitials: $('player-art-initials'),
     play:     $('player-play'),
     iconPlay: $('icon-play'),
     iconPause:$('icon-pause'),
@@ -342,10 +344,22 @@ function setMetaText(item) {
     .filter(Boolean).join(' · ');
 }
 
+/** Initials on a coloured square behind the artwork, the same as on the
+ *  cards, so an item without artwork is not an empty box. */
+function setArtInitials(item) {
+  const node = elements.artInitials;
+  if (!node) return;
+  const initials = artworkInitials(item?.title);
+  node.textContent = initials;
+  node.hidden = !initials;
+  node.style?.setProperty?.('--ph-hue', String(initialsHue(item?.title)));
+}
+
 function setMeta(item) {
   bar.hidden = false;
   document.getElementById('app')?.classList.add('has-player');
   setMetaText(item);
+  setArtInitials(item);
   const artworkToken = ++metadataArtworkToken;
   const attachArtwork = () => {
     if (artworkToken !== metadataArtworkToken || currentItem !== item
@@ -353,7 +367,7 @@ function setMeta(item) {
     const src = item.thumbnail.trim();
     elements.art.referrerPolicy = 'no-referrer';
     elements.art.onload = () => { elements.art.style.opacity = '1'; };
-    elements.art.onerror = () => { elements.art.removeAttribute('src'); elements.art.style.opacity = '0.2'; };
+    elements.art.onerror = () => { elements.art.removeAttribute('src'); elements.art.style.opacity = '0'; };
     if (elements.art.getAttribute('src') !== src) {
       elements.art.style.opacity = '0';
       elements.art.src = src;
@@ -365,7 +379,7 @@ function setMeta(item) {
     attachArtwork();
   } else {
     elements.art.removeAttribute('src');
-    elements.art.style.opacity = '0.2';
+    elements.art.style.opacity = '0';
     resolveArtworkRelay(item, { priority: 20 }).then(attachArtwork).catch(() => {});
   }
   syncFavButton();
