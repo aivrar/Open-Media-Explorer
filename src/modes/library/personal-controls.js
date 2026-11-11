@@ -7,6 +7,16 @@ import { renderResults, renderStatus, updateSentinelStatus } from './render.js';
 
 function refresh() { renderResults(); renderStatus(); updateSentinelStatus(); }
 
+// Set while the Library is mounted; lets a dropped file use the same import
+// path, busy state and messages as the Import M3U button.
+let importLocal = null;
+
+/** Import a local .m3u/.m3u8 file into My Playlists. `type` ('tv' or 'radio')
+ *  overrides the "Add as" choice. Resolves false if the Library is not open. */
+export function importLocalPlaylist(file, type = '') {
+  return importLocal ? importLocal(file, type) : Promise.resolve(false);
+}
+
 function selectControl(label, options, onChange) {
   const select = el('select', { className: 'chip', attrs: { 'aria-label': label, title: label }, on: { change: onChange } },
     ...options.map(([value, text]) => el('option', { attrs: { value }, text })));
@@ -81,10 +91,9 @@ export function buildPersonalControls() {
     } catch (error) { message.textContent = error.message || 'Could not add this link.'; }
     finally { setBusy(false); }
   });
-  file.addEventListener('change', async () => {
-    const selected = file.files?.[0];
-    file.value = '';
-    if (!selected || busy) return;
+  importLocal = async (selected, type = '') => {
+    if (!selected || busy) return false;
+    if (type === 'tv' || type === 'radio') defaultType.value = type;
     setBusy(true);
     message.textContent = 'Importing playlist...';
     try {
@@ -92,14 +101,22 @@ export function buildPersonalControls() {
       const exists = getPlaylists().some((entry) => entry.name.toLowerCase() === playlistName(selected.name).toLowerCase());
       if (exists && !globalThis.confirm(`Replace ${selected.name}? Saved favorites will be kept.`)) {
         message.textContent = 'Import cancelled.';
-        return;
+        return false;
       }
       const data = await importPlaylistFile(selected, defaultType.value);
       view.playlistId = data.playlist.id;
       message.textContent = `${data.replaced ? 'Updated' : 'Imported'} ${data.playlist.items.length} channels; ${data.playlist.skipped} unsupported entries skipped; ${data.playlist.duplicates} duplicates removed.`;
       syncPersonalControls(); refresh();
-    } catch (error) { message.textContent = error.message || 'Playlist import failed.'; }
-    finally { setBusy(false); }
+      return true;
+    } catch (error) {
+      message.textContent = error.message || 'Playlist import failed.';
+      return false;
+    } finally { setBusy(false); }
+  };
+  file.addEventListener('change', () => {
+    const selected = file.files?.[0];
+    file.value = '';
+    importLocal(selected);
   });
   removeButton.addEventListener('click', async () => {
     const selected = getPlaylists().find((entry) => entry.id === view.playlistId);

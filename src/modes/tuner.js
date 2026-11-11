@@ -590,7 +590,32 @@ function renderStrip() {
     rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
     ui.strip.appendChild(pill);
   }
+  centerActivePill();
 }
+
+/** Scroll position that puts a pill in the middle of the strip. */
+export function centeredScrollLeft({ stripLeft, stripWidth, scrollLeft, pillLeft, pillWidth }) {
+  return Math.max(0, Math.round(pillLeft - stripLeft + scrollLeft - (stripWidth - pillWidth) / 2));
+}
+
+// The strip is rebuilt on every station change, and it holds up to 31 pills,
+// which is wider than most windows. Without this the highlighted station was
+// often scrolled out of sight.
+function centerActivePill() {
+  const strip = ui.strip;
+  const active = strip?.querySelector?.('.station-pill.is-active');
+  if (!active?.getBoundingClientRect || !strip.getBoundingClientRect) return;
+  const stripBox = strip.getBoundingClientRect();
+  const pillBox = active.getBoundingClientRect();
+  if (!stripBox.width) return;
+  strip.scrollLeft = centeredScrollLeft({
+    stripLeft: stripBox.left, stripWidth: strip.clientWidth || stripBox.width,
+    scrollLeft: strip.scrollLeft, pillLeft: pillBox.left, pillWidth: pillBox.width,
+  });
+}
+
+/** The band the Tuner is on ('radio' or 'tv'); used for dropped playlists. */
+export function tunerBand() { return state.band; }
 
 const subs = [];
 function tearDown() {

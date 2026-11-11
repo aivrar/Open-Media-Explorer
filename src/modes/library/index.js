@@ -37,6 +37,7 @@ import { libraryPool } from './personal.js';
 import { getPlaylistItems, loadPlaylists } from '../../lib/playlists.js';
 import { syncPersonalControls } from './personal-controls.js';
 import { ui } from './shell-refs.js';
+import { selectSource } from './sidebar.js';
 
 const subs = [];
 
@@ -86,6 +87,18 @@ let startTabChosen = false;
  *  they have any, so saved stations are one click away. The full catalog still
  *  loads in the background, so switching to All Sources stays instant. Later
  *  visits keep whatever tab the user last picked. */
+/** Make My Playlists the Library tab, whether or not the Library is open.
+ *  Used when a playlist file is dropped on the window from another mode. */
+export function showMyPlaylists() {
+  startTabChosen = true;
+  if (ui.sidebar?.isConnected) {
+    selectSource('playlists');
+    return;
+  }
+  view.activeSource = 'playlists';
+  view.filters.type = '';
+}
+
 export function chooseLibraryStartTab(favoriteCount = getState().favorites.length) {
   if (startTabChosen) return;
   startTabChosen = true;

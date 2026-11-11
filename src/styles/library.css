@@ -103,6 +103,9 @@
 /* A source switched off in Settings is left out of the list entirely; it
    can be switched back on in Settings > Sources. */
 .source-item.is-disabled { display: none; }
+/* A section heading with no visible source rows after it (every source
+   switched off) is hidden too. "By archive" is the last section. */
+.source-section-header:not(:has(~ .source-item:not(.is-disabled))) { display: none; }
 .source-item.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);

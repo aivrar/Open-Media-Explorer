@@ -24,10 +24,12 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.4.md
 |   |-- RELEASE_NOTES_0.1.5.md
 |   |-- RELEASE_NOTES_0.1.6.md
+|   |-- RELEASE_NOTES_0.1.7.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
 |   |-- RELEASE_RECORD_0.1.6.md
+|   |-- RELEASE_RECORD_0.1.7.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -111,6 +113,8 @@ WorldMediaWindows/
 | `src/modes/library/snapshots.js` | Independent live-snapshot refresh, stale-cache state, reconciliation, and teardown. |
 | `src/lib/live-load.js` | Tuner/Grid progressive source loading and per-source time limits. |
 | `src/lib/initials.js` | Initials and stable colours for items without artwork. |
+| `src/lib/playlist-drop.js` | Drag-and-drop import of local M3U playlists; keeps other dropped files from being opened by Windows. |
+| `src/lib/video-picture.js` | Decides whether the floating video is shown: at once for TV/video, only with a picture for radio/audio. |
 | `src/lib/themes.js` | Persisted appearance catalog, DOM theme application, and native-caption synchronization. |
 | `src/lib/dash-player.js` | Lazy dash.js playback lifecycle, MSE checks, errors, and deterministic cleanup. |
 | `src/lib/download-client.js` | Opaque registration, finite-download start/status/cancel, and open-folder client. |
@@ -130,4 +134,4 @@ WorldMediaWindows/
 | `build_single_exe.py` | Builds the classic unsigned one-file `dist\WorldMediaWindows.exe` with the current frontend, icon, and WebView bridge. |
 | `assets/` | App icon, Windows metadata, and embedded-runtime launcher assets. |
 | `docs/PROVIDERS.md` | All eleven public endpoints, cache/refresh rules, limitations, and content/retry behavior. |
-| `docs/RELEASE_NOTES_0.1.6.md` | GitHub release notes for the `v0.1.6` tag and its release assets. |
+| `docs/RELEASE_NOTES_0.1.7.md` | GitHub release notes for the `v0.1.7` tag and its release assets. |

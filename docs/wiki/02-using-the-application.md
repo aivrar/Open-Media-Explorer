@@ -20,7 +20,8 @@ station in Library, inspect Grid, and return without losing the current player.
 Video appears in an overlay above the bar, at the bottom right. It grows with
 the window, and the button in its top-right corner switches between the normal
 and a larger size; the choice is remembered. Audio keeps the bar visible
-without showing a video element.
+without showing a video element, including radio stations that stream in a
+video format (HLS or DASH) but carry no picture.
 
 ## Library
 
@@ -89,7 +90,10 @@ all enabled sources, so rapidly switching tabs cannot wipe the catalog.
 3. Click **Add link**, paste the URL, optionally enter a name, and click **Add**.
    Leave **Single channel** selected for a direct stream (including HLS `.m3u8`
    or DASH `.mpd`). Choose **Online M3U playlist** to fetch a list of channels.
-   To use a local file instead, click **Import M3U** and select the file.
+   To use a local file instead, click **Import M3U** and select the file, or
+   drop the `.m3u`/`.m3u8` file anywhere on the window. A drop opens My
+   Playlists and shows the result; dropped on the Tuner, new channels are added
+   as the band the dial is on.
 4. Choose that playlist (or **All playlists**), search titles/groups, or filter by
    media type. Click a channel to play; star it to save it in Favorites.
 
@@ -191,7 +195,8 @@ Tuner provides a radio-style way to step through live media:
 
 The dial shows the selected station's place in the current list ("12 of 80"),
 not a broadcast frequency. Starred stations are marked with ★ in the station
-strip and on the dial. Stations appear as each live source answers; a source
+strip and on the dial, and the strip keeps the current station in view.
+Stations appear as each live source answers; a source
 that does not answer within 20 seconds is marked unavailable instead of holding
 the dial on "Loading". Tuner reuses the live adapter/snapshot lane and
 content-rating preference.

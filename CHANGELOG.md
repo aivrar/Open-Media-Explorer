@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.7 - 2026-11-10
+
+- Dropping a local `.m3u`/`.m3u8` file on the window imports it into My
+  Playlists, the same as **Import M3U**, instead of Windows opening the file in
+  Notepad (issue #5). Dropped on the Tuner, new channels default to the band the
+  dial is on. Other dropped files are ignored with a short message.
+- Radio and audio items whose stream has no picture (audio-only HLS or DASH)
+  no longer open an empty video square. TV and video items are unchanged.
+- Tuner: the station strip under the dial now keeps the current station in
+  view, centred where possible, instead of letting it scroll out of sight.
+- Library sidebar: the "By archive" heading is hidden when every source is
+  switched off.
+
 ## 0.1.6 - 2026-11-10
 
 - Sources switched off in Settings are left out of the Library sidebar instead

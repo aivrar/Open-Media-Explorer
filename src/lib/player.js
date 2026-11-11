@@ -21,6 +21,7 @@ import {
   selectHlsPlaybackEngine, waitForHlsStartupBuffer,
 } from './hls-recovery.js';
 import { isContentAllowed } from './content-rating.js';
+import { expectsPicture, hasPicture } from './video-picture.js';
 
 let Hls = null;
 let hlsInstance = null;
@@ -129,6 +130,20 @@ function bindVideoSizeButton() {
   });
   subscribe('settings-change', syncVideoSize);
   syncVideoSize();
+}
+
+// True while a stream is playing through the <video> element. Audio-only
+// HLS/DASH (some radio stations) also plays there, so the square is only shown
+// for radio and audio items once the stream reports a picture.
+let pictureStream = false;
+
+function syncVideoPicture() {
+  if (pictureStream && hasPicture(elements.video)) showVideo(true);
+}
+
+function bindVideoPicture() {
+  elements.video.addEventListener?.('loadedmetadata', syncVideoPicture);
+  elements.video.addEventListener?.('resize', syncVideoPicture);
 }
 
 function showVideo(show) {
@@ -459,7 +474,8 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
   }
   let playbackStarted = false;
   if (videoKind) {
-    showVideo(true);
+    pictureStream = true;
+    showVideo(expectsPicture(item) || hasPicture(elements.video));
     if (kind === 'hls') {
       const HlsLib = await loadHlsIfNeeded();
       if (stale() || !playback.owns(target, generation)) return;
@@ -579,6 +595,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       }
     }
   } else {
+    pictureStream = false;
     showVideo(false);
     elements.audio.src = item.stream_url;
     elements.video.hidden = true;
@@ -905,6 +922,7 @@ export function initPlayer() {
   bindControls();
   bindMediaSession();
   bindVideoSizeButton();
+  bindVideoPicture();
   syncPlaybackUi('init');
   // Keep the player-bar star in sync if a Library card toggles favorites
   // for the currently-playing item.

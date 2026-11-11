@@ -10,12 +10,13 @@ import { initSettings, openSettings } from './lib/settings.js';
 import { initEqOverlay } from './lib/eq-overlay.js';
 import { initSleepTimer } from './lib/sleep-timer.js';
 import { initShutdownButton } from './lib/shutdown.js';
-import { renderLibrary } from './modes/library.js';
-import { renderTuner } from './modes/tuner.js';
+import { renderLibrary, showMyPlaylists, importLocalPlaylist } from './modes/library.js';
+import { renderTuner, tunerBand } from './modes/tuner.js';
 import { renderGrid } from './modes/grid.js';
 import { renderDiscovery } from './modes/discovery.js';
 import { renderAbout } from './modes/about.js';
 import { initPersistenceNotice } from './lib/persistence-notice.js';
+import { initPlaylistDrop } from './lib/playlist-drop.js';
 
 const MODES = {
   library: renderLibrary,
@@ -67,6 +68,16 @@ function setMode(mode) {
   }
 }
 
+// A playlist file dropped anywhere on the window goes to Library > My
+// Playlists, where the import result is shown. Dropped on the Tuner, new
+// channels default to the band the dial is on.
+async function importDroppedPlaylist(file) {
+  const type = getState().mode === 'tuner' ? tunerBand() : '';
+  showMyPlaylists();
+  if (getState().mode !== 'library') setMode('library');
+  await importLocalPlaylist(file, type);
+}
+
 function escape(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -89,6 +100,7 @@ async function boot() {
   initEqOverlay();
   initSleepTimer();
   bindTopBar();
+  initPlaylistDrop({ onPlaylist: importDroppedPlaylist });
   const state = getState();
   syncCatalogSourceSettings(state.settings);
   syncTechnicalDetails(state.settings);
