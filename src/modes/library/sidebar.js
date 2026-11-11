@@ -67,7 +67,8 @@ export function buildSidebar() {
             }
             if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
-            const options = [...list.querySelectorAll('.source-item')];
+            // Switched-off sources are hidden, so they are not keyboard stops.
+            const options = [...list.querySelectorAll('.source-item:not(.is-disabled)')];
             const index = options.indexOf(event.currentTarget);
             const next = event.key === 'Home' ? options[0]
               : event.key === 'End' ? options.at(-1)

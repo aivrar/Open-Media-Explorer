@@ -41,7 +41,7 @@ def prepare(destination: Path):
     (destination / '_Sidebar.md').write_text('**Open Media Explorer**\n\n' + ''.join(
         f'- [{name.replace("-", " ")}]({name})\n' for name in PAGES.values()), encoding='utf-8')
     (destination / '_Footer.md').write_text(
-        f'[Repository]({REPO}) · [Latest release]({REPO}/releases/latest) · Open Media Explorer 0.1.5\n', encoding='utf-8')
+        f'[Repository]({REPO}) · [Latest release]({REPO}/releases/latest) · Open Media Explorer 0.1.6\n', encoding='utf-8')
     print(f'Prepared {len(PAGES)} wiki pages in {destination}')
 
 if __name__ == '__main__':

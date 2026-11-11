@@ -17,6 +17,10 @@ discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
 
+**New in v0.1.6:** sources you switch off in Settings disappear from the
+Library sidebar, the mouse wheel turns the Tuner dial, and the floating video
+grows with the window and has a button for a larger size.
+
 **New in v0.1.5:** the portable ZIP opens its window again after being
 extracted from a download (it failed to start in v0.1.2 to v0.1.4).
 
@@ -52,7 +56,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.5-portable.zip
+WorldMediaWindows-0.1.6-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -91,8 +95,9 @@ and Owncast.
 
 ![Library - TV channels with sidebar counts](screenshots/1.PNG)
 
-**Tuner** - a radio-style dial for live radio and live TV. Drag the dial or use
-arrow keys; the dial shows each station's place in the list ("12 of 80"). Pick
+**Tuner** - a radio-style dial for live radio and live TV. Drag the dial,
+scroll the mouse wheel, or use arrow keys; the dial shows each station's place
+in the list ("12 of 80"). Pick
 **★ My favorites** as the source to spin through only your starred stations.
 
 ![Tuner - analog dial](screenshots/2.PNG)
@@ -261,7 +266,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.5-portable.zip
+dist\WorldMediaWindows-0.1.6-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

@@ -17,7 +17,9 @@ The top bar is shared by every mode:
 
 The bottom player bar is global. It survives mode switches, so you can start a
 station in Library, inspect Grid, and return without losing the current player.
-Video appears in a movable overlay above the bar; audio keeps the bar visible
+Video appears in an overlay above the bar, at the bottom right. It grows with
+the window, and the button in its top-right corner switches between the normal
+and a larger size; the choice is remembered. Audio keeps the bar visible
 without showing a video element.
 
 ## Library
@@ -183,8 +185,8 @@ Tuner provides a radio-style way to step through live media:
 1. Choose **Radio** or **TV**.
 2. Filter by country and source. Source **★ My favorites** puts only your
    starred stations for that band on the dial; the choice is remembered.
-3. Drag the dial, use Left/Up or Right/Down, or focus the dial and use arrow
-   keys.
+3. Drag the dial, scroll the mouse wheel over it (one station per notch), use
+   Left/Up or Right/Down, or focus the dial and use arrow keys.
 4. Press Enter or Space to play the selected item.
 
 The dial shows the selected station's place in the current list ("12 of 80"),

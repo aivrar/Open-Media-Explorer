@@ -60,6 +60,10 @@
   --font-mono: 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --topbar-h: 56px;
   --player-h: 96px;
+  /* Floating video: 320 px wide on a 1080p-wide window, growing in step with
+     wider windows (640 px at 4K) so it covers the same share of the screen. */
+  --video-w: min(32vw, clamp(320px, calc(100vw / 6), 640px));
+  --video-clearance: calc(var(--video-w) * 0.5625 + 80px);
 }
 
 :root[data-theme='light'] {
@@ -612,6 +616,55 @@ html, body {
 .player-action:active:not(:disabled),
 .player-action-secondary:active:not(:disabled),
 .player-eq:active:not(:disabled) { transform: scale(.97); }
+
+/* Floating video (bottom-right, above the player bar). The dock has no look
+   of its own, so it takes no space while the video is hidden. */
+#app.video-large {
+  --video-w: min(calc(100vw - 32px), clamp(480px, 40vw, 1400px));
+  --video-clearance: calc(var(--video-w) * 0.5625 + 80px);
+}
+.video-dock {
+  position: absolute;
+  bottom: calc(var(--player-h) + 8px);
+  right: 16px;
+  width: var(--video-w);
+  z-index: 20;
+}
+.video-dock video {
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - var(--player-h) - 96px);
+  vertical-align: top;
+  background: black;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-2);
+}
+.video-dock video:fullscreen { border: 0; border-radius: 0; }
+.video-size-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(0, 0, 0, .62);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.video-dock:hover .video-size-btn,
+.video-size-btn:focus-visible { opacity: 1; }
+.video-size-btn:hover { background: rgba(0, 0, 0, .82); }
+.video-size-btn .icon-smaller,
+.video-size-btn[aria-pressed="true"] .icon-larger { display: none; }
+.video-size-btn[aria-pressed="true"] .icon-smaller { display: block; }
+.video-dock video[hidden] + .video-size-btn { display: none; }
 .player-action:disabled,
 .player-action-secondary:disabled,
 .player-eq:disabled { opacity: .52; cursor: not-allowed; }

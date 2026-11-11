@@ -1,4 +1,4 @@
-Open Media Explorer 0.1.5 - Third-Party Notices
+Open Media Explorer 0.1.6 - Third-Party Notices
 ================================================
 
 This notice is distributed inside the World Media portable folder and is served

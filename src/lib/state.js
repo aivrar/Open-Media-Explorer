@@ -15,6 +15,7 @@
  *     showExplicitContent: bool,
  *     tunerFavoritesOnly: bool,
  *     showTechnicalDetails: bool,
+ *     videoSize: 'normal' | 'large',
  *   },
  *   sleepTimer: { until: number | null }
  * }
@@ -71,6 +72,7 @@ const DEFAULT_SETTINGS = {
   showExplicitContent: false,
   tunerFavoritesOnly: false,
   showTechnicalDetails: false,
+  videoSize: 'normal',
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
 
@@ -109,6 +111,7 @@ export function normalizeSettings(value) {
     showExplicitContent: source.showExplicitContent === true,
     tunerFavoritesOnly: source.tunerFavoritesOnly === true,
     showTechnicalDetails: source.showTechnicalDetails === true,
+    videoSize: source.videoSize === 'large' ? 'large' : 'normal',
     enabledSources,
   };
 }

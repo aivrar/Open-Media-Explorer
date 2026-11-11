@@ -100,11 +100,9 @@
 }
 .source-item:hover { background: var(--bg-elev-2); color: var(--text); }
 .source-item:focus-visible { scroll-margin: 8px; }
-.source-item.is-disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.source-item.is-disabled:hover { background: transparent; color: var(--text-dim); }
+/* A source switched off in Settings is left out of the list entirely; it
+   can be switched back on in Settings > Sources. */
+.source-item.is-disabled { display: none; }
 .source-item.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);
@@ -501,13 +499,13 @@
   gap: 14px;
   /* When the global video overlay is showing (bottom-right of the screen),
      reserve room at the bottom of this panel so its long description text
-     can be scrolled clear of the video. ~240 px covers a 16:9 video at
-     320 px wide + native controls bar + a little breathing room. */
-  scroll-padding-bottom: 260px;
+     can be scrolled clear of the video: a 16:9 video at the current width
+     plus a little breathing room (260 px at the 320 px base width). */
+  scroll-padding-bottom: var(--video-clearance);
 }
 
 #app.has-video .detail-panel {
-  padding-bottom: 260px;
+  padding-bottom: var(--video-clearance);
 }
 .detail-panel .detail-close {
   align-self: flex-end;

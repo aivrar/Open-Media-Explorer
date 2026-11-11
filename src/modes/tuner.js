@@ -2,7 +2,7 @@
  * Tuner Mode — skeuomorphic dial for live radio + live TV.
  *
  * v1 simplification: dial rotation maps linearly to a 1D index into the current
- * station array. Mouse-drag rotates the dial. Arrow keys also work. Each station
+ * station array. Mouse-drag or the mouse wheel rotates the dial. Arrow keys also work. Each station
  * shows its honest position in the current list ("12 of 80"), not a made-up
  * frequency that would change whenever the list reloads.
  *
@@ -197,10 +197,35 @@ function buildDialSvg() {
   `;
 }
 
+/** Shortest signed turn in degrees between two pointer angles. atan2 jumps
+ *  from +180 to -180 at 9 o'clock; without this a drag across that point
+ *  reads as a full reverse turn and skips 30 stations. */
+export function dialTurn(fromDeg, toDeg) {
+  let delta = (toDeg - fromDeg) % 360;
+  if (delta > 180) delta -= 360;
+  else if (delta < -180) delta += 360;
+  return delta;
+}
+
+const WHEEL_NOTCH_PX = 100;
+const WHEEL_TUNE_DELAY_MS = 250;
+
+/** Whole station steps for one wheel event. Mouse wheels send about 100 px
+ *  per notch and touchpads send many small values, so movement is pooled in
+ *  `pool.px` and one step is taken per notch-sized amount. */
+export function wheelSteps(pool, event) {
+  const unit = event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 100 : 1;
+  pool.px += (Number(event.deltaY) || 0) * unit;
+  const steps = Math.trunc(pool.px / WHEEL_NOTCH_PX);
+  pool.px -= steps * WHEEL_NOTCH_PX;
+  return steps;
+}
+
 function bindDialEvents(wrap) {
   let dragging = false;
-  let startAngle = 0;
-  let baseRotation = 0;
+  let lastAngle = 0;
+  const wheelPool = { px: 0 };
+  let wheelTuneTimer = null;
 
   function angleFromEvent(e) {
     const rect = wrap.getBoundingClientRect();
@@ -215,16 +240,28 @@ function bindDialEvents(wrap) {
     if (state.stations.length === 0) return;
     dragging = true;
     wrap.classList.add('dragging');
-    startAngle = angleFromEvent(e);
-    baseRotation = state.rotationDeg;
+    lastAngle = angleFromEvent(e);
     e.preventDefault();
   }
   function onMove(e) {
     if (!dragging) return;
     const a = angleFromEvent(e);
-    let delta = a - startAngle;
-    state.rotationDeg = baseRotation + delta;
+    state.rotationDeg += dialTurn(lastAngle, a);
+    lastAngle = a;
     applyRotation();
+  }
+  // Mouse wheel: one station per notch. The dial moves at once, but the
+  // station is only tuned when the wheel rests, so a fast scroll does not
+  // start and abandon a stream for every station it passes.
+  function onWheel(e) {
+    if (state.stations.length === 0) return;
+    e.preventDefault();
+    const steps = wheelSteps(wheelPool, e);
+    if (steps === 0) return;
+    state.rotationDeg = (state.index + steps) * 12;
+    applyRotation();
+    clearTimeout(wheelTuneTimer);
+    wheelTuneTimer = setTimeout(() => { wheelTuneTimer = null; tuneCurrent(); }, WHEEL_TUNE_DELAY_MS);
   }
   function onUp() {
     if (!dragging) return;
@@ -236,12 +273,15 @@ function bindDialEvents(wrap) {
   wrap.addEventListener('mousedown', onDown);
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
+  wrap.addEventListener('wheel', onWheel, { passive: false });
   wrap.addEventListener('touchstart', onDown, { passive: false });
   window.addEventListener('touchmove', onMove, { passive: false });
   window.addEventListener('touchend', onUp);
 
   // Return cleanup so the mode tear-down can detach.
   return () => {
+    clearTimeout(wheelTuneTimer);
+    wheelTuneTimer = null;
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
     window.removeEventListener('touchmove', onMove);

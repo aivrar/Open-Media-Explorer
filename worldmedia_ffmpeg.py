@@ -375,7 +375,7 @@ def query_release_asset(
         try:
             upstream = selected.open(
                 GITHUB_RELEASE_API,
-                headers={"User-Agent": "WorldMediaWindows/0.1.5"},
+                headers={"User-Agent": "WorldMediaWindows/0.1.6"},
                 cancel=cancellation,
             )
             try:
@@ -663,7 +663,7 @@ def download_asset(
         try:
             upstream = selected.open(
                 asset.download_url,
-                headers={"User-Agent": "WorldMediaWindows/0.1.5"},
+                headers={"User-Agent": "WorldMediaWindows/0.1.6"},
                 cancel=cancellation,
             )
             try:

@@ -4,7 +4,8 @@
  */
 
 import { getState, setCurrentItem, setPlaying, emit, subscribe, loadVolume, saveVolume,
-         addFavorite, removeFavorite, isFavorite, persistFavoriteMetadata } from './state.js';
+         addFavorite, removeFavorite, isFavorite, persistFavoriteMetadata,
+         saveSettings } from './state.js';
 import { getSourceLabel, loadAdapter } from './sources.js';
 import { postSilent } from './http.js';
 import { isArtworkRelayUrl, resolveArtworkRelay } from './artwork.js';
@@ -107,24 +108,30 @@ async function loadHlsIfNeeded() {
   }
 }
 
-function syncMediaSizing() {
-  // Video shows large; audio is hidden but functional.
-  const v = elements.video;
-  v.style.position = 'absolute';
-  v.style.bottom = 'calc(var(--player-h) + 8px)';
-  v.style.right = '16px';
-  v.style.width = '320px';
-  v.style.maxWidth = '32vw';
-  v.style.height = 'auto';
-  v.style.background = 'black';
-  v.style.borderRadius = '10px';
-  v.style.border = '1px solid var(--border)';
-  v.style.boxShadow = 'var(--shadow-2)';
-  v.style.zIndex = '20';
+// The floating video's position and size live in base.css (.video-dock).
+// Its width follows the window, and the corner button switches between the
+// normal and large size; the choice is a saved setting.
+function syncVideoSize() {
+  const large = getState().settings.videoSize === 'large';
+  document.getElementById('app')?.classList.toggle('video-large', large);
+  const button = document.getElementById('video-size-btn');
+  if (!button) return;
+  const label = large ? 'Smaller video' : 'Larger video';
+  button.setAttribute('aria-pressed', large ? 'true' : 'false');
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
+function bindVideoSizeButton() {
+  document.getElementById('video-size-btn')?.addEventListener('click', () => {
+    const large = getState().settings.videoSize === 'large';
+    saveSettings({ videoSize: large ? 'normal' : 'large' });
+  });
+  subscribe('settings-change', syncVideoSize);
+  syncVideoSize();
 }
 
 function showVideo(show) {
-  syncMediaSizing();
   elements.video.hidden = !show;
   // Tell the rest of the UI a video overlay is on-screen, so anything that
   // ends near the bottom-right (the library detail panel, mainly) can
@@ -897,6 +904,7 @@ export function initPlayer() {
   bindElements();
   bindControls();
   bindMediaSession();
+  bindVideoSizeButton();
   syncPlaybackUi('init');
   // Keep the player-bar star in sync if a Library card toggles favorites
   // for the currently-playing item.

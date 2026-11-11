@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.6 - 2026-11-10
+
+- Sources switched off in Settings are left out of the Library sidebar instead
+  of staying in the list greyed out (issue #4).
+- Tuner: the mouse wheel now turns the dial, one station per notch; the station
+  is tuned when the wheel comes to rest.
+- Tuner: dragging the dial across the 9 o'clock position no longer jumps 30
+  stations.
+- The floating video grows with the window (320 px wide on a 1080p-wide window,
+  up to 640 px at 4K), and a button in its corner switches to a larger size;
+  the choice is remembered.
+
 ## 0.1.5 - 2026-11-08
 
 - Fixed the portable ZIP not opening a window (issue #3). The ZIP was missing
