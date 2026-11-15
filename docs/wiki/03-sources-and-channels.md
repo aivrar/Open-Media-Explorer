@@ -1,6 +1,6 @@
 # Sources and channels
 
-World Media currently registers eleven adapters. Each adapter converts a public
+World Media currently registers ten adapters. Each adapter converts a public
 provider response into the same item shape (stable ID, title, type, stream or
 download capability, artwork, metadata, tags, and rights note). The source is
 queried directly by the adapter through the local server's approved catalog
@@ -14,17 +14,24 @@ provider's **Source** link for authoritative rights, schedule, and availability.
 
 | Source | What appears in World Media | Live/on-demand behavior | Download/record behavior | Important caveat |
 |---|---|---|---|---|
-| [Radio Browser](https://www.radio-browser.info/) | Community internet-radio stations with country, language, tags, click rank, and optional favicon | Live audio; mirror is resolved and re-resolved if a mirror fails | Record audio; no finite download is claimed for a station stream | Community entries can be offline, malformed, or missing artwork |
+| [Radio Browser](https://www.radio-browser.info/) | Community internet-radio stations with country, language, tags, click rank, optional favicon, and the stream format and bitrate when listed (the detail panel also offers **Other streams**) | Live audio; mirror is resolved and re-resolved if a mirror fails | Record audio; no finite download is claimed for a station stream | Community entries can be offline, malformed, or missing artwork |
 | [iptv-org](https://iptv-org.github.io/) | Publicly listed TV channels joined from streams, channels, and logos data | Live video; up to eight validated stream candidates are retained per channel | Record video; HLS candidates are probed and fail over | Directory presence does not prove the broadcaster is reachable |
 | [Internet Archive](https://archive.org/) | Archive films and audio from curated collections and search | On-demand; per-item metadata resolves the playable derivative lazily | Download finite original/derivative when the item exposes one | Rights vary by item; Archive search and metadata can be transiently unavailable |
 | [NASA Image and Video Library](https://images.nasa.gov/) | NASA mission video and audio records with descriptions, dates, and assets | On-demand | Download when a playable finite asset resolves | NASA work is generally public domain in the U.S.; item guidance still applies |
 | [Wikimedia Commons](https://commons.wikimedia.org/) | Searchable free-licensed/public-domain audio and video files | On-demand | Download the file URL when available | Every file carries its own license and attribution requirements |
 | [LibriVox](https://librivox.org/) | Public-domain audiobook records and chapter/track media | On-demand audio | Download chapter audio or the available full-audiobook archive | RSS, cover, or older mirror endpoints may fail independently |
 | [media.ccc.de](https://media.ccc.de/) / C3VOC | Technical talks, event recordings, and current conference live rooms | VOD recordings plus independently refreshed live snapshots | Download VOD; record live C3VOC audio/video | An empty live snapshot between events is valid and does not end VOD collection |
-| [Library of Congress](https://www.loc.gov/) | U.S. cultural-heritage audio and film/video records and resources | On-demand when a usable resource is found | Conditional; only exposed after rights/resource validation | Shared one-request/6-second pacing; CAPTCHA or 429 enters a long cooldown |
 | [gPodder Podcasts](https://gpodder.net/) | Podcast directory shows resolved through publisher RSS/Atom feeds | On-demand episodes plus feeds that declare a current live enclosure | Download finite episodes; record only explicitly live items | Dead/slow/malformed publisher feeds are isolated; publisher terms apply |
 | [PeerTube](https://joinpeertube.org/) | Federated video indexed by public SepiaSearch and resolved at exact origins | On-demand and live HLS video | Conditional download; record live video | Independent instances vary in rate limits, licenses, and uptime |
 | [Owncast](https://owncast.online/) | Verified independent self-hosted live video directory entries | Live video snapshots refreshed about every two minutes | Record live video | Entries without an exact rating join fail closed; servers can disappear |
+
+Library of Congress was removed from the app because its site (loc.gov)
+no longer answers apps: every request now gets a browser check instead of
+data, and World Media does not try to get around that.
+Favorites and playlist items saved from it are kept and still show "Library of
+Congress" as their source. One that carries its own stream URL still plays; one
+that needed the old adapter to find its stream shows "Source no longer
+available." in the player bar when you press Play.
 
 ## Provider pacing and caching
 
@@ -40,7 +47,6 @@ adapter policies:
 | Wikimedia Commons | Default one lane | Audio/video searches are paged independently and may run in parallel |
 | LibriVox | Default one lane | Audiobook pages finite; RSS and cover resolution cached in session |
 | media.ccc.de | Two lanes, at least 500 ms between starts | Recent/search ~5 minutes, details ~1 hour, live ~10 seconds; live refresh about every minute |
-| Library of Congress | One lane, at least 6 seconds between starts | Catalog ~30 minutes, details ~6 hours; CAPTCHA/429 keeps the cursor and cools down |
 | gPodder | Four lanes | Directory/feed data ~30 minutes; searches ~5 minutes; at most four feeds active globally and one per host |
 | PeerTube | Two lanes, at least 500 ms between starts | Index ~5 minutes, origin details ~10 minutes; `Retry-After` is honored |
 | Owncast | One lane | Verified snapshot refresh about every 2 minutes; last-known-good data can be stale |

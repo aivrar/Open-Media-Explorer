@@ -11,7 +11,7 @@ Open-Media-Explorer
 Suggested repository description:
 
 ```text
-Portable Windows app for internet radio, live TV, podcasts, public-domain films, archives, and independent streams from eleven public sources, with favorites, EQ, downloads, and live recording.
+Portable Windows app for internet radio, live TV, podcasts, public-domain films, archives, and independent streams from ten public sources, with favorites, EQ, downloads, and live recording.
 ```
 
 Suggested topics:

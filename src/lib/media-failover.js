@@ -10,14 +10,29 @@ export const MAX_MEDIA_CANDIDATES = 8;
 export const MEDIA_PROBE_TIMEOUT_MS = 15_000;
 export const MEDIA_PROBE_CONCURRENCY = 2;
 
+export const MEDIA_REGISTRY_FULL = 'MEDIA_REGISTRY_FULL';
+export const MEDIA_REGISTRY_FULL_MESSAGE = "The app's stream relay is full. Restart the app to clear it.";
+
+/** Distinct error codes carried by the underlying candidate failures. */
+export function underlyingErrorCodes(errors) {
+  const codes = [];
+  for (const error of Array.isArray(errors) ? errors : []) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (code && !codes.includes(code)) codes.push(code);
+  }
+  return codes;
+}
+
 export class MediaConnectionError extends Error {
-  constructor(message, { attempts = 0, errors = [] } = {}) {
+  constructor(message, { attempts = 0, errors = [], code = 'MEDIA_CANDIDATES_UNAVAILABLE' } = {}) {
     super(message);
     this.name = 'MediaConnectionError';
-    this.code = 'MEDIA_CANDIDATES_UNAVAILABLE';
+    this.code = code;
     this.attempts = attempts;
     this.errors = errors;
-    this.retryable = true;
+    this.codes = underlyingErrorCodes(errors);
+    // A full relay registry does not clear by retrying; only a restart does.
+    this.retryable = code !== MEDIA_REGISTRY_FULL;
   }
 }
 
@@ -294,6 +309,11 @@ export async function connectMediaRelay(item, options = {}) {
     } catch (batchErrors) {
       errors.push(...batchErrors);
     }
+  }
+  if (underlyingErrorCodes(errors).includes(MEDIA_REGISTRY_FULL)) {
+    throw new MediaConnectionError(MEDIA_REGISTRY_FULL_MESSAGE, {
+      attempts: candidates.length, errors, code: MEDIA_REGISTRY_FULL,
+    });
   }
   if (candidates.length === 1 && errors[0]?.mediaRegistrationFailed) throw errors[0];
   throw new MediaConnectionError(

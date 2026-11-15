@@ -24,9 +24,16 @@ export const DEFAULT_MAX_QUEUE = 256;
 export const DEFAULT_COOLDOWN_BASE_MS = 1_500;
 export const DEFAULT_COOLDOWN_MAX_MS = 30_000;
 export const DEFAULT_TASK_TIMEOUT_MS = 60_000;
-export const MAX_RETRY_AFTER_MS = 60 * 60 * 1000;
+// The longest wait a provider may declare (Retry-After or an explained hold).
+// The Library's browse progress uses the same cap, so a queued search never
+// starts before a browse hold ends.
+export const MAX_RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
 export const PLAYBACK_CATALOG_CONCURRENCY = 2;
 export const PLAYBACK_BACKGROUND_CONCURRENCY = 1;
+// Global slots that background work (prefetch and snapshot refresh) may never
+// take, so what the user is looking at can start at once. A small scheduler
+// keeps at most a quarter of its slots this way.
+export const FOREGROUND_RESERVED_SLOTS = 2;
 
 function abortError(reason = null) {
   if (reason?.name === 'AbortError') return reason;
@@ -98,6 +105,10 @@ export class CatalogScheduler {
         Number(options.playbackMaxConcurrent) || PLAYBACK_CATALOG_CONCURRENCY,
       ),
     );
+    this.foregroundReserve = Math.min(
+      Math.floor(this.maxConcurrent / 4),
+      Math.floor(finiteNonnegative(options.foregroundReserve, FOREGROUND_RESERVED_SLOTS)),
+    );
     this.playbackBackgroundConcurrent = Math.max(
       1,
       Math.min(
@@ -121,6 +132,9 @@ export class CatalogScheduler {
       state = {
         enabled: true,
         cooldownUntil: 0,
+        // End of a cooldown the provider declared (Retry-After), as opposed
+        // to an ordinary failure backoff.
+        declaredUntil: 0,
         nextStartAt: 0,
         failures: 0,
       };
@@ -256,8 +270,45 @@ export class CatalogScheduler {
     const value = finiteNonnegative(delayMs, 0);
     const until = options.absolute === true ? value : this.now() + value;
     state.cooldownUntil = Math.max(state.cooldownUntil, until);
+    if (options.declared === true) state.declaredUntil = Math.max(state.declaredUntil, until);
     this._rescheduleWake();
     return state.cooldownUntil;
+  }
+
+  /** Read-only: how long a source's cooldown has left, or 0 when it has none. */
+  cooldownRemainingMs(sourceId) {
+    const state = this.sourceState.get(sourceId);
+    if (!state) return 0;
+    return Math.max(0, state.cooldownUntil - this.now());
+  }
+
+  /** Read-only: time left of a cooldown the provider itself declared
+   *  (Retry-After), or 0. Ordinary failure backoff never counts. */
+  declaredCooldownRemainingMs(sourceId) {
+    const state = this.sourceState.get(sourceId);
+    if (!state) return 0;
+    return Math.max(0, Math.min(state.declaredUntil, state.cooldownUntil) - this.now());
+  }
+
+  /**
+   * Move a source's queued work up to `priority` (what the user is looking
+   * at). Running work is unaffected. Returns how many queued jobs were raised.
+   */
+  promote(sourceId, priority = CATALOG_PRIORITY.USER) {
+    const queue = this.queues.get(sourceId);
+    if (!queue?.length) return 0;
+    let raised = 0;
+    for (const job of queue) {
+      if (job.priority < priority) {
+        job.priority = priority;
+        raised += 1;
+      }
+    }
+    if (raised > 0) {
+      queue.sort((left, right) => right.priority - left.priority || left.sequence - right.sequence);
+      this._queueDrain();
+    }
+    return raised;
   }
 
   recordFailure(sourceId, error = null) {
@@ -272,7 +323,7 @@ export class CatalogScheduler {
     const delay = Number.isFinite(retryAfter) && retryAfter >= 0
       ? Math.min(MAX_RETRY_AFTER_MS, retryAfter)
       : fallback;
-    this.setCooldown(sourceId, delay);
+    this.setCooldown(sourceId, delay, { declared: Number.isFinite(retryAfter) && retryAfter > 0 });
     return delay;
   }
 
@@ -285,6 +336,7 @@ export class CatalogScheduler {
     const state = this._state(sourceId);
     state.failures = 0;
     state.cooldownUntil = 0;
+    state.declaredUntil = 0;
     state.nextStartAt = 0;
     this._queueDrain();
   }
@@ -384,6 +436,9 @@ export class CatalogScheduler {
     const activeBackground = this.playbackPriority
       ? [...this.activeJobs].filter((job) => job.priority <= this.pausePriorityAt).length
       : 0;
+    // Background work leaves the last slots free for foreground work.
+    const backgroundFull = !this.playbackPriority
+      && this.activeCount >= this.maxConcurrent - this.foregroundReserve;
     for (const sourceId of this.sourceOrder) {
       const queue = this.queues.get(sourceId);
       if (!queue?.length) continue;
@@ -393,6 +448,7 @@ export class CatalogScheduler {
       if ((this.activeBySource.get(sourceId) || 0) >= policy.maxConcurrent) continue;
       const job = queue[0];
       if (!this.visible && job.priority <= this.pausePriorityAt) continue;
+      if (backgroundFull && job.priority <= this.pausePriorityAt) continue;
       if (this.playbackPriority && job.priority <= this.pausePriorityAt
           && activeBackground >= this.playbackBackgroundConcurrent) continue;
       if (this._eligibleAt(sourceId) > now) continue;

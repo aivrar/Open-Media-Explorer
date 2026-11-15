@@ -1,5 +1,5 @@
 /** Local-only collection pools; filters never trigger provider searches. */
-import { getState } from '../../lib/state.js';
+import { displayFavorites, getState } from '../../lib/state.js';
 import { favoriteForContentView } from '../../lib/content-rating.js';
 import { getPlaylistItems } from '../../lib/playlists.js';
 import { view } from './state.js';
@@ -10,7 +10,8 @@ export function isPersonalSource(source = view.activeSource) {
 
 export function libraryPool() {
   if (view.activeSource === 'favorites') {
-    return getState().favorites.map((item) => favoriteForContentView(item, getState().settings));
+    // Shown in the chosen order ("My order" or A-Z); see lib/favorites-order.js.
+    return displayFavorites().map((item) => favoriteForContentView(item, getState().settings));
   }
   if (view.activeSource === 'playlists') return getPlaylistItems(view.playlistId);
   return view.items;

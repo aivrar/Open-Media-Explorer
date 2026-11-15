@@ -65,13 +65,6 @@ export const SOURCES = Object.freeze([
     capabilities: ['browse', 'search', 'on demand', 'live', 'download', 'record'],
   }),
   source({
-    id: 'library-of-congress', displayName: 'Library of Congress', types: ['video', 'audio'],
-    color: 'var(--source-library-of-congress)', homepage: 'https://www.loc.gov/',
-    description: 'U.S. cultural-heritage audio and film/video catalog.',
-    rightsNote: 'Rights and access vary by collection and item; no blanket public-domain claim.',
-    capabilities: ['browse', 'search', 'on demand', 'conditional download'],
-  }),
-  source({
     id: 'gpodder', displayName: 'gPodder Podcasts', types: ['audio', 'video', 'radio', 'tv'],
     color: 'var(--source-gpodder)', homepage: 'https://gpodder.net/',
     description: 'Open podcast directory resolved through publisher RSS/Atom feeds.',
@@ -96,6 +89,22 @@ export const SOURCES = Object.freeze([
 
 export const SOURCE_IDS = Object.freeze(SOURCES.map((entry) => entry.id));
 
+/**
+ * Sources the app used to offer. They are kept only so items saved from them
+ * still read sensibly: a label, the neutral colour, and a plain message when
+ * playing one would need the removed adapter. Nothing lists or fetches them.
+ */
+export const RETIRED_SOURCES = Object.freeze({
+  // Removed because loc.gov now answers apps only with a browser check.
+  'library-of-congress': Object.freeze({ displayName: 'Library of Congress' }),
+});
+
+export const RETIRED_SOURCE_MESSAGE = 'Source no longer available.';
+
+export function isRetiredSource(id) {
+  return Object.hasOwn(RETIRED_SOURCES, String(id));
+}
+
 const SOURCE_BY_ID = new Map(SOURCES.map((entry) => [entry.id, entry]));
 
 export function getSource(id) {
@@ -104,7 +113,7 @@ export function getSource(id) {
 
 export function getSourceLabel(id) {
   if (id === 'playlist') return 'My Playlists';
-  return getSource(id)?.displayName || id;
+  return getSource(id)?.displayName || (isRetiredSource(id) ? RETIRED_SOURCES[id].displayName : id);
 }
 
 export function getSourceColor(id) {
@@ -120,7 +129,6 @@ const ADAPTER_LOADERS = Object.freeze({
   'wikimedia': () => import('../adapters/wikimedia.js'),
   'librivox': () => import('../adapters/librivox.js'),
   'media-ccc': () => import('../adapters/media-ccc.js'),
-  'library-of-congress': () => import('../adapters/library-of-congress.js'),
   'gpodder': () => import('../adapters/gpodder.js'),
   'peertube': () => import('../adapters/peertube.js'),
   'owncast': () => import('../adapters/owncast.js'),
@@ -131,6 +139,13 @@ const adapterCache = new Map();
 export async function loadAdapter(id) {
   if (id === 'playlist') return {}; // Imported channels already carry their canonical URLs.
   if (adapterCache.has(id)) return adapterCache.get(id);
+  if (isRetiredSource(id)) {
+    // Saved items may still name a removed source; say so plainly.
+    throw Object.assign(new Error(`Retired source: ${id}`), {
+      code: 'SOURCE_RETIRED',
+      userMessage: RETIRED_SOURCE_MESSAGE,
+    });
+  }
   const loader = ADAPTER_LOADERS[id];
   if (!loader) throw new Error(`Unknown adapter: ${id}`);
   const mod = await loader();

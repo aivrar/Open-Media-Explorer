@@ -6,7 +6,11 @@ import { randomOne } from '../lib/search.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { playItem } from '../lib/player.js';
 import { getState, subscribe } from '../lib/state.js';
-import { isArtworkRelayUrl, loadArtworkImage, resolveArtworkRelay } from '../lib/artwork.js';
+import {
+  artworkSourceFor, isArtworkRelayUrl, isStationImageSource, loadArtworkImage, resolveArtworkRelay,
+  stationImageSourceFor,
+} from '../lib/artwork.js';
+import { onStationImagesChange } from '../lib/station-images.js';
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import {
   DISCOVERY_ATTEMPT_DEADLINE_MS, withDiscoveryAttemptDeadline,
@@ -131,23 +135,34 @@ function renderNow(item) {
   ui.now.removeAttribute('hidden');
   const artworkToken = Symbol('discovery-artwork');
   ui.now.__artworkToken = artworkToken;
+  // Which station picture is shown, so a new list redraws only on a change.
+  ui.now.__stationImage = stationImageSourceFor(item);
   const appendArtwork = () => {
-    if (!isArtworkRelayUrl(item.thumbnail) || ui.now.__artworkToken !== artworkToken) return;
+    // The user's own station picture first, then the item's relay artwork.
+    const source = artworkSourceFor(item);
+    if (!source || ui.now.__artworkToken !== artworkToken) return;
     const img = el('img', { attrs: { alt: '', referrerpolicy: 'no-referrer' } });
     ui.now.insertBefore(img, ui.now.firstChild);
-    void loadArtworkImage(img, item.thumbnail.trim(), {
+    void loadArtworkImage(img, source, {
       priority: 20,
       signal: artworkSignal,
     }).catch((error) => {
-      if (error?.name !== 'AbortError') img.remove();
+      if (error?.name === 'AbortError') return;
+      img.remove();
+      // A station picture that would not load: show the item's own artwork.
+      if (isStationImageSource(source)) showOwnArtwork();
     });
   };
-  if (isArtworkRelayUrl(item.thumbnail)) {
-    appendArtwork();
-  } else {
-    resolveArtworkRelay(item, { priority: 20, signal: artworkSignal })
-      .then(appendArtwork).catch(() => {});
-  }
+  const showOwnArtwork = () => {
+    if (isArtworkRelayUrl(item.thumbnail)) {
+      appendArtwork();
+    } else {
+      resolveArtworkRelay(item, { priority: 20, signal: artworkSignal })
+        .then(appendArtwork).catch(() => {});
+    }
+  };
+  if (artworkSourceFor(item)) appendArtwork();
+  else showOwnArtwork();
 
   const text = el('div', { className: 'now-text' });
   text.appendChild(el('div', { className: 'now-source', text: getSourceLabel(item.source) }));
@@ -156,6 +171,16 @@ function renderNow(item) {
   text.appendChild(el('h2', { text: item.title }));
   text.appendChild(el('p', { text: item.description || '' }));
   ui.now.appendChild(text);
+}
+
+/** The station pictures changed: redraw the item on show (not replay it)
+ *  when its picture is a different one now. Returns true when redrawn. */
+export function syncDiscoveryStationImage() {
+  const item = state.current;
+  if (!item || !ui.now || ui.now.hasAttribute?.('hidden')) return false;
+  if (stationImageSourceFor(item) === (ui.now.__stationImage || '')) return false;
+  renderNow(item);
+  return true;
 }
 
 async function surprise() {
@@ -270,6 +295,7 @@ export function renderDiscovery(host) {
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'discovery') surprise();
   }));
+  subs.push(onStationImagesChange(() => { syncDiscoveryStationImage(); }));
   subs.push(subscribe('settings-change', (settings) => {
     rebuildSourceSelect();
     if (state.current && (!isContentAllowed(state.current, settings)

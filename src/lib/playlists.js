@@ -36,7 +36,7 @@ export async function loadPlaylists(requestImpl = controlRequest) {
 }
 
 export async function importPlaylistFile(file, defaultType = 'tv', requestImpl = controlRequest) {
-  if (!file || !/\.m3u8?$/i.test(file.name)) throw new Error('Choose an .m3u or .m3u8 file.');
+  if (!file || !/\.(m3u8?|pls|xspf)$/i.test(file.name)) throw new Error('Choose an .m3u, .m3u8, .pls or .xspf file.');
   if (file.size > 8 * 1024 * 1024) throw new Error('Playlist exceeds 8 MiB; split it into smaller files.');
   await loadPlaylists(requestImpl);
   const bytes = await file.arrayBuffer();

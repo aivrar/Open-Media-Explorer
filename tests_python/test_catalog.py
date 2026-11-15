@@ -7,6 +7,7 @@ import json
 import socket
 import tempfile
 import threading
+import time
 import unittest
 import zlib
 from pathlib import Path
@@ -20,6 +21,7 @@ from worldmedia_catalog import (
     CatalogCache,
     CatalogError,
     CatalogService,
+    ChallengeHolds,
     attach_podcast_identities,
     canonical_http_url,
     normalize_owncast_snapshot,
@@ -310,6 +312,50 @@ class CatalogUrlAndFeedTests(unittest.TestCase):
             fetcher.fetch("https://feed.example/rate", accept="application/xml", allowed_types={"application/xml"})
         self.assertEqual(limited.exception.code, "CATALOG_RATE_LIMITED")
         self.assertEqual(limited.exception.retry_after, 37)
+
+    def test_bounded_fetcher_reports_a_browser_check_and_backs_off_for_an_hour(self) -> None:
+        challenge_page = b"<!DOCTYPE html><title>Just a moment...</title>"
+        connector = FakeConnector({
+            "https://catalog.example/audio/?fo=json": response(
+                403, challenge_page, "text/html", **{"Cf-Mitigated": "challenge", "Server": "cloudflare"}
+            ),
+            "https://feed.example/challenge-503": response(
+                503, challenge_page, "text/html", **{"Cf-Mitigated": " Challenge ", "Retry-After": "7200"}
+            ),
+            "https://feed.example/challenge-429": response(
+                429, challenge_page, "text/html", **{"Cf-Mitigated": "challenge", "Retry-After": "30"}
+            ),
+            "https://feed.example/plain-403": response(403, b"<html>forbidden</html>", "text/html"),
+            "https://feed.example/other-mitigation": response(
+                403, b"<html>blocked</html>", "text/html", **{"Cf-Mitigated": "block"}
+            ),
+        })
+        fetcher = BoundedFetcher(connector)
+        for url, expected_retry in (
+            ("https://catalog.example/audio/?fo=json", 3600),
+            ("https://feed.example/challenge-503", 7200),
+            ("https://feed.example/challenge-429", 3600),
+        ):
+            with self.subTest(url=url), self.assertRaises(CatalogError) as caught:
+                fetcher.fetch(url, accept="application/json", allowed_types={"application/json"})
+            self.assertEqual(caught.exception.status, 502)
+            self.assertEqual(caught.exception.code, "CATALOG_SOURCE_CHALLENGE")
+            self.assertEqual(
+                caught.exception.message,
+                "Catalog source is asking for a browser check and is not answering apps right now.",
+            )
+            # Retryable like any outage so stale data can be served; the
+            # retry-after spaces any retry.
+            self.assertTrue(caught.exception.retryable)
+            self.assertEqual(caught.exception.retry_after, expected_retry)
+            self.assertGreaterEqual(caught.exception.retry_after, 3600)
+        for url in ("https://feed.example/plain-403", "https://feed.example/other-mitigation"):
+            with self.subTest(url=url), self.assertRaises(CatalogError) as caught:
+                fetcher.fetch(url, accept="application/json", allowed_types={"application/json"})
+            self.assertEqual(caught.exception.status, 502)
+            self.assertEqual(caught.exception.code, "CATALOG_UPSTREAM_STATUS")
+            self.assertFalse(caught.exception.retryable)
+            self.assertIsNone(caught.exception.retry_after)
 
 
 class CatalogProviderTests(unittest.TestCase):
@@ -678,6 +724,155 @@ class CacheAndServiceTests(unittest.TestCase):
                 redirect_service.resolve_peertube({"watch_url": watch, "uuid": uuid_value})
             self.assertEqual(caught.exception.code, "PEERTUBE_CROSS_ORIGIN_REDIRECT")
 
+    def test_browser_check_serves_stale_data_and_waits_out_the_retry_after(self) -> None:
+        challenge = lambda: response(  # noqa: E731
+            503, b"<!DOCTYPE html><title>Just a moment...</title>", "text/html",
+            **{"Cf-Mitigated": "challenge", "Retry-After": "7200"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            clock = FakeClock()
+            url = "https://feeds.example.test/show.xml"
+            good = response(200, (FIXTURES / "podcast-rss.xml").read_bytes(), "application/rss+xml")
+            connector = FakeConnector({url: [good, challenge(), good]})
+            service = CatalogService(Path(directory) / "feed", connector=connector, clock=clock)
+            self.assertEqual(service.resolve_feed({"url": url})["cache"]["state"], "updated")
+            clock.advance(1801)
+            stale = service.resolve_feed({"url": url})
+            self.assertEqual(stale["cache"]["state"], "stale")
+            self.assertEqual(stale["cache"]["reason"], "CATALOG_SOURCE_CHALLENGE")
+            self.assertEqual(len(connector.calls), 2)
+            # Within the declared wait the origin is not asked again.
+            clock.advance(7199)
+            again = service.resolve_feed({"url": url})
+            self.assertEqual(again["cache"]["state"], "stale")
+            self.assertEqual(len(connector.calls), 2)
+            clock.advance(1)
+            self.assertEqual(service.resolve_feed({"url": url})["cache"]["state"], "updated")
+            self.assertEqual(len(connector.calls), 3)
+
+        with tempfile.TemporaryDirectory() as directory:
+            clock = FakeClock()
+            public = json.loads((FIXTURES / "peertube.json").read_text())["originDetails"]["vod"]
+            uuid_value = public["uuid"]
+            api = f"https://video.example.org/api/v1/videos/{uuid_value}"
+            connector = FakeConnector({api: [
+                response(200, json.dumps(public).encode(), "application/json"),
+                challenge(),
+            ]})
+            service = CatalogService(Path(directory) / "peertube", connector=connector, clock=clock)
+            request = {"watch_url": public["url"], "uuid": uuid_value}
+            self.assertEqual(service.resolve_peertube(request)["cache"]["state"], "updated")
+            clock.advance(601)
+            # The retryable-only stale path treats a challenge like any outage.
+            stale = service.resolve_peertube(request)
+            self.assertEqual(stale["cache"]["state"], "stale")
+            self.assertEqual(stale["cache"]["reason"], "CATALOG_SOURCE_CHALLENGE")
+            clock.advance(60)
+            self.assertEqual(service.resolve_peertube(request)["cache"]["state"], "stale")
+            self.assertEqual(len(connector.calls), 2, "no fresh fetch before the retry-after")
+
+        with tempfile.TemporaryDirectory() as directory:
+            # Nothing cached: the challenge itself reaches the caller, with the
+            # time left on later calls and no new upstream request.
+            clock = FakeClock()
+            url = "https://feeds.example.test/new.xml"
+            connector = FakeConnector({url: challenge()})
+            service = CatalogService(Path(directory) / "empty", connector=connector, clock=clock)
+            with self.assertRaises(CatalogError) as first:
+                service.resolve_feed({"url": url})
+            self.assertEqual(first.exception.code, "CATALOG_SOURCE_CHALLENGE")
+            self.assertEqual(first.exception.retry_after, 7200)
+            clock.advance(3600)
+            with self.assertRaises(CatalogError) as second:
+                service.resolve_feed({"url": url})
+            self.assertEqual(second.exception.retry_after, 3600)
+            self.assertEqual(len(connector.calls), 1)
+
+    def test_browser_check_memory_is_per_url_bounded_and_expires(self) -> None:
+        challenge = response(
+            403, b"<!DOCTYPE html><title>Just a moment...</title>", "text/html",
+            **{"Cf-Mitigated": "challenge"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            clock = FakeClock()
+            blocked = "https://cdn.example.test/shows/one.xml"
+            sibling = "https://cdn.example.test/shows/two.xml"
+            good = response(200, (FIXTURES / "podcast-rss.xml").read_bytes(), "application/rss+xml")
+            connector = FakeConnector({blocked: challenge, sibling: good})
+            service = CatalogService(Path(directory) / "cache", connector=connector, clock=clock)
+            with self.assertRaises(CatalogError) as caught:
+                service.resolve_feed({"url": blocked})
+            self.assertEqual(caught.exception.code, "CATALOG_SOURCE_CHALLENGE")
+            # Another URL on the same host is fetched normally.
+            self.assertEqual(service.resolve_feed({"url": sibling})["cache"]["state"], "updated")
+            self.assertEqual([call[0] for call in connector.calls], [blocked, sibling])
+            # The blocked URL itself is not asked again before its retry-after.
+            clock.advance(3599)
+            with self.assertRaises(CatalogError) as again:
+                service.resolve_feed({"url": blocked})
+            self.assertEqual(again.exception.retry_after, 1)
+            self.assertEqual(len(connector.calls), 2)
+
+        holds = ChallengeHolds()
+        holds.hold("https://a.example/1", 0.0, 10)
+        self.assertEqual(holds.remaining("https://a.example/1", 5.0), 5)
+        self.assertEqual(holds.remaining("https://a.example/2", 5.0), 0)
+        self.assertEqual(holds.remaining("https://a.example/1", 10.0), 0)
+        self.assertEqual(len(holds), 0, "an expired hold is removed when looked up")
+        holds.hold("https://a.example/old", 0.0, 10)
+        holds.hold("https://a.example/new", 20.0, 10)
+        self.assertEqual(len(holds), 1, "expired holds are pruned when a new one is added")
+        # At capacity the hold that ends soonest is dropped; the rest stay.
+        capped = ChallengeHolds()
+        for index in range(ChallengeHolds.MAX_URLS):
+            capped.hold(f"https://cdn.example/{index}", 0.0, 1000 + index)
+        capped.hold("https://cdn.example/extra", 0.0, 5000)
+        self.assertEqual(len(capped), ChallengeHolds.MAX_URLS)
+        self.assertEqual(capped.remaining("https://cdn.example/0", 1.0), 0)
+        self.assertEqual(capped.remaining("https://cdn.example/1", 1.0), 1000)
+        self.assertEqual(capped.remaining("https://cdn.example/extra", 1.0), 4999)
+
+    def test_browser_check_memory_lookup_prunes_every_ended_hold(self) -> None:
+        holds = ChallengeHolds()
+        for index in range(5):
+            holds.hold(f"https://a.example/{index}", 0.0, 10 + index)
+        holds.hold("https://a.example/long", 0.0, 100)
+        self.assertEqual(holds.remaining("https://a.example/unrelated", 50.0), 0)
+        self.assertEqual(len(holds), 1, "a lookup of any URL removes every ended hold")
+        self.assertEqual(holds.remaining("https://a.example/long", 50.0), 50)
+
+    def test_browser_check_memory_is_safe_under_concurrent_use(self) -> None:
+        holds = ChallengeHolds()
+        errors: list[BaseException] = []
+        start = threading.Barrier(8)
+        deadline = time.monotonic() + 0.5
+
+        def hammer(worker: int) -> None:
+            try:
+                start.wait(5)
+                step = 0
+                while time.monotonic() < deadline:
+                    now = float(step)
+                    url = f"https://cdn.example/{(worker * 7919 + step) % 1500}"
+                    holds.hold(url, now, step % 40)
+                    remaining = holds.remaining(f"https://cdn.example/{(step * 31) % 1500}", now)
+                    if remaining < 0 or len(holds) > ChallengeHolds.MAX_URLS:
+                        raise AssertionError("inconsistent challenge memory")
+                    step += 1
+            except BaseException as error:  # Reported below.
+                errors.append(error)
+
+        threads = [threading.Thread(target=hammer, args=(worker,)) for worker in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertLessEqual(len(holds), ChallengeHolds.MAX_URLS)
+        holds.remaining("https://cdn.example/none", float("inf"))
+        self.assertEqual(len(holds), 0)
+
     def test_peertube_authoritative_private_refresh_never_uses_stale_public_detail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             clock = FakeClock()
@@ -916,6 +1111,56 @@ class AssetTests(unittest.TestCase):
             registry.shutdown()
             with self.assertRaises(CatalogError):
                 registry.register({"url": url, "source_id": "gpodder", "item_id": "item:three"})
+
+    def test_expired_artwork_stands_in_only_when_its_refresh_meets_a_browser_check(self) -> None:
+        challenge = response(
+            403, b"<!DOCTYPE html><title>Just a moment...</title>", "text/html",
+            **{"Cf-Mitigated": "challenge"},
+        )
+        checked = "https://images.example.test/checked.png"
+        failing = "https://images.example.test/failing.png"
+        corrupt = "https://images.example.test/corrupt.png"
+        newer = png_with_dimensions(2, 2)
+        with tempfile.TemporaryDirectory() as directory:
+            clock = FakeClock()
+            connector = FakeConnector({
+                checked: [response(200, PNG_1X1, "image/png"), challenge, response(200, newer, "image/png")],
+                failing: [response(200, PNG_1X1, "image/png"), response(500, b"{}", "application/json")],
+                corrupt: [response(200, PNG_1X1, "image/png"), challenge],
+            })
+            registry = AssetRegistry(Path(directory) / "cache", connector=connector, clock=clock, ttl_seconds=60)
+
+            def read(url: str):
+                token = registry.register({"url": url, "source_id": "nasa", "item_id": url}).token
+                return registry.read(token)
+
+            for url in (checked, failing, corrupt):
+                self.assertEqual(read(url).data, PNG_1X1)
+            clock.advance(61)  # Every cached image has expired.
+
+            # The refresh meets a browser check: the last validated image is served.
+            self.assertEqual(read(checked).data, PNG_1X1)
+            self.assertEqual(len(connector.calls), 4)
+            # While the check's retry-after lasts it is served without asking again.
+            self.assertEqual(read(checked).data, PNG_1X1)
+            self.assertEqual(len(connector.calls), 4)
+
+            # Any other failure is reported as before; the expired image is not served.
+            with self.assertRaises(CatalogError) as failed:
+                read(failing)
+            self.assertEqual(failed.exception.code, "CATALOG_UPSTREAM_STATUS")
+
+            # A stand-in must still pass full validation.
+            registry.cache._paths(corrupt)[1].write_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'/>")
+            with self.assertRaises(CatalogError) as refused:
+                read(corrupt)
+            self.assertEqual(refused.exception.code, "CATALOG_SOURCE_CHALLENGE")
+            self.assertFalse(registry.cache._paths(corrupt)[1].exists())
+
+            # Once the retry-after has passed, a successful refresh replaces it.
+            clock.advance(3600)
+            self.assertEqual(read(checked).data, newer)
+            self.assertEqual(registry.cache.get(checked).data, newer)
 
     def test_asset_registry_uses_expiry_heap_for_large_thumbnail_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

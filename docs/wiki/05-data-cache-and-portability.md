@@ -8,7 +8,10 @@ For a normal portable launch, the executable's directory is the portable root:
 WorldMediaWindows.exe
 WorldMediaWindows-data\
   cache\                 catalog/provider cache records
-  state\                 launcher.json, profile-preferences.json, playlists.json
+  state\                 launcher.json, profile-preferences.json,
+                         profile-preferences-extra.json, playlists.json,
+                         song-log.json
+  station-images\        your own station pictures (made when you open it)
   logs\                  native.log and runtime diagnostics
   webview2_data\         WebView2 browser profile and localStorage
 downloads\               finite downloads and completed recordings
@@ -30,10 +33,29 @@ Playlist URLs and optional headers are stored as plain text and can contain
 provider tokens. Keep this file and the original playlists private; do not
 include them in bug reports or GitHub commits.
 
+Version 0.1.9 adds three more kinds of saved data:
+
+- the **song log** is stored in `state/song-log.json`, not in the browser
+  profile;
+- **favorites categories** are saved in the browser profile under their own key
+  (`worldmedia.favgroups.v1`) and mirrored to
+  `state/profile-preferences-extra.json`;
+- your **station pictures** are ordinary files in the `station-images` folder
+  of the data folder.
+
+These live in separate files on purpose. World Media 0.1.8 and older treat a
+`profile-preferences.json` that holds a key they do not know as unreadable and
+ignore all of it, favorites included. So `profile-preferences.json` keeps only
+the keys that every version knows, and the newer data goes into the extra file
+and `song-log.json`, which older versions never open. See **Going back to an
+older version** below.
+
 The browser profile stores:
 
 - favorites (`worldmedia.favorites.v1`);
-- settings and enabled sources (`worldmedia.settings.v1`);
+- favorites categories (`worldmedia.favgroups.v1`);
+- settings, enabled sources, and the Favorites sort choice
+  (`worldmedia.settings.v1`);
 - volume (`worldmedia.volume.v1`);
 - recent capture job history (`worldmedia.jobs.v1`);
 - global/favorite/custom EQ (`worldmedia.eq.v1`).
@@ -73,6 +95,60 @@ are still stored in WebView2, not a separate unlimited native favorites database
 Older `%LOCALAPPDATA%\\WorldMediaWindows` state can be migrated once when no
 portable state directory exists. The legacy source is copied, not deleted.
 
+## The backup ZIP
+
+**Settings → Storage → Back up my data** writes one ZIP into the `downloads`
+folder, named like `WorldMedia-backup-20261114-221500.zip`. World Media first
+saves your latest favorites and settings to the data folder; if that fails, no
+backup is made. The ZIP is a copy of the saved data, not of the whole data
+folder:
+
+- `WorldMediaWindows-data\state\` holds `playlists.json`,
+  `profile-preferences.json` (favorites, settings, volume, equalizer curves),
+  `profile-preferences-extra.json` (categories) and `song-log.json`, for each
+  of them that exists;
+- `WorldMediaWindows-data\station-images\` holds your station pictures;
+- `exports\` holds `.m3u8` playlist files that other players can open:
+  `favorites-radio.m3u8`, `favorites-tv.m3u8`, `favorites-other.m3u8`, and one
+  file for each imported playlist;
+- `README.txt` explains the files and how to restore them.
+
+The cache, logs, browser profile, FFmpeg tools, and your downloads are never
+included, and old download history is left out of the copy. Everything in one
+ZIP is limited to 192 MB before compression; the README in the ZIP says if
+some station pictures did not fit.
+
+**There is no restore button.** To restore, close World Media, copy the
+`WorldMediaWindows-data` folder from the ZIP into the folder that holds
+`WorldMediaWindows.exe`, and let it replace files with the same names.
+Imported playlists come back at once. Favorites and settings are only taken
+from the backup by a copy of World Media that has none of its own yet, such as
+a new computer or a fresh copy of the app. Copying the entire
+`WorldMediaWindows-data` folder remains the most complete backup.
+
+Playlist addresses can contain private links or account tokens, so share the
+ZIP only with people you trust.
+
+## Station images
+
+The `station-images` folder inside `WorldMediaWindows-data` holds your own
+pictures for stations. **Settings → Station images → Open folder** makes the
+folder and opens it. A picture named like a station, for example
+`Radio Paradise.png`, replaces that station's artwork after you press
+**Refresh**. PNG, JPG, WebP or GIF, up to 2 MB each. World Media only reads
+this folder. Because it is part of the data folder, it moves with the portable
+folder, and the backup ZIP includes it. **Clear local cache** leaves it alone.
+[Using the application](02-using-the-application.md) has the matching rules.
+
+## Going back to an older version
+
+Keep the `WorldMediaWindows-data` folder as it is and start the older EXE
+beside it. Going back from v0.1.9 to v0.1.8 keeps your favorites and settings,
+because the data that v0.1.8 does not know is kept in other files (see above).
+v0.1.8 does not show favorites categories, the song log, or station pictures,
+and it does not open or change those files. It also ignores the Favorites sort
+choice. Back up the data folder before you switch, as for any update.
+
 ## Cache semantics
 
 Provider metadata cache records are bounded (256 total/64 per provider, 2 MiB
@@ -89,12 +165,19 @@ discard unseen collected items.
 
 ## Clearing cache safely
 
-Settings → Storage → **Clear local cache** removes local favorites, preferences,
-EQ, volume, and job history as well as catalog/artwork cache records. It keeps:
+Settings → Storage → **Clear local cache** removes local favorites, favorites
+categories, preferences, EQ, volume, and job history, empties the song log, and
+clears catalog/artwork cache records. It keeps:
 
-- files already in `downloads`;
+- files already in `downloads`, including backup ZIPs;
+- imported playlists (`state/playlists.json`);
+- your station pictures;
 - managed FFmpeg tools;
 - the EXE and source code.
+
+If the saved copy in the data folder cannot be cleared, Settings says so and
+stays open. Press **Clear cache** again before closing World Media, or the
+favorites and settings could come back.
 
 Treat this as a profile reset. Back up the data directory first if favorites or
 custom EQ matter. Do not delete individual WebView2 files while the app is

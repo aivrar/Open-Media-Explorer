@@ -135,6 +135,8 @@ class DownloadService:
         self._active_sources: dict[str, str] = {}
         self._job_sources: dict[str, str] = {}
         self._upstreams: dict[str, object] = {}
+        # Set by shutdown() under _lock before its snapshot; start() refuses after that.
+        self._closing = False
 
     def start(self, media_id: str) -> dict:
         registration = self.registry.get(media_id)
@@ -143,6 +145,8 @@ class DownloadService:
         title = registration.title
         source_key = registration.url
         with self._lock:
+            if self._closing:
+                raise DownloadError("Download service is stopping.", code="DOWNLOAD_SERVICE_STOPPED", retryable=True)
             existing = self._active_sources.get(source_key)
             if existing:
                 raise DuplicateJobError(existing)
@@ -170,22 +174,40 @@ class DownloadService:
             if thread is not threading.current_thread():
                 done.wait(DOWNLOAD_CANCEL_WAIT_SECONDS)
 
-        self.jobs.attach_controller(job.id, cancel=cancel_worker)
-        with self._lock:
-            self._workers[job.id] = (thread, cancel, done)
-        try:
-            thread.start()
-        except Exception:
+        def abandon() -> None:
+            """Undo a start that never got a worker; the job keeps any terminal state it has."""
             with self._lock:
-                self._workers.pop(job.id, None)
                 self._active_sources.pop(source_key, None)
                 self._job_sources.pop(job.id, None)
+            self.registry.release_root(media_id)
             done.set()
-            self.jobs.transition(
-                job.id, "failed", error_code="DOWNLOAD_START_FAILED",
-                error_message="The download worker could not start.", retryable=True,
-            )
-            raise DownloadError("The download worker could not start.", code="DOWNLOAD_START_FAILED", retryable=True)
+
+        try:
+            self.jobs.attach_controller(job.id, cancel=cancel_worker)
+        except JobStateError:
+            abandon()  # Cancelled (for example by JobRegistry.shutdown) before it had a worker.
+            raise
+        # Checked, registered and started in one critical section with shutdown()'s
+        # gate and snapshot: a start that gets past the gate is in that snapshot.
+        error: tuple[str, str] | None = None
+        with self._lock:
+            if self._closing:
+                error = ("DOWNLOAD_SERVICE_STOPPED", "Download service is stopping.")
+            else:
+                self._workers[job.id] = (thread, cancel, done)
+                try:
+                    thread.start()
+                except Exception:
+                    self._workers.pop(job.id, None)
+                    error = ("DOWNLOAD_START_FAILED", "The download worker could not start.")
+        if error:
+            code, message = error
+            abandon()
+            try:
+                self.jobs.transition(job.id, "failed", error_code=code, error_message=message, retryable=True)
+            except JobStateError:
+                pass  # Shutdown may already have cancelled it.
+            raise DownloadError(message, code=code, retryable=True)
         return self.jobs.snapshot(job.id)
 
     def shutdown(self, timeout: float = 10.0) -> bool:
@@ -193,6 +215,8 @@ class DownloadService:
 
         deadline = time.monotonic() + max(0.0, timeout)
         with self._lock:
+            # No start() can register a worker after this snapshot.
+            self._closing = True
             workers = list(self._workers.values())
             upstreams = list(self._upstreams.values())
         for _thread, cancel, _done in workers:
@@ -305,7 +329,6 @@ class DownloadService:
                 cleanup_error = error
             finally:
                 with self._lock:
-                    self._workers.pop(job_id, None)
                     source_key = self._job_sources.pop(job_id, None)
                     if source_key:
                         self._active_sources.pop(source_key, None)
@@ -338,6 +361,11 @@ class DownloadService:
             except JobStateError:
                 pass
             finally:
+                # Each capture job is started with its own freshly registered root; release it.
+                self.registry.release_root(registration.token)
+                # Last, so shutdown() cannot report success while this cleanup still runs.
+                with self._lock:
+                    self._workers.pop(job_id, None)
                 done.set()
 
     def _transfer(

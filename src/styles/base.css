@@ -68,7 +68,6 @@
   --source-wikimedia: #4dd0c8;
   --source-librivox: #a78bfa;
   --source-media-ccc: #f4d35e;
-  --source-library-of-congress: #ff8a65;
   --source-gpodder: #7bd88f;
   --source-peertube: #f472b6;
   --source-owncast: #a3e635;
@@ -113,7 +112,6 @@
   --source-wikimedia: #00796b;
   --source-librivox: #5e35b1;
   --source-media-ccc: #776300;
-  --source-library-of-congress: #ad3f20;
   --source-gpodder: #247a3b;
   --source-peertube: #ad296d;
   --source-owncast: #4d7900;
@@ -229,7 +227,6 @@
     --source-wikimedia: #00796b;
     --source-librivox: #5e35b1;
     --source-media-ccc: #776300;
-    --source-library-of-congress: #ad3f20;
     --source-gpodder: #247a3b;
     --source-peertube: #ad296d;
     --source-owncast: #4d7900;
@@ -631,6 +628,9 @@ html, body {
 }
 .player-btn:hover { background: var(--bg-elev-3); }
 .player-btn:active { transform: scale(0.96); }
+#player-mute .icon-silent,
+#player-mute[data-silent="true"] .icon-sound { display: none; }
+#player-mute[data-silent="true"] .icon-silent { display: block; }
 
 #player-next-broken {
   width: auto;
@@ -1112,6 +1112,33 @@ html, body {
 .row + .row { border-top: 1px solid var(--border); }
 .row label { color: var(--text); }
 .row .description { font-size: 12px; color: var(--text-dim); display: block; margin-top: 2px; }
+.backup-row > div:first-child { min-width: 0; }
+.row .backup-status { margin-top: 6px; color: var(--text); overflow-wrap: anywhere; }
+.row .backup-status:empty { display: none; }
+.row .backup-status[data-state="error"] { color: var(--danger); }
+.station-images-path {
+  display: block;
+  margin-top: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.station-images-path:empty { display: none; }
+.clear-cache-status {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+.backup-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
 
 input[type="checkbox"].switch {
   appearance: none;

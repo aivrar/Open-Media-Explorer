@@ -10,7 +10,7 @@ import uuid
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE = ROOT / 'dist/Release-v0.1.8/WorldMediaWindows.exe'
+EXE = ROOT / 'dist/Release-v0.1.9/WorldMediaWindows.exe'
 SCRATCH = ROOT / 'build' / ('release-ui-' + uuid.uuid4().hex)
 SCRATCH.mkdir()
 with socket.socket() as sock:
@@ -51,7 +51,7 @@ def mark(label):
 process = start()
 try:
     sources = ['radio-browser','iptv-org','internet-archive','nasa','wikimedia','librivox',
-               'media-ccc','library-of-congress','gpodder','peertube','owncast']
+               'media-ccc','gpodder','peertube','owncast']
     api('/api/v1/profile/preferences', {'values': {'worldmedia.settings.v1': json.dumps({
         'theme': 'dark', 'enabledSources': dict.fromkeys(sources, False)})}})
     with sync_playwright() as p:
@@ -100,14 +100,14 @@ try:
             page.locator('#player-stop').click()
             mark(title + ' real playback progresses')
         page.locator('.source-item[data-source="favorites"]').click()
-        page.get_by_label('Filter saved items by media type').select_option('radio')
+        page.locator('.personal-type [data-type="radio"]').click(); page.wait_for_timeout(400)
         assert page.locator('.card').count() == 1
-        page.get_by_label('Filter saved items by media type').select_option('tv')
+        page.locator('.personal-type [data-type="tv"]').click(); page.wait_for_timeout(400)
         assert page.locator('.card').count() == 2
         page.locator('.search-input').fill('DASH')
         page.wait_for_function("document.querySelectorAll('.card').length === 1")
         page.locator('.search-input').fill('')
-        page.get_by_label('Filter saved items by media type').select_option('')
+        page.locator('.personal-type [data-type=""]').click(); page.wait_for_timeout(400)
         mark('Favorites type filter and local search')
         for mode in ['tuner','grid','discovery','about','library']:
             page.locator(f'.mode-btn[data-mode="{mode}"]').click()

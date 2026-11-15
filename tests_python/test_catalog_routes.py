@@ -99,9 +99,12 @@ class CatalogRouteTests(unittest.TestCase):
     def test_fixed_catalog_hosts_are_exact_and_dynamic_hosts_have_no_proxy_wildcards(self) -> None:
         expected = {
             "api.media.ccc.de", "media.ccc.de", "streaming.media.ccc.de",
-            "www.loc.gov", "loc.gov", "gpodder.net", "www.gpodder.net", "sepiasearch.org",
+            "gpodder.net", "www.gpodder.net", "sepiasearch.org",
         }
         self.assertTrue(expected.issubset(worldmedia_server.ALLOWED_HOSTS))
+        # Library of Congress was removed: loc.gov answers apps with a browser check.
+        self.assertNotIn("www.loc.gov", worldmedia_server.ALLOWED_HOSTS)
+        self.assertNotIn("loc.gov", worldmedia_server.ALLOWED_HOSTS)
         self.assertNotIn("directory.owncast.online", worldmedia_server.ALLOWED_HOSTS)
         self.assertNotIn("owncast.directory", worldmedia_server.ALLOWED_HOSTS)
         self.assertEqual(worldmedia_server.ALLOWED_SUFFIXES, (".api.radio-browser.info", ".archive.org"))

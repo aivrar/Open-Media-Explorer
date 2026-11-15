@@ -10,7 +10,7 @@ from unittest import mock
 import worldmedia_downloads
 from tests_python.fixture_server import AUDIO_BYTES, VIDEO_BYTES, ZIP_BYTES, MediaFixtureServer
 from worldmedia_downloads import DownloadService
-from worldmedia_jobs import DuplicateJobError, JobRegistry
+from worldmedia_jobs import DuplicateJobError, JobRegistry, JobStateError
 from worldmedia_media import MediaRegistry, SafeConnector
 from worldmedia_runtime import get_runtime_paths
 
@@ -256,7 +256,7 @@ class DownloadServiceTests(unittest.TestCase):
             ("nasa", "/media/video.mp4", "video", "nasa.mp4", VIDEO_BYTES),
             ("wikimedia", "/media/audio.mp3", "audio", "commons.mp3", AUDIO_BYTES),
             ("media-ccc", "/media/video.mp4", "video", "conference-talk.mp4", VIDEO_BYTES),
-            ("library-of-congress", "/media/audio.mp3", "audio", "loc-audio.mp3", AUDIO_BYTES),
+            ("librivox", "/media/audio.mp3", "audio", "chapter-01.mp3", AUDIO_BYTES),
             ("gpodder", "/media/audio.mp3", "audio", "podcast-episode.mp3", AUDIO_BYTES),
             ("peertube", "/media/video.mp4", "video", "peertube-video.mp4", VIDEO_BYTES),
         ):
@@ -266,6 +266,106 @@ class DownloadServiceTests(unittest.TestCase):
             ).token)["id"])
             self.assertEqual(job["state"], "completed", job)
             self.assertEqual(Path(job["output_path"]).read_bytes(), expected)
+
+    def test_a_job_cancelled_before_its_controller_attaches_cleans_up(self) -> None:
+        created = threading.Event()
+        proceed = threading.Event()
+        attach = self.jobs.attach_controller
+
+        def wait_then_attach(*args, **kwargs):
+            created.set()  # The job exists; its controller is not attached yet.
+            proceed.wait()
+            return attach(*args, **kwargs)
+
+        registration = self.register("/media/audio.mp3", title="Cancelled Early")
+        outcome = []
+
+        def start() -> None:
+            try:
+                outcome.append(self.service.start(registration.token))
+            except JobStateError as error:
+                outcome.append(error)
+
+        with mock.patch.object(self.jobs, "attach_controller", side_effect=wait_then_attach):
+            thread = threading.Thread(target=start)
+            thread.start()
+            try:
+                self.assertTrue(created.wait(5))
+                self.assertTrue(self.jobs.shutdown(timeout=0.05))  # Cancels the queued job.
+            finally:
+                proceed.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(outcome[0], JobStateError)
+        self.assertEqual(self.jobs.list()[0].state, "cancelled")  # Kept as it was.
+        self.assertTrue(self.registry._entries[registration.token].released)
+        with self.service._lock:
+            self.assertFalse(self.service._workers)
+            self.assertFalse(self.service._active_sources)
+            self.assertFalse(self.service._job_sources)
+
+    def test_shutdown_cannot_report_success_while_a_worker_is_still_cleaning_up(self) -> None:
+        in_cleanup = threading.Event()
+        allow_cleanup = threading.Event()
+        release_root = self.registry.release_root
+
+        def blocked_release(token, **kwargs):
+            in_cleanup.set()
+            allow_cleanup.wait()
+            return release_root(token, **kwargs)
+
+        with mock.patch.object(self.registry, "release_root", side_effect=blocked_release):
+            started = self.service.start(self.register("/media/audio.mp3", title="Slow Cleanup").token)
+            try:
+                self.assertTrue(in_cleanup.wait(5))
+                self.assertFalse(self.service.shutdown(timeout=0.05))
+            finally:
+                allow_cleanup.set()
+            self.assertTrue(self.service.shutdown(timeout=5))
+        self.assertEqual(self.jobs.snapshot(started["id"])["state"], "completed")
+
+    def test_a_start_racing_shutdown_is_refused_and_downloads_nothing(self) -> None:
+        in_start = threading.Event()
+        shutdown_done = threading.Event()
+        attach = self.jobs.attach_controller
+
+        def attach_then_wait(*args, **kwargs):
+            attach(*args, **kwargs)
+            in_start.set()  # Past start()'s first check, before its worker is registered.
+            shutdown_done.wait()
+
+        registration = self.register("/media/audio.mp3", title="Racing Shutdown")
+        outcome = []
+
+        def start() -> None:
+            try:
+                outcome.append(self.service.start(registration.token))
+            except worldmedia_downloads.DownloadError as error:
+                outcome.append(error)
+
+        with mock.patch.object(self.jobs, "attach_controller", side_effect=attach_then_wait):
+            thread = threading.Thread(target=start)
+            thread.start()
+            try:
+                self.assertTrue(in_start.wait(5))
+                self.assertTrue(self.service.shutdown(timeout=0.05))
+            finally:
+                shutdown_done.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(outcome[0].code, "DOWNLOAD_SERVICE_STOPPED")
+        job = self.jobs.list()[0]
+        self.assertEqual(job.state, "failed")
+        self.assertEqual(job.error["code"], "DOWNLOAD_SERVICE_STOPPED")
+        self.assertTrue(self.registry._entries[registration.token].released)
+        with self.service._lock:
+            self.assertFalse(self.service._workers)
+            self.assertFalse(self.service._active_sources)
+        self.assertFalse(any(self.paths.downloads_root.glob("Racing Shutdown*")))
+        with self.assertRaises(worldmedia_downloads.DownloadError) as refused:
+            self.service.start(self.register("/media/audio.mp3", title="After").token)
+        self.assertEqual(refused.exception.code, "DOWNLOAD_SERVICE_STOPPED")
+        self.assertEqual(len(self.jobs.list()), 1)
 
     def test_open_folder_is_fixed_to_runtime_download_root(self) -> None:
         with mock.patch("worldmedia_downloads.os.startfile", create=True) as startfile:

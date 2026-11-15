@@ -21,7 +21,9 @@ import urllib.parse
 from collections import deque
 from http import HTTPStatus
 from pathlib import Path
+from typing import Callable
 
+from worldmedia_backup import BackupError, create_backup
 from worldmedia_catalog import AssetRegistry, CatalogService, FIXED_METADATA_HOSTS
 from worldmedia_downloads import DownloadError, DownloadService
 from worldmedia_ffmpeg import FfmpegError, FfmpegService
@@ -33,22 +35,44 @@ from worldmedia_jobs import (
     JobRegistry,
     JobStateError,
 )
+from worldmedia_icy import (
+    ICY_REQUEST_HEADER,
+    IcyStripper,
+    RefusedIcyHosts,
+    clean_stream_title,
+    parse_metaint,
+    parse_stream_title,
+)
 from worldmedia_media import (
     MEDIA_RELAY_SUFFIX_PATTERN,
     MAX_MANIFEST_BYTES,
     RELAY_CHUNK_SIZE,
     MediaError,
+    MediaProtocolError,
+    MediaRegistration,
     MediaRegistry,
     SafeConnector,
+    Upstream,
     rewrite_dash_manifest,
     rewrite_hls_manifest,
 )
 from worldmedia_recording import RecordingError, RecordingService, normalize_recording_eq
 from worldmedia_playlists import PlaylistStore
+from worldmedia_station_images import StationImages
+from worldmedia_songlog import (
+    MAX_BODY_BYTES as SONG_LOG_BODY_LIMIT,
+    SongLogError,
+    export_song_log,
+    load_song_log,
+    save_song_log,
+)
 from worldmedia_runtime import (
     DEFAULT_SERVER_PORT,
+    PROFILE_SEQUENCE_HEADER,
+    PROFILE_WRITER_HEADER,
     get_runtime_paths,
     load_profile_transfer,
+    parse_profile_write_order,
     runtime_status,
     save_profile_transfer,
     save_server_port,
@@ -70,7 +94,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.8 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.9 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -111,6 +135,11 @@ DOWNLOAD_SERVICE = DownloadService(MEDIA_REGISTRY, JOB_REGISTRY, RUNTIME_PATHS)
 RECORDING_SERVICE = RecordingService(MEDIA_REGISTRY, JOB_REGISTRY, FFMPEG_SERVICE, RUNTIME_PATHS)
 RELAY_SLOTS = threading.BoundedSemaphore(16)
 ASSET_SLOTS = threading.BoundedSemaphore(16)
+# The user's own station pictures (worldmedia_station_images.py).
+STATION_IMAGES = StationImages(RUNTIME_PATHS.state_root)
+STATION_IMAGE_SLOTS = threading.BoundedSemaphore(8)
+# Hosts whose servers broke when asked for icy metadata; asked again after a while.
+ICY_REFUSED_HOSTS = RefusedIcyHosts()
 
 CATALOG_BODY_LIMITS = {
     "/api/v1/playlists/import": 48 * 1024 * 1024 + 8 * 1024,
@@ -119,6 +148,9 @@ CATALOG_BODY_LIMITS = {
     "/api/v1/catalog/cache/clear": 1024,
     "/api/v1/assets/register": 24 * 1024,
     "/api/v1/runtime/server-port": 1024,
+    "/api/v1/backup/create": 1024,
+    "/api/v1/song-log": SONG_LOG_BODY_LIMIT,
+    "/api/v1/song-log/export": SONG_LOG_BODY_LIMIT,
     # Preferences are JSON strings inside JSON: escaping expands the payload.
     "/api/v1/profile/preferences": 12 * 1024 * 1024 + 8 * 1024,
 }
@@ -134,6 +166,124 @@ def is_allowed_host(host: str) -> bool:
 PROXY_CONNECTOR = SafeConnector(
     target_policy=lambda target: target.scheme == "https" and is_allowed_host(target.host),
 )
+
+
+# Client errors a server may answer because of the Icy-MetaData header itself.
+# Anything else (401/403/404/410, 5xx) is the same without the header, so it
+# is never retried: that would only double the wait on a dead station.
+ICY_REJECTION_STATUSES = frozenset({400, 406, 412, 415, 431})
+
+
+def wants_icy_metadata(
+    registration: MediaRegistration, method: str, *, dash: bool, range_value: str = "",
+) -> bool:
+    """Ask a station for in-band song titles only for plain live audio playback.
+
+    Never for HEAD, DASH templates, HLS/DASH/video registrations, the children
+    a manifest lists (never their own root), on-demand items, a capture job's
+    root (FFmpeg recording), or a host that broke when asked recently.
+    Downloads open their own upstream connections and never come here.
+    Only a request from the start asks: no Range, or exactly "bytes=0-" (what
+    a media element sends first); a seek or resumed read never asks.
+    """
+    return (
+        method == "GET"
+        and not dash
+        and range_value in {"", "bytes=0-"}
+        and registration.media_type == "audio"
+        and registration.delivery != "on-demand"
+        and registration.token == registration.root_token
+        and not registration.capture
+        and ICY_REFUSED_HOSTS.should_ask(registration.url)
+    )
+
+
+def _strippable_metaint(response) -> tuple[bool, int | None]:
+    """(blocks may be present, interval to strip or None).
+
+    Strip only a reply that looks like an endless stream: a plain 200 with a
+    valid icy-metaint, no content encoding, and no Content-Length or
+    Content-Range (a finite file keeps its length and seeking). A reply with
+    no icy-metaint, or that is not a 2xx, has no blocks.
+    """
+    raw_metaint = response.getheader("icy-metaint")
+    if raw_metaint is None or not 200 <= response.status < 300:
+        return False, None
+    metaint = parse_metaint(raw_metaint)
+    encoding = (response.getheader("Content-Encoding") or "identity").strip().lower()
+    if (
+        response.status == HTTPStatus.OK
+        and metaint is not None
+        and encoding == "identity"
+        and response.getheader("Content-Length") is None
+        and response.getheader("Content-Range") is None
+    ):
+        return True, metaint
+    return True, None
+
+
+def open_relay_upstream(
+    registration: MediaRegistration,
+    method: str,
+    headers: dict[str, str],
+    *,
+    ask_icy: bool,
+) -> tuple[Upstream, int | None]:
+    """Open the relay's upstream; the int is the icy-metaint to strip, if any.
+
+    Without ask_icy this is exactly the request the relay always made. With
+    it, the station is asked for metadata, and its reply is used as is unless:
+    - it carries blocks this relay will not strip (see _strippable_metaint);
+    - the server answered with something that is not HTTP (an old Shoutcast
+      "ICY 200 OK"), or reset or closed the connection after the request was
+      sent and before any reply (MediaProtocolError);
+    - it answered one of ICY_REJECTION_STATUSES.
+    Then the request is repeated once, exactly as before, and that host is not
+    asked again for a while, but only if that repeat succeeded (so a dead
+    station never lands on the list). Timeouts, DNS and connect failures and
+    every other status are never repeated.
+    """
+    connector = MEDIA_REGISTRY.connector
+    if not ask_icy:
+        return connector.open(registration.url, method=method, headers=headers), None
+    try:
+        upstream = connector.open(
+            registration.url, method=method, headers={**headers, ICY_REQUEST_HEADER: "1"},
+        )
+    except MediaProtocolError:
+        return _open_without_icy(registration, method, headers), None
+    if upstream.response.status in ICY_REJECTION_STATUSES:
+        upstream.close()
+        return _open_without_icy(registration, method, headers), None
+    has_blocks, metaint = _strippable_metaint(upstream.response)
+    if not has_blocks or metaint is not None:
+        return upstream, metaint
+    upstream.close()
+    return _open_without_icy(registration, method, headers), None
+
+
+def _open_without_icy(registration: MediaRegistration, method: str, headers: dict[str, str]) -> Upstream:
+    """The one repeat without the header; remembers the host only if it worked."""
+    upstream = MEDIA_REGISTRY.connector.open(registration.url, method=method, headers=headers)
+    if upstream.response.status < 400:
+        ICY_REFUSED_HOSTS.refuse(registration.url)
+    return upstream
+
+
+def stream_title_recorder(registration: MediaRegistration, response) -> Callable[[bytes], None]:
+    """Store each block's StreamTitle as this playback root's latest song."""
+    names = [registration.title]
+    icy_name = response.getheader("icy-name")
+    if isinstance(icy_name, str) and len(icy_name) <= 512:
+        names.append(icy_name)
+    root_token = registration.root_token
+
+    def record(block: bytes) -> None:
+        raw = parse_stream_title(block)
+        if raw is not None:  # A block without StreamTitle says nothing about the song.
+            MEDIA_REGISTRY.note_stream_title(root_token, clean_stream_title(raw, names))
+
+    return record
 
 
 def rate_limit(client_ip: str) -> bool:
@@ -222,6 +372,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
         high_volume = (
             path in {"/api/health", "/api/ping", "/api/proxy"}
             or path.startswith("/api/v1/assets/")
+            or path.startswith("/api/v1/station-images/")
             or path.startswith("/api/v1/catalog/")
             or path.startswith("/api/v1/media/")
             or path.startswith("/api/v1/dash/")
@@ -330,6 +481,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     "Artwork relay does not accept query parameters.",
                 ))
             return self._handle_asset_relay(method, asset_match.group(1))
+        # A page shows many station pictures at once, so like artwork they have
+        # their own small slot pool instead of the control rate limit.
+        station_image_match = re.fullmatch(r"/api/v1/station-images/([0-9a-f]{32})", parsed.path)
+        if station_image_match:
+            return self._handle_station_image(method, station_image_match.group(1), parsed.query)
         if not rate_limit(self.client_address[0]):
             if parsed.path == "/api/v1" or parsed.path.startswith("/api/v1/"):
                 return self._send_api_error(ApiError(
@@ -421,8 +577,18 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 if path == "/api/v1/profile/preferences":
                     return self._send_api_success({"values": load_profile_transfer(RUNTIME_PATHS)})
+                if path == "/api/v1/song-log":
+                    try:
+                        return self._send_api_success(load_song_log(RUNTIME_PATHS))
+                    except SongLogError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
                 if path == "/api/v1/ffmpeg/status":
                     return self._send_api_success(FFMPEG_SERVICE.status().as_data())
+                if path == "/api/v1/station-images":
+                    # Read-only: scans the folder (new or changed files only are read).
+                    return self._send_api_success(STATION_IMAGES.listing())
+                if path == "/api/v1/station-images/open-folder":
+                    raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 if path == "/api/v1/catalog/owncast/snapshot":
                     return self._send_api_success(CATALOG_SERVICE.owncast_snapshot())
                 if path in {
@@ -432,8 +598,17 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     "/api/v1/assets/register",
                 } or re.fullmatch(r"/api/v1/assets/[A-Za-z0-9_-]{22,128}/expire", path):
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
-                if path in {"/api/v1/jobs/download", "/api/v1/jobs/record"}:
+                if path in {
+                    "/api/v1/jobs/download", "/api/v1/jobs/record", "/api/v1/backup/create",
+                    "/api/v1/song-log/export",
+                }:
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
+                now_playing = re.fullmatch(r"/api/v1/media/([A-Za-z0-9_-]{22,128})/now-playing", path)
+                if now_playing:
+                    # Read-only: the latest station-announced song of a playback
+                    # relay token; title and changed_at are null when unknown,
+                    # released or expired. Plain text, never fetched or rendered.
+                    return self._send_api_success(MEDIA_REGISTRY.now_playing(now_playing.group(1)))
                 if path == "/api/v1/jobs":
                     return self._send_api_success({"jobs": JOB_REGISTRY.snapshots()})
                 if path.startswith("/api/v1/jobs/"):
@@ -472,7 +647,9 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     return self._send_api_success(CATALOG_SERVICE.resolve_feed(body))
                 if path == "/api/v1/catalog/peertube/resolve":
                     return self._send_api_success(CATALOG_SERVICE.resolve_peertube(body))
-                if path == "/api/v1/catalog/owncast/snapshot":
+                if path == "/api/v1/catalog/owncast/snapshot" or re.fullmatch(
+                    r"/api/v1/media/[A-Za-z0-9_-]{22,128}/now-playing", path,
+                ):
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "GET is required.")
                 if path == "/api/v1/catalog/cache/clear":
                     if body:
@@ -506,13 +683,23 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                             "Profile preferences require only a values object.",
                         )
                     try:
-                        saved_values = save_profile_transfer(body.get("values"), RUNTIME_PATHS)
+                        # Write order headers from newer pages; none from older ones.
+                        order = parse_profile_write_order(
+                            self.headers.get(PROFILE_WRITER_HEADER), self.headers.get(PROFILE_SEQUENCE_HEADER),
+                        )
+                        if order is None:
+                            saved_values = save_profile_transfer(body.get("values"), RUNTIME_PATHS)
+                        else:
+                            saved_values = save_profile_transfer(body.get("values"), RUNTIME_PATHS, order=order)
                     except ValueError as error:
                         raise ApiError(
                             HTTPStatus.BAD_REQUEST,
                             "INVALID_PROFILE_PREFERENCES",
                             str(error),
                         ) from error
+                    if saved_values is None:
+                        # A later write from the same page is already on disk.
+                        return self._send_api_success({"saved": False, "superseded": True, "keys": []})
                     return self._send_api_success({
                         "saved": True,
                         "keys": sorted(saved_values),
@@ -570,6 +757,49 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     return self._send_api_success({
                         "opened": True, "path": DOWNLOAD_SERVICE.open_downloads_folder(),
                     })
+                if path == "/api/v1/station-images/open-folder":
+                    if body:
+                        raise ApiError(
+                            HTTPStatus.BAD_REQUEST, "UNEXPECTED_FIELDS",
+                            "Open station images folder accepts an empty JSON object.",
+                        )
+                    # A fixed location: the folder is made when there is none yet.
+                    return self._send_api_success({"opened": True, "path": STATION_IMAGES.open_folder()})
+                if path == "/api/v1/backup/create":
+                    if body:
+                        raise ApiError(
+                            HTTPStatus.BAD_REQUEST, "UNEXPECTED_FIELDS",
+                            "Backup accepts an empty JSON object.",
+                        )
+                    try:
+                        # Fixed locations only: nothing in a request names a file.
+                        result = create_backup(
+                            RUNTIME_PATHS, PLAYLIST_STORE, secrets_to_exclude=(SESSION_TOKEN,),
+                        )
+                    except BackupError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
+                    return self._send_api_success(result)
+                if path == "/api/v1/song-log":
+                    try:
+                        # A stale revision is answered (not an error) with what is stored.
+                        result = save_song_log(body, RUNTIME_PATHS)
+                    except ValueError as error:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_SONG_LOG", str(error)) from error
+                    except SongLogError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
+                    except OSError as error:
+                        raise ApiError(
+                            HTTPStatus.INTERNAL_SERVER_ERROR, "SONG_LOG_SAVE_FAILED",
+                            "The song log could not be saved in your data folder.", retryable=True,
+                        ) from error
+                    return self._send_api_success(result)
+                if path == "/api/v1/song-log/export":
+                    try:
+                        # The server names the file; nothing in a request is a path.
+                        result = export_song_log(body, RUNTIME_PATHS)
+                    except SongLogError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
+                    return self._send_api_success(result)
                 if path in {"/api/v1/ffmpeg/install", "/api/v1/ffmpeg/repair"}:
                     allowed = {"confirmed", "destination"}
                     if set(body) - allowed:
@@ -658,11 +888,15 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             status = HTTPStatus.CONFLICT if error.code in {
                 "DOWNLOAD_NOT_FINITE", "DOWNLOAD_NAME_COLLISION"
             } else HTTPStatus.BAD_REQUEST
+            if error.code == "DOWNLOAD_SERVICE_STOPPED":
+                status = HTTPStatus.SERVICE_UNAVAILABLE
             return self._send_api_error(ApiError(status, error.code, str(error), error.retryable))
         except RecordingError as error:
             status = HTTPStatus.CONFLICT if error.code in {
                 "RECORDING_NOT_LIVE", "RECORDING_TOOL_UNAVAILABLE", "RECORDING_NAME_COLLISION"
             } else HTTPStatus.BAD_REQUEST
+            if error.code == "RECORDING_SERVICE_STOPPED":
+                status = HTTPStatus.SERVICE_UNAVAILABLE
             return self._send_api_error(ApiError(status, error.code, str(error), error.retryable))
         except ApiError as error:
             return self._send_api_error(error)
@@ -673,6 +907,59 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 "INTERNAL_ERROR",
                 "The local control service could not complete the request.",
                 retryable=True,
+            ))
+
+    def _handle_station_image(self, method: str, picture_id: str, query: str) -> None:
+        """One of the user's station pictures, by the id the folder listing gave.
+
+        Checked like other GET routes (session token, and the Origin when one is
+        sent). The id only selects an entry of the last folder scan; no part of
+        the request is ever used as a path."""
+        try:
+            if query:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "QUERY_NOT_ALLOWED",
+                               "Station pictures do not accept query parameters.")
+            if method not in {"GET", "HEAD"}:
+                raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED",
+                               "Station pictures support GET and HEAD only.")
+            validate_authenticated_get(self.headers, self.server.server_port, SESSION_TOKEN)
+            validators = list(self.headers.get_all("If-None-Match", []))
+            if len(validators) > 1:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "DUPLICATE_HEADER", "If-None-Match must appear at most once.")
+            validator = validators[0].strip() if validators else ""
+            if validator and (len(validator) > 1024 or re.search(r"[\r\n\0]", validator)):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_VALIDATOR", "Picture cache validator is invalid.")
+            if not STATION_IMAGE_SLOTS.acquire(blocking=False):
+                raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "STATION_IMAGES_BUSY",
+                               "Station pictures are busy.", retryable=True)
+            try:
+                data, content_type, etag = STATION_IMAGES.read(picture_id)
+            finally:
+                STATION_IMAGE_SLOTS.release()
+            status = HTTPStatus.NOT_MODIFIED if validator in {"*", etag} else HTTPStatus.OK
+            self.send_response(status)
+            if status == HTTPStatus.OK:
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, max-age=60")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
+            self.end_headers()
+            if status == HTTPStatus.OK and method != "HEAD":
+                self.wfile.write(data)
+                self.wfile.flush()
+        except ApiError as error:
+            return self._send_api_error(error)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self._abort_relay_response()
+            return None
+        except Exception as error:
+            self.log_message("station picture failure type=%s", type(error).__name__)
+            return self._send_api_error(ApiError(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "STATION_IMAGE_FAILED",
+                "The station picture could not be read.", retryable=True,
             ))
 
     def _handle_asset_relay(self, method: str, token: str) -> None:
@@ -790,7 +1077,12 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 headers = dict(registration.headers)
                 if range_value and not manifest_probe:
                     headers["Range"] = range_value
-                upstream = MEDIA_REGISTRY.connector.open(registration.url, method=method, headers=headers)
+                upstream, metaint = open_relay_upstream(
+                    registration, method, headers,
+                    ask_icy=wants_icy_metadata(
+                        registration, method, dash=dash_query is not None, range_value=range_value,
+                    ),
+                )
                 try:
                     content_type = upstream.response.getheader("Content-Type", "application/octet-stream")
                     if len(content_type) > 2048 or re.search(r"[\r\n\0]", content_type):
@@ -830,6 +1122,30 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                             len(rewritten),
                             body=rewritten,
                         )
+                    if metaint is not None and not is_manifest:
+                        # The stripped body is shorter than upstream's and its byte
+                        # offsets differ, so no Content-Length, Content-Range,
+                        # Accept-Ranges or validators; no icy-* header is ever
+                        # forwarded (icy-metaint would announce blocks that are
+                        # gone). The connection close ends the body.
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
+                        self.send_header("Connection", "close")
+                        self.close_connection = True
+                        self.end_headers()
+                        response_started = True
+                        stripper = IcyStripper(metaint, stream_title_recorder(registration, upstream.response))
+                        # Forward audio as it arrives (iter_available), not in full
+                        # 64 KiB reads: the stripped first chunk is a few bytes
+                        # short, and the element would wait a whole further read.
+                        for chunk in upstream.iter_available(chunk_size=RELAY_CHUNK_SIZE):
+                            audio = stripper.feed(chunk)
+                            if audio:
+                                self.wfile.write(audio)
+                                self.wfile.flush()
+                        return None
                     self.send_response(upstream.response.status)
                     self.send_header("Content-Type", content_type)
                     for name in ("Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag", "Content-Encoding"):

@@ -1,6 +1,7 @@
 """Pinned upstream connector plus opaque HLS and DASH media relays."""
 from __future__ import annotations
 
+import functools
 import http.client
 import heapq
 import ipaddress
@@ -12,6 +13,7 @@ import threading
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from typing import Callable, Iterable, Mapping
 
@@ -24,11 +26,40 @@ HEADER_TIMEOUT = 12.0
 IDLE_TIMEOUT = 15.0
 MAX_REDIRECTS = 5
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
-MAX_REGISTRATIONS = 4096
+MAX_REGISTRATIONS = 8192
 DEFAULT_TTL_SECONDS = 6 * 60 * 60
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.8"
-MAX_CHILDREN_PER_ROOT = 2048
+# A live root lives this many default TTLs (capped at 24 h) after it was last
+# used; see MediaRegistry._renew_live_locked().
+LIVE_TTL_MULTIPLIER = 4
+# A capture job's own relay root stays usable this long after the job ends.
+CAPTURE_RELEASE_GRACE_SECONDS = 5.0
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.9"
+# One root may hold at most half the registry, so a long VOD playlist (more
+# than 2,048 segments) or several live renditions with long windows still fit.
+MAX_CHILDREN_PER_ROOT = 4096
+# A live HLS media playlist slides, so its segments, keys and maps would fill
+# MAX_CHILDREN_PER_ROOT within hours (about 600 new entries an hour at 6 s).
+# They keep the root's lifetime exactly like every other child, and are removed
+# early only under pressure, least recently listed first and only once not
+# listed for LIVE_CHILD_MIN_RETENTION_SECONDS: after a rewrite, while the root
+# holds more than LIVE_CHILD_SOFT_LIMIT such evictable children (permanent ones
+# do not count); and when a new child would exceed MAX_CHILDREN_PER_ROOT, just
+# enough to make room plus LIVE_CHILD_EVICTION_BATCH. So a root's first 1,024
+# live children behave as before; a 6 s stream with one rendition keeps
+# slid-out segments valid for about 1.7 h (1,024 x 6 s), less if permanent
+# children leave fewer than 1,024 places below the hard limit; anything the
+# playlist being rewritten lists, or that was listed within the last ten
+# minutes, is never evicted, however large the window; and the hard limit and
+# its error still apply. Ten minutes exceeds what the player can still ask
+# for after a segment leaves the playlist: src/lib/hls-recovery.js buffers at
+# most 120 s ahead (maxMaxBufferLength) and 45 s behind (backBufferLength), and
+# vendored hls.js retries a fragment for about 30 s within a 120 s load limit.
+LIVE_CHILD_SOFT_LIMIT = 1024
+LIVE_CHILD_MIN_RETENTION_SECONDS = 600
+LIVE_CHILD_EVICTION_BATCH = 64
 MAX_DASH_REPRESENTATIONS = 256
+# Latest station-announced song titles kept, one per playback root (see now_playing()).
+MAX_NOW_PLAYING = 256
 RELAY_CHUNK_SIZE = 64 * 1024
 MEDIA_RELAY_SUFFIXES = frozenset({
     "aac", "ac3", "bin", "eac3", "flac", "key", "m3u8", "m4a", "m4s",
@@ -39,6 +70,9 @@ MEDIA_RELAY_SUFFIX_PATTERN = "|".join(sorted(MEDIA_RELAY_SUFFIXES))
 _OUTBOUND_HEADER_NAMES = {
     "accept": "Accept",
     "content-type": "Content-Type",
+    # Set only by the plain live audio relay (see worldmedia_icy.py). Capture
+    # headers cannot carry it: sanitize_capture_headers() keeps two fields.
+    "icy-metadata": "Icy-MetaData",
     "if-modified-since": "If-Modified-Since",
     "if-none-match": "If-None-Match",
     "if-range": "If-Range",
@@ -72,6 +106,17 @@ _DASH_URL_ATTRIBUTES = {
 
 class MediaError(ApiError):
     pass
+
+
+class MediaProtocolError(MediaError):
+    """MEDIA_CONNECT_FAILED where a server took the request but gave no valid HTTP reply.
+
+    For example an old Shoutcast server's "ICY 200 OK" status line, which
+    http.client rejects as BadStatusLine, or a connection reset or closed
+    after the request was sent and before any reply. Never a DNS, connect or
+    timeout failure. Same status, code and message as the plain error, so
+    callers that do not care see no difference.
+    """
 
 
 def _media_error(status: int, code: str, message: str, retryable: bool = False) -> MediaError:
@@ -227,6 +272,42 @@ class Upstream:
                 return
             yield chunk
 
+    def iter_available(
+        self,
+        *,
+        cancel: threading.Event | None = None,
+        chunk_size: int = RELAY_CHUNK_SIZE,
+    ):
+        """Like iter_chunks(), but yields whatever has arrived instead of a full chunk.
+
+        Each item is one read1(): it waits for at least one byte (with the same
+        idle timeout) and then returns what is buffered or one socket read, at
+        most chunk_size. Used by the stripped icy relay: the removed metadata
+        leaves its first output a few bytes short of 64 KiB, and a media
+        element that starts only once it holds 64 KiB would otherwise wait a
+        whole further 64 KiB read on a slow station. Never a busy loop.
+        """
+        size = max(1024, min(int(chunk_size), RELAY_CHUNK_SIZE))
+        read = getattr(self.response, "read1", None) or self.response.read
+        while True:
+            if cancel and cancel.is_set():
+                raise _media_error(HTTPStatus.REQUEST_TIMEOUT, "MEDIA_CANCELLED", "Media request was cancelled.")
+            try:
+                chunk = read(size)
+            except socket.timeout:
+                raise _media_error(HTTPStatus.GATEWAY_TIMEOUT, "MEDIA_IDLE_TIMEOUT", "Media source stopped responding.", True) from None
+            if not chunk:
+                remaining = getattr(self.response, "length", None)
+                if isinstance(remaining, int) and remaining > 0:
+                    raise _media_error(
+                        HTTPStatus.BAD_GATEWAY,
+                        "UPSTREAM_BODY_TRUNCATED",
+                        "Media source ended before its declared length.",
+                        True,
+                    )
+                return
+            yield chunk
+
 
 class SafeConnector:
     def __init__(
@@ -250,6 +331,22 @@ class SafeConnector:
 
     def resolve(self, url: str) -> ResolvedTarget:
         return resolve_target(url, self.resolver, self.address_policy)
+
+    def resolve_batch(self, urls: Iterable[str]) -> dict[str, ResolvedTarget]:
+        """Resolve the distinct URLs one manifest lists, looking each (host, port) up once.
+
+        Every URL still gets its own validation, and the address policy still
+        checks every address of the shared answer for every URL. The answers
+        live only for this call; open() never uses them and resolves afresh.
+        """
+        answers: dict[tuple[str, int], list] = {}
+
+        def resolver(host: str, port: int) -> list:
+            if (host, port) not in answers:
+                answers[(host, port)] = list(self.resolver(host, port))
+            return answers[(host, port)]
+
+        return {url: resolve_target(url, resolver, self.address_policy) for url in dict.fromkeys(urls)}
 
     def open(
         self,
@@ -308,6 +405,7 @@ class SafeConnector:
                 host_header = f"{host_header}:{target.port}"
             connection: http.client.HTTPConnection | None = None
             response: http.client.HTTPResponse | None = None
+            protocol_failure = False
             # DNS pinning prevents rebinding, but pinning only the first valid
             # address makes a multi-address CDN less reliable than a browser:
             # one retired edge turns a healthy channel into an immediate 502.
@@ -321,6 +419,7 @@ class SafeConnector:
                     connection = _PinnedHTTPSConnection(dial_target, self.connect_timeout, self.ssl_context)
                 else:
                     connection = _PinnedHTTPConnection(dial_target, self.connect_timeout)
+                request_sent = False
                 try:
                     connection.putrequest(current_method, target.request_target, skip_host=True, skip_accept_encoding=True)
                     connection.putheader("Host", host_header)
@@ -334,15 +433,26 @@ class SafeConnector:
                     if current_method == "POST":
                         connection.putheader("Content-Length", str(len(current_body or b"")))
                     connection.endheaders(current_body if current_method == "POST" else None)
+                    request_sent = True
                     if connection.sock:
                         connection.sock.settimeout(self.header_timeout)
                     response = connection.getresponse()
                     break
-                except (OSError, TimeoutError, http.client.HTTPException):
+                except (OSError, TimeoutError, http.client.HTTPException) as error:
+                    # The server was reached and took the request, then answered
+                    # with something that is not HTTP, or reset or closed the
+                    # connection before any reply. Connect failures and timeouts
+                    # are not this.
+                    if isinstance(error, http.client.HTTPException) or (
+                        request_sent
+                        and isinstance(error, (ConnectionResetError, ConnectionAbortedError))
+                    ):
+                        protocol_failure = True
                     connection.close()
                     connection = None
             if connection is None or response is None:
-                raise _media_error(
+                error_type = MediaProtocolError if protocol_failure else MediaError
+                raise error_type(
                     HTTPStatus.BAD_GATEWAY,
                     "MEDIA_CONNECT_FAILED",
                     "Media source could not be reached.",
@@ -396,6 +506,12 @@ class MediaRegistration:
     content_type: str | None = None
     content_length: int | None = None
     created_at: float = field(default_factory=time.time)
+    # Listed only by live media playlists: may be evicted under pressure (see child()).
+    evictable: bool = False
+    # Set on a root once it is expired on purpose; a released root is never renewed.
+    released: bool = False
+    # Set on a root a capture job (recording) reads; the relay never asks it for icy metadata.
+    capture: bool = False
 
     def public_data(self) -> dict:
         return {
@@ -560,10 +676,24 @@ class DashTemplateRegistration:
         return f"/api/v1/dash/{self.token}{suffix}?{query}"
 
 
+@dataclass(frozen=True, slots=True)
+class _DashTemplatePlan:
+    """A validated, resolved DASH template that is not registered yet."""
+
+    key: tuple
+    url_template: str
+    placeholders: tuple[str, ...]
+    placeholder_literals: tuple[tuple[str, str], ...]
+    representation_templates: tuple[tuple[str, str], ...]
+    allowed_representation_ids: frozenset[str]
+    allowed_bandwidths: frozenset[str]
+
+
 class MediaRegistry:
     def __init__(self, connector: SafeConnector | None = None, *, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> None:
         self.connector = connector or SafeConnector()
         self.ttl_seconds = max(60, min(int(ttl_seconds), 24 * 60 * 60))
+        self.live_ttl_seconds = min(24 * 60 * 60, self.ttl_seconds * LIVE_TTL_MULTIPLIER)
         self._entries: dict[str, MediaRegistration] = {}
         self._child_index: dict[tuple[str, str], str] = {}
         self._child_keys_by_token: dict[str, tuple[str, str]] = {}
@@ -572,6 +702,11 @@ class MediaRegistry:
         self._dash_keys_by_token: dict[str, tuple] = {}
         self._root_child_counts: dict[str, int] = {}
         self._expiry_heap: list[tuple[float, str, str]] = []
+        # Per root: evictable child tokens, least recently listed first, with the time last listed.
+        self._live_listed: dict[str, OrderedDict[str, float]] = {}
+        # Per root token: (latest song title or None, wall-clock time it changed),
+        # least recently updated first; at most MAX_NOW_PLAYING entries.
+        self._now_playing: OrderedDict[str, tuple[str | None, float]] = OrderedDict()
         self._lock = threading.RLock()
 
     def register(self, payload: object) -> MediaRegistration:
@@ -619,7 +754,7 @@ class MediaRegistry:
             delivery=delivery,
             media_type=media_type,
             headers=sanitize_capture_headers(payload.get("capture_headers")),
-            expires_at=now + min(24 * 60 * 60, self.ttl_seconds * (4 if delivery == "live" else 1)),
+            expires_at=now + (self.live_ttl_seconds if delivery == "live" else self.ttl_seconds),
             root_token=token,
             title=title.strip(),
             source=source,
@@ -642,50 +777,320 @@ class MediaRegistry:
             if (not registration or registration.expires_at <= now
                     or registration.root_token not in self._entries):
                 raise _media_error(HTTPStatus.NOT_FOUND, "MEDIA_TOKEN_EXPIRED", "Media relay token is invalid or expired.")
+            self._renew_live_locked(registration.root_token, now)
             return registration
 
-    def child(self, parent: MediaRegistration, url: str, *, media_type: str | None = None) -> MediaRegistration:
-        target = self.connector.resolve(url)
-        key = (parent.root_token, target.url)
+    def _renew_live_locked(self, root_token: str, now: float) -> None:
+        """Slide a live root's lease on use: every relay request looks its token up.
+
+        Once less than half of live_ttl_seconds is left, the root, its children
+        and its DASH templates all move to now + live_ttl_seconds together, so a
+        live root in use never runs out, and an unused one dies between half
+        and all of live_ttl_seconds after its last use. A released (expired on
+        purpose) root is never renewed. Old heap records are left behind;
+        _prune_locked skips them because expires_at no longer matches.
+        """
+        root = self._entries.get(root_token)
+        if (root is None or root.delivery != "live" or root.released or root.expires_at <= now
+                or root.expires_at - now >= self.live_ttl_seconds / 2):
+            return
+        deadline = now + self.live_ttl_seconds
+        for registration in self._entries.values():
+            if registration.root_token == root_token:
+                registration.expires_at = deadline
+                heapq.heappush(self._expiry_heap, (deadline, "entry", registration.token))
+        for template_token, template in tuple(self._dash_templates.items()):
+            if template.root_token == root_token:
+                self._dash_templates[template_token] = replace(template, expires_at=deadline)
+                heapq.heappush(self._expiry_heap, (deadline, "template", template_token))
+
+    def child(
+        self,
+        parent: MediaRegistration,
+        url: str,
+        *,
+        media_type: str | None = None,
+        evictable: bool = False,
+        target: ResolvedTarget | None = None,
+    ) -> MediaRegistration:
+        """Scoped relay entry for a resource listed by `parent`.
+
+        Every child keeps its parent's lifetime. An evictable one (listed by a
+        live media playlist) can also be removed early under pressure; see
+        LIVE_CHILD_SOFT_LIMIT. Any non-evictable sighting makes it permanent.
+        `target` is `url` already resolved by the caller.
+        """
+        target = target or self.connector.resolve(url)
         with self._lock:
             now = time.time()
             self._prune_locked(now)
-            if parent.root_token not in self._entries or parent.expires_at <= now:
-                raise _media_error(HTTPStatus.NOT_FOUND, "MEDIA_TOKEN_EXPIRED", "Media relay token is invalid or expired.")
-            existing = self._child_index.get(key)
-            if existing and existing in self._entries:
-                return self._entries[existing]
+            self._check_parent_locked(parent, now)
+            entry = self._existing_child_locked(parent, target.url)
+            if entry is not None:
+                self._sight_child_locked(parent, entry, evictable=evictable, now=now)
+                return entry
             root_children = self._root_child_counts.get(parent.root_token, 0)
-            if root_children >= MAX_CHILDREN_PER_ROOT:
-                code = "DASH_CHILD_LIMIT" if parent.media_type == "dash" else "HLS_CHILD_LIMIT"
-                raise _media_error(
-                    HTTPStatus.BAD_GATEWAY,
-                    code,
-                    "Streaming manifest contains too many resources.",
-                )
-            if len(self._entries) + len(self._dash_templates) >= MAX_REGISTRATIONS:
-                raise _media_error(HTTPStatus.SERVICE_UNAVAILABLE, "MEDIA_REGISTRY_FULL", "Media relay is temporarily full.", True)
-            token = secrets.token_urlsafe(32)
-            child = MediaRegistration(
-                token=token,
-                item_id=parent.item_id,
-                url=target.url,
-                delivery=parent.delivery,
-                media_type=media_type or infer_media_type(target.url),
-                headers=dict(parent.headers),
-                expires_at=parent.expires_at,
-                root_token=parent.root_token,
-                title=parent.title,
-                source=parent.source,
-                download_name=parent.download_name,
-                recording_kind=parent.recording_kind,
-            )
-            self._entries[token] = child
-            self._child_index[key] = token
-            self._child_keys_by_token[token] = key
-            self._root_child_counts[parent.root_token] = root_children + 1
-            heapq.heappush(self._expiry_heap, (child.expires_at, "entry", token))
+            if root_children >= MAX_CHILDREN_PER_ROOT and evictable:
+                # A playlist adding many segments at once: make room from old history first.
+                excess = root_children - MAX_CHILDREN_PER_ROOT + 1 + LIVE_CHILD_EVICTION_BATCH
+                self._evict_live_locked(parent.root_token, now, excess)
+            child = self._new_child(parent, target, media_type=media_type, evictable=evictable)
+            self._insert_child_locked(parent, child, now=now)
             return child
+
+    def _check_parent_locked(self, parent: MediaRegistration, now: float) -> None:
+        if parent.root_token not in self._entries or parent.expires_at <= now:
+            raise _media_error(HTTPStatus.NOT_FOUND, "MEDIA_TOKEN_EXPIRED", "Media relay token is invalid or expired.")
+
+    def _existing_child_locked(self, parent: MediaRegistration, url: str) -> MediaRegistration | None:
+        token = self._child_index.get((parent.root_token, url))
+        return self._entries.get(token) if token is not None else None
+
+    def _sight_child_locked(self, parent: MediaRegistration, entry: MediaRegistration, *, evictable: bool, now: float) -> None:
+        """An existing child listed again: a non-evictable sighting makes it permanent."""
+        if not entry.evictable:
+            return
+        listed = self._live_listed.get(parent.root_token)
+        if not evictable:
+            entry.evictable = False  # Permanent for good.
+            if listed is not None:
+                listed.pop(entry.token, None)
+                if not listed:
+                    del self._live_listed[parent.root_token]
+        elif listed is not None:
+            listed[entry.token] = now
+            listed.move_to_end(entry.token)
+
+    @staticmethod
+    def _new_child(
+        parent: MediaRegistration, target: ResolvedTarget, *, media_type: str | None, evictable: bool,
+    ) -> MediaRegistration:
+        """A child registration with its token decided, not registered yet."""
+        token = secrets.token_urlsafe(32)
+        return MediaRegistration(
+            token=token,
+            item_id=parent.item_id,
+            url=target.url,
+            delivery=parent.delivery,
+            media_type=media_type or infer_media_type(target.url),
+            headers=dict(parent.headers),
+            expires_at=parent.expires_at,
+            root_token=parent.root_token,
+            title=parent.title,
+            source=parent.source,
+            download_name=parent.download_name,
+            recording_kind=parent.recording_kind,
+            evictable=evictable,
+        )
+
+    def _insert_child_locked(self, parent: MediaRegistration, child: MediaRegistration, *, now: float) -> None:
+        root_children = self._root_child_counts.get(parent.root_token, 0)
+        if root_children >= MAX_CHILDREN_PER_ROOT:
+            code = "DASH_CHILD_LIMIT" if parent.media_type == "dash" else "HLS_CHILD_LIMIT"
+            raise _media_error(
+                HTTPStatus.BAD_GATEWAY,
+                code,
+                "Streaming manifest contains too many resources.",
+            )
+        if len(self._entries) + len(self._dash_templates) >= MAX_REGISTRATIONS:
+            raise _media_error(HTTPStatus.SERVICE_UNAVAILABLE, "MEDIA_REGISTRY_FULL", "Media relay is temporarily full.", True)
+        key = (parent.root_token, child.url)
+        self._entries[child.token] = child
+        self._child_index[key] = child.token
+        self._child_keys_by_token[child.token] = key
+        self._root_child_counts[parent.root_token] = root_children + 1
+        if child.evictable:
+            self._live_listed.setdefault(parent.root_token, OrderedDict())[child.token] = now
+        heapq.heappush(self._expiry_heap, (child.expires_at, "entry", child.token))
+
+    def touch_live_children(self, parent: MediaRegistration, urls: Iterable[str]) -> None:
+        """Mark the evictable children of `parent`'s root at these resolved URLs as listed now.
+
+        Creates nothing and leaves permanent entries alone, so a rewrite can
+        protect everything it lists before it adds anything that might evict.
+        """
+        with self._lock:
+            listed = self._live_listed.get(parent.root_token)
+            if not listed:
+                return
+            now = time.time()
+            for url in urls:
+                token = self._child_index.get((parent.root_token, url))
+                if token in listed:
+                    listed[token] = now
+                    listed.move_to_end(token)
+
+    def add_children(
+        self, parent: MediaRegistration, targets: Mapping[str, ResolvedTarget], *, evictable: bool,
+    ) -> dict[str, MediaRegistration]:
+        """Register everything one rewrite lists, all or nothing, in one locked step.
+
+        `targets` maps each listed URL to its already resolved target, so no
+        network or DNS work happens under the lock. For a live playlist the
+        listed evictable children first count as listed now, so nothing this
+        rewrite lists can be evicted. Then both limits are worked out: if the
+        new entries would not fit, a live playlist may evict old history, but
+        only when that is enough for everything to fit; otherwise
+        HLS_CHILD_LIMIT or MEDIA_REGISTRY_FULL is raised with nothing changed.
+        The checks in _insert_child_locked() stay as a backstop.
+        """
+        children, _templates = self._commit(parent, targets, (), evictable=evictable, render=None)
+        return children
+
+    def add_dash_resources(
+        self,
+        parent: MediaRegistration,
+        targets: Mapping[str, ResolvedTarget],
+        plans: Iterable["_DashTemplatePlan"],
+        render: Callable[[dict[str, MediaRegistration], list[DashTemplateRegistration]], object],
+    ) -> object:
+        """Register one DASH rewrite's children and templates, all or nothing.
+
+        Like add_children(), and in the same locked step every entry is
+        decided (an existing one, or a new one with its token) and passed to
+        `render`, which builds and checks the rewritten manifest. Only when
+        render returns is anything registered; its result is returned. If it
+        raises, the registry is left exactly as it was (apart from pruning
+        entries that had already expired).
+        """
+        _children, result = self._commit(parent, targets, list(plans), evictable=False, render=render)
+        return result
+
+    def _commit(
+        self,
+        parent: MediaRegistration,
+        targets: Mapping[str, ResolvedTarget],
+        plans: list["_DashTemplatePlan"],
+        *,
+        evictable: bool,
+        render: Callable[[dict[str, MediaRegistration], list[DashTemplateRegistration]], object] | None,
+    ) -> tuple[dict[str, MediaRegistration], object]:
+        """The one locked step behind add_children() and add_dash_resources().
+
+        One clock reading decides the parent's validity and every time used.
+        Nothing changes until the limits are checked and render() returned.
+        """
+        with self._lock:
+            now = time.time()
+            self._prune_locked(now)
+            self._check_parent_locked(parent, now)
+            # 1. Decide every entry without changing anything.
+            by_url: dict[str, MediaRegistration] = {}
+            existing: list[MediaRegistration] = []
+            new_children: list[MediaRegistration] = []
+            for target in targets.values():
+                if target.url in by_url:
+                    continue
+                entry = self._existing_child_locked(parent, target.url)
+                if entry is None:
+                    entry = self._new_child(parent, target, media_type=None, evictable=evictable)
+                    new_children.append(entry)
+                else:
+                    existing.append(entry)
+                by_url[target.url] = entry
+            by_key: dict[tuple, DashTemplateRegistration] = {}
+            new_templates: list[tuple[tuple, DashTemplateRegistration]] = []
+            for plan in plans:
+                if plan.key in by_key:
+                    continue
+                token = self._dash_template_index.get(plan.key)
+                template = self._dash_templates.get(token) if token is not None else None
+                if template is None:
+                    template = self._new_dash_template(parent, plan)
+                    new_templates.append((plan.key, template))
+                by_key[plan.key] = template
+            children = {url: by_url[target.url] for url, target in targets.items()}
+            templates = [by_key[plan.key] for plan in plans]
+            # 2. Check both limits. This rewrite's own children are re-listed
+            # below, so they never count as old history that could be evicted.
+            protected = {entry.token for entry in existing} if evictable else set()
+            needed = self._room_needed_locked(
+                parent, len(new_children) + len(new_templates), evictable=evictable, now=now, protected=protected,
+            )
+            # 3. Build the output; a failure here still leaves everything as it was.
+            result = render(children, templates) if render is not None else None
+            # 4. Commit. Nothing below is expected to fail; the insert checks are a backstop.
+            for entry in existing:
+                self._sight_child_locked(parent, entry, evictable=evictable, now=now)
+            if needed:
+                self._evict_live_locked(parent.root_token, now, needed)
+            for entry in new_children:
+                self._insert_child_locked(parent, entry, now=now)
+            for key, template in new_templates:
+                self._insert_dash_template_locked(parent, key, template)
+            if evictable:
+                self._trim_live_locked(parent.root_token, now)
+            return children, result
+
+    def _room_needed_locked(
+        self, parent: MediaRegistration, new: int, *, evictable: bool, now: float, protected: set[str],
+    ) -> int:
+        """Raise unless `new` more entries fit under both limits; changes nothing.
+
+        Returns how many old live children (evictable only) must be evicted
+        first. They may be evicted only when that is enough for everything
+        to fit; otherwise the limit error is raised.
+        """
+        root_token = parent.root_token
+        over_root = self._root_child_counts.get(root_token, 0) + new - MAX_CHILDREN_PER_ROOT
+        over_registry = len(self._entries) + len(self._dash_templates) + new - MAX_REGISTRATIONS
+        needed = max(over_root, over_registry, 0)
+        evictable_now = self._old_live_count_locked(root_token, now, needed, protected) if evictable and needed else 0
+        if over_root > evictable_now:
+            code = "DASH_CHILD_LIMIT" if parent.media_type == "dash" else "HLS_CHILD_LIMIT"
+            raise _media_error(HTTPStatus.BAD_GATEWAY, code, "Streaming manifest contains too many resources.")
+        if over_registry > evictable_now:
+            raise _media_error(HTTPStatus.SERVICE_UNAVAILABLE, "MEDIA_REGISTRY_FULL", "Media relay is temporarily full.", True)
+        return needed
+
+    def _old_live_count_locked(self, root_token: str, now: float, limit: int, protected: set[str]) -> int:
+        """How many of the root's evictable children, up to `limit`, _evict_live_locked() would take.
+
+        `protected` children are about to be listed again (moved to the end
+        with the time now), so they are skipped here as eviction will skip them.
+        """
+        count = 0
+        for token, last_listed in self._live_listed.get(root_token, {}).items():
+            if count >= limit:
+                break
+            if token in protected:
+                continue
+            if now - last_listed < LIVE_CHILD_MIN_RETENTION_SECONDS:
+                break
+            count += 1
+        return count
+
+    def trim_live_children(self, parent: MediaRegistration) -> None:
+        """Evict live-playlist history beyond LIVE_CHILD_SOFT_LIMIT (after a full rewrite)."""
+        with self._lock:
+            self._trim_live_locked(parent.root_token, time.time())
+
+    def _trim_live_locked(self, root_token: str, now: float) -> None:
+        listed = self._live_listed.get(root_token)
+        if listed and len(listed) > LIVE_CHILD_SOFT_LIMIT:
+            self._evict_live_locked(root_token, now, len(listed) - LIVE_CHILD_SOFT_LIMIT)
+
+    def _evict_live_locked(self, root_token: str, now: float, excess: int) -> None:
+        """Evict up to `excess` evictable children, least recently listed first."""
+        listed = self._live_listed.get(root_token)
+        evicted = False
+        while listed and excess > 0:
+            excess -= 1
+            token, last_listed = next(iter(listed.items()))
+            if now - last_listed < LIVE_CHILD_MIN_RETENTION_SECONDS:
+                break  # Everything after this was listed even more recently.
+            listed.pop(token)
+            self._remove_entry_locked(token)
+            evicted = True
+        # An evicted entry leaves its heap record behind until the root's expiry
+        # (_prune_locked skips it); rebuild once those outnumber the live records.
+        live_records = len(self._entries) + len(self._dash_templates)
+        if evicted and len(self._expiry_heap) > 4 * live_records + 1024:
+            self._expiry_heap = [(entry.expires_at, "entry", token) for token, entry in self._entries.items()]
+            self._expiry_heap.extend(
+                (template.expires_at, "template", token) for token, template in self._dash_templates.items()
+            )
+            heapq.heapify(self._expiry_heap)
 
     def dash_template(
         self,
@@ -697,6 +1102,32 @@ class MediaRegistry:
         representation_templates: Mapping[str, str] | None = None,
     ) -> DashTemplateRegistration:
         """Register one constrained DASH URL template without exposing it."""
+
+        plan = self.plan_dash_template(
+            parent, url_template, representation_ids=representation_ids,
+            bandwidths=bandwidths, representation_templates=representation_templates,
+        )
+        with self._lock:
+            now = time.time()
+            self._prune_locked(now)
+            self._check_parent_locked(parent, now)
+            token = self._dash_template_index.get(plan.key)
+            if token is not None and token in self._dash_templates:
+                return self._dash_templates[token]
+            template = self._new_dash_template(parent, plan)
+            self._insert_dash_template_locked(parent, plan.key, template)
+            return template
+
+    def plan_dash_template(
+        self,
+        parent: MediaRegistration,
+        url_template: str,
+        *,
+        representation_ids: Iterable[str] = (),
+        bandwidths: Iterable[str] = (),
+        representation_templates: Mapping[str, str] | None = None,
+    ) -> "_DashTemplatePlan":
+        """Validate and resolve one DASH URL template; registers nothing."""
 
         raw_representation_templates = dict(representation_templates or {})
         if len(raw_representation_templates) > MAX_DASH_REPRESENTATIONS:
@@ -809,47 +1240,54 @@ class MediaRegistry:
             tuple(sorted(allowed_representations)),
             tuple(sorted(allowed_bandwidths)),
         )
-        with self._lock:
-            now = time.time()
-            self._prune_locked(now)
-            if parent.root_token not in self._entries or parent.expires_at <= now:
-                raise _media_error(HTTPStatus.NOT_FOUND, "MEDIA_TOKEN_EXPIRED", "Media relay token is invalid or expired.")
-            existing = self._dash_template_index.get(key)
-            if existing and existing in self._dash_templates:
-                return self._dash_templates[existing]
-            child_count = self._root_child_counts.get(parent.root_token, 0)
-            if child_count >= MAX_CHILDREN_PER_ROOT:
-                raise _media_error(
-                    HTTPStatus.BAD_GATEWAY,
-                    "DASH_CHILD_LIMIT",
-                    "DASH manifest contains too many resource templates.",
-                )
-            if len(self._entries) + len(self._dash_templates) >= MAX_REGISTRATIONS:
-                raise _media_error(HTTPStatus.SERVICE_UNAVAILABLE, "MEDIA_REGISTRY_FULL", "Media relay is temporarily full.", True)
-            token = secrets.token_urlsafe(32)
-            entry = DashTemplateRegistration(
-                token=token,
-                root_token=parent.root_token,
-                item_id=parent.item_id,
-                url_template=target.url,
-                placeholders=tuple(placeholders),
-                placeholder_literals=literal_items,
-                representation_templates=tuple(resolved_representation_templates),
-                allowed_representation_ids=allowed_representations,
-                allowed_bandwidths=allowed_bandwidths,
-                headers=dict(parent.headers),
-                expires_at=parent.expires_at,
-                delivery=parent.delivery,
-                title=parent.title,
-                source=parent.source,
-                recording_kind=parent.recording_kind,
+        return _DashTemplatePlan(
+            key=key,
+            url_template=target.url,
+            placeholders=tuple(placeholders),
+            placeholder_literals=literal_items,
+            representation_templates=tuple(resolved_representation_templates),
+            allowed_representation_ids=allowed_representations,
+            allowed_bandwidths=allowed_bandwidths,
+        )
+
+    @staticmethod
+    def _new_dash_template(parent: MediaRegistration, plan: "_DashTemplatePlan") -> DashTemplateRegistration:
+        """A template registration with its token decided, not registered yet."""
+        return DashTemplateRegistration(
+            token=secrets.token_urlsafe(32),
+            root_token=parent.root_token,
+            item_id=parent.item_id,
+            url_template=plan.url_template,
+            placeholders=plan.placeholders,
+            placeholder_literals=plan.placeholder_literals,
+            representation_templates=plan.representation_templates,
+            allowed_representation_ids=plan.allowed_representation_ids,
+            allowed_bandwidths=plan.allowed_bandwidths,
+            headers=dict(parent.headers),
+            expires_at=parent.expires_at,
+            delivery=parent.delivery,
+            title=parent.title,
+            source=parent.source,
+            recording_kind=parent.recording_kind,
+        )
+
+    def _insert_dash_template_locked(
+        self, parent: MediaRegistration, key: tuple, template: DashTemplateRegistration,
+    ) -> None:
+        child_count = self._root_child_counts.get(parent.root_token, 0)
+        if child_count >= MAX_CHILDREN_PER_ROOT:
+            raise _media_error(
+                HTTPStatus.BAD_GATEWAY,
+                "DASH_CHILD_LIMIT",
+                "DASH manifest contains too many resource templates.",
             )
-            self._dash_templates[token] = entry
-            self._dash_template_index[key] = token
-            self._dash_keys_by_token[token] = key
-            self._root_child_counts[parent.root_token] = child_count + 1
-            heapq.heappush(self._expiry_heap, (entry.expires_at, "template", token))
-            return entry
+        if len(self._entries) + len(self._dash_templates) >= MAX_REGISTRATIONS:
+            raise _media_error(HTTPStatus.SERVICE_UNAVAILABLE, "MEDIA_REGISTRY_FULL", "Media relay is temporarily full.", True)
+        self._dash_templates[template.token] = template
+        self._dash_template_index[key] = template.token
+        self._dash_keys_by_token[template.token] = key
+        self._root_child_counts[parent.root_token] = child_count + 1
+        heapq.heappush(self._expiry_heap, (template.expires_at, "template", template.token))
 
     def expand_dash_template(self, token: str, query: str) -> MediaRegistration:
         if not isinstance(query, str) or len(query) > 2048 or re.search(r"%(?![0-9A-Fa-f]{2})", query):
@@ -861,6 +1299,8 @@ class MediaRegistry:
             if (not entry or entry.expires_at <= now
                     or entry.root_token not in self._entries):
                 raise _media_error(HTTPStatus.NOT_FOUND, "DASH_TEMPLATE_EXPIRED", "DASH relay template is invalid or expired.")
+            self._renew_live_locked(entry.root_token, now)
+            entry = self._dash_templates[token]  # Renewal replaces the frozen record.
         try:
             parsed = urllib.parse.parse_qs(
                 query, keep_blank_values=True, strict_parsing=True, max_num_fields=5,
@@ -913,6 +1353,76 @@ class MediaRegistry:
                 return
             self._expire_roots_locked({entry.root_token}, deadline)
 
+    def release_root(self, token: str, *, grace_seconds: float = CAPTURE_RELEASE_GRACE_SECONDS) -> bool:
+        """Expire `token`'s registrations if `token` is itself a root; never raises.
+
+        Capture jobs call this when they end. It relies on the invariant that
+        each capture job is started with its own freshly registered root
+        (src/lib/download-client.js and recording-client.js register one per
+        start; playback never hands its root to a job). A job started from a
+        child token (another root's resource) leaves that root alone.
+        """
+        with self._lock:
+            entry = self._entries.get(token)
+            if entry is None or entry.root_token != token:
+                return False
+            self.expire(token, grace_seconds=grace_seconds)
+            return True
+
+    def mark_capture(self, token: str) -> None:
+        """A capture job reads this registration: its relay requests never ask for icy metadata."""
+        with self._lock:
+            entry = self._entries.get(token)
+            if entry is not None:
+                entry.capture = True
+
+    def _live_root_locked(self, token: str, now: float) -> MediaRegistration | None:
+        root = self._entries.get(token)
+        if root is None or root.root_token != token or root.released or root.expires_at <= now:
+            return None
+        return root
+
+    def note_stream_title(self, token: str, title: str | None) -> None:
+        """Record the latest song title the relay read for this playback root.
+
+        Ignored once the root is released or expired, so a stream still being
+        relayed after its release cannot bring the entry back.
+        """
+        now = time.time()
+        with self._lock:
+            if self._live_root_locked(token, now) is None:
+                return
+            previous = self._now_playing.get(token)
+            if previous is not None and previous[0] == title:
+                self._now_playing.move_to_end(token)
+                return
+            if previous is None and title is None:
+                return
+            self._now_playing[token] = (title, now)
+            self._now_playing.move_to_end(token)
+            while len(self._now_playing) > MAX_NOW_PLAYING:
+                self._now_playing.popitem(last=False)
+
+    def now_playing(self, token: str) -> dict:
+        """The latest song title of a live playback root; nothing if unknown, released or expired.
+
+        The page polls this only while it plays the root, and one continuous
+        relay connection makes no further requests, so a poll counts as use:
+        it slides the lease exactly as get() does (_renew_live_locked), so the
+        title, and the root a reconnect needs, outlive the first lease. A
+        released or expired root is never revived.
+        """
+        now = time.time()
+        with self._lock:
+            self._prune_locked(now)
+            if self._live_root_locked(token, now) is None:
+                return {"title": None, "changed_at": None}
+            self._renew_live_locked(token, now)
+            record = self._now_playing.get(token)
+            if record is None or record[0] is None:
+                return {"title": None, "changed_at": None}
+            return {"title": record[0], "changed_at": record[1]}
+
     def expire_item(self, item_id: str, *, grace_seconds: float = 5.0) -> None:
         deadline = time.time() + max(0.0, min(float(grace_seconds), 30.0))
         with self._lock:
@@ -929,11 +1439,17 @@ class MediaRegistry:
             self._dash_keys_by_token.clear()
             self._root_child_counts.clear()
             self._expiry_heap.clear()
+            self._live_listed.clear()
+            self._now_playing.clear()
 
     def _expire_roots_locked(self, roots: set[str], deadline: float) -> None:
         if not roots:
             return
+        for root_token in roots:
+            self._now_playing.pop(root_token, None)  # A released playback has no song.
         for registration in self._entries.values():
+            if registration.token in roots:
+                registration.released = True
             if registration.root_token not in roots or registration.expires_at <= deadline:
                 continue
             registration.expires_at = deadline
@@ -953,11 +1469,18 @@ class MediaRegistry:
 
     def _remove_entry_locked(self, token: str) -> None:
         self._entries.pop(token, None)
+        self._live_listed.pop(token, None)  # A root takes its live history with it.
+        self._now_playing.pop(token, None)  # ...and its song title.
         key = self._child_keys_by_token.pop(token, None)
         if key:
             if self._child_index.get(key) == token:
                 self._child_index.pop(key, None)
             self._decrement_root_locked(key[0])
+            listed = self._live_listed.get(key[0])
+            if listed is not None:
+                listed.pop(token, None)
+                if not listed:
+                    del self._live_listed[key[0]]
 
     def _remove_template_locked(self, token: str) -> None:
         template = self._dash_templates.pop(token, None)
@@ -1000,26 +1523,63 @@ def infer_media_type(url: str) -> str:
     return "audio"
 
 
+def is_live_hls_media_playlist(text: str) -> bool:
+    """A media playlist that has not ended.
+
+    A media playlist has an #EXTINF: or #EXT-X-TARGETDURATION: tag (the latter
+    is required, so a live playlist with no segments yet still counts). It has
+    ended once it carries #EXT-X-ENDLIST. #EXT-X-PLAYLIST-TYPE:VOD without
+    ENDLIST is treated as not live: a VOD playlist never changes, so its entries
+    keep the root's lifetime for seeking. Master playlists have neither tag.
+    Tags are matched whole and, like the rest of this file, ignoring case.
+    """
+    names, values = set(), {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            name, colon, value = stripped.upper().partition(":")
+            if colon:
+                names.add(name + ":")
+                values[name] = value.strip()
+            else:
+                names.add(name.split()[0])
+    if not names & {"#EXTINF:", "#EXT-X-TARGETDURATION:"}:
+        return False
+    return "#EXT-X-ENDLIST" not in names and values.get("#EXT-X-PLAYLIST-TYPE") != "VOD"
+
+
 def rewrite_hls_manifest(text: str, manifest_url: str, parent: MediaRegistration, registry: MediaRegistry) -> str:
     if not text.lstrip().startswith("#EXTM3U"):
         raise _media_error(HTTPStatus.BAD_GATEWAY, "INVALID_HLS_MANIFEST", "Upstream HLS manifest is invalid.")
-    output: list[str] = []
+    # Only a live media playlist slides; its resources may be evicted under pressure.
+    live = is_live_hls_media_playlist(text)
+    # One pass splits the text into literal pieces and the URLs it lists.
+    pieces: list[str] = []
+    url_pieces: list[int] = []
     for line in text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
-            absolute = urllib.parse.urljoin(manifest_url, stripped)
-            child = registry.child(parent, absolute)
-            output.append(media_relay_path(child))
-            continue
-        if "URI" in line.upper():
-            def replace(match: re.Match) -> str:
-                raw = match.group(2) or match.group(3) or ""
-                absolute = urllib.parse.urljoin(manifest_url, raw)
-                child = registry.child(parent, absolute)
-                return f'URI="{media_relay_path(child)}"'
-            line = _URI_ATTRIBUTE.sub(replace, line)
-        output.append(line)
-    return "\n".join(output) + "\n"
+            url_pieces.append(len(pieces))
+            pieces.append(urllib.parse.urljoin(manifest_url, stripped))
+        elif "URI" in line.upper():
+            start = 0
+            for match in _URI_ATTRIBUTE.finditer(line):
+                pieces.append(line[start:match.start()] + 'URI="')
+                url_pieces.append(len(pieces))
+                pieces.append(urllib.parse.urljoin(manifest_url, match.group(2) or match.group(3) or ""))
+                pieces.append('"')
+                start = match.end()
+            pieces.append(line[start:])
+        else:
+            pieces.append(line)
+        pieces.append("\n")
+    # Each distinct URL is validated once, with one DNS lookup per host and port.
+    targets = registry.connector.resolve_batch(pieces[index] for index in url_pieces)
+    # All entries are added in one locked step, or none if the playlist cannot fit.
+    children = registry.add_children(parent, targets, evictable=live)
+    for index in url_pieces:
+        pieces[index] = media_relay_path(children[pieces[index]])
+    return "".join(pieces)
 
 
 def rewrite_dash_manifest(text: str, manifest_url: str, parent: MediaRegistration, registry: MediaRegistry) -> bytes:
@@ -1136,13 +1696,25 @@ def rewrite_dash_manifest(text: str, manifest_url: str, parent: MediaRegistratio
                 collect(child, scope_base)
         return result, unidentified_distinct
 
+    # Nothing is registered during the walk: each reference is validated (and
+    # each template resolved) and its write is recorded. The walk only ever
+    # reads original values, so the writes can wait until everything has been
+    # registered in one all-or-nothing step.
+    child_urls: list[str] = []
+    plans: list[_DashTemplatePlan] = []
+    writes: list[tuple[Callable[[str], None], bool, int]] = []
+
+    def set_text(element: ET.Element, value: str) -> None:
+        element.text = value
+
     def rewrite_reference(
         raw: str,
         base_url: str,
         scope: ET.Element,
+        write: Callable[[str], None],
         *,
         representation_scoped: bool = False,
-    ) -> str:
+    ) -> None:
         value = (raw or "").strip()
         if not value or len(value) > 8192 or re.search(r"[\r\n\0]", value):
             raise _media_error(HTTPStatus.BAD_GATEWAY, "INVALID_DASH_URL", "DASH resource URL is invalid.")
@@ -1163,16 +1735,17 @@ def rewrite_dash_manifest(text: str, manifest_url: str, parent: MediaRegistratio
             }
         if _DASH_PLACEHOLDER.search(absolute) or "$$" in absolute or representation_templates:
             representation_ids, bandwidths = scope_values(scope)
-            template = registry.dash_template(
+            plans.append(registry.plan_dash_template(
                 parent,
                 absolute,
                 representation_ids=representation_ids,
                 bandwidths=bandwidths,
                 representation_templates=representation_templates,
-            )
-            return template.relay_template()
-        child = registry.child(parent, absolute)
-        return media_relay_path(child)
+            ))
+            writes.append((write, True, len(plans) - 1))
+            return
+        child_urls.append(absolute)
+        writes.append((write, False, len(child_urls) - 1))
 
     def walk(element: ET.Element, inherited_base: str, scope: ET.Element, depth: int = 0) -> None:
         if depth > 64:
@@ -1192,23 +1765,24 @@ def rewrite_dash_manifest(text: str, manifest_url: str, parent: MediaRegistratio
         reference_scope = scope if local_name in _DASH_URL_ATTRIBUTES else element
         for attribute in _DASH_URL_ATTRIBUTES.get(local_name, ()):
             if attribute in element.attrib:
-                element.attrib[attribute] = rewrite_reference(
+                rewrite_reference(
                     element.attrib[attribute],
                     element_base,
                     reference_scope,
+                    functools.partial(element.set, attribute),
                     representation_scoped=local_name == "SegmentTemplate",
                 )
         if local_name == "UTCTiming":
             scheme = (element.attrib.get("schemeIdUri") or "").lower()
             value = element.attrib.get("value") or ""
             if value.startswith(("http://", "https://")) or ":utc:http" in scheme:
-                element.attrib["value"] = rewrite_reference(value, element_base, reference_scope)
+                rewrite_reference(value, element_base, reference_scope, functools.partial(element.set, "value"))
         if local_name == "Location" and (element.text or "").strip():
-            element.text = rewrite_reference(element.text or "", inherited_base, reference_scope)
+            rewrite_reference(element.text or "", inherited_base, reference_scope, functools.partial(set_text, element))
 
         for base_child, original in zip(base_children, original_bases):
             if original:
-                base_child.text = rewrite_reference(original, inherited_base, element)
+                rewrite_reference(original, inherited_base, element, functools.partial(set_text, base_child))
 
         for child in list(element):
             if _xml_local_name(child.tag) == "BaseURL":
@@ -1217,13 +1791,22 @@ def rewrite_dash_manifest(text: str, manifest_url: str, parent: MediaRegistratio
             walk(child, element_base, child_scope, depth + 1)
 
     walk(root, manifest_url, root)
+    targets = registry.connector.resolve_batch(child_urls)
     namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") else ""
     if namespace:
         ET.register_namespace("", namespace)
-    rewritten = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-    if len(rewritten) > MAX_MANIFEST_BYTES:
-        raise _media_error(HTTPStatus.BAD_GATEWAY, "DASH_MANIFEST_TOO_LARGE", "Rewritten DASH manifest is too large.")
-    return rewritten
+
+    def render(children: dict[str, MediaRegistration], templates: list[DashTemplateRegistration]) -> bytes:
+        for write, is_template, index in writes:
+            write(templates[index].relay_template() if is_template else media_relay_path(children[child_urls[index]]))
+        rewritten = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        if len(rewritten) > MAX_MANIFEST_BYTES:
+            raise _media_error(HTTPStatus.BAD_GATEWAY, "DASH_MANIFEST_TOO_LARGE", "Rewritten DASH manifest is too large.")
+        return rewritten
+
+    # Everything is registered in one locked step, and only once the rewritten
+    # manifest is built and within size: otherwise nothing is registered.
+    return registry.add_dash_resources(parent, targets, plans, render)
 
 
 def _xml_local_name(name: str) -> str:

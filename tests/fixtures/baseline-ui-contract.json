@@ -40,7 +40,7 @@
     "privateFields": ["_extra"]
   },
   "adapters": {
-    "ids": ["radio-browser", "iptv-org", "internet-archive", "nasa", "wikimedia", "librivox", "media-ccc", "library-of-congress", "gpodder", "peertube", "owncast"],
+    "ids": ["radio-browser", "iptv-org", "internet-archive", "nasa", "wikimedia", "librivox", "media-ccc", "gpodder", "peertube", "owncast"],
     "requiredExports": ["id", "displayName", "itemTypes", "search", "browse", "browsePage", "random"]
   },
   "apiRoutes": [

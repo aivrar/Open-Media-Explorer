@@ -59,6 +59,8 @@
   font: inherit;
   cursor: pointer;
 }
+/* A long favorites category name on the Source list is cut, not widening the bar. */
+.tuner-filter select { max-width: min(260px, 40vw); text-overflow: ellipsis; }
 
 .tuner-stage {
   display: flex;
@@ -80,6 +82,18 @@
   container-type: inline-size;
   position: relative;
   filter: drop-shadow(0 12px 32px rgba(0,0,0,0.5));
+  /* Round, so the wheel and drag area is the dial itself, not the square around it. */
+  border-radius: 50%;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease;
+}
+/* Soft glow while the pointer is over a dial the wheel can turn. */
+@media (hover: hover) {
+  .tuner-dial.can-turn:hover {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+      0 0 16px 2px color-mix(in srgb, var(--accent) 32%, transparent);
+  }
 }
 
 .tuner-dial svg {
@@ -136,6 +150,14 @@
   background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
 }
 .tuner-strip::-webkit-scrollbar { height: 6px; }
+/* Room at both ends of the strip, so every station can scroll to the centre,
+   even when the cards on one side are short. Half the strip is always enough
+   for any card. Left out for the empty-list message. */
+.tuner-strip:not(:has(> .tuner-empty))::before,
+.tuner-strip:not(:has(> .tuner-empty))::after {
+  content: '';
+  flex: 0 0 50%;
+}
 .station-pill {
   flex: 0 0 auto;
   padding: 6px 12px;

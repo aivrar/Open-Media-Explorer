@@ -418,7 +418,7 @@ test('simultaneous provider faults remain isolated while user and healthy source
     maxConcurrent: 4,
     defaultSourceConcurrency: 1,
   });
-  const slowLoc = deferred();
+  const slowHeld = deferred();
   const starts = [];
   const run = (sourceId, outcome, priority = CATALOG_PRIORITY.INITIAL) => scheduler.enqueue({
     sourceId,
@@ -426,7 +426,7 @@ test('simultaneous provider faults remain isolated while user and healthy source
     priority,
     task: async () => {
       starts.push(sourceId);
-      if (sourceId === 'library-of-congress') await slowLoc.promise;
+      if (sourceId === 'held-source') await slowHeld.promise;
       if (outcome instanceof Error) throw outcome;
       return outcome;
     },
@@ -439,7 +439,7 @@ test('simultaneous provider faults remain isolated while user and healthy source
   };
 
   const jobs = [
-    run('library-of-congress', retryable('LOC cooldown', 429, 3_600_000)),
+    run('held-source', retryable('declared cooldown', 429, 3_600_000)),
     run('gpodder', retryable('dead feed', 503)),
     run('peertube', retryable('broken origin', 502)),
     run('owncast', retryable('safety metadata invalid', 400)),
@@ -453,15 +453,15 @@ test('simultaneous provider faults remain isolated while user and healthy source
   ];
   jobs.forEach((job) => void job.catch(() => {}));
   await flush();
-  assert.ok(starts.includes('radio-browser'), 'user work must start despite the slow LOC task');
-  slowLoc.resolve();
+  assert.ok(starts.includes('radio-browser'), 'user work must start despite the slow held task');
+  slowHeld.resolve();
   const outcomes = await Promise.allSettled(jobs);
 
   assert.equal(outcomes.filter((entry) => entry.status === 'fulfilled').length, 6);
   assert.equal(outcomes.filter((entry) => entry.status === 'rejected').length, 5);
   assert.deepEqual(outcomes[4], { status: 'fulfilled', value: [] },
     'an authoritative empty C3VOC snapshot remains a successful empty snapshot');
-  assert.equal(scheduler._state('library-of-congress').cooldownUntil, 3_600_000);
+  assert.equal(scheduler._state('held-source').cooldownUntil, 3_600_000);
   assert.equal(scheduler._state('owncast').cooldownUntil, 0,
     'permanent schema/safety failures must not create a retry storm timer');
   assert.ok(scheduler._state('gpodder').cooldownUntil > 0);
@@ -472,5 +472,96 @@ test('simultaneous provider faults remain isolated while user and healthy source
   });
   assert.equal(clock.timers.size, 0,
     'settled provider cooldown metadata must not leave a wake timer without queued work');
+  scheduler.destroy();
+});
+
+test('cooldownRemainingMs reports the time left without changing anything', () => {
+  let time = 1_000;
+  const scheduler = new CatalogScheduler({ now: () => time });
+  assert.equal(scheduler.cooldownRemainingMs('unknown-source'), 0);
+  assert.equal(scheduler.sourceState.has('unknown-source'), false, 'reading creates no state');
+  scheduler.setCooldown('held-source', 3_600_000);
+  assert.equal(scheduler.cooldownRemainingMs('held-source'), 3_600_000);
+  time += 600_000;
+  assert.equal(scheduler.cooldownRemainingMs('held-source'), 3_000_000);
+  assert.equal(scheduler.cooldownRemainingMs('held-source'), 3_000_000, 'repeat reads agree');
+  time += 3_000_001;
+  assert.equal(scheduler.cooldownRemainingMs('held-source'), 0);
+  scheduler.setCooldown('nasa', 5_000);
+  scheduler.resetSource('nasa');
+  assert.equal(scheduler.cooldownRemainingMs('nasa'), 0);
+  scheduler.destroy();
+});
+
+test('a declared cooldown is known as declared until it ends; ordinary backoff is not', () => {
+  let time = 0;
+  const scheduler = new CatalogScheduler({ now: () => time });
+  const declared = Object.assign(new Error('slow down'), { status: 429, retryAfterMs: 120_000 });
+  scheduler.recordFailure('held-source', declared);
+  assert.equal(scheduler.declaredCooldownRemainingMs('held-source'), 120_000);
+  time += 100_000;
+  // The last 30 seconds of a declared hold still count as declared.
+  assert.equal(scheduler.declaredCooldownRemainingMs('held-source'), 20_000);
+  time += 20_000;
+  assert.equal(scheduler.declaredCooldownRemainingMs('held-source'), 0);
+
+  scheduler.recordFailure('flaky', Object.assign(new Error('bad gateway'), { status: 502 }));
+  assert.ok(scheduler.cooldownRemainingMs('flaky') > 0);
+  assert.equal(scheduler.declaredCooldownRemainingMs('flaky'), 0, 'backoff is not a declared hold');
+
+  scheduler.recordFailure('held-source', declared);
+  scheduler.resetSource('held-source');
+  assert.equal(scheduler.declaredCooldownRemainingMs('held-source'), 0);
+  assert.equal(scheduler.declaredCooldownRemainingMs('unknown-source'), 0);
+  assert.equal(scheduler.sourceState.has('unknown-source'), false, 'reading creates no state');
+  scheduler.destroy();
+});
+
+test('background prefetch leaves slots free for what the user is looking at', async () => {
+  const scheduler = new CatalogScheduler({ maxConcurrent: 11, defaultSourceConcurrency: 4 });
+  assert.equal(scheduler.foregroundReserve, 2);
+  const gate = deferred();
+  const starts = [];
+  const run = (sourceId, key, priority) => scheduler.enqueue({
+    sourceId, key, priority,
+    task: async () => { starts.push(`${sourceId}:${key}`); await gate.promise; return key; },
+  });
+  const jobs = [];
+  for (let index = 0; index < 12; index++) {
+    jobs.push(run(`background-${index % 3}`, `page-${index}`, CATALOG_PRIORITY.PREFETCH));
+  }
+  await flush();
+  assert.equal(scheduler.stats().active, 9, 'background never takes the reserved slots');
+  jobs.push(run('selected', 'first-page', CATALOG_PRIORITY.USER));
+  await flush();
+  assert.ok(starts.includes('selected:first-page'), 'the selected source starts at once');
+  gate.resolve();
+  await Promise.all(jobs);
+  scheduler.destroy();
+});
+
+test('promote moves a queued first page ahead of background work', async () => {
+  const scheduler = new CatalogScheduler({ maxConcurrent: 1, defaultSourceConcurrency: 1 });
+  const gate = deferred();
+  const starts = [];
+  const run = (sourceId, priority) => scheduler.enqueue({
+    sourceId, key: 'page', priority,
+    task: async () => { starts.push(sourceId); await gate.promise; return sourceId; },
+  });
+  const jobs = [run('busy', CATALOG_PRIORITY.PREFETCH)];
+  await flush();
+  jobs.push(
+    run('other-a', CATALOG_PRIORITY.INITIAL),
+    run('other-b', CATALOG_PRIORITY.INITIAL),
+    run('selected', CATALOG_PRIORITY.INITIAL),
+  );
+  await flush();
+  assert.deepEqual(starts, ['busy']);
+  assert.equal(scheduler.promote('selected', CATALOG_PRIORITY.USER), 1);
+  assert.equal(scheduler.promote('selected', CATALOG_PRIORITY.USER), 0, 'already promoted');
+  assert.equal(scheduler.promote('nothing-queued'), 0);
+  gate.resolve();
+  await Promise.all(jobs);
+  assert.deepEqual(starts.slice(0, 2), ['busy', 'selected']);
   scheduler.destroy();
 });

@@ -12,16 +12,32 @@ import { view } from './state.js';
 import { getState } from '../../lib/state.js';
 import { isContentAllowed } from '../../lib/content-rating.js';
 import { isPersonalSource, personalFilters } from './personal.js';
+import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
 
 export function filterItems(items) {
-  return items.filter(itemPassesFilters);
+  const inCategory = favoritesCategoryTest();
+  return items.filter((it) => itemPassesFilters(it, inCategory));
 }
 
-export function itemPassesFilters(it) {
+/** For the Favorites category chips: a test for "is this favorite in the
+ *  chosen category", or null when no category is chosen (or it no longer
+ *  exists). Reads the categories once for a whole pass. */
+export function favoritesCategoryTest() {
+  if (view.activeSource !== 'favorites') return null;
+  const category = personalFilters()?.category || '';
+  if (!category) return null;
+  const groups = favoriteGroupsSnapshot();
+  if (category === UNCATEGORIZED) return (id) => !groups.has(groups.groupOf(id));
+  if (!groups.has(category)) return null;
+  return (id) => groups.groupOf(id) === category;
+}
+
+export function itemPassesFilters(it, inCategory = favoritesCategoryTest()) {
   const onFavorites = view.activeSource === 'favorites';
   const personal = isPersonalSource();
 
   if (it.__contentHidden !== true && !isContentAllowed(it, getState().settings)) return false;
+  if (onFavorites && inCategory && !inCategory(it.id)) return false;
 
   // Disabled sources disappear from the regular Library pool immediately;
   // favorites remain visible so disabling a catalog never hides saved items.

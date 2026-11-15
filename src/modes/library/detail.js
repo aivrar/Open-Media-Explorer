@@ -8,12 +8,16 @@
 import { getState, isFavorite, addFavorite, removeFavorite } from '../../lib/state.js';
 import { getSourceLabel } from '../../lib/sources.js';
 import { safeExternalUrl } from '../../lib/item-model.js';
-import { isArtworkRelayUrl, loadArtworkImage } from '../../lib/artwork.js';
+import {
+  artworkSourceFor, isArtworkRelayUrl, isStationImageSource, loadArtworkImage, stationImageSourceFor,
+} from '../../lib/artwork.js';
 import { playItem } from '../../lib/player.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import { resolveItemArtwork } from './thumbnails.js';
+import { createOtherStreams } from './other-streams.js';
+import { streamQualityLabel } from '../../lib/stream-quality.js';
 import {
   contentBadgeText, favoriteForContentView, isContentAllowed,
 } from '../../lib/content-rating.js';
@@ -21,6 +25,20 @@ import {
 let detailReturnFocus = null;
 let detailKeyHandler = null;
 let detailArtworkAbort = null;
+let detailArtworkShown = null;
+let detailOtherStreams = null;
+
+function stopOtherStreams() {
+  detailOtherStreams?.abort();
+  detailOtherStreams = null;
+}
+
+/** A row in "Other streams" is its own Radio Browser entry: play it and show
+ *  its details, so the panel's Favorite button is about the entry playing. */
+function playOtherStream(stream) {
+  openDetail(stream, { focus: true });
+  playItem(stream).catch((err) => console.warn('play failed:', err));
+}
 
 function bindDetailKeys() {
   if (detailKeyHandler || !globalThis.document?.addEventListener) return;
@@ -41,15 +59,77 @@ function unbindDetailKeys() {
   detailKeyHandler = null;
 }
 
+/** The panel's picture for an item: an <img> to mount, and start() to load it
+ *  once mounted. Cancels the previous picture's work. */
+function detailArtwork(item) {
+  if (detailArtworkAbort && !detailArtworkAbort.signal.aborted) detailArtworkAbort.abort();
+  detailArtworkAbort = new AbortController();
+  const detailArtworkSignal = detailArtworkAbort.signal;
+  // Which station picture is shown (refreshDetailArtwork compares).
+  detailArtworkShown = { item, source: stationImageSourceFor(item) };
+  const detailThumb = el('img', {
+    className: 'detail-thumb',
+    attrs: { alt: '', referrerpolicy: 'no-referrer' },
+  });
+  const loadDetailArtwork = () => {
+    // The user's own station picture first, then the item's relay artwork.
+    const source = artworkSourceFor(item);
+    if (!source || !detailThumb.isConnected) return;
+    detailThumb.style.display = '';
+    void loadArtworkImage(detailThumb, source, {
+      priority: 30,
+      signal: detailArtworkSignal,
+    }).catch((error) => {
+      if (error?.name === 'AbortError' || detailArtworkSignal.aborted) return;
+      detailThumb.style.display = 'none';
+      // A station picture that would not load: show the item's own artwork.
+      if (isStationImageSource(source) && item.__contentHidden !== true) {
+        resolveItemArtwork(item, { priority: 30, signal: detailArtworkSignal })
+          .then(loadDetailArtwork).catch(() => {});
+      }
+    });
+  };
+  const start = () => {
+    if (artworkSourceFor(item) && isContentAllowed(item, getState().settings)) {
+      loadDetailArtwork();
+      return;
+    }
+    // Artwork may still be hydrating: mounted hidden, filled in once resolved.
+    detailThumb.style.display = 'none';
+    if (item.__contentHidden !== true) {
+      resolveItemArtwork(item, { priority: 30, signal: detailArtworkSignal }).then(() => {
+        if (isArtworkRelayUrl(item.thumbnail) && detailThumb.isConnected) {
+          loadDetailArtwork();
+        }
+      }).catch(() => {});
+    }
+  };
+  return { thumb: detailThumb, start };
+}
+
+/** The station pictures changed: if the open panel's picture is a different
+ *  one now, swap only the picture; the rest of the panel (buttons, focus,
+ *  Other streams) stays as it is. Returns true when the picture was swapped. */
+export function refreshDetailArtwork() {
+  const shown = detailArtworkShown;
+  const panel = ui.detailPanel;
+  if (!panel || !shown || stationImageSourceFor(shown.item) === shown.source) return false;
+  const old = [...panel.children].find((node) => node.className === 'detail-thumb');
+  if (!old) return false;
+  const artwork = detailArtwork(shown.item);
+  panel.insertBefore(artwork.thumb, old);
+  old.remove();
+  artwork.start();
+  return true;
+}
+
 export function openDetail(item, options = {}) {
   if (!item?.id) return;
   if (!isContentAllowed(item, getState().settings) && !isFavorite(item.id)) {
     closeDetail();
     return;
   }
-  if (detailArtworkAbort && !detailArtworkAbort.signal.aborted) detailArtworkAbort.abort();
-  detailArtworkAbort = new AbortController();
-  const detailArtworkSignal = detailArtworkAbort.signal;
+  stopOtherStreams();
   item = favoriteForContentView(item, getState().settings);
   view.detailItemId = item.id;
   if (!ui.detailPanel) {
@@ -73,35 +153,9 @@ export function openDetail(item, options = {}) {
   });
   ui.detailPanel.appendChild(closeBtn);
 
-  const detailThumb = el('img', {
-    className: 'detail-thumb',
-    attrs: { alt: '', referrerpolicy: 'no-referrer' },
-  });
-  const loadDetailArtwork = () => {
-    if (!isArtworkRelayUrl(item.thumbnail) || !detailThumb.isConnected) return;
-    detailThumb.style.display = '';
-    void loadArtworkImage(detailThumb, item.thumbnail.trim(), {
-      priority: 30,
-      signal: detailArtworkSignal,
-    }).catch((error) => {
-      if (error?.name !== 'AbortError') detailThumb.style.display = 'none';
-    });
-  };
-  if (isArtworkRelayUrl(item.thumbnail) && isContentAllowed(item, getState().settings)) {
-    ui.detailPanel.appendChild(detailThumb);
-    loadDetailArtwork();
-  } else {
-    // Artwork may still be hydrating — append (hidden) and fill in once resolved.
-    detailThumb.style.display = 'none';
-    ui.detailPanel.appendChild(detailThumb);
-    if (item.__contentHidden !== true) {
-      resolveItemArtwork(item, { priority: 30, signal: detailArtworkSignal }).then(() => {
-        if (isArtworkRelayUrl(item.thumbnail) && detailThumb.isConnected) {
-          loadDetailArtwork();
-        }
-      }).catch(() => {});
-    }
-  }
+  const artwork = detailArtwork(item);
+  ui.detailPanel.appendChild(artwork.thumb);
+  artwork.start();
 
   ui.detailPanel.appendChild(el('h2', {
     className: 'detail-title',
@@ -114,6 +168,12 @@ export function openDetail(item, options = {}) {
   if (item.country) meta.appendChild(el('span', { text: item.country }));
   if (item.language) meta.appendChild(el('span', { text: item.language }));
   if (item.license) meta.appendChild(el('span', { text: item.license }));
+  const qualityLabel = streamQualityLabel(item);
+  if (qualityLabel) {
+    meta.appendChild(el('span', {
+      className: 'detail-quality', text: qualityLabel, attrs: { title: 'Stream format and bitrate' },
+    }));
+  }
   const ratingLabel = contentBadgeText(item);
   if (ratingLabel && item.__contentHidden !== true) {
     meta.appendChild(el('span', { className: 'content-rating-badge', text: ratingLabel }));
@@ -153,13 +213,20 @@ export function openDetail(item, options = {}) {
   if (sourceUrl && item.__contentHidden !== true) {
     actions.appendChild(el('a', { className: 'btn', attrs: { href: sourceUrl, target: '_blank', rel: 'noopener' }, text: 'Source ↗' }));
   }
+  const otherStreams = createOtherStreams(item, { onPlay: playOtherStream });
+  detailOtherStreams = otherStreams;
+  if (otherStreams.button) actions.appendChild(otherStreams.button);
   ui.detailPanel.appendChild(actions);
+  if (otherStreams.section) ui.detailPanel.appendChild(otherStreams.section);
+  if (otherStreams.note) ui.detailPanel.appendChild(otherStreams.note);
   if (options.focus === true) queueMicrotask(() => closeBtn.isConnected && closeBtn.focus());
 }
 
 export function closeDetail({ preserveSelection = false } = {}) {
   if (detailArtworkAbort && !detailArtworkAbort.signal.aborted) detailArtworkAbort.abort();
   detailArtworkAbort = null;
+  detailArtworkShown = null;
+  stopOtherStreams();
   if (ui.detailPanel) {
     ui.detailPanel.remove();
     ui.detailPanel = null;

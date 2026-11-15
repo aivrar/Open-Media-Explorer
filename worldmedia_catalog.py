@@ -55,14 +55,14 @@ MAX_XML_TEXT = 2 * 1024 * 1024
 MAX_FEED_ITEMS = 1_000
 MAX_OWNCAST_ITEMS = 5_000
 MAX_UPSTREAM_SECONDS = 30.0
+SOURCE_CHALLENGE_RETRY_SECONDS = 60 * 60
+_CHALLENGE_STATUSES = frozenset({HTTPStatus.FORBIDDEN, HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE})
 ASSET_TTL_SECONDS = 6 * 60 * 60
 
 FIXED_METADATA_HOSTS = frozenset({
     "api.media.ccc.de",
     "media.ccc.de",
     "streaming.media.ccc.de",
-    "www.loc.gov",
-    "loc.gov",
     "gpodder.net",
     "www.gpodder.net",
     "sepiasearch.org",
@@ -596,11 +596,72 @@ class Fetched:
     retry_after: int | None = None
 
 
+def _challenge_error(retry_after: int) -> CatalogError:
+    # Retryable like any other upstream outage, so cached data can still be
+    # served. The retry-after (at least an hour) spaces any retry, and the
+    # caller's ChallengeHolds stops a fresh fetch of the same URL before it ends.
+    return _error(
+        HTTPStatus.BAD_GATEWAY,
+        "CATALOG_SOURCE_CHALLENGE",
+        "Catalog source is asking for a browser check and is not answering apps right now.",
+        True,
+        retry_after=retry_after,
+    )
+
+
+class ChallengeHolds:
+    """Memory of browser-check answers, keyed by the exact request URL.
+
+    While a URL's retry-after lasts, BoundedFetcher answers that same URL with
+    the challenge error and the time left instead of asking again. Other URLs,
+    even on the same host or CDN, are unaffected.
+    """
+
+    MAX_URLS = 1024
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._until: dict[str, float] = {}
+
+    def _prune_locked(self, now: float) -> None:
+        for key in [key for key, until in self._until.items() if until <= now]:
+            del self._until[key]
+
+    def remaining(self, url: str, now: float) -> int:
+        with self._lock:
+            self._prune_locked(now)  # Every ended hold goes, not only this URL's.
+            until = self._until.get(url)
+            if until is None:
+                return 0
+            return max(1, int(until - now + 0.999))
+
+    def hold(self, url: str, now: float, seconds: int) -> None:
+        with self._lock:
+            self._prune_locked(now)
+            self._until[url] = max(self._until.get(url, 0.0), now + max(0, seconds))
+            # When full, drop the hold that ends soonest. That one URL may then
+            # be asked again a little early, which is acceptable.
+            while len(self._until) > self.MAX_URLS:
+                del self._until[min(self._until, key=self._until.__getitem__)]
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._until)
+
+
 class BoundedFetcher:
-    def __init__(self, connector: Any, *, clock: Any = time, cancel: threading.Event | None = None) -> None:
+    def __init__(
+        self,
+        connector: Any,
+        *,
+        clock: Any = time,
+        cancel: threading.Event | None = None,
+        holds: ChallengeHolds | None = None,
+    ) -> None:
         self.connector = connector
         self.clock = clock
         self.cancel = cancel
+        self.holds = holds
 
     def fetch(
         self,
@@ -613,6 +674,15 @@ class BoundedFetcher:
         max_decoded: int = 8 * 1024 * 1024,
     ) -> Fetched:
         request_headers = {"Accept": accept, **dict(headers or {})}
+        hold_key = ""
+        if self.holds is not None:
+            try:
+                hold_key = canonical_http_url(url)
+            except CatalogError:
+                hold_key = ""
+            held = self.holds.remaining(hold_key, float(self.clock.time())) if hold_key else 0
+            if held:
+                raise _challenge_error(held)
         started = float(self.clock.monotonic())
         upstream = self.connector.open(url, method="GET", headers=request_headers, cancel=self.cancel)
         try:
@@ -624,6 +694,15 @@ class BoundedFetcher:
             retry = _retry_after(response.getheader("Retry-After"), float(self.clock.time()))
             if status == HTTPStatus.NOT_MODIFIED:
                 return Fetched(status, b"", content_type, upstream.url, etag, modified, retry)
+            if status in _CHALLENGE_STATUSES and (
+                (response.getheader("Cf-Mitigated", "") or "").strip().lower() == "challenge"
+            ):
+                # The source answered with a browser check page instead of data.
+                # Report it plainly and back off; never try to pass the check.
+                delay = min(24 * 60 * 60, max(SOURCE_CHALLENGE_RETRY_SECONDS, retry or 0))
+                if self.holds is not None and hold_key:
+                    self.holds.hold(hold_key, float(self.clock.time()), delay)
+                raise _challenge_error(delay)
             if status == HTTPStatus.TOO_MANY_REQUESTS:
                 raise _error(
                     HTTPStatus.TOO_MANY_REQUESTS,
@@ -2035,7 +2114,13 @@ class AssetCache:
     def _forget_locked(self, digest: str) -> None:
         self._total_bytes = max(0, self._total_bytes - self._entry_sizes.pop(digest, 0))
 
-    def get(self, url: str) -> AssetBlob | None:
+    def get(self, url: str, *, allow_stale: bool = False) -> AssetBlob | None:
+        """Return validated cached artwork, or None.
+
+        Expired artwork is kept on disk (not served) until a refresh replaces
+        it, so it can stand in when that refresh meets a browser check;
+        `allow_stale` returns it then, after the same full validation.
+        """
         meta, binary = self._paths(url)
         if not self._ensure_storage():
             return None
@@ -2062,9 +2147,10 @@ class AssetCache:
                     or payload.get("size") != len(data)
                     or payload.get("etag") != '"' + content_sha256 + '"'
                     or not isinstance(payload.get("fresh_until"), (int, float))
-                    or float(payload["fresh_until"]) <= now
                 ):
                     raise ValueError("invalid asset cache")
+                if float(payload["fresh_until"]) <= now and not allow_stale:
+                    return None  # Expired: kept until its refresh succeeds.
                 content_type = payload.get("content_type")
                 if content_type not in _ALLOWED_IMAGE_TYPES:
                     raise ValueError("invalid asset type")
@@ -2273,6 +2359,7 @@ class AssetRegistry:
         self.ttl_seconds = max(60.0, min(float(ttl_seconds), 24 * 60 * 60))
         self.cache = cache or AssetCache(cache_root, clock=clock)
         self._cancel = threading.Event()
+        self._challenge_holds = ChallengeHolds()
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._active = 0
@@ -2357,13 +2444,22 @@ class AssetRegistry:
                 if self._closed:
                     raise _error(HTTPStatus.SERVICE_UNAVAILABLE, "ASSET_SERVICE_STOPPED", "Artwork service is stopping.", True)
                 cache_epoch = self._cache_epoch
-            fetched = BoundedFetcher(self.connector, clock=self.clock, cancel=self._cancel).fetch(
-                registration.url,
-                accept="image/webp,image/png,image/jpeg,image/gif;q=0.9,image/x-icon;q=0.5",
-                allowed_types=_ARTWORK_FETCH_TYPES,
-                max_compressed=MAX_ASSET_BYTES,
-                max_decoded=MAX_ASSET_BYTES,
-            )
+            try:
+                fetched = BoundedFetcher(self.connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
+                    registration.url,
+                    accept="image/webp,image/png,image/jpeg,image/gif;q=0.9,image/x-icon;q=0.5",
+                    allowed_types=_ARTWORK_FETCH_TYPES,
+                    max_compressed=MAX_ASSET_BYTES,
+                    max_decoded=MAX_ASSET_BYTES,
+                )
+            except CatalogError as error:
+                # A browser check is not an answer about the image: keep showing the
+                # validated artwork from the last successful fetch, if there is any.
+                if error.code == "CATALOG_SOURCE_CHALLENGE":
+                    stale = self.cache.get(registration.url, allow_stale=True)
+                    if stale:
+                        return stale
+                raise
             data, content_type = normalize_artwork(fetched.data, fetched.content_type)
             width, height = validate_image(data, content_type)
             with self._lock:
@@ -2512,6 +2608,7 @@ class CatalogService:
         self.clock = clock
         self.cache = cache or CatalogCache(cache_root, clock=clock)
         self._cancel = threading.Event()
+        self._challenge_holds = ChallengeHolds()
         self._locks = _KeyLocks()
         self._state_lock = threading.RLock()
         self._condition = threading.Condition(self._state_lock)
@@ -2609,7 +2706,7 @@ class CatalogService:
                     if isinstance(record.value, Mapping) else None,
                 ), "fresh")
             try:
-                fetched = BoundedFetcher(self.connector, clock=self.clock, cancel=self._cancel).fetch(
+                fetched = BoundedFetcher(self.connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
                     requested_url,
                     accept="application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9",
                     allowed_types={"application/rss+xml", "application/atom+xml", "application/xml", "text/xml", "application/octet-stream"},
@@ -2697,7 +2794,7 @@ class CatalogService:
                 return self._result(record.value, "fresh")
             connector = _clone_connector(self.connector, _exact_target(origin))
             try:
-                fetched = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel).fetch(
+                fetched = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
                     detail_url,
                     accept="application/json",
                     allowed_types={"application/json", "application/problem+json"},
@@ -2752,7 +2849,7 @@ class CatalogService:
                 _fixed_url_target({OWNCAST_PLAYLIST_URL, OWNCAST_HOME_URL}),
             )
             try:
-                playlist = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel).fetch(
+                playlist = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
                     OWNCAST_PLAYLIST_URL,
                     accept="application/vnd.apple.mpegurl,application/x-mpegURL,text/plain;q=0.8",
                     allowed_types={"application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl", "text/plain", "application/octet-stream"},
@@ -2760,7 +2857,7 @@ class CatalogService:
                     max_compressed=4 * 1024 * 1024,
                     max_decoded=4 * 1024 * 1024,
                 )
-                home = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel).fetch(
+                home = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
                     OWNCAST_HOME_URL,
                     # The fixed Owncast directory endpoint currently serves
                     # its JSON document as text/plain. Bytes still cross the
@@ -2778,7 +2875,7 @@ class CatalogService:
                         raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_304_WITHOUT_CACHE", "Catalog cache validator had no usable record.", True)
                     return self._result(refreshed.value, "revalidated")
                 if playlist.status == HTTPStatus.NOT_MODIFIED:
-                    playlist = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel).fetch(
+                    playlist = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
                         OWNCAST_PLAYLIST_URL,
                         accept="application/vnd.apple.mpegurl,application/x-mpegURL,text/plain;q=0.8",
                         allowed_types={"application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl", "text/plain", "application/octet-stream"},
@@ -2786,7 +2883,7 @@ class CatalogService:
                         max_decoded=4 * 1024 * 1024,
                     )
                 if home.status == HTTPStatus.NOT_MODIFIED:
-                    home = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel).fetch(
+                    home = BoundedFetcher(connector, clock=self.clock, cancel=self._cancel, holds=self._challenge_holds).fetch(
                         OWNCAST_HOME_URL,
                         accept="application/json,text/plain;q=0.8",
                         allowed_types={"application/json", "text/plain"},

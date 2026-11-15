@@ -3,19 +3,25 @@
 [![Latest release](https://img.shields.io/github/v/release/aivrar/Open-Media-Explorer?display_name=tag&sort=semver)](https://github.com/aivrar/Open-Media-Explorer/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2022H2%2F11-0078D4)
 ![Portable](https://img.shields.io/badge/portable-single%20EXE-2ea44f)
-![Sources](https://img.shields.io/badge/public%20sources-11-F28C52)
+![Sources](https://img.shields.io/badge/public%20sources-10-F28C52)
 ![Privacy](https://img.shields.io/badge/accounts%20%7C%20telemetry-none-success)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 **Explore the world's open media from one portable Windows app.** World Media
 brings together internet radio, live television, podcasts, public-domain films,
 space media, cultural archives, audiobooks, conference recordings, PeerTube,
-and independent Owncast streams from eleven public sources.
+and independent Owncast streams from ten public sources.
 
 Search everything, save favorites, browse a live-channel Grid, spin the Tuner,
 discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
+
+**New in v0.1.9:** sort Favorites by hand or A-Z and group them in categories,
+import `.pls` and `.xspf` playlists, see the song a radio station plays (with a
+song log), use your own station pictures, and back up your data with one
+button. Live streams reconnect by themselves. Library of Congress is gone (its
+site refuses apps). Requested in [discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8).
 
 **New in v0.1.8:** Tuner dial fixes. A dial with one station stays put, the
 knob always rests at the same angle for the same station, the dial is no longer
@@ -66,7 +72,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.8-portable.zip
+WorldMediaWindows-0.1.9-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -100,15 +106,15 @@ Five tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**, and
 
 **Library** - search and browse everything. Left sidebar groups results by type
 and source: Radio Browser, iptv-org, Internet Archive, NASA, Wikimedia Commons,
-LibriVox, media.ccc.de/C3VOC, Library of Congress, gPodder Podcasts, PeerTube,
-and Owncast.
+LibriVox, media.ccc.de/C3VOC, gPodder Podcasts, PeerTube, and Owncast.
 
 ![Library - TV channels with sidebar counts](screenshots/1.PNG)
 
 **Tuner** - a radio-style dial for live radio and live TV. Drag the dial,
 scroll the mouse wheel, or use arrow keys; the dial shows each station's place
-in the list ("12 of 80"). Pick
-**★ My favorites** as the source to spin through only your starred stations.
+in the list ("12 of 80"). Pick **★ My favorites**, or one of your own
+categories, as the source to spin through only those stations, in the order of
+your Favorites.
 
 ![Tuner - analog dial](screenshots/2.PNG)
 
@@ -131,17 +137,47 @@ collection and artwork; normal background priority returns when playback stops.
 ### Your own channels and organized Favorites
 
 Open **Library → My Playlists → Add link**, paste a stream URL, optionally
-name it, and press **Add**. Choose **Online M3U playlist** for a channel-list
-URL, or use **Import playlist** for a local `.m3u`/`.m3u8` file. You can also drop
+name it, and press **Add**. Choose **Online playlist** for a channel-list
+URL, or use **Import playlist** for a local `.m3u`, `.m3u8`, `.pls` or `.xspf`
+file. You can also drop
 a local playlist file anywhere on the window. A direct HLS
 `.m3u8` stream belongs under **Single channel**. These are Library collections,
 not subscriptions: importing the same link again updates the saved list.
 
-In **Favorites**, use **All media / Radio / TV / Video / Audio** and local
-search to find saved channels. Removing a playlist keeps its favorites.
-Playlist URLs may contain access tokens: keep your data folder private.
+In **Favorites** and **My Playlists**, use the **All / Radio / TV / Audio /
+Video** buttons and local search to find saved channels. **Star all** in My
+Playlists adds every listed channel to Favorites. Removing a playlist keeps its
+favorites. Playlist URLs may contain access tokens: keep your data folder
+private.
+
+Favorites can be sorted **My order** (move a card up, down or to the top with
+the buttons on it) or **A-Z**. Use the tag button on a favorite card to put it
+in a category of your own, such as "Rock" or "Talk", and the category buttons
+above the list to show one category.
 
 ![My Playlists and the Add link form, shown with public sample channels](screenshots/v0.1.3/my-playlists.png)
+
+### Song titles, station pictures, and backup
+
+Many radio stations announce the song they are playing. When a station does,
+the title shows under the station name in the player bar, and the note button
+at the top right opens a **Song log** of the songs you heard, which you can
+copy or save as a CSV file. Not every station sends titles, and stations
+delivered as HLS do not show one.
+
+Put a picture named exactly like a station (PNG, JPG, WebP or GIF, up to 2 MB)
+in the `station-images` folder (**Settings → Station images → Open folder**),
+press **Refresh**, and it replaces that station's artwork. Radio Browser
+stations show their format and bitrate in the detail panel, and **Other
+streams** lists other listings of the same station to pick from by hand.
+
+**Settings → Storage → Back up my data** writes one ZIP into the `downloads`
+folder with your favorites, settings, categories, song log, imported playlists
+and station pictures, plus `.m3u8` playlist files that other players can open.
+There is no restore button; the
+[data guide](docs/wiki/05-data-cache-and-portability.md) says how to copy it
+back. Playlist addresses can contain private links or account tokens, so share
+the ZIP only with people you trust.
 
 ### Updating without losing data
 
@@ -163,7 +199,9 @@ exact palette color; Windows 10 uses the matching dark or light caption style.
 
 ## Playback
 
-Video plays in a movable overlay with fullscreen support.
+Video plays in a movable overlay with fullscreen support. Live radio and TV
+that lose their connection reconnect by themselves for up to ten minutes; the
+player bar says "Connection lost. Retrying..." meanwhile.
 
 ![Fullscreen TV - live IPTV from iptv-org](screenshots/4.PNG)
 
@@ -189,7 +227,7 @@ World Media does not remove DRM or grant rights to third-party broadcasts.
 
 ## Where The Content Comes From
 
-Every item World Media surfaces comes from one of eleven public archives or
+Every item World Media surfaces comes from one of ten public archives or
 directories. The app does not host content and does not require API keys.
 
 | Source | What it provides | Home | Licensing |
@@ -201,7 +239,6 @@ directories. The app does not host content and does not require API keys.
 | [Wikimedia Commons](https://commons.wikimedia.org) | Free-licensed media files | `commons.wikimedia.org` | CC-BY-SA or public domain per file |
 | [LibriVox](https://librivox.org) | Public-domain audiobooks | `librivox.org` | Public domain |
 | [media.ccc.de](https://media.ccc.de) | Technical conference recordings and current C3VOC streams | `media.ccc.de` | Per recording or event |
-| [Library of Congress](https://www.loc.gov) | U.S. cultural-heritage audio and film/video | `loc.gov` | Per item and collection |
 | [gPodder](https://gpodder.net) | Open podcast directory resolved through publisher feeds | `gpodder.net` | Publisher terms per episode |
 | [PeerTube](https://joinpeertube.org) | Federated on-demand and live video | Independent instances | Per video and instance |
 | [Owncast](https://owncast.online) | Independent self-hosted live video | Independent servers | Broadcaster terms |
@@ -210,7 +247,7 @@ directories. The app does not host content and does not require API keys.
 
 - **No accounts.** Nothing to sign up for.
 - **No telemetry.** The app does not collect usage data.
-- **No API keys.** All eleven sources use public anonymous endpoints.
+- **No API keys.** All ten sources use public anonymous endpoints.
 - **Localhost only.** The bundled Python server binds to `127.0.0.1`.
 - **Two bounded same-origin relays.** Catalog metadata uses an HTTPS-only,
   DNS-pinned allowlist proxy. Playback and capture use opaque expiring relay
@@ -227,14 +264,19 @@ with a visible label; enabling the switch does not weaken URL, redirect,
 private-network, schema, or media-safety checks. Turning it off hides marked
 items everywhere while retaining saved favorites as nonrevealing placeholders.
 
-Public catalogs are not equally reliable. Library of Congress may return a
-CAPTCHA or 429 even below its published limit; the app retains the cursor and
-backs off instead of reporting a false zero. Podcast feeds and independent
+Public catalogs are not equally reliable. A source may return a CAPTCHA or 429
+even below its published limit; the app retains the cursor and backs off
+instead of reporting a false zero. Podcast feeds and independent
 PeerTube/Owncast servers may be dead, slow, or malformed; one failure is
 isolated from the other sources. C3VOC and Owncast are live snapshots that
 refresh, and an empty C3VOC snapshot between events is valid. A provider marked
 **complete** has reached the end of the current finite catalog; live snapshots
 continue on their own refresh schedule.
+
+Library of Congress was removed from the app because its site (loc.gov) no
+longer answers apps: every request now gets a browser check instead of data,
+and World Media does not try to get around that. Items you saved from it stay
+in Favorites and playlists.
 
 The exact public endpoints, cache/refresh rules, and source-specific limits are
 documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
@@ -251,6 +293,9 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
   detected or installed from Settings.
 - An empty or broken independent stream is an upstream condition. **Try next**
   moves on without deleting the item or favorite.
+- No song title under a station means the station does not send one (or is
+  delivered as HLS). See the
+  [troubleshooting guide](docs/wiki/06-troubleshooting.md).
 - Runtime diagnostics are under `WorldMediaWindows-data\logs\` beside the
   launcher and do
   not contain upstream media URLs or authentication secrets.
@@ -277,7 +322,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.8-portable.zip
+dist\WorldMediaWindows-0.1.9-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

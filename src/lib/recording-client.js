@@ -1,6 +1,6 @@
 /** Live recording client using opaque media registration and fixed quality profiles. */
 
-import { controlRequest } from './capture-client.js';
+import { controlRequest, expireMedia, isDefinitiveRejection } from './capture-client.js';
 import { connectMediaRelay } from './media-failover.js';
 
 export function startRegisteredRecording(mediaId, profile, options = {}) {
@@ -21,7 +21,17 @@ export async function startItemRecording(item, profile, options = {}) {
   // Use the same verified endpoint selected by playback. If the current URL
   // has gone stale, bounded IPTV alternates are tried before a job is created.
   const registration = await connectMediaRelay(item, requestOptions);
-  return startRegisteredRecording(registration.media_id, profile, { ...requestOptions, eqCurve });
+  try {
+    return await startRegisteredRecording(registration.media_id, profile, { ...requestOptions, eqCurve });
+  } catch (error) {
+    // Only a definite refusal proves no job took this registration. After a
+    // lost reply the job may be running; the backend releases a job's root
+    // when the job ends, and an unused root expires by itself.
+    if (isDefinitiveRejection(error)) {
+      expireMedia(registration.media_id, 0, { fetchImpl: requestOptions.fetchImpl }).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export function stopRecording(jobId, options = {}) {

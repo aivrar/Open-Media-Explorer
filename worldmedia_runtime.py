@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +25,35 @@ PROFILE_TRANSFER_KEYS = frozenset({
     "worldmedia.volume.v1",
     "worldmedia.jobs.v1",
     "worldmedia.eq.v1",
+    "worldmedia.favgroups.v1",  # Favorites categories (src/lib/favorite-groups.js)
 })
+# Releases up to 0.1.8 know only these keys, and they treat a profile file that
+# holds any other key as unreadable: the whole file, favorites included. So the
+# main file keeps only these keys, and every newer key goes into a separate file
+# that older releases never open (see save_profile_transfer).
+LEGACY_PROFILE_TRANSFER_KEYS = frozenset({
+    "worldmedia.favorites.v1",
+    "worldmedia.settings.v1",
+    "worldmedia.volume.v1",
+    "worldmedia.jobs.v1",
+    "worldmedia.eq.v1",
+})
+PROFILE_TRANSFER_EXTRA_FILENAME = "profile-preferences-extra.json"
+# Write order for the two profile files. A page sends its own random id and a
+# number that only goes up with every profile write (request headers, so the
+# body stays what every client sends). A write whose number is not higher than
+# the last one taken for that page is answered "superseded" and changes
+# nothing: a save the page gave up on cannot land after a later save or clear.
+# A write without the headers (an older client) is applied as it always was.
+PROFILE_WRITER_HEADER = "X-WorldMedia-Profile-Writer"
+PROFILE_SEQUENCE_HEADER = "X-WorldMedia-Profile-Sequence"
+MAX_PROFILE_WRITERS = 8  # Page loads remembered; the oldest is forgotten first.
+_PROFILE_WRITER_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
+_PROFILE_SEQUENCE = re.compile(r"[0-9]{1,16}")
+# Held for every write of the pair and every read of it, so both files always
+# come from the same write.
+PROFILE_FILES_LOCK = threading.Lock()
+_profile_writers: OrderedDict[str, int] = OrderedDict()
 # Keep the long-standing default so an ordinary EXE update retains the existing
 # WebView local-storage origin.  The user may choose another port in Settings;
 # that change uses the profile handoff below.
@@ -105,6 +136,13 @@ def profile_transfer_path(paths: RuntimePaths | None = None) -> Path:
     return selected.state_root / "state" / PROFILE_TRANSFER_FILENAME
 
 
+def profile_transfer_extra_path(paths: RuntimePaths | None = None) -> Path:
+    """Return the handoff file for keys that releases up to 0.1.8 do not know."""
+
+    # Always beside the main file, wherever that is.
+    return profile_transfer_path(paths).with_name(PROFILE_TRANSFER_EXTRA_FILENAME)
+
+
 def _atomic_write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
@@ -175,10 +213,12 @@ def normalize_profile_transfer_values(value: object) -> dict[str, str]:
     return values
 
 
-def load_profile_transfer(paths: RuntimePaths | None = None) -> dict[str, str]:
-    """Read the latest safe handoff, treating corrupt data as unavailable."""
+def _read_profile_file(path: Path) -> dict[str, str]:
+    """One handoff file's values; {} when it is missing or corrupt.
 
-    path = profile_transfer_path(paths)
+    A key this release does not know (written by a newer one) is skipped
+    rather than making the whole file unreadable."""
+
     try:
         # JSON can expand each byte to a six-byte escape (ensure_ascii=True).
         if not path.is_file() or path.stat().st_size > PROFILE_TRANSFER_MAX_BYTES * 6 + 8 * 1024:
@@ -186,20 +226,99 @@ def load_profile_transfer(paths: RuntimePaths | None = None) -> dict[str, str]:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict) or raw.get("version") != PROFILE_TRANSFER_VERSION:
             return {}
-        return normalize_profile_transfer_values(raw.get("values"))
-    except (OSError, ValueError, json.JSONDecodeError):
+        values = raw.get("values")
+        if not isinstance(values, dict):
+            return {}
+        known = {key: entry for key, entry in values.items() if key in PROFILE_TRANSFER_KEYS}
+        return normalize_profile_transfer_values(known)
+    except (OSError, ValueError, TypeError, RecursionError):
         return {}
 
 
-def save_profile_transfer(values: object, paths: RuntimePaths | None = None) -> dict[str, str]:
-    """Atomically store browser data before its localhost origin changes."""
+def load_profile_transfer(paths: RuntimePaths | None = None) -> dict[str, str]:
+    """Read the latest safe handoff, treating corrupt data as unavailable."""
+
+    path = profile_transfer_path(paths)
+    with PROFILE_FILES_LOCK:
+        main = _read_profile_file(path)
+        extra = _read_profile_file(path.with_name(PROFILE_TRANSFER_EXTRA_FILENAME))
+    merged = dict(main)
+    merged.update({key: entry for key, entry in extra.items() if key not in LEGACY_PROFILE_TRANSFER_KEYS})
+    try:
+        return normalize_profile_transfer_values(merged)
+    except ValueError:
+        return main
+
+
+def parse_profile_write_order(writer: object, sequence: object) -> tuple[str, int] | None:
+    """The page id and number from a profile write's headers; None when the
+    request has neither (an older client). Raises ValueError when they are
+    malformed or only one is present."""
+
+    if writer is None and sequence is None:
+        return None
+    if not isinstance(writer, str) or not _PROFILE_WRITER_ID.fullmatch(writer):
+        raise ValueError("The profile write order is invalid.")
+    if not isinstance(sequence, str) or not _PROFILE_SEQUENCE.fullmatch(sequence):
+        raise ValueError("The profile write order is invalid.")
+    number = int(sequence, 10)
+    if number < 1:
+        raise ValueError("The profile write order is invalid.")
+    return writer, number
+
+
+def reset_profile_write_order() -> None:
+    """Forget every page's write order (tests)."""
+
+    with PROFILE_FILES_LOCK:
+        _profile_writers.clear()
+
+
+def save_profile_transfer(
+    values: object,
+    paths: RuntimePaths | None = None,
+    *,
+    order: tuple[str, int] | None = None,
+) -> dict[str, str] | None:
+    """Atomically store browser data before its localhost origin changes.
+
+    Keys every release knows go into the main file and newer keys into the
+    extra file, so an older release can still read the main file (and with it
+    the favorites) after a downgrade.
+
+    Order of the two writes, for saves and clears alike: the main (legacy) file
+    first, then the extra file (replaced, or removed when there is nothing to
+    keep in it). If the second write fails, the favorites and settings are
+    already the newest and only the categories are one step behind; their stale
+    entries are pruned harmlessly by the page. The failure is still raised, so
+    the page reports it and saves again.
+
+    With ``order`` (page id, number), a write that is not newer than the last
+    one taken for that page changes nothing and returns None ("superseded")."""
 
     selected = paths or get_runtime_paths()
     normalized = normalize_profile_transfer_values(values)
-    _atomic_write_json(
-        profile_transfer_path(selected),
-        {"version": PROFILE_TRANSFER_VERSION, "values": normalized},
-    )
+    legacy = {key: entry for key, entry in normalized.items() if key in LEGACY_PROFILE_TRANSFER_KEYS}
+    newer = {key: entry for key, entry in normalized.items() if key not in LEGACY_PROFILE_TRANSFER_KEYS}
+    main_path = profile_transfer_path(selected)
+    extra_path = main_path.with_name(PROFILE_TRANSFER_EXTRA_FILENAME)
+    with PROFILE_FILES_LOCK:
+        if order is not None:
+            writer, sequence = order
+            last = _profile_writers.get(writer)
+            if last is not None and sequence <= last:
+                return None
+            # Taken before writing: an older write arriving after this one
+            # failed half-way is refused too; the page retries with a new number.
+            _profile_writers[writer] = sequence
+            _profile_writers.move_to_end(writer)
+            while len(_profile_writers) > MAX_PROFILE_WRITERS:
+                _profile_writers.popitem(last=False)
+        _atomic_write_json(main_path, {"version": PROFILE_TRANSFER_VERSION, "values": legacy})
+        if newer:
+            _atomic_write_json(extra_path, {"version": PROFILE_TRANSFER_VERSION, "values": newer})
+        else:
+            extra_path.unlink(missing_ok=True)
     return normalized
 
 

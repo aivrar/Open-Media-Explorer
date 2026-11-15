@@ -11,10 +11,17 @@
  * data we have).
  */
 
-import { getState, isFavorite, addFavorite, removeFavorite } from '../../lib/state.js';
+import { getState, isFavorite, addFavorite, removeFavorite, moveFavorite } from '../../lib/state.js';
+import { FAVORITES_SORT_MANUAL, normalizeFavoritesSort } from '../../lib/favorites-order.js';
+import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
+import { buildCategoryButton, closeDetachedCategoryMenu, updateCategoryButton } from './card-category.js';
+import {
+  canonicalArtworkUrl, isArtworkRelayUrl, isStationImageSource, stationImageSourceFor,
+} from '../../lib/artwork.js';
 import { SOURCES, getSourceLabel } from '../../lib/sources.js';
 import { el } from './utils.js';
 import { artworkInitials, initialsHue } from '../../lib/initials.js';
+import { streamQualityLabel } from '../../lib/stream-quality.js';
 import {
   view, renderedIds,
   RENDER_LIMIT_INITIAL, RENDER_LIMIT_STEP, RENDER_WINDOW_MAX,
@@ -96,6 +103,9 @@ export function filteredItemsForCurrentView(pool = view.items) {
 
 /* ============ Cards grid + render window ============ */
 
+// The window start the mounted cards were drawn for.
+let lastRenderStart = 0;
+
 export function renderResults() {
   // Favorites is its own pool (kept in state, persisted to localStorage)
   // and lives outside the regular accumulating view.items. This keeps a
@@ -109,7 +119,8 @@ export function renderResults() {
     view.filters.language, view.filters.yearMin, view.filters.yearMax,
     getState().settings.showExplicitContent === true,
   ]);
-  if (signature !== view.renderSignature) {
+  const signatureChanged = signature !== view.renderSignature;
+  if (signatureChanged) {
     view.renderSignature = signature;
     view.renderStart = 0;
   }
@@ -117,6 +128,8 @@ export function renderResults() {
   const maximumStart = Math.max(0, filtered.length - view.renderLimit);
   view.renderStart = Math.max(0, Math.min(view.renderStart || 0, maximumStart));
   const visible = filtered.slice(view.renderStart, view.renderStart + view.renderLimit);
+  const windowMoved = view.renderStart !== lastRenderStart;
+  lastRenderStart = view.renderStart;
   if (ui.windowBack) {
     ui.windowBack.style.display = view.renderStart > 0 ? 'inline-flex' : 'none';
     ui.windowBack.textContent = view.renderStart > 0
@@ -152,6 +165,14 @@ export function renderResults() {
       }
     }
   }
+  // Favorites reordered by hand or by the sort choice, or one added/removed,
+  // under unchanged filters: move the mounted cards instead of rebuilding
+  // them, so artwork does not flash, scrolling stays put and focus survives.
+  // A shifted render window (scrolling far) keeps the full rebuild.
+  if (needClear && !signatureChanged && !windowMoved && view.activeSource === 'favorites'
+      && reconcileCardsInPlace(visible)) {
+    needClear = false;
+  }
   if (needClear) {
     if (thumbHydration.observer) thumbHydration.observer.disconnect();
     thumbHydration.observer = null;
@@ -162,24 +183,38 @@ export function renderResults() {
   }
 
   if (visible.length === 0) {
-    if (isPersonalSource() || (!view.loading && !view.loadingMore)) {
-      if (!ui.resultsHost.querySelector('.empty-state')) {
+    closeDetachedCategoryMenu();
+    // Settled is judged on this view's own sources: the global loading flags
+    // also cover background prefetch of every other source (and, during a
+    // search, browse pages that have nothing to do with the results shown).
+    const onlyHolds = viewWaitsOnlyOnHolds();
+    if (isPersonalSource() || onlyHolds || !viewHasPendingSources()) {
+      // Hold notices explain the empty page only when nothing else is pending.
+      const notices = onlyHolds ? currentSourceNotices() : [];
+      const message = notices.length > 0 ? notices.join(' ') : isPersonalSource()
+        ? personalEmptyMessage() : view.query
+        ? `Try a different search term, or pick a different source.`
+        : `Type a search above, or browse a single source on the left.`;
+      // An empty view left over from another tab keeps its own message; replace it.
+      if (ui.resultsHost.querySelector('.empty-state')?.getAttribute('data-message') !== message) {
         ui.resultsHost.innerHTML = '';
         renderedIds.clear();
-        const empty = el('div', { className: 'empty-state' });
+        const empty = el('div', { className: 'empty-state', attrs: { 'data-message': message } });
         empty.appendChild(el('h3', { text: 'No matching items' }));
-        empty.appendChild(el('p', { text: isPersonalSource()
-          ? (view.activeSource === 'playlists' ? 'Import an M3U channel list above, or clear your filters.' : 'Star items to save them here, or clear your filters.') : view.query
-          ? `Try a different search term, or pick a different source.`
-          : `Type a search above, or browse a single source on the left.` }));
+        empty.appendChild(el('p', { text: message }));
         ui.resultsHost.appendChild(empty);
       }
+    } else {
+      // Something for this view is still on its way (a first page, a search,
+      // or loading again after a hold): no "No matching items" meanwhile.
+      ui.resultsHost.querySelector('.empty-state')?.remove();
     }
     return;
   }
 
   const stale = ui.resultsHost.querySelector('.empty-state');
   if (stale) stale.remove();
+  const refocus = refreshChangedCards(visible);
 
   // Append only the items we haven't already mounted. Use a document
   // fragment so one reflow handles the whole batch.
@@ -190,6 +225,313 @@ export function renderResults() {
     renderedIds.add(it.id);
   }
   if (frag.childNodes.length > 0) ui.resultsHost.appendChild(frag);
+  syncFavoriteCategoryControls();
+  syncFavoriteOrderControls(filtered);
+  refocus?.();
+}
+
+/** What an empty Favorites or My Playlists view says. */
+function personalEmptyMessage() {
+  if (view.activeSource === 'playlists') return 'Import a playlist above, or clear your filters.';
+  const category = personalFilters()?.category || '';
+  if (category === UNCATEGORIZED) return 'Every favorite is in a category. Choose All categories to see them all.';
+  if (category && favoriteGroupsSnapshot().has(category)) {
+    return 'No favorites in this category match. Use the category button on a favorite to put it here, or clear your filters.';
+  }
+  return 'Star items to save them here, or clear your filters.';
+}
+
+/** What a card shows, apart from artwork (see artworkIdentity). */
+function cardContentKey(item) {
+  return JSON.stringify([
+    item.title || '', item.source || '', item.type || '', item.year || '', item.country || '',
+    item.license || '', item.content_rating || '', item.__contentHidden === true, Number(item.__revision) || 0,
+  ]);
+}
+
+/** The provider artwork a card stands for. Session relay URLs are left out:
+ *  hydration swaps an item's own thumbnail for a relay (and blanks it while
+ *  it works), which the card already handles without being rebuilt. */
+function artworkIdentity(item) {
+  if (item?.__contentHidden === true) return '';
+  // The user's own station picture stands in for the provider artwork.
+  return stationImageSourceFor(item)
+    || canonicalArtworkUrl(item?._extra?.artworkUrl) || canonicalArtworkUrl(item?.thumbnail) || '';
+}
+
+function rememberShown(card, item) {
+  card.__shown = { item, key: cardContentKey(item), artwork: artworkIdentity(item) };
+}
+
+/** True when a mounted card no longer matches its item: a new title, type,
+ *  rating, other shown text, or different artwork (for example after a
+ *  favorite's metadata was saved again without a new __revision). */
+function cardIsStale(card, item) {
+  const shown = card.__shown;
+  if (!shown) return false;
+  if (shown.key !== cardContentKey(item)) return true;
+  const artwork = artworkIdentity(item);
+  if (artwork === shown.artwork) return false;
+  // A station picture added, changed, removed or failed: redraw this card.
+  if (isStationImageSource(artwork) || isStationImageSource(shown.artwork)) return true;
+  if (!artwork) {
+    // Still artwork: a session relay image (its provider URL is not always
+    // kept), or one a saved favorite will fetch again (needsArtwork).
+    if (isArtworkRelayUrl(item.thumbnail) || item._extra?.needsArtwork === true) return false;
+    // A card shows an image only once its lookup has finished, so without
+    // one this is the brief blank of a lookup still running: nothing to drop.
+    // With one, the artwork is really gone: redraw to the initials tile.
+    return Boolean(card.__thumb?.querySelector?.('img'));
+  }
+  // The card's own item found its artwork; the card has already shown it.
+  if (!shown.artwork && shown.item === item) {
+    shown.artwork = artwork;
+    return false;
+  }
+  return true;
+}
+
+/** Rebuild just the mounted cards whose item changed, in place. The others
+ *  (and their loaded artwork) are left alone, but take the current item
+ *  object, so opening, playing, starring and moving always act on it (a
+ *  replacement can differ only in data the card does not show, such as its
+ *  stream URL). Returns a function that puts focus back on the matching
+ *  control of a rebuilt card, to be called once the move buttons are synced,
+ *  or null. */
+function refreshChangedCards(visible) {
+  const host = ui.resultsHost;
+  if (!host?.children || renderedIds.size === 0) return null;
+  const canReplace = typeof host.insertBefore === 'function';
+  const items = new Map(visible.map((item, index) => [item.id, { item, index }]));
+  const focused = globalThis.document?.activeElement || null;
+  let refocus = null;
+  for (const card of [...host.children]) {
+    const entry = items.get(card.dataset?.id);
+    if (!entry) continue;
+    if (!canReplace || !cardIsStale(card, entry.item)) {
+      card.__item = entry.item;
+      continue;
+    }
+    const fresh = renderCard(entry.item, { eagerArtwork: entry.index < THUMBNAIL_EAGER_CARD_COUNT });
+    let held = null;
+    for (let node = focused; node; node = node.parentNode) if (node === card) { held = focused; break; }
+    thumbHydration.observer?.unobserve?.(card);
+    host.insertBefore(fresh, card);
+    card.remove();
+    if (held) refocus = () => matchingControl(fresh, held)?.focus?.({ preventScroll: true });
+  }
+  return refocus;
+}
+
+/** The control in a rebuilt card that does what `old` did in the old card. */
+function matchingControl(card, old) {
+  const direction = old.getAttribute?.('data-move');
+  if (direction) return card.__orderControls?.__buttons?.[direction] || null;
+  if (old.className?.startsWith?.('card-star')) return card.__star || null;
+  if (old.className?.startsWith?.('card-category')) return card.__categoryButton || null;
+  return card.children?.[0] || null;
+}
+
+/** Bring the mounted cards in line with `visible` without rebuilding them:
+ *  drop the cards no longer shown, create the missing ones, and move the rest
+ *  into place (only the cards that are out of place move). Returns false,
+ *  leaving the DOM untouched, when a full rebuild is needed instead. */
+function reconcileCardsInPlace(visible) {
+  const host = ui.resultsHost;
+  if (typeof host?.insertBefore !== 'function') return false;
+  const wanted = new Map(visible.map((item) => [item.id, item]));
+  const cards = [...host.children];
+  for (const card of cards) {
+    const id = card.dataset?.id;
+    if (!id) return false;
+    const item = wanted.get(id);
+    if (item && Number(card.dataset.revision || 0) !== Number(item.__revision || 0)) return false;
+  }
+  const scroller = host.parentNode;
+  const scrollTop = scroller?.scrollTop;
+  const focused = globalThis.document?.activeElement;
+  const mounted = new Map();
+  for (const card of cards) {
+    if (wanted.has(card.dataset.id)) {
+      mounted.set(card.dataset.id, card);
+      continue;
+    }
+    thumbHydration.observer?.unobserve?.(card);
+    card.remove();
+    renderedIds.delete(card.dataset.id);
+  }
+  for (const [index, item] of visible.entries()) {
+    let card = mounted.get(item.id);
+    if (!card) {
+      card = renderCard(item, { eagerArtwork: index < THUMBNAIL_EAGER_CARD_COUNT });
+      renderedIds.add(item.id);
+    }
+    const current = host.children[index] || null;
+    if (current !== card) host.insertBefore(card, current);
+  }
+  if (typeof scrollTop === 'number' && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop;
+  // Moving a node in the DOM drops its focus; put it back on the same control.
+  if (focused?.isConnected && globalThis.document.activeElement !== focused) {
+    focused.focus?.({ preventScroll: true });
+  }
+  return true;
+}
+
+/* ============ Favorites category button ============ */
+
+/** Give each mounted Favorites card its category button (see
+ *  card-category.js), named after its current category, and take it off cards
+ *  shown anywhere else. Like the move buttons this runs in every view, because
+ *  a card reused from Favorites (same item, same place) must lose it there.
+ *  The button goes in before the move buttons and the star, matching the
+ *  layout from left to right. */
+function syncFavoriteCategoryControls() {
+  if (!ui.resultsHost?.children) return;
+  const favorites = view.activeSource === 'favorites';
+  const groups = favorites ? favoriteGroupsSnapshot() : null;
+  for (const card of ui.resultsHost.children) {
+    if (!card.dataset?.id) continue;
+    let button = card.__categoryButton || null;
+    if (!favorites) {
+      if (button) {
+        button.remove();
+        card.__categoryButton = null;
+        card.classList.remove('has-category-control');
+      }
+      continue;
+    }
+    const item = card.__item;
+    if (!item) continue;
+    if (!button) {
+      button = buildCategoryButton(card, item);
+      card.__categoryButton = button;
+      const before = card.__orderControls || card.__star;
+      if (before && typeof card.insertBefore === 'function') card.insertBefore(button, before);
+      else card.appendChild(button);
+      card.classList.add('has-category-control');
+    }
+    updateCategoryButton(button, item, groups);
+  }
+  closeDetachedCategoryMenu();
+}
+
+/* ============ Favorites "My order" controls ============ */
+
+const MOVE_ACTIONS = [
+  { direction: 'top', label: (title) => `Move ${title} to top`, tip: 'Move to top',
+    icon: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 5h12M7 14l5-5 5 5M12 9v11"/></svg>' },
+  { direction: 'up', label: (title) => `Move ${title} up`, tip: 'Move up',
+    icon: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>' },
+  { direction: 'down', label: (title) => `Move ${title} down`, tip: 'Move down',
+    icon: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' },
+];
+
+/** True when Favorites cards offer the move buttons ("My order" only). */
+export function favoritesManualOrder() {
+  return view.activeSource === 'favorites'
+    && normalizeFavoritesSort(getState().settings.favoritesSort) === FAVORITES_SORT_MANUAL;
+}
+
+function buildOrderControls(item, card) {
+  const title = item.title || 'Untitled';
+  const group = el('div', { className: 'card-order' });
+  group.__buttons = {};
+  for (const action of MOVE_ACTIONS) {
+    const button = el('button', {
+      className: 'card-order-btn',
+      attrs: { type: 'button', 'data-move': action.direction, 'aria-label': action.label(title), title: action.tip },
+      html: action.icon,
+      on: { click: (event) => {
+        event.stopPropagation();
+        onMoveFavorite((card?.__item || item).id, action.direction, button);
+      } },
+    });
+    group.__buttons[action.direction] = button;
+    group.appendChild(button);
+  }
+  return group;
+}
+
+function setMoveEnabled(button, enabled) {
+  if (!button) return;
+  if (enabled) button.removeAttribute('aria-disabled');
+  else button.setAttribute('aria-disabled', 'true');
+}
+
+/** Add or remove each mounted card's move buttons for the current sort, and
+ *  disable the ones that cannot move: up/top for the first item shown, down
+ *  for the last. aria-disabled (not `disabled`) keeps a button focusable, so
+ *  focus can stay on it after its card reaches the top or bottom. */
+function syncFavoriteOrderControls(filtered) {
+  if (!ui.resultsHost?.children) return;
+  // Runs in every view: a card reused from Favorites (same item, same place,
+  // for example in My Playlists) must lose its move buttons there.
+  const manual = favoritesManualOrder();
+  const positions = manual ? new Map(filtered.map((item, index) => [item.id, index])) : null;
+  for (const card of ui.resultsHost.children) {
+    const id = card.dataset?.id;
+    if (!id) continue;
+    let controls = card.__orderControls || null;
+    if (!manual) {
+      if (controls) {
+        controls.remove();
+        card.__orderControls = null;
+        card.classList.remove('has-order-controls');
+      }
+      continue;
+    }
+    if (!controls) {
+      const item = filtered[positions.get(id)];
+      if (!item) continue;
+      controls = buildOrderControls(item, card);
+      card.__orderControls = controls;
+      const star = card.__star;
+      if (star && typeof card.insertBefore === 'function') card.insertBefore(controls, star);
+      else card.appendChild(controls);
+      card.classList.add('has-order-controls');
+    }
+    const index = positions.get(id) ?? -1;
+    setMoveEnabled(controls.__buttons.top, index > 0);
+    setMoveEnabled(controls.__buttons.up, index > 0);
+    setMoveEnabled(controls.__buttons.down, index >= 0 && index < filtered.length - 1);
+  }
+}
+
+/** Keep the moved favorite inside the render window, so its card (and the
+ *  button that was pressed) stays mounted after a move across the window edge. */
+function revealFilteredItem(itemId) {
+  const filtered = filteredItemsForCurrentView(libraryPool());
+  const index = filtered.findIndex((item) => item.id === itemId);
+  if (index < 0) return;
+  const limit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
+  const start = view.renderStart || 0;
+  if (index >= start && index < start + limit) return;
+  view.renderStart = index < start ? index : Math.max(0, index - limit + 1);
+  renderResults();
+  updateSentinelStatus();
+}
+
+function mountedCard(itemId) {
+  for (const card of ui.resultsHost?.children || []) {
+    if (card.dataset?.id === itemId) return card;
+  }
+  return null;
+}
+
+/** A move button was pressed: move the favorite among the items the user can
+ *  see, then keep focus on the same button of the same card. */
+export function onMoveFavorite(itemId, direction, button = null) {
+  if (button?.getAttribute?.('aria-disabled') === 'true' || !favoritesManualOrder()) return false;
+  const visibleIds = filteredItemsForCurrentView(libraryPool()).map((item) => item.id);
+  // The Library re-renders on the favorites-change event this sends.
+  if (!moveFavorite(itemId, direction, { visibleIds })) return false;
+  if (!mountedCard(itemId)) revealFilteredItem(itemId);
+  const target = mountedCard(itemId)?.__orderControls?.__buttons?.[direction];
+  if (target && globalThis.document?.activeElement !== target) target.focus?.({ preventScroll: true });
+  // Up and down stay next to where they were. "Move to top" can leave the
+  // list behind, so bring the card (and the focused button) just into view.
+  if (direction === 'top') target?.scrollIntoView?.({ block: 'nearest' });
+  return true;
 }
 
 /** Bump the render window so more cards mount. Called from the sentinel
@@ -238,8 +580,10 @@ function renderCard(item, opts = {}) {
       type: 'button',
       'aria-label': `Open ${item.title || 'Untitled'} from ${sourceLabel}`,
     },
-    on: { click: () => onCardClick(item) },
+    // card.__item, not `item`: a reused card is handed the current object.
+    on: { click: () => onCardClick(card.__item || item) },
   });
+  card.__item = item;
 
   const thumb = el('div', { className: 'card-thumb' });
   const placeholder = el('div', { className: 'placeholder' });
@@ -263,7 +607,7 @@ function renderCard(item, opts = {}) {
       'aria-label': isFavorite(item.id) ? 'Remove from favorites' : 'Add to favorites',
       'aria-pressed': isFavorite(item.id) ? 'true' : 'false',
     },
-    on: { click: (e) => { e.stopPropagation(); toggleFav(item, star); } },
+    on: { click: (e) => { e.stopPropagation(); toggleFav(card.__item || item, star); } },
     html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
   });
   const artworkOptions = {
@@ -303,15 +647,28 @@ function renderCard(item, opts = {}) {
     text: item.country,
   }));
   if (facts.childElementCount > 0) meta.appendChild(facts);
-  if (item.license && item.license !== 'Unknown') meta.appendChild(el('span', {
+  const license = item.license && item.license !== 'Unknown' ? item.license : '';
+  // Stream format and bitrate share the technical column with the license,
+  // so like it they show only with "Show technical source details" on.
+  const quality = streamQualityLabel(item);
+  if (license && !quality) meta.appendChild(el('span', {
     className: 'card-license',
-    text: item.license,
-    attrs: { title: item.license },
+    text: license,
+    attrs: { title: license },
   }));
+  if (quality) meta.appendChild(el('span', {
+    className: 'card-license has-quality',
+    attrs: { title: [license, quality].filter(Boolean).join(' \u00B7 ') },
+  }, license ? el('span', { text: license }) : null, el('span', { className: 'card-quality', text: quality })));
   body.appendChild(meta);
   openButton.appendChild(body);
   card.appendChild(openButton);
   card.appendChild(star);
+  // Favorites "My order" move buttons go in before the star (see
+  // syncFavoriteOrderControls), so the tab order matches what is seen.
+  card.__star = star;
+  card.__thumb = thumb;
+  rememberShown(card, item);
   return card;
 }
 
@@ -325,19 +682,31 @@ function onCardClick(item) {
   playItem(item).catch((err) => console.warn('play failed:', err));
 }
 
+function setStarState(btn, fav) {
+  const label = fav ? 'Remove from favorites' : 'Add to favorites';
+  btn.classList.toggle('is-fav', fav);
+  btn.setAttribute('aria-pressed', fav ? 'true' : 'false');
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+}
+
 function toggleFav(item, btn) {
   if (isFavorite(item.id)) {
     if (removeFavorite(item.id) === false) return;
-    btn.classList.remove('is-fav');
-    btn.setAttribute('aria-pressed', 'false');
-    btn.setAttribute('aria-label', 'Add to favorites');
-    btn.title = 'Add to favorites';
+    setStarState(btn, false);
   } else {
     if (addFavorite(item) === false) return;
-    btn.classList.add('is-fav');
-    btn.setAttribute('aria-pressed', 'true');
-    btn.setAttribute('aria-label', 'Remove from favorites');
-    btn.title = 'Remove from favorites';
+    setStarState(btn, true);
+  }
+}
+
+/** Bring the stars on the mounted cards in line with saved favorites. */
+export function syncCardStars() {
+  if (!ui.resultsHost?.querySelectorAll) return;
+  const saved = new Set(getState().favorites.map((f) => f.id));
+  for (const card of ui.resultsHost.querySelectorAll('.card')) {
+    const star = card.querySelector?.('.card-star');
+    if (star) setStarState(star, saved.has(card.dataset.id));
   }
 }
 
@@ -357,7 +726,7 @@ function sourceGlyph(type) {
  *  area. This DOES respect the sidebar filter. Note this
  *  is different from `fetchSourcesAllEnabled` in chain.js, which always
  *  returns every enabled source regardless of the sidebar tab. */
-function effectiveStatusSources() {
+export function effectiveStatusSources() {
   const all = SOURCES.filter((s) => getState().settings.enabledSources[s.id] !== false);
   if (view.activeSource === 'all') return all.map((s) => s.id);
   if (isPersonalSource()) return [];
@@ -377,9 +746,94 @@ function statusBucket(status) {
   const snapshot = status?.snapshot?.state;
   if (['rate-limited', 'retrying', 'error'].includes(finite)
       || ['stale', 'retrying'].includes(snapshot)) return 'waiting';
-  if (finite === 'complete'
+  // A finished search ('ready') is done for the results it shows.
+  if (['complete', 'ready'].includes(finite)
       && !['live', 'loading', 'refreshing'].includes(snapshot)) return 'done';
   return 'collecting';
+}
+
+/**
+ * True while something the current view shows is still on its way: a search
+ * that has not answered, a browse page in flight, a browse first page not
+ * answered yet, a browse retry the chain will make by itself, or a live
+ * snapshot still loading for the first time. Explained holds, finished
+ * searches (including failed ones), disabled, complete and exhausted sources
+ * are not pending.
+ */
+export function viewHasPendingSources(sources = effectiveStatusSources(), now = Date.now()) {
+  if (isPersonalSource()) return false;
+  const searching = Boolean((view.lastQuery || '').trim());
+  return sources.some((id) => {
+    const status = view.sourceStatus.get(id);
+    if (!status || isHeldStatus(status, now)) return false;
+    if (!searching && ['retrying', 'rate-limited'].includes(status.state)) return true;
+    return sourceIsLoading(id, status, searching);
+  });
+}
+
+/** True while one of the view's own sources is fetching or still owes its
+ *  first page: the "Loading more…" spinner. Background prefetch of sources
+ *  outside the view does not count; retries are shown by their own line. */
+export function viewSourcesLoading(sources = effectiveStatusSources()) {
+  if (isPersonalSource()) return false;
+  const searching = Boolean((view.lastQuery || '').trim());
+  return sources.some((id) => sourceIsLoading(id, view.sourceStatus.get(id), searching));
+}
+
+function sourceIsLoading(id, status, searching) {
+  if (!status) return false;
+  if (status.state === 'loading') return true;
+  if (searching) return false;
+  const snapshot = status.snapshot;
+  if (['loading', 'refreshing'].includes(snapshot?.state) && !snapshot?.lastGoodAt) return true;
+  if (status.state !== 'more') return false;
+  const progress = view.sourceProgress?.get(id);
+  return Boolean(progress && !progress.exhausted && !progress.error
+    && progress.cursor == null && !(progress.loaded > 0));
+}
+
+/** Plain-language explanation for a waiting source, or '' when there is none
+ *  (raw adapter errors stay in tooltips only). */
+export function sourceNotice(status) {
+  if (!['rate-limited', 'retrying', 'error'].includes(status?.state)) return '';
+  return typeof status?.notice === 'string' ? status.notice : '';
+}
+
+/**
+ * True when the current view still has sources to come and every one of them
+ * is waiting out a declared, explained hold (see isHeldStatus), so
+ * nothing for this view is loading and nothing will be requested until the
+ * hold ends. Such a view is settled for the spinner and the empty page.
+ */
+export function viewWaitsOnlyOnHolds(sources = effectiveStatusSources(), now = Date.now()) {
+  if (isPersonalSource()) return false;
+  const searching = Boolean((view.lastQuery || '').trim());
+  let held = 0;
+  for (const id of sources) {
+    const status = view.sourceStatus.get(id);
+    if (isHeldStatus(status, now)) {
+      held += 1;
+      continue;
+    }
+    if (status?.state === 'disabled') continue;
+    if (searching ? status?.state === 'ready' : view.exhausted?.has(id)) continue;
+    return false;
+  }
+  return held > 0;
+}
+
+/** A source status waiting out a declared hold that the source explained in
+ *  plain words (its adapter set a user message). It sends nothing until
+ *  retryAt, so Retry now cannot help. A bare rate limit with no notice keeps
+ *  the old behaviour: spinner, and Retry now still sends a request. */
+function isHeldStatus(status, now = Date.now()) {
+  return status?.state === 'rate-limited' && Number(status.retryAt) > now && Boolean(sourceNotice(status));
+}
+
+/** Notices for the sources the current view covers, without repeats. */
+export function currentSourceNotices(sourceIds = effectiveStatusSources()) {
+  const notices = sourceIds.map((id) => sourceNotice(view.sourceStatus.get(id))).filter(Boolean);
+  return [...new Set(notices)];
 }
 
 function compactSourceStatus(status, disabled) {
@@ -387,10 +841,10 @@ function compactSourceStatus(status, disabled) {
     return { text: 'Off', kind: 'off', title: 'Source disabled' };
   }
   if (status?.state === 'rate-limited') {
-    return { text: 'Wait', kind: 'wait', title: 'Rate limited; retry scheduled' };
+    return { text: 'Wait', kind: 'wait', title: sourceNotice(status) || 'Rate limited; retry scheduled' };
   }
   if (['retrying', 'error'].includes(status?.state)) {
-    return { text: 'Wait', kind: 'wait', title: status?.error || 'Retry scheduled' };
+    return { text: 'Wait', kind: 'wait', title: sourceNotice(status) || status?.error || 'Retry scheduled' };
   }
   const snapshot = status?.snapshot;
   if (snapshot?.state === 'stale' || snapshot?.state === 'retrying') {
@@ -407,6 +861,9 @@ function compactSourceStatus(status, disabled) {
   }
   if (status?.state === 'complete') {
     return { text: 'Done', kind: 'done', title: 'Source complete' };
+  }
+  if (status?.state === 'ready') {
+    return { text: 'Done', kind: 'done', title: 'Search complete' };
   }
   return { text: 'Pull', kind: 'pull', title: 'Collecting' };
 }
@@ -428,7 +885,9 @@ export function renderStatus() {
   for (const id of targets) {
     totals[statusBucket(view.sourceStatus.get(id))] += 1;
   }
-  const summaryText = `Collecting ${totals.collecting} · Waiting ${totals.waiting} · Done ${totals.done}`;
+  const notice = currentSourceNotices(targets).join(' ');
+  const summaryText = `Collecting ${totals.collecting} · Waiting ${totals.waiting} · Done ${totals.done}`
+    + (notice ? ` · ${notice}` : '');
   if (ui.statusHost.dataset.summary === summaryText) return;
   ui.statusHost.dataset.summary = summaryText;
   const summary = el('span', { className: 'collection-summary' });
@@ -443,6 +902,14 @@ export function renderStatus() {
   summary.appendChild(el('span', {
     className: 'collection-summary-part is-done', text: `Done ${totals.done}`,
   }));
+  if (notice) {
+    // A source said in plain words why it is waiting (for example a
+    // provider-side block). Keep it on the always-visible summary line.
+    summary.appendChild(el('span', { className: 'collection-summary-separator', text: '·' }));
+    summary.appendChild(el('span', {
+      className: 'collection-summary-notice', text: notice, attrs: { title: notice },
+    }));
+  }
   ui.statusHost.replaceChildren(summary);
 }
 
@@ -466,15 +933,29 @@ export function updateSentinelStatus() {
   if (searchLoading) {
     ui.sentinelStatus.textContent = 'Searching...';
     ui.sentinelButton.style.display = 'none';
-  } else if (view.loading || (view.loadingMore && !searching)) {
+  } else if (viewWaitsOnlyOnHolds(sources)) {
+    // Every source this view still needs is waiting out a declared hold:
+    // nothing is loading and Retry cannot help until it ends. The empty page
+    // carries the message when there are no items; otherwise this line does.
+    const notices = currentSourceNotices(sources);
+    ui.sentinelStatus.textContent = total === 0
+      ? ''
+      : `${total} items${notices.length > 0 ? ` · ${notices.join(' ')}` : ''}`;
+    ui.sentinelButton.style.display = 'none';
+  } else if (!searching && viewSourcesLoading(sources)) {
     ui.sentinelStatus.innerHTML = '<span class="spinner-inline"></span> Loading more…';
     ui.sentinelButton.style.display = 'none';
   } else if (retryingSources.length > 0) {
-    ui.sentinelStatus.textContent = `${total} items · ${retryingSources.length} ${retryingSources.length === 1 ? 'source' : 'sources'} retrying`;
+    const notices = currentSourceNotices(retryingSources);
+    ui.sentinelStatus.textContent = `${total} items · ${retryingSources.length} ${retryingSources.length === 1 ? 'source' : 'sources'} retrying`
+      + (notices.length > 0 ? ` · ${notices.join(' ')}` : '');
     ui.sentinelButton.textContent = 'Retry now';
     ui.sentinelButton.dataset.action = 'retry';
     ui.sentinelButton.dataset.restartExhausted = 'false';
-    ui.sentinelButton.style.display = 'inline-flex';
+    // Only offer Retry now when some retrying source is not inside a hold.
+    const now = Date.now();
+    const canRetry = retryingSources.some((id) => !isHeldStatus(view.sourceStatus.get(id), now));
+    ui.sentinelButton.style.display = canRetry ? 'inline-flex' : 'none';
   } else if (searching) {
     ui.sentinelStatus.textContent = `${total} search ${total === 1 ? 'result' : 'results'} loaded`;
     ui.sentinelButton.style.display = 'none';

@@ -9,10 +9,12 @@ World Media uses public media catalogs and streams from:
 - Wikimedia Commons — free-licensed and public-domain files
 - LibriVox — public-domain audiobook recordings
 - media.ccc.de / C3VOC — conference recordings and event streams
-- Library of Congress — U.S. cultural-heritage audio and film/video
 - gPodder.net and podcast publishers — directory metadata and RSS/Atom media
 - PeerTube / SepiaSearch — federated public video
 - Owncast Directory and independent broadcasters — self-hosted live video
+
+Library of Congress was a source in earlier versions. It was removed because
+its site no longer answers apps (it asks for a browser check instead).
 
 Each catalog entry, stream, and file retains its provider, publisher, creator,
 or broadcaster rights. World Media's MIT license applies only to the app.

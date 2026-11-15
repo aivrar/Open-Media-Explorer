@@ -61,7 +61,7 @@ test('strict JSON and text helpers keep response types separate', async () => {
 
 test('HTML/CAPTCHA, malformed JSON, and GraphQL errors are typed failures rather than empty success', async () => {
   await assert.rejects(
-    getJson('https://www.loc.gov/audio', {
+    getJson('https://catalog.example/audio', {
       fetchImpl: async () => response('<!doctype html><h1>CAPTCHA</h1>', {
         headers: { 'content-type': 'text/html' },
       }),

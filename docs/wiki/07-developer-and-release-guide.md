@@ -15,6 +15,11 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 | Artwork | `src/lib/artwork.js`, `src/modes/library/thumbnails.js` |
 | EQ | `src/lib/audio-engine.js`, `src/lib/eq-store.js`, `src/lib/eq-overlay.js` |
 | Personal playlists | `src/lib/playlists.js`, `src/modes/library/personal-controls.js`, `worldmedia_playlists.py` |
+| Favorites order and categories | `src/lib/favorites-order.js`, `src/lib/favorite-groups.js`, `src/modes/library/favorite-categories.js`, `src/modes/library/card-category.js` |
+| Song title and song log | `src/lib/now-playing.js`, `src/lib/song-log.js`, `src/lib/song-log-panel.js`, `worldmedia_icy.py`, `worldmedia_songlog.py` |
+| Live stream reconnect | `src/lib/live-resume.js`, `src/lib/relay-memory.js`, `src/lib/player.js` |
+| Station images and stream quality | `src/lib/station-images.js`, `worldmedia_station_images.py`, `src/lib/stream-quality.js`, `src/lib/other-streams.js`, `src/modes/library/other-streams.js` |
+| Backup | `src/lib/backup.js`, `worldmedia_backup.py` |
 | Capture UI/client | `src/lib/capture-ui.js`, `src/lib/capture-client.js`, `src/lib/download-client.js`, `src/lib/recording-client.js` |
 | Native server/security | `worldmedia_server.py`, `worldmedia_security.py`, `worldmedia_catalog.py`, `worldmedia_media.py` |
 | Jobs/downloads/recording | `worldmedia_jobs.py`, `worldmedia_downloads.py`, `worldmedia_recording.py`, `worldmedia_ffmpeg.py` |
@@ -47,9 +52,9 @@ Build the frontend:
 npm run build
 ```
 
-The current repository baseline is 286 JavaScript tests and 148 Python tests;
-the exact count should be reported by the command rather than assumed after
-future changes.
+The current repository baseline is 651 JavaScript tests and 466 Python tests
+(4 of them skipped); the exact count should be reported by the command rather
+than assumed after future changes.
 
 ## Development server
 
@@ -74,7 +79,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.8-portable.zip
+dist\WorldMediaWindows-0.1.9-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -101,8 +106,8 @@ Before replacing the EXE:
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For v0.1.8 evidence and limitations, see the
-[release record](../RELEASE_RECORD_0.1.8.md). The optional
+For v0.1.9 evidence and limitations, see the
+[release record](../RELEASE_RECORD_0.1.9.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review
@@ -133,3 +138,13 @@ the resulting diff before committing/pushing that checkout.
 6. Add deterministic fixtures and retry/cursor tests.
 7. Update `docs/PROVIDERS.md` and this wiki's source table.
 8. Run both test suites and perform an opt-in live probe only when necessary.
+
+## Retiring a source
+
+When a provider stops answering apps, remove its adapter, its entry in the
+`SOURCES` list, and its host in the server allowlist, as was done for Library of
+Congress in 0.1.9. Keep an entry in `RETIRED_SOURCES` in `src/lib/sources.js`.
+It gives items saved from that source a readable label and a neutral colour,
+and playing one that needs the removed adapter shows "Source no longer
+available." Update `docs/PROVIDERS.md`, the source counts in the docs, and the
+sources badge in the README.

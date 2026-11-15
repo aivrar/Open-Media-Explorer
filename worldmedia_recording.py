@@ -364,6 +364,10 @@ class RecordingService:
         self._workers: dict[str, threading.Thread] = {}
         self._controllers: dict[str, RecordingController] = {}
         self._utility_processes: set = set()
+        # Set by shutdown() under _lock: _closing before its first snapshot (no new
+        # jobs), _terminating as it takes its first forced snapshot.
+        self._closing = False
+        self._terminating = False
 
     def start(self, media_id: str, profile: str, relay_origin: str, eq: object | None = None) -> dict:
         registration = self.registry.get(media_id)
@@ -371,6 +375,9 @@ class RecordingService:
         selected_eq = normalize_recording_eq(eq)
         if registration.delivery == "on-demand":
             raise RecordingError("Finite on-demand originals should be downloaded, not recorded.", code="RECORDING_NOT_LIVE")
+        # FFmpeg reads this root through the relay; it must get the stream
+        # exactly as before, without asking the station for icy metadata.
+        self.registry.mark_capture(media_id)
         status = self.ffmpeg.status()
         if status.state != "ready" or not status.ffmpeg_path or not status.ffprobe_path:
             raise RecordingError(
@@ -385,12 +392,21 @@ class RecordingService:
             "video" if registration.media_type in {"video", "hls", "dash"} else "audio"
         )
         initial_kind = f"record-{recording_kind}"
+        with self._lock:
+            if self._closing:
+                raise RecordingError("Recording service is stopping.", code="RECORDING_SERVICE_STOPPED", retryable=True)
         job = self.jobs.create(
             kind=initial_kind, title=registration.title, media_id=media_id,
             item_id=registration.item_id, source=registration.source, profile=selected_profile,
         )
         controller = RecordingController()
-        self.jobs.attach_controller(job.id, stop=controller.stop, cancel=controller.cancel)
+        try:
+            self.jobs.attach_controller(job.id, stop=controller.stop, cancel=controller.cancel)
+        except JobStateError:
+            # Cancelled (for example by JobRegistry.shutdown) before it had a worker;
+            # the job keeps that terminal state.
+            self.registry.release_root(media_id)
+            raise
         tool = RecordingTool(Path(status.ffmpeg_path), Path(status.ffprobe_path))
         thread = threading.Thread(
             target=self._worker,
@@ -400,20 +416,29 @@ class RecordingService:
             ),
             name=f"worldmedia-record-{job.id[-8:]}", daemon=True,
         )
+        # Checked, registered and started in one critical section with shutdown()'s
+        # gate and snapshot: a start that gets past the gate is in that snapshot.
+        error: tuple[str, str] | None = None
         with self._lock:
-            self._workers[job.id] = thread
-            self._controllers[job.id] = controller
-        try:
-            thread.start()
-        except Exception:
-            with self._lock:
-                self._workers.pop(job.id, None)
-                self._controllers.pop(job.id, None)
-            self.jobs.transition(
-                job.id, "failed", error_code="RECORDING_START_FAILED",
-                error_message="The recorder worker could not start.", retryable=True,
-            )
-            raise RecordingError("The recorder worker could not start.", code="RECORDING_START_FAILED", retryable=True)
+            if self._closing:
+                error = ("RECORDING_SERVICE_STOPPED", "Recording service is stopping.")
+            else:
+                self._workers[job.id] = thread
+                self._controllers[job.id] = controller
+                try:
+                    thread.start()
+                except Exception:
+                    self._workers.pop(job.id, None)
+                    self._controllers.pop(job.id, None)
+                    error = ("RECORDING_START_FAILED", "The recorder worker could not start.")
+        if error:
+            code, message = error
+            self.registry.release_root(media_id)
+            try:
+                self.jobs.transition(job.id, "failed", error_code=code, error_message=message, retryable=True)
+            except JobStateError:
+                pass  # Shutdown may already have cancelled it.
+            raise RecordingError(message, code=code, retryable=True)
         return self.jobs.snapshot(job.id)
 
     def shutdown(self, timeout: float = 12.0) -> bool:
@@ -421,6 +446,8 @@ class RecordingService:
 
         deadline = time.monotonic() + max(0.0, timeout)
         with self._lock:
+            # No start() can register a worker after this snapshot.
+            self._closing = True
             job_ids = list(self._workers)
         for job_id in job_ids:
             try:
@@ -437,6 +464,8 @@ class RecordingService:
         graceful_deadline = min(deadline, time.monotonic() + GRACEFUL_STOP_TIMEOUT + 2)
         self._wait_internal_until(graceful_deadline)
         with self._lock:
+            # A utility child started after this snapshot terminates itself in _run().
+            self._terminating = True
             remaining = list(self._controllers.values())
             utilities = list(self._utility_processes)
         for controller in remaining:
@@ -510,6 +539,13 @@ class RecordingService:
             ) from error
         with self._lock:
             self._utility_processes.add(process)
+            if self._terminating:
+                # Shutdown already took its snapshot of children and missed this one.
+                # On Windows Popen.terminate() is TerminateProcess, the same as kill().
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
         try:
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
@@ -851,6 +887,8 @@ class RecordingService:
                             stream.close()
                         except (OSError, ValueError, AttributeError):
                             pass
+            # FFmpeg and finalization are done. Each capture job is started with its own freshly registered root; release it.
+            self.registry.release_root(registration.token)
             if paths:
                 for candidate in (paths.working, paths.finalizing):
                     if candidate and candidate.exists():

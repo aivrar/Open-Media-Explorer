@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.1.9 - 2026-11-15
+
+Most of this release answers the feature requests in discussion #8.
+
+- Player bar: the speaker button shows a crossed-out speaker when the sound is
+  muted or the volume is at zero. Point at the volume slider to see the volume
+  as a percentage. It starts at 80%; 100% is full volume and there is no boost
+  (discussion #8).
+- Tuner: the dial glows when the mouse is over it and the wheel can turn it.
+  The station cards under the dial can always scroll to the centre, including
+  the first and the last station (discussion #8).
+- Favorites and My Playlists: the media type is a row of buttons (**All**,
+  **Radio**, **TV**, **Audio**, **Video**) instead of a drop-down
+  (discussion #8).
+- Favorites: sort by **My order** or **A-Z**. In My order, each card has buttons
+  to move it up, move it down, or move it to the top. The Tuner follows the
+  same order (discussion #8).
+- Favorites: make your own categories, for example "Rock" or "Talk". Put a
+  favorite in one with the tag button on its card, show one category with the
+  category buttons above the list, and rename or delete a category (its
+  favorites are kept). The Tuner's Source list offers each category
+  (discussion #8).
+- My Playlists: **Star all** adds all the channels that are listed (for the
+  chosen playlist, media type and search) to Favorites (discussion #8).
+- Playlist import also accepts `.pls` and `.xspf` files, besides `.m3u` and
+  `.m3u8`. This works with the file picker, with drag and drop, and with an
+  online link (discussion #8).
+- Song title: a radio station that sends the title of its current song shows
+  it under the station name in the player bar, with a note sign, and in the
+  Windows media overlay. Not every station sends titles. Stations that are
+  delivered as HLS do not show one, and some stations send jingles or filler
+  text instead of a song (discussion #8).
+- Song log: the note button at the top right opens a list of the songs you
+  heard, with time, station and title. **Copy** puts a title on the clipboard,
+  **Remove** takes a song off the list, **Save to file** writes a CSV file into
+  the downloads folder, and **Clear log** empties the list (discussion #8).
+- Stream quality: Radio Browser stations show their format and bitrate, for
+  example "MP3 · 128 kbps", in the detail panel. **Other streams** lists other
+  listings of the same station to pick from by hand. Nothing switches
+  automatically (discussion #8).
+- Station images: **Settings → Station images → Open folder** opens a
+  `station-images` folder inside the data folder, so it travels with the
+  portable folder. A picture named exactly like a station (PNG, JPG, WebP or
+  GIF, up to 2 MB) replaces that station's artwork after **Refresh**.
+  Characters Windows does not allow in file names are left out when names are
+  compared (discussion #8).
+- Backup: **Settings → Storage → Back up my data** writes one ZIP into the
+  downloads folder. It holds favorites, settings, equalizer curves, categories,
+  the song log, imported playlists and station images, plus `.m3u8` playlist
+  files that other players can open (favorites for radio, TV and other media,
+  and one file for each imported playlist). There is no restore button: to
+  restore, close the app and copy the `WorldMediaWindows-data` folder from the
+  ZIP back. Playlist addresses can contain private links or account tokens, so
+  share the ZIP only with people you trust (discussion #8).
+- Live radio and TV now reconnect by themselves after a dropped connection. The
+  player bar says "Connection lost. Retrying..." and tries again for up to ten
+  minutes. A radio stream that silently freezes is noticed after about 20
+  seconds and restarted.
+- Library of Congress was removed as a source: its website now refuses requests
+  from apps like this one. The app has ten sources. Library of Congress
+  favorites stay in the list and say "Source no longer available." when they
+  cannot play.
+- Library: a search with no results no longer leaves a blank loading area.
+  Choosing one source right after opening no longer restarts loading for every
+  source. **Retry now** and the explicit-content switch no longer leave a
+  source stuck.
+- The status texts in the player bar fit in a small window, and "Checking..." no
+  longer stays forever after a failed Play.
+- Internal: relays left behind by a rejected download or recording start, or by
+  a page reload, are now released.
+- Internal: the new data is stored in separate files
+  (`state/profile-preferences-extra.json`, `state/song-log.json` and the
+  `station-images` folder), so that going back to v0.1.8 keeps your favorites
+  and settings.
+
 ## 0.1.8 - 2026-11-10
 
 - Tuner: with only one station on the dial, the dial stays put. Arrow keys,

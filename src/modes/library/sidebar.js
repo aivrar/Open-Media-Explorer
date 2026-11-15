@@ -15,8 +15,10 @@ import { getState } from '../../lib/state.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
-import { renderResults, renderStatus, updateSentinelStatus } from './render.js';
-import { runSearch } from './chain.js';
+import {
+  effectiveStatusSources, renderResults, renderStatus, updateSentinelStatus,
+} from './render.js';
+import { focusViewSources, runSearch } from './chain.js';
 import { closeDetail } from './detail.js';
 import { isPersonalSource } from './personal.js';
 import { syncPersonalControls } from './personal-controls.js';
@@ -120,14 +122,19 @@ export function selectSource(sourceId) {
   // Just re-render with the new filter. No refetch — the chain keeps going
   // regardless of which tab is active. Edge case: if we've never started
   // the chain (view.items is empty AND we're not entering favorites where
-  // the pool is irrelevant), kick off a fresh runSearch.
+  // the pool is irrelevant), kick off a fresh runSearch. An empty pool while
+  // the first pages are still on their way is not that case: starting over
+  // would cancel and repeat every source's first request.
   const poolIsEmpty = view.items.length === 0;
+  const chainIdle = !view.catalogActive || view.sourceProgress.size === 0;
   const headingNonFav = !isPersonalSource(sourceId);
   const pendingQuery = (view.query || '').trim() !== (view.lastQuery || '').trim();
-  if (headingNonFav && (poolIsEmpty || pendingQuery)) {
+  if (headingNonFav && ((poolIsEmpty && chainIdle) || pendingQuery)) {
     runSearch();
     return;
   }
+  // The selected sources' pending work goes ahead of background prefetch.
+  if (headingNonFav && sourceId !== 'all') focusViewSources(effectiveStatusSources());
   renderResults();
   renderStatus();
   updateSentinelStatus();

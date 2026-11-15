@@ -9,11 +9,21 @@ import { getState, setCurrentItem, setPlaying, emit, subscribe, loadVolume, save
 import { getSourceLabel, loadAdapter } from './sources.js';
 import { postSilent } from './http.js';
 import { isArtworkRelayUrl, resolveArtworkRelay } from './artwork.js';
+import {
+  markStationImageFailed, onStationImagesChange, peekStationImageUrl, stationImageSourceFor, stationImageUrl,
+} from './station-images.js';
 import { artworkInitials, initialsHue } from './initials.js';
 import { createPlaybackState } from './player-state.js';
 import { repairFiniteMediaFields, resolveMediaAction } from './media-capabilities.js';
 import { expireMedia } from './capture-client.js';
-import { connectMediaRelay, MediaConnectionError } from './media-failover.js';
+import {
+  connectMediaRelay, MediaConnectionError, MEDIA_REGISTRY_FULL, MEDIA_REGISTRY_FULL_MESSAGE,
+} from './media-failover.js';
+import {
+  createLiveResume, createStallWatchdog, isLiveMedia, RECONNECTING_TEXT, RECONNECT_GAVE_UP_TEXT, RECONNECT_STOPPED_TEXT,
+} from './live-resume.js';
+import { createRelayMemory } from './relay-memory.js';
+import { resolveFailureMessage } from './resolve-message.js';
 import { createAudioEngine } from './audio-engine.js';
 import { getEffectiveEq, loadEqState } from './eq-store.js';
 import { createDashPlayback } from './dash-player.js';
@@ -23,6 +33,8 @@ import {
 } from './hls-recovery.js';
 import { isContentAllowed } from './content-rating.js';
 import { expectsPicture, hasPicture } from './video-picture.js';
+import { createNowPlayingPoller, NOW_PLAYING_EVENT, songLine } from './now-playing.js';
+import { streamQualityLabel } from './stream-quality.js';
 
 let Hls = null;
 let hlsInstance = null;
@@ -52,10 +64,182 @@ function effectiveEqCurve(item = currentItem) {
   return getEffectiveEq(loadEqState(), item.id, isFavorite(item.id));
 }
 
+// Survives a page reload so the next page can release a leftover registration.
+const relayMemory = createRelayMemory({ release: (mediaId) => expireMedia(mediaId, 0) });
+
+function setActiveRelay(mediaId) {
+  activeRelayId = mediaId || '';
+  if (activeRelayId) relayMemory.remember(activeRelayId);
+}
+
 function releaseRelay(graceSeconds = 0) {
   const relayId = activeRelayId;
   activeRelayId = '';
-  if (relayId) expireMedia(relayId, graceSeconds).catch(() => {});
+  if (!relayId) return;
+  // The remembered id is cleared only once the release succeeded, and only if
+  // no newer id was stored meanwhile; otherwise the next page start retries.
+  expireMedia(relayId, graceSeconds)
+    .then(() => { relayMemory.forgetIf(relayId); })
+    .catch(() => {});
+}
+
+// What this play session has shown so far. A new one starts with every
+// playItem() call, including each automatic reconnect attempt.
+function newPlaySession(token) {
+  return {
+    token,
+    played: false, // the playhead really moved forward 1 s after a `playing` event
+    lastTime: null, // playhead at the last sample; null until `playing`
+    lastSampleAt: 0, // wall-clock time of that sample
+    progressed: 0,
+    seeking: false,
+    duration: undefined, // last known duration; NaN (unknown) is never stored
+    hlsLive: null, // hls.js playlist type, once known
+    stopReason: '', // a failure that must end an auto-reconnect episode
+    userPaused: false, // the user paused while the first play() was pending
+  };
+}
+let playSession = newPlaySession(0);
+
+// Auto-reconnect for live streams that drop after playing (see live-resume.js).
+let reconnectItem = null;
+let reconnectStatus = '';
+let reconnectEpoch = 0; // bumped by every cancel, so queued work can tell
+let queuedFailureToken = 0; // the play session whose failure is being queued
+const liveResume = createLiveResume({
+  runAttempt: () => runReconnectAttempt(),
+  abortAttempt: () => abandonReconnectAttempt(),
+  onWaiting: () => showReconnecting(),
+  onGiveUp: () => {
+    reconnectItem = null;
+    reconnectStatus = '';
+    if (currentItem) showBrokenState(RECONNECT_GAVE_UP_TEXT, { showNext: true, retry: true });
+  },
+  onRecovered: () => {
+    reconnectItem = null;
+    reconnectStatus = '';
+    // A stream that froze silently during the episode emits no timeupdate.
+    watchForStall();
+  },
+  setTimer: (fn, delay) => setTimeout(fn, delay),
+  clearTimer: (timer) => clearTimeout(timer),
+  now: () => Date.now(),
+});
+
+// A plain live stream can freeze with no error, `ended` or `waiting`. While it
+// should be playing, a playhead that stands still for 20 s counts as a lost
+// connection. HLS has its own progress watchdog in hls-recovery.js.
+let stallWatchToken = 0;
+const stallWatchdog = createStallWatchdog({
+  read: () => stallWatchState(),
+  onStall: () => {
+    if (stallWatchToken !== playToken || !stallWatchState().eligible) return;
+    failPlayback('Playback error');
+  },
+  setTimer: (fn, delay) => setTimeout(fn, delay),
+  clearTimer: (timer) => clearTimeout(timer),
+  now: () => Date.now(),
+});
+
+function plainLiveStream() {
+  const kind = currentItem?.stream_kind;
+  return (kind === 'audio' || kind === 'video') && !hlsInstance && !dashSession
+    && playSession.played && isLiveMedia({
+      delivery: currentItem.delivery,
+      hlsLive: playSession.hlsLive,
+      duration: playSession.duration,
+    });
+}
+
+// The song a Shoutcast/Icecast station announces (see now-playing.js). Only
+// plain live audio that is sounding through the relay is followed; anything
+// else, a pause, an error or a reconnect wait stops it. A reconnect plays a
+// new relay token, which is followed from then on.
+const nowPlaying = createNowPlayingPoller({
+  onChange: (state) => onSongChange(state),
+  now: () => Date.now(),
+});
+let metaLineShowsItem = false; // the meta line shows the item's own line, not a status
+let songMetadataSaved = false; // Media Session metadata was replaced by a song
+let metadataBeforeSong = null;
+
+function songTitleEligible() {
+  const el = playback.activeElement;
+  return Boolean(elements && currentItem && activeRelayId && activePlaybackRelayed
+    && el === elements.audio && currentItem.stream_kind === 'audio'
+    && !hlsInstance && !dashSession && !el.paused && !el.ended && !playbackProblem
+    && playSession.token === playToken && !reconnectPending()
+    && isLiveMedia({
+      delivery: currentItem.delivery,
+      hlsLive: playSession.hlsLive,
+      duration: playSession.duration,
+    }));
+}
+
+function syncNowPlaying() {
+  if (songTitleEligible()) nowPlaying.follow(activeRelayId, { itemId: currentItem.id });
+  else nowPlaying.stop();
+}
+
+/** The song to show for this item now, or ''. */
+function currentSongTitle(item) {
+  const state = nowPlaying.state;
+  return state?.title && activeRelayId && state.mediaId === activeRelayId && state.itemId === item?.id
+    ? state.title : '';
+}
+
+/** Song title as Media Session metadata (title = song, artist = station);
+ *  whatever was there before comes back when the song goes away. */
+function syncSongMediaSession(title) {
+  const mediaSession = globalThis.navigator?.mediaSession;
+  if (!mediaSession) return;
+  if (title && currentItem && typeof globalThis.MediaMetadata === 'function') {
+    try {
+      if (!songMetadataSaved) {
+        metadataBeforeSong = mediaSession.metadata ?? null;
+        songMetadataSaved = true;
+      }
+      mediaSession.metadata = new globalThis.MediaMetadata({ title, artist: currentItem.title || '' });
+    } catch (_) {}
+    return;
+  }
+  if (!songMetadataSaved) return;
+  songMetadataSaved = false;
+  try { mediaSession.metadata = metadataBeforeSong; } catch (_) {}
+  metadataBeforeSong = null;
+}
+
+function onSongChange(state) {
+  const title = state?.title || null;
+  // Never pair one station's song with another station's name.
+  syncSongMediaSession(title && state?.itemId === currentItem?.id ? title : null);
+  // A status (reconnecting, an error, resolving) keeps the line; the song
+  // comes back with the item's line once the status is gone.
+  if (currentItem && elements && metaLineShowsItem) setMetaText(currentItem);
+  emit(NOW_PLAYING_EVENT, {
+    itemId: state?.itemId || '',
+    mediaId: state?.mediaId || '',
+    title,
+    changedAt: Number.isFinite(state?.changedAt) ? state.changedAt : Date.now(),
+  });
+}
+
+function stallWatchState() {
+  const el = getActiveEl();
+  const eligible = Boolean(el && currentItem && stallWatchToken === playToken
+    && playSession.token === playToken && !el.paused && !el.ended
+    && !playSession.seeking && !playbackProblem && !liveResume.active
+    && plainLiveStream());
+  return { eligible, position: el ? Number(el.currentTime) : Number.NaN };
+}
+
+/** Start watching the current session (no-op if already watching or not eligible). */
+function watchForStall() {
+  if (stallWatchToken !== playToken) {
+    stallWatchdog.stop();
+    stallWatchToken = playToken;
+  }
+  stallWatchdog.start();
 }
 
 function cancelPendingResolution(reason = 'Playback selection changed') {
@@ -199,8 +383,11 @@ function syncPlaybackUi(reason = 'sync') {
   elements.play.title = action;
   elements.play.setAttribute('aria-label', action);
   elements.play.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
-  elements.play.hidden = !currentItem || !hasSource;
-  elements.play.disabled = !hasSource;
+  // A reconnecting or given-up live stream keeps Play available even after its
+  // media was torn down: pressing it runs the full rebuild.
+  const canRetry = Boolean(currentItem && playbackProblem?.retry);
+  elements.play.hidden = !currentItem || (!hasSource && !canRetry);
+  elements.play.disabled = !hasSource && !canRetry;
 
   if (el) {
     elements.time.textContent = fmtTime(el.currentTime);
@@ -227,13 +414,32 @@ function syncPlaybackUi(reason = 'sync') {
       mediaSession.playbackState = !el ? 'none' : (isPlaying ? 'playing' : 'paused');
     } catch (_) {}
   }
+  syncNowPlaying();
   return reason;
 }
 
-function showBrokenState(msg, { showNext = true } = {}) {
+/** The line under the title. A status or error message is also put in the
+ *  tooltip, so a text cut off by the narrow column can be read in full; the
+ *  normal source line clears it again (or sets `hover`, for a song). Text
+ *  only, never markup. Only setMetaText() writes the item's own line. */
+function setSourceLine(text, { status = false, hover = '', itemLine = false } = {}) {
+  elements.source.textContent = text;
+  elements.source.title = status ? text : hover;
+  metaLineShowsItem = itemLine && !status;
+}
+
+/** Play failed before there was any playable stream. The capture controls
+ *  stop showing "Checking…" for it until the next Play of an item starts. */
+function reportUnplayable(item) {
+  emit('media-unplayable', { itemId: item?.id || '' });
+}
+
+function showBrokenState(msg, { showNext = true, retry = false } = {}) {
+  stallWatchdog.stop();
   elements.title.textContent = currentItem?.title || 'Stream unavailable';
-  elements.source.textContent = msg || 'This stream could not be played';
-  playbackProblem = { message: msg, showNext };
+  // While a reconnect episode runs, a failed attempt keeps saying so.
+  setSourceLine(reconnectStatus || msg || 'This stream could not be played', { status: true });
+  playbackProblem = { message: msg, showNext, retry: retry === true };
   setMediaPriority(false);
   elements.nextBroken.hidden = !showNext;
   const active = getActiveEl();
@@ -245,7 +451,213 @@ function showBrokenState(msg, { showNext = true } = {}) {
 
 function hideBrokenState() {
   playbackProblem = null;
-  elements.nextBroken.hidden = true;
+  // Try next stays offered while a reconnect attempt is still connecting.
+  elements.nextBroken.hidden = !reconnectStatus;
+}
+
+function reconnectingCurrentItem() {
+  return Boolean(currentItem && reconnectItem && reconnectItem.id === currentItem.id
+    && liveResume.active);
+}
+
+/** Waiting for, or running, an automatic reconnect attempt for this item. */
+function reconnectPending(item = currentItem) {
+  return Boolean(item && currentItem && item.id === currentItem.id && reconnectingCurrentItem()
+    && (liveResume.waiting || liveResume.inFlight));
+}
+
+/** Auto-reconnect only a live stream that really played in this session, or
+ *  one that is already inside an episode. A station that never started keeps
+ *  today's immediate broken state. */
+function shouldReconnect() {
+  if (!currentItem) return false;
+  if (reconnectingCurrentItem()) return true;
+  return playSession.token === playToken && playSession.played && isLiveMedia({
+    delivery: currentItem.delivery,
+    hlsLive: playSession.hlsLive,
+    duration: playSession.duration,
+  });
+}
+
+/** A network-ish end of playback: reconnect a live stream, else show the error. */
+function failPlayback(msg, options = {}) {
+  if (!shouldReconnect()) {
+    showBrokenState(msg, options);
+    return;
+  }
+  // Inside a running attempt the failure belongs to that attempt: record it so
+  // the attempt settles as failed even if its play() already resolved.
+  if (liveResume.inFlight && reconnectingCurrentItem()) {
+    if (playSession.token === playToken) liveResume.failed();
+    return;
+  }
+  // This may run inside an hls.js error callback. Tear down and switch to the
+  // reconnecting state only after the current dispatch has finished. Further
+  // errors from the same failure are coalesced into this one transition.
+  if (queuedFailureToken === playToken) return;
+  const token = playToken;
+  const epoch = reconnectEpoch;
+  queuedFailureToken = token;
+  queueMicrotask(() => {
+    if (queuedFailureToken === token) queuedFailureToken = 0;
+    if (token !== playToken || !currentItem) return;
+    // Sleep timer or a pause arrived first: no episode, just the plain error.
+    if (epoch !== reconnectEpoch) {
+      showBrokenState(msg, options);
+      return;
+    }
+    if (!reconnectingCurrentItem()) {
+      liveResume.cancel();
+      reconnectItem = currentItem;
+    }
+    liveResume.failed();
+  });
+}
+
+function showReconnecting() {
+  if (!currentItem) return;
+  reconnectStatus = RECONNECTING_TEXT;
+  // The dead session must not keep loading, or recover on its own, while the
+  // episode waits; the next attempt rebuilds everything.
+  hlsRecoverySession?.destroy();
+  try { hlsInstance?.stopLoad?.(); } catch (_) {}
+  showBrokenState(RECONNECTING_TEXT, { showNext: true, retry: true });
+}
+
+function cancelReconnect({ keepAttempt = false } = {}) {
+  reconnectEpoch++;
+  reconnectItem = null;
+  reconnectStatus = '';
+  liveResume.cancel({ keepAttempt });
+}
+
+/** A user pause (the Play/Pause button, Media Session pause). */
+function pauseFromUser() {
+  const el = getActiveEl();
+  if (el && !playbackProblem && !el.paused && !el.ended) {
+    // Already sounding, even while a reconnect attempt is still settling its
+    // play(): end the episode but keep that stream, just paused, so Play
+    // resumes it. The play() this pause interrupts is not a failure.
+    if (playSession.token === playToken) playSession.userPaused = true;
+    cancelReconnect({ keepAttempt: true });
+    hideBrokenState();
+    // The status may still read "Reconnecting…" if `playing` has not yet
+    // rewritten it; show the station's normal line again.
+    if (currentItem) setMetaText(currentItem);
+    el.pause();
+    return true;
+  }
+  if (!stopReconnecting()) el?.pause();
+  return true;
+}
+
+/** True when this rejection is only the user's pause interrupting this
+ *  session's first play(); any other start failure is still reported. */
+function pausedDuringStart(error, token) {
+  return error?.name === 'AbortError'
+    && playSession.token === token && playSession.userPaused === true;
+}
+
+/** Stop a waiting or running reconnect (sleep timer, user pause). */
+function stopReconnecting() {
+  // Also drop a failure queued just before this stop, even with no episode yet.
+  reconnectEpoch++;
+  if (!liveResume.active) return false;
+  const interrupted = liveResume.waiting || liveResume.inFlight;
+  cancelReconnect();
+  if (interrupted && currentItem) {
+    showBrokenState(RECONNECT_STOPPED_TEXT, { showNext: true, retry: true });
+  }
+  return interrupted;
+}
+
+/** One attempt: exactly what pressing Play on the broken item does. */
+async function runReconnectAttempt() {
+  const item = reconnectItem;
+  if (!item || currentItem?.id !== item.id) return 'stop';
+  try {
+    await startPlayback(item);
+  } catch (error) {
+    if (error?.code === 'CONTENT_RATING_BLOCKED') {
+      stop();
+      return 'stop';
+    }
+    return 'retry';
+  }
+  if (playSession.stopReason) {
+    // A full relay or a blocked play() will not clear by retrying.
+    reconnectItem = null;
+    reconnectStatus = '';
+    return 'stop';
+  }
+  const el = getActiveEl();
+  return el && !playbackProblem && !el.paused && !el.ended ? 'ok' : 'retry';
+}
+
+/** Invalidate an attempt that is still running, so a late finish cannot start
+ *  playback after a cancel or a timeout. */
+function abandonReconnectAttempt() {
+  playToken++;
+  cancelPendingResolution('Reconnect attempt abandoned');
+  releaseRelay(0);
+  invalidatePlaybackOwnership();
+  destroyHls();
+  destroyDash();
+  if (!elements) return;
+  clearMedia(elements.audio);
+  clearMedia(elements.video);
+  activePlaybackRelayed = false;
+  showVideo(false);
+  syncPlaybackUi('reconnect-abandoned');
+}
+
+// Playback cannot move the playhead faster than real time; this much slack
+// covers timer jitter. A larger advance is a jump (a live-edge correction or a
+// seek that fired no events), not playback.
+const PROGRESS_SLACK_SECONDS = 1;
+
+function startProgressSample(el) {
+  const time = Number(el.currentTime);
+  playSession.lastTime = Number.isFinite(time) ? time : 0;
+  playSession.lastSampleAt = Date.now();
+}
+
+/** Credit only forward, unseeked playhead movement after `playing`, judged
+ *  against the wall-clock time since the previous sample, so throttled
+ *  timeupdate events (a minimised window) still count. */
+function notePlaybackProgress(el) {
+  if (playSession.played || playSession.lastTime == null || playSession.seeking) return;
+  const time = Number(el.currentTime);
+  if (!Number.isFinite(time)) return;
+  const sampledAt = Date.now();
+  const step = time - playSession.lastTime;
+  const elapsed = Math.max(0, sampledAt - playSession.lastSampleAt) / 1000;
+  playSession.lastTime = time;
+  playSession.lastSampleAt = sampledAt;
+  if (step > 0 && step <= elapsed + PROGRESS_SLACK_SECONDS) playSession.progressed += step;
+  if (playSession.progressed >= 1) playSession.played = true;
+}
+
+function noteSeeking(el, seeking) {
+  playSession.seeking = seeking;
+  if (seeking) stallWatchdog.stop();
+  // A seek's jump is never progress: continue counting from where it landed.
+  if (!seeking && playSession.lastTime != null) startProgressSample(el);
+  // Watch again from where it landed: a stream frozen there sends no further
+  // timeupdate or playing. A no-op unless the usual conditions hold.
+  if (!seeking) watchForStall();
+}
+
+function noteDuration(el) {
+  const duration = Number(el.duration);
+  if (!Number.isNaN(duration)) playSession.duration = duration;
+}
+
+function noteStartFailure(error, token) {
+  if (error?.name !== 'NotAllowedError' || playSession.token !== token) return;
+  // Autoplay policy: never loop on play(); end any episode with the normal message.
+  playSession.stopReason = 'NotAllowedError';
+  reconnectStatus = '';
 }
 
 async function attemptMediaPlay(el) {
@@ -273,11 +685,25 @@ function bindMediaEvents(el, generation) {
   const sync = (reason) => owned(() => syncPlaybackUi(reason));
   const onTimeUpdate = owned(() => {
     hlsRecoverySession?.noteProgress(el.currentTime);
+    notePlaybackProgress(el);
+    watchForStall();
     syncPlaybackUi('timeupdate');
+  });
+  const onDurationChange = owned(() => {
+    noteDuration(el);
+    syncPlaybackUi('durationchange');
   });
   const onStalled = owned(() => {
     if (!el.paused && !el.ended) hlsRecoverySession?.noteStalled();
     syncPlaybackUi('stalled');
+  });
+  // `waiting` means playback really stopped for lack of data. `stalled` alone
+  // only means fetching paused while buffered media may keep playing, so it
+  // does not count as an interruption of a reconnected stream.
+  const onWaiting = owned(() => {
+    if (!el.paused && !el.ended) hlsRecoverySession?.noteStalled();
+    liveResume.noteInterrupted();
+    syncPlaybackUi('waiting');
   });
   const onPlay = owned(() => {
     setMediaPriority(true);
@@ -288,14 +714,32 @@ function bindMediaEvents(el, generation) {
   const onPlaying = owned(() => {
     setMediaPriority(true);
     hlsRecoverySession?.notePlaying();
+    if (playSession.lastTime == null) startProgressSample(el);
+    noteDuration(el);
+    if (reconnectingCurrentItem()) {
+      reconnectStatus = '';
+      liveResume.notePlaying();
+    }
     hideBrokenState();
     if (currentItem) setMetaText(currentItem);
+    watchForStall();
     syncPlaybackUi('playing');
   });
-  const onPaused = owned(() => {
+  const pausedNow = () => {
+    stallWatchdog.stop();
     setMediaPriority(false);
     hlsRecoverySession?.notePaused();
+    liveResume.noteInterrupted();
     syncPlaybackUi('pause');
+  };
+  const onPaused = owned(pausedNow);
+  const onEnded = owned(() => {
+    pausedNow();
+    // A plain live stream (Icecast/MP3) "ends" when its connection closes.
+    const progressive = currentItem?.stream_kind === 'audio' || currentItem?.stream_kind === 'video';
+    if (progressive && playSession.duration === Number.POSITIVE_INFINITY && shouldReconnect()) {
+      failPlayback('Playback error');
+    }
   });
   const onError = owned(() => {
     // The play() promise is the authoritative result while an attempt is
@@ -303,18 +747,20 @@ function bindMediaEvents(el, generation) {
     // or codec; pausing here aborts an attempt that may otherwise succeed.
     if (pendingPlay?.element === el) return;
     if (hlsRecoverySession?.isRecovering) return;
-    showBrokenState('Playback error');
+    failPlayback('Playback error');
   });
   const bindings = [
     ['timeupdate', onTimeUpdate],
-    ['loadedmetadata', sync('loadedmetadata')],
-    ['durationchange', sync('durationchange')],
+    ['loadedmetadata', onDurationChange],
+    ['durationchange', onDurationChange],
     ['play', onPlay],
     ['playing', onPlaying],
     ['pause', onPaused],
-    ['ended', onPaused],
+    ['ended', onEnded],
+    ['seeking', owned(() => noteSeeking(el, true))],
+    ['seeked', owned(() => noteSeeking(el, false))],
     ['emptied', onPaused],
-    ['waiting', onStalled],
+    ['waiting', onWaiting],
     ['stalled', onStalled],
     ['error', onError],
   ];
@@ -340,8 +786,23 @@ function clearMedia(el) {
 
 function setMetaText(item) {
   elements.title.textContent = item.title || 'Untitled';
-  elements.source.textContent = [getSourceLabel(item.source), item.country, item.language]
-    .filter(Boolean).join(' · ');
+  // A reconnect attempt rebuilds the player bar; keep the status visible.
+  if (reconnectStatus) {
+    setSourceLine(reconnectStatus, { status: true });
+    return;
+  }
+  const line = [getSourceLabel(item.source), item.country, item.language].filter(Boolean).join(' \u00B7 ');
+  const song = currentSongTitle(item);
+  // Stream format and bitrate go on hover only, after the normal line: the
+  // visible column is too narrow for them.
+  const quality = streamQualityLabel(item);
+  if (!song) {
+    setSourceLine(line, { itemLine: true, hover: quality ? [line, quality].filter(Boolean).join('\n') : '' });
+    return;
+  }
+  // The song replaces the line; its full text and the normal line stay readable on hover.
+  const text = songLine(song);
+  setSourceLine(text, { hover: [text, line, quality].filter(Boolean).join('\n'), itemLine: true });
 }
 
 /** Initials on a coloured square behind the artwork, the same as on the
@@ -360,14 +821,39 @@ function setMeta(item) {
   document.getElementById('app')?.classList.add('has-player');
   setMetaText(item);
   setArtInitials(item);
+  setPlayerArtwork(item);
+  syncFavButton();
+}
+
+// The station picture the player bar was last drawn with ('' for none).
+let playerStationImage = '';
+
+/** The station pictures changed (startup list, Refresh, or one would not
+ *  load): redraw the player bar's picture, which the Tuner shows too, only
+ *  when the playing item's picture is a different one now. Playback and the
+ *  rest of the bar are left alone. Returns true when it was redrawn. */
+export function syncPlayerStationImage() {
+  if (!currentItem || !bar || bar.hidden) return false;
+  if (stationImageSourceFor(currentItem) === playerStationImage) return false;
+  setPlayerArtwork(currentItem);
+  return true;
+}
+
+/** The player bar's picture (also what the Tuner shows): the user's own
+ *  station picture first, then the item's relay artwork. A station picture
+ *  that will not load falls back to the item's own artwork. */
+function setPlayerArtwork(item) {
   const artworkToken = ++metadataArtworkToken;
-  const attachArtwork = () => {
-    if (artworkToken !== metadataArtworkToken || currentItem !== item
-        || !isArtworkRelayUrl(item.thumbnail)) return;
-    const src = item.thumbnail.trim();
+  playerStationImage = stationImageSourceFor(item);
+  const current = () => artworkToken === metadataArtworkToken && currentItem === item;
+  const showSource = (src, onFail = null) => {
     elements.art.referrerPolicy = 'no-referrer';
     elements.art.onload = () => { elements.art.style.opacity = '1'; };
-    elements.art.onerror = () => { elements.art.removeAttribute('src'); elements.art.style.opacity = '0'; };
+    elements.art.onerror = () => {
+      elements.art.removeAttribute('src');
+      elements.art.style.opacity = '0';
+      if (current()) onFail?.();
+    };
     if (elements.art.getAttribute('src') !== src) {
       elements.art.style.opacity = '0';
       elements.art.src = src;
@@ -375,14 +861,37 @@ function setMeta(item) {
       elements.art.style.opacity = '1';
     }
   };
-  if (isArtworkRelayUrl(item.thumbnail)) {
-    attachArtwork();
-  } else {
-    elements.art.removeAttribute('src');
-    elements.art.style.opacity = '0';
-    resolveArtworkRelay(item, { priority: 20 }).then(attachArtwork).catch(() => {});
+  const attachArtwork = () => {
+    if (!current() || !isArtworkRelayUrl(item.thumbnail)) return;
+    showSource(item.thumbnail.trim());
+  };
+  const showOwnArtwork = () => {
+    if (isArtworkRelayUrl(item.thumbnail)) {
+      attachArtwork();
+    } else {
+      elements.art.removeAttribute('src');
+      elements.art.style.opacity = '0';
+      resolveArtworkRelay(item, { priority: 20 }).then(attachArtwork).catch(() => {});
+    }
+  };
+  const custom = stationImageSourceFor(item);
+  if (!custom) {
+    showOwnArtwork();
+    return;
   }
-  syncFavButton();
+  // Marking it failed redraws every view, this one included (initPlayer).
+  const failed = () => {
+    markStationImageFailed(custom);
+    if (current()) showOwnArtwork();
+  };
+  const ready = peekStationImageUrl(custom);
+  if (ready) {
+    showSource(ready, failed);
+    return;
+  }
+  elements.art.removeAttribute('src');
+  elements.art.style.opacity = '0';
+  stationImageUrl(custom).then((url) => { if (current()) showSource(url, failed); }, failed);
 }
 
 /** Reflect the favorited state of the currently-playing item on the player
@@ -509,7 +1018,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
             getCurrentTime: () => target.currentTime,
             onRecovering: (message) => {
               if (currentItem) elements.title.textContent = currentItem.title || 'Live stream';
-              elements.source.textContent = message;
+              setSourceLine(message, { status: true });
             },
             onRecovered: () => {
               if (!playback.owns(target, generation)) return;
@@ -532,7 +1041,11 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
               }
               return true;
             },
-            onTerminal: (message) => showBrokenState(message, { showNext: true }),
+            onTerminal: (message) => failPlayback(message, { showNext: true }),
+          });
+          instance.on(HlsLib.Events.LEVEL_LOADED, (_evt, data) => {
+            if (!playback.owns(target, generation) || playSession.token !== token) return;
+            if (typeof data?.details?.live === 'boolean') playSession.hlsLive = data.details.live;
           });
           instance.on(HlsLib.Events.MANIFEST_PARSED, (_evt, data) => {
             if (!playback.owns(target, generation)) return;
@@ -567,7 +1080,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
           autoplay: false,
           onError: () => {
             if (playback.owns(target, generation)) {
-              showBrokenState('DASH playback failed.', { showNext: true });
+              failPlayback('DASH playback failed.', { showNext: true });
             }
           },
         });
@@ -603,9 +1116,12 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       await attemptMediaPlay(elements.video);
       playbackStarted = playback.owns(target, generation) && !stale();
     } catch (e) {
-      if (playback.owns(target, generation)) {
+      if (pausedDuringStart(e, token)) {
+        syncPlaybackUi('paused-during-start');
+      } else if (playback.owns(target, generation)) {
         console.warn('video play() rejected:', e);
-        showBrokenState('Playback did not start. Press Play to retry.', { showNext: false });
+        noteStartFailure(e, token);
+        showBrokenState('Playback did not start. Press Play to retry.', { showNext: false, retry: true });
       }
     }
   } else {
@@ -618,9 +1134,12 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       await attemptMediaPlay(elements.audio);
       playbackStarted = playback.owns(target, generation) && !stale();
     } catch (e) {
-      if (playback.owns(target, generation)) {
+      if (pausedDuringStart(e, token)) {
+        syncPlaybackUi('paused-during-start');
+      } else if (playback.owns(target, generation)) {
         console.warn('audio play() rejected:', e);
-        showBrokenState('Playback did not start. Press Play to retry.', { showNext: false });
+        noteStartFailure(e, token);
+        showBrokenState('Playback did not start. Press Play to retry.', { showNext: false, retry: true });
       }
     }
   }
@@ -646,8 +1165,20 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
  *
  * Guarded against rapid switches: each call increments `playToken`. Async work
  * checks the token and returns early if the user has since selected something else.
+ *
+ * Choosing the item that is waiting to reconnect tries it at once inside the
+ * same episode; anything else ends the episode and plays normally.
  */
 export async function playItem(item) {
+  if (reconnectPending(item)) {
+    await liveResume.attemptNow();
+    return;
+  }
+  cancelReconnect();
+  await startPlayback(item);
+}
+
+async function startPlayback(item) {
   if (!item) {
     showBrokenState('No item');
     return;
@@ -659,6 +1190,11 @@ export async function playItem(item) {
     throw error;
   }
   const myToken = ++playToken;
+  // Before any await: a poll still on its way for the previous station must
+  // not show its song (or put it in Media Session) under the new station.
+  nowPlaying.stop();
+  playSession = newPlaySession(myToken);
+  stallWatchdog.stop();
   setMediaPriority(true);
   cancelPendingResolution();
   repairFiniteMediaFields(item);
@@ -678,13 +1214,16 @@ export async function playItem(item) {
   // must begin inside the Play/card-click user activation, before stream
   // resolution or relay registration yields back to the event loop.
   await audioEngine.resume({ create: true });
+  // A switch or Stop during that await owns the player bar now.
+  if (myToken !== playToken) return;
   hideBrokenState();
   setMeta(item);
   syncPlaybackUi('source-switch');
 
+  let resolveMessage = '';
   if (item._extra?.needsResolve && !item.stream_url) {
     elements.title.textContent = item.title || 'Loading…';
-    elements.source.textContent = 'Resolving stream…';
+    setSourceLine(reconnectStatus || 'Resolving stream…', { status: Boolean(reconnectStatus) });
     const controller = new AbortController();
     resolutionController = controller;
     try {
@@ -699,6 +1238,7 @@ export async function playItem(item) {
     } catch (err) {
       if (err?.name !== 'AbortError' && myToken === playToken) {
         console.warn('Lazy resolve failed:', err);
+        resolveMessage = resolveFailureMessage(err);
       }
     } finally {
       if (resolutionController === controller) resolutionController = null;
@@ -717,7 +1257,8 @@ export async function playItem(item) {
 
   if (myToken !== playToken) return;
   if (!item.stream_url) {
-    showBrokenState('No stream URL');
+    showBrokenState(resolveMessage || 'No stream URL');
+    reportUnplayable(item);
     return;
   }
   let playbackItem = item;
@@ -730,6 +1271,7 @@ export async function playItem(item) {
     if (!Array.isArray(item._extra?.streamCandidates)) {
       try {
         const mod = await loadAdapter(item.source);
+        if (myToken !== playToken) return;
         if (typeof mod.refreshStreamCandidates === 'function') {
           await mod.refreshStreamCandidates(item, { signal: connectionController.signal });
         }
@@ -737,13 +1279,15 @@ export async function playItem(item) {
         if (error?.name === 'AbortError') throw error;
         // The saved URL is still worth one bounded attempt.
       }
+      // No relay registration for a station the user already left.
+      if (myToken !== playToken) return;
     }
     const relay = await connectMediaRelay(item, { signal: connectionController.signal });
     if (myToken !== playToken) {
       expireMedia(relay.media_id, 0).catch(() => {});
       return;
     }
-    activeRelayId = relay.media_id;
+    setActiveRelay(relay.media_id);
     playbackItem = { ...item, stream_url: relay.relay_url };
     relayAvailable = true;
     persistFavoriteMetadata(item);
@@ -756,12 +1300,23 @@ export async function playItem(item) {
     console.warn('Same-origin media relay unavailable; playback was not attached:', error);
     emit('media-relay', { available: false, error });
     if (myToken === playToken) {
-      const message = error instanceof MediaConnectionError
-        ? 'No working stream endpoint answered for this channel. Press Play to retry.'
-        : 'Secure media relay unavailable. Press Play on the item to retry.';
+      const registryFull = error?.code === MEDIA_REGISTRY_FULL;
+      if (registryFull) {
+        // Retrying cannot help until the app restarts; end any reconnect episode.
+        playSession.stopReason = MEDIA_REGISTRY_FULL;
+        reconnectStatus = '';
+      }
+      const message = registryFull
+        ? MEDIA_REGISTRY_FULL_MESSAGE
+        : error instanceof MediaConnectionError
+          ? 'No working stream endpoint answered for this channel. Press Play to retry.'
+          : 'Secure media relay unavailable. Press Play on the item to retry.';
       showBrokenState(message, {
         showNext: false,
+        // Media was already torn down; keep Play so the user can retry by hand.
+        retry: registryFull,
       });
+      reportUnplayable(item);
     }
     return;
   } finally {
@@ -804,10 +1359,18 @@ async function playActive() {
   }
 }
 
-export async function togglePlay() {
+/** Every user "play" (the Play button, Media Session, media keys) goes here,
+ *  so a broken, reconnecting or given-up stream is rebuilt the same way. */
+async function playFromUser() {
   if (currentItem && !isContentAllowed(currentItem, getState().settings)) {
     stop();
     return false;
+  }
+  // Waiting to reconnect: try now, inside the same episode (one at a time).
+  if (reconnectPending()) {
+    await liveResume.attemptNow();
+    const target = getActiveEl();
+    return Boolean(target && !playbackProblem && !target.paused);
   }
   // A media element that has entered an error state cannot reliably recover
   // from another play() call. Re-register the endpoint and rebuild HLS/DASH so
@@ -818,14 +1381,25 @@ export async function togglePlay() {
     const retryTarget = getActiveEl();
     return Boolean(retryTarget && !playbackProblem && !retryTarget.paused);
   }
+  if (!getActiveEl()) return false;
+  return playActive();
+}
+
+export async function togglePlay() {
   const el = getActiveEl();
-  if (!el) return false;
-  if (playbackProblem || el.paused || el.ended) return playActive();
-  el.pause();
-  return true;
+  const playing = Boolean(el && !playbackProblem && !el.paused && !el.ended);
+  // Sounding means Pause, also while a reconnect attempt is still settling.
+  if (!playing || (currentItem && !isContentAllowed(currentItem, getState().settings))) {
+    return playFromUser();
+  }
+  // A user pause ends any reconnect episode.
+  return pauseFromUser();
 }
 
 export function stop() {
+  cancelReconnect();
+  nowPlaying.stop(); // at once: the song and its Media Session entry go with the station
+  stallWatchdog.stop();
   // Bump the token so any in-flight playItem aborts.
   playToken++;
   setMediaPriority(false);
@@ -853,9 +1427,36 @@ export function setVolume(pct) {
   elements.video.volume = v;
   elements.vol.value = String(Math.round(v * 100));
   saveVolume(v * 100);
+  syncVolumeUi();
+}
+
+// Silent means nothing can be heard: muted, or the volume turned all the way down.
+export function isSilent(muted, volumePct) {
+  return !!muted || Math.round(volumePct) <= 0;
+}
+
+export function volumeText(volumePct) {
+  return `${Math.round(Math.max(0, Math.min(100, volumePct)))}%`;
+}
+
+function syncVolumeUi() {
+  // The slider holds the user's volume; a sleep-timer fade only changes the media elements.
+  const pct = Number(elements.vol.value);
+  const text = volumeText(pct);
+  elements.vol.title = `Volume ${text}`;
+  elements.vol.setAttribute('aria-valuetext', text);
+  elements.mute.dataset.silent = isSilent(elements.audio.muted, pct) ? 'true' : 'false';
 }
 
 export function getCurrentItem() { return currentItem; }
+/** The song the current station announces: { itemId, mediaId, title,
+ *  changedAt } or null. Changes are emitted as NOW_PLAYING_EVENT. */
+export function getNowPlaying() {
+  const state = nowPlaying.state;
+  return state?.title ? {
+    itemId: state.itemId, mediaId: state.mediaId, title: state.title, changedAt: state.changedAt,
+  } : null;
+}
 export function getAudioEngineStatus() { return audioEngine.getStatus(); }
 export function getAudioFrequencyResponse(frequencies) {
   return audioEngine.getFrequencyResponse(frequencies);
@@ -879,6 +1480,7 @@ export function setMuted(m) {
   elements.mute.title = muted ? 'Unmute' : 'Mute';
   elements.mute.setAttribute('aria-label', elements.mute.title);
   elements.mute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+  syncVolumeUi();
 }
 
 function bindControls() {
@@ -923,8 +1525,10 @@ function bindMediaSession() {
   const mediaSession = globalThis.navigator?.mediaSession;
   if (!mediaSession?.setActionHandler) return;
   try {
-    mediaSession.setActionHandler('play', () => { playActive(); });
-    mediaSession.setActionHandler('pause', () => { getActiveEl()?.pause(); });
+    // Same retry logic as the Play button: with no source left (after giving
+    // up, or a stopped reconnect) it rebuilds the stream.
+    mediaSession.setActionHandler('play', () => { playFromUser().catch(() => {}); });
+    mediaSession.setActionHandler('pause', () => { pauseFromUser(); });
     mediaSession.setActionHandler('stop', () => { stop(); });
   } catch (error) {
     console.warn('Media Session handlers unavailable:', error);
@@ -950,5 +1554,31 @@ export function initPlayer() {
   subscribe('content-policy-change', ({ current, currentItem: changedItem } = {}) => {
     if (current !== true && changedItem?.id === currentItem?.id
         && !isContentAllowed(currentItem, false)) stop();
+  });
+  // The sleep timer pauses the media itself; it must also stop reconnecting.
+  subscribe('sleep-fired', () => { stopReconnecting(); });
+  // Station pictures listed, refreshed or failed: redraw the bar's picture.
+  onStationImagesChange(syncPlayerStationImage);
+  bindPageLifecycle();
+}
+
+/** Reload safety for the playback relay, and network-back retries. */
+function bindPageLifecycle() {
+  // A registration the previous page (before a reload) left behind.
+  relayMemory.releaseLeftover().catch(() => {});
+  const win = globalThis.window;
+  if (typeof win?.addEventListener !== 'function') return;
+  // Rate-limited in live-resume.js; an explicit Play still tries at once.
+  win.addEventListener('online', () => { liveResume.networkBack(); });
+  win.addEventListener('pagehide', (event) => {
+    // A page kept in the back/forward cache may come back and keep playing.
+    if (event?.persisted) return;
+    const relayId = activeRelayId;
+    cancelReconnect();
+    if (!relayId) return;
+    // Best effort. The id stays remembered, so the next page start releases
+    // it again if this request is lost with the page.
+    expireMedia(relayId, 0, { keepalive: true }).catch(() => {});
+    relayMemory.remember(relayId);
   });
 }

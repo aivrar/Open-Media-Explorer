@@ -11,7 +11,7 @@ const read = (relative) => readFile(new URL(relative, root), 'utf8');
 
 const EXPECTED_IDS = Object.freeze([
   'radio-browser', 'iptv-org', 'internet-archive', 'nasa', 'wikimedia', 'librivox',
-  'media-ccc', 'library-of-congress', 'gpodder', 'peertube', 'owncast',
+  'media-ccc', 'gpodder', 'peertube', 'owncast',
 ]);
 
 function json(data, status = 200) {
@@ -57,9 +57,9 @@ function cssVariable(block, name) {
   return match[1].toLowerCase();
 }
 
-test('the source registry is one immutable eleven-entry authority with one lazy adapter each', async () => {
+test('the source registry is one immutable ten-entry authority with one lazy adapter each', async () => {
   assert.deepEqual(SOURCE_IDS, EXPECTED_IDS);
-  assert.equal(new Set(SOURCE_IDS).size, 11);
+  assert.equal(new Set(SOURCE_IDS).size, 10);
   assert.equal(Object.isFrozen(SOURCES), true);
   assert.equal(Object.isFrozen(SOURCE_IDS), true);
 
@@ -188,8 +188,8 @@ test('all source colors are unique and clear the 3:1 non-text contrast gate in d
     assert.ok(contrast(darkColor, darkSurface) >= 3, `${id} dark mark lacks contrast`);
     assert.ok(contrast(lightColor, lightSurface) >= 3, `${id} light mark lacks contrast`);
   }
-  assert.equal(new Set(darkColors).size, 11);
-  assert.equal(new Set(lightColors).size, 11);
+  assert.equal(new Set(darkColors).size, 10);
+  assert.equal(new Set(lightColors).size, 10);
   assert.match(css, /Source hues are decorative identifiers only/);
 });
 

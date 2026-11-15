@@ -1,8 +1,8 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.8` behavior in this repository: how to
-install and run it, browse all eleven public sources, play media, use the
+It describes the shipped `0.1.9` behavior in this repository: how to
+install and run it, browse all ten public sources, play media, use the
 equalizer, download finite files, record live streams, preserve portable data,
 and diagnose provider or runtime problems.
 
@@ -11,13 +11,30 @@ catalogs or stream files itself, and it does not have a fixed channel list.
 Stations, channels, episodes, and archive records are discovered from the
 providers at run time and can change without an app update.
 
-![World Media Library with all eleven public sources](<../../screenshots/updated screenshots/all_sources.PNG>)
+![World Media Library with its public sources](<../../screenshots/updated screenshots/all_sources.PNG>)
 
 | Tune live radio and TV | Discover something unexpected |
 |---|---|
 | ![World Media Tuner](<../../screenshots/updated screenshots/tuner.PNG>) | ![World Media Discovery](<../../screenshots/updated screenshots/discovery.PNG>) |
 
 ![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
+
+## New in 0.1.9
+
+- Favorites can be sorted **My order** or **A-Z** and grouped in your own
+  categories, and the media type is a row of buttons. **Star all** and `.pls`
+  and `.xspf` import are new in My Playlists. See [Using the
+  application](02-using-the-application.md).
+- The player bar shows the song a radio station is playing (when it sends
+  one), and the **Song log** keeps a list of the songs you heard. Live radio and
+  TV reconnect by themselves, and Radio Browser stations show their stream
+  format and bitrate. See [Playback, EQ, downloads, and
+  recording](04-playback-eq-downloads-recording.md).
+- You can give stations your own pictures, and **Back up my data** in Settings
+  writes one ZIP with your favorites, settings, playlists and more. See [Data,
+  cache, and portability](05-data-cache-and-portability.md).
+- Library of Congress is no longer a source, so the app has ten. See [Sources
+  and channels](03-sources-and-channels.md).
 
 ## Start here
 
@@ -46,11 +63,15 @@ providers at run time and can change without an app update.
    card to open its detail panel and begin playback.
 5. Use the bottom player bar to play/pause, stop, seek finite media, mute, set
    volume, favorite the current item, open EQ, and download or record when the
-   source supports that action.
+   source supports that action. The bar also shows the song a radio station is
+   playing, when the station sends it.
 6. Use the gear for appearance, content, recorder, quality, source toggles,
    server-port handoff, FFmpeg, downloads, and cache controls.
 7. Bring your own channels with **Library → My Playlists → Add link / Import playlist**.
-   In Favorites, choose Radio, TV, Video, or Audio and search your saved items.
+   In Favorites, press All, Radio, TV, Audio, or Video, search your saved items,
+   sort them **My order** or **A-Z**, and group them in your own categories.
+8. Open **Settings → Storage** to back up your data with **Back up my data** or
+   to open the folder for your own station pictures.
 
 ## What the screens mean
 
@@ -59,7 +80,7 @@ providers at run time and can change without an app update.
   limited for performance.
 - **Tuner** is a live station/channel selector with a rotary presentation.
   The dial shows the station's place in the list, not a broadcast frequency,
-  and can be limited to your starred stations.
+  and can be limited to your starred stations or one of your categories.
 - **Grid** is a guide-style view for live TV and radio. It uses the same live
   adapters as Tuner but presents tiles, category/country/source filters, and a
   text filter.

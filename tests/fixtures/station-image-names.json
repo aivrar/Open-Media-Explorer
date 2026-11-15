@@ -1,0 +1,29 @@
+{
+  "note": "Station name -> normalized key. Read by tests_python/test_station_images.py and tests/station-images.test.js so both sides match the same way.",
+  "cases": [
+    ["Radio Paradise", "radio paradise"],
+    ["radio  paradise", "radio paradise"],
+    ["  RADIO\tParadise \n", "radio paradise"],
+    ["AC/DC Radio", "acdc radio"],
+    ["Rock : FM", "rock fm"],
+    ["What? \"Now\" <Live> | 24*7", "what now live 247"],
+    ["Back\\slash", "backslash"],
+    ["Radio X.", "radio x"],
+    ["Radio X . . ", "radio x"],
+    ["Caf\u00e9 FM", "caf\u00e9 fm"],
+    ["Cafe\u0301 FM", "caf\u00e9 fm"],
+    ["\uff32\uff41\uff44\uff49\uff4f \uff11", "radio 1"],
+    ["Radio\u00a0One", "radio one"],
+    ["\u3000Tokyo\u3000FM\u3000", "tokyo fm"],
+    ["Line\u2028Break", "line break"],
+    ["Bell\u0007Radio", "bellradio"],
+    ["Zero\u200bWidth", "zero\u200bwidth"],
+    ["\u0130stanbul", "i\u0307stanbul"],
+    ["\u039f\u0394\u039f\u03a3", "\u03bf\u03b4\u03bf\u03c2"],
+    ["Stra\u00dfe", "stra\u00dfe"],
+    [".977 Hits", ".977 hits"],
+    ["...", ""],
+    ["   ", ""],
+    ["", ""]
+  ]
+}

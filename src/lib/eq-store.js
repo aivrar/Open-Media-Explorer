@@ -104,6 +104,17 @@ export function addFavoriteEq(eqState, itemId, effectiveCurve = null) {
   };
 }
 
+/** addFavoriteEq for many items with one copy of the map: each id gets the
+ *  same entry addFavoriteEq(state, id, getEffectiveEq(state, id, false)) gives. */
+export function addFavoritesEq(eqState, itemIds) {
+  const state = normalizeEqState(eqState);
+  const favorites = { ...state.favorites };
+  for (const itemId of itemIds || []) {
+    if (itemId) defineOwn(favorites, itemId, cloneEqCurve(state.global));
+  }
+  return { ...state, favorites };
+}
+
 export function removeFavoriteEq(eqState, itemId) {
   const state = normalizeEqState(eqState);
   if (!itemId || !state.favorites[itemId]) return state;
@@ -159,9 +170,9 @@ export function loadEqState(storage) {
   }
 }
 
-export function saveEqState(eqState, storage) {
+export function saveEqState(eqState, storage, onError) {
   const normalized = normalizeEqState(eqState);
-  try { resolveStorage(storage)?.setItem(EQ_STORAGE_KEY, JSON.stringify(normalized)); } catch (_) {}
+  try { resolveStorage(storage)?.setItem(EQ_STORAGE_KEY, JSON.stringify(normalized)); } catch (error) { onError?.(error); }
   return normalized;
 }
 

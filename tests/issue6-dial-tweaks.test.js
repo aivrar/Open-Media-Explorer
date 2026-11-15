@@ -39,11 +39,11 @@ test('drag, wheel and arrow keys leave a one-station dial fixed', async () => {
 
 test('playlist wording names both accepted file types', async () => {
   const drop = await read('src/lib/playlist-drop.js');
-  assert.match(drop, /Drop a playlist file \(\.m3u or \.m3u8\) to import it into My Playlists/);
+  assert.match(drop, /Drop a playlist file \(\.m3u, \.m3u8, \.pls or \.xspf\) to import it into My Playlists/);
   const controls = await read('src/modes/library/personal-controls.js');
   assert.match(controls, /text: 'Import playlist'/);
-  assert.match(controls, /Import a local \.m3u or \.m3u8 channel list\./);
-  assert.match(controls, /accept: '\.m3u,\.m3u8'/);
+  assert.match(controls, /Import a local \.m3u, \.m3u8, \.pls or \.xspf channel list\./);
+  assert.match(controls, /accept: '\.m3u,\.m3u8,\.pls,\.xspf'/);
 });
 
 test('the dial fits a short window and its station name stays inside the knob', async () => {

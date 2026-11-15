@@ -9,6 +9,13 @@
 }
 .personal-controls { flex-basis: 100%; align-items: flex-start; }
 .personal-controls select { max-width: 260px; padding: 8px 12px; appearance: auto; }
+/* Media type buttons: wrap onto a new line rather than squash in a narrow window. */
+.personal-type { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; }
+.personal-type .chip { padding: 8px 14px; }
+/* Favorites sort ("My order" / "A–Z"): the same chips, set apart from the type filter. */
+.personal-sort { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.personal-sort .chip { padding: 8px 14px; }
+.personal-sort-label { font-size: 12px; color: var(--text-dim); margin-left: 4px; }
 .playlist-message { flex-basis: 100%; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
 .playlist-message:empty { display: none; }
 .playlist-actions { flex: 1 1 400px; max-width: 100%; }
@@ -267,6 +274,13 @@
 .collection-summary-part.is-done::before { background: #54d68b; }
 .collection-summary-separator { color: var(--text-mute); }
 .collection-summary-favorites { color: var(--text-mute); }
+.collection-summary-notice {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
 
 .results-window-back {
   align-self: flex-start;
@@ -448,6 +462,19 @@
   overflow: hidden;
   line-height: 16px;
 }
+/* License on the first line, stream format and bitrate on the second. */
+.card-license.has-quality {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+.card-license.has-quality > span {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-quality { font-variant-numeric: tabular-nums; }
 .card-star {
   position: absolute;
   top: 8px;
@@ -544,14 +571,83 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+.detail-quality { font-variant-numeric: tabular-nums; }
+
+/* "Other streams": other Radio Browser entries for the same station. */
+.other-streams {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.other-streams-header {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+.other-streams-status {
+  margin: 0;
+  color: var(--text-dim);
+}
+.other-streams-status:focus { outline: none; }
+.other-streams-retry { align-self: flex-start; }
+.other-streams-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.other-stream {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+}
+.other-stream + .other-stream { border-top: 1px solid var(--border); }
+.other-stream-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.other-stream-name,
+.other-stream-facts {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.other-stream-name { color: var(--text); }
+.other-stream-facts {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.other-streams .btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.other-streams-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
 
 .empty-state {
+  grid-column: 1 / -1;
   text-align: center;
   padding: 72px 24px;
   color: var(--text-dim);
 }
 .empty-state h3 { color: var(--text); margin: 0 0 8px; font-weight: 500; }
-.empty-state p { margin: 0; }
+/* Full width of the grid, but a readable line length for longer messages. */
+.empty-state p { margin: 0 auto; max-width: 64ch; overflow-wrap: anywhere; }
 
 .results-loadmore {
   display: flex;
@@ -782,3 +878,141 @@
   background: transparent;
 }
 .library-root.is-personal-view .card-star:hover { transform: translateY(-50%) scale(1.08); }
+
+/* Favorites in "My order": a narrow column of move buttons (top, up, down)
+   just left of the star. The star keeps its place; the text makes room. */
+.card-order {
+  position: absolute;
+  top: 50%;
+  right: 40px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
+}
+.card-order-btn {
+  appearance: none;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-order-btn:hover:not([aria-disabled="true"]) { color: var(--text); border-color: var(--border-strong); }
+.card-order-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card-order-btn[aria-disabled="true"] { opacity: 0.35; cursor: default; }
+.library-root.is-personal-view .card.has-order-controls .card-body { padding-right: 72px; }
+
+/* ============ Favorites categories ============
+   A second row of chips under the type and sort buttons. With many
+   categories the chips scroll inside about three rows, so the cards stay in
+   view; a long name is cut and shown in full on hover. */
+.favorite-categories { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; flex-basis: 100%; min-width: 0; max-width: 100%; }
+.category-chips {
+  display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%;
+  max-height: 116px; overflow-y: auto; overscroll-behavior: contain; padding: 2px;
+}
+.category-chip { max-width: 16em; min-width: 0; padding: 6px 10px; }
+.category-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-chip-count { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.category-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 2px 0; }
+.category-tool[hidden], .category-form[hidden] { display: none; }
+.category-new:disabled { opacity: 0.5; cursor: default; }
+.category-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.category-input { width: 14em; max-width: 100%; padding: 6px 10px; color: var(--text); cursor: text; }
+.category-form-message, .category-status { font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.category-form-message:empty, .category-status:empty { display: none; }
+
+/* The category button on a Favorites card: left of the move buttons (or of
+   the star in A-Z), so the order on screen is the tab order. */
+.card-category {
+  position: absolute;
+  top: 50%;
+  right: 40px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev-2);
+  color: var(--text-mute);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.card-category:hover { color: var(--text); border-color: var(--border-strong); }
+.card-category:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card-category.is-set { color: var(--accent); }
+.card-category[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+.card.has-order-controls .card-category { right: 66px; }
+.library-root.is-personal-view .card.has-category-control .card-body { padding-right: 70px; }
+.library-root.is-personal-view .card.has-category-control.has-order-controls .card-body { padding-right: 96px; }
+
+/* The menu the card button opens. It sits on the page, not in the card, so
+   nothing clips it; card-category.js keeps it inside the window. */
+.category-menu {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 180px;
+  max-width: min(300px, calc(100vw - 16px));
+  max-height: min(360px, calc(100vh - 16px));
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev-1);
+  box-shadow: var(--shadow-2);
+}
+.category-menu-item {
+  appearance: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px 6px 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.category-menu-item:hover, .category-menu-item:focus-visible { background: var(--bg-elev-3); }
+.category-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.category-menu-item[aria-checked="true"]::before { content: '\2713'; position: absolute; left: 9px; color: var(--accent); }
+.category-menu-item[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.category-menu-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-menu-separator { flex: 0 0 auto; height: 1px; margin: 4px 6px; background: var(--border); }
+.category-menu-form { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; }
+.category-menu-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.category-menu-message { padding: 4px 10px 6px; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.category-menu-message[hidden] { display: none; }

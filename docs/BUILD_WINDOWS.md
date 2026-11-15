@@ -5,7 +5,7 @@ The classic single-file artifact and signed-runtime portable fallback are:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.8-portable.zip
+dist\WorldMediaWindows-0.1.9-portable.zip
 ```
 
 `dist\WorldMediaWindows.exe` is the owner-preferred one-file PyInstaller build.
@@ -106,7 +106,7 @@ Expected behavior:
 
 ## Catalog, Cache, And Network Boundaries
 
-The app registers all eleven adapters lazily and gives every source an
+The app registers all ten adapters lazily and gives every source an
 independent global scheduler slot. Adapter-declared limits add stricter
 per-provider concurrency and request spacing. Library collection keeps
 advancing each available cursor while the mode is active; a slow or
@@ -117,7 +117,8 @@ the complete collected catalog remains resident for the app session without an
 application item ceiling.
 
 The steady-state performance boundaries are independent: catalog metadata has
-eleven fair source lanes and a 60-second final watchdog; artwork uses twelve
+eleven global slots shared fairly by the ten source lanes and a 60-second final
+watchdog; artwork uses twelve
 priority lanes with a 25-second watchdog; the localhost server accepts a
 128-request backlog and sixteen simultaneous artwork relays. Library filter
 results are incrementally extended for append-only pages, so a 40,000-item

@@ -11,7 +11,7 @@
       "endpoint": "local:docs/FIVE_NEW_SOURCES_PHASES.md",
       "status": "not-applicable",
       "contentType": "application/json",
-      "sha256": "7f280282a350fd7cc21016e3c38713fa1b4825a26b28ffa161ec1b351f9ce693",
+      "sha256": "7007a5f287cae8b8b77d780d5217a1f8f07b927e0dea45dbd1a329e806594d9e",
       "cases": ["source IDs", "stable identity", "content preference default", "favorite and EQ preservation"]
     },
     {
@@ -27,28 +27,6 @@
       "contentType": "application/json",
       "sha256": "fb04d48c05970edf74d444e9240eaadd2a45749655d7263c00b51931fa7eecd5",
       "cases": ["recent page", "event detail", "GraphQL search", "GraphQL error", "empty live", "nonempty published live schema"]
-    },
-    {
-      "file": "loc.json",
-      "provider": "Library of Congress",
-      "endpoint": [
-        "https://www.loc.gov/audio/?fo=json&at=results,pagination",
-        "https://www.loc.gov/film-and-videos/?fo=json&at=results,pagination",
-        "https://www.loc.gov/item/{id}/?fo=json&at=item,resources"
-      ],
-      "status": [200, 200, 200, 429],
-      "contentType": "application/json",
-      "sha256": "445d1875d58a67fec8cacbc70f2578241354969ee6916fdca8b2181f4a3aab18",
-      "cases": ["audio page", "video page", "downloadable resource", "restricted stream", "Retry-After rate limit"]
-    },
-    {
-      "file": "loc-captcha.html",
-      "provider": "Library of Congress",
-      "endpoint": "https://www.loc.gov/{format}/?fo=json",
-      "status": 200,
-      "contentType": "text/html",
-      "sha256": "b63762167679c0abff41ffc42ff5739b51433c5560370a4dacbd6addedc03dc5",
-      "cases": ["CAPTCHA body returned where JSON was expected"]
     },
     {
       "file": "gpodder.json",

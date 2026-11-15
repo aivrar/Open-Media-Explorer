@@ -65,7 +65,8 @@ origin and browser storage contain the persisted favorites/settings/EQ state.
   assets\                            icon/runtime assets (folder build)
   WorldMediaWindows-data\
     cache\                           bounded catalog/artwork cache
-    state\                           launcher and profile handoff JSON
+    state\                           launcher, profile handoff, and song log JSON
+    station-images\                  your own station pictures (made on demand)
     logs\                            native/runtime logs
     webview2_data\                   WebView2 profile and localStorage
   downloads\                         finite downloads and recordings
@@ -88,7 +89,8 @@ The localhost port is part of the WebView2 origin. Settings therefore offers
 The app normally uses `9124` and, when that port is occupied, tries a bounded
 fallback range. The active process keeps its current port until it exits. The
 profile handoff copies only the documented favorites/settings/volume/jobs/EQ
-keys into `state\profile-preferences.json` before an origin change.
+keys into `state\profile-preferences.json`, and the favorites categories into
+`state\profile-preferences-extra.json`, before an origin change.
 
 ## Test portable installation
 

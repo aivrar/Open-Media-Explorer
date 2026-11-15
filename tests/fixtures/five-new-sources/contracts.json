@@ -4,14 +4,12 @@
   "appPageSize": 30,
   "sourceIds": [
     "media-ccc",
-    "library-of-congress",
     "gpodder",
     "peertube",
     "owncast"
   ],
   "stableIdentity": {
     "media-ccc": "vod=media-ccc:{event-guid}; live=media-ccc:live:{conference-slug}/{room-slug}/{native-language-key}",
-    "library-of-congress": "library-of-congress:{canonical /item/{id}/ path segment}",
     "gpodder": "gpodder:{lowercase-hex sha256 of UTF-8 normalized-feed-URL + LF + episode-GUID-or-enclosure-URL}",
     "peertube": "peertube:{lowercase normalized-origin-host}:{lowercase video-uuid}",
     "owncast": "owncast:{lowercase-hex sha256 of UTF-8 normalized-instance-base-URL with trailing slash}"
@@ -26,11 +24,6 @@
       "source": "media-ccc",
       "input": {"kind": "live", "conference": "fixture-live", "room": "hall-a", "language": "native"},
       "id": "media-ccc:live:fixture-live/hall-a/native"
-    },
-    {
-      "source": "library-of-congress",
-      "input": {"url": "HTTP://WWW.LOC.GOV/item/fixture-audio-1/?fo=json#top"},
-      "id": "library-of-congress:fixture-audio-1"
     },
     {
       "source": "gpodder",

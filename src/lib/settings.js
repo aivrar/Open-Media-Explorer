@@ -9,6 +9,8 @@ import { SOURCES } from './sources.js';
 import { openDownloadsFolder } from './download-client.js';
 import { THEME_OPTIONS } from './themes.js';
 import { saveProfileHandoff } from './profile-transfer.js';
+import { bindBackupControls } from './backup.js';
+import { STATION_IMAGES_HINT, bindStationImageControls } from './station-images.js';
 import {
   FFMPEG_APPROX_SIZE,
   FFMPEG_PROVIDER,
@@ -22,7 +24,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.8';
+const VERSION = '0.1.9';
 
 function buildModal() {
   const state = getState();
@@ -180,13 +182,37 @@ function buildModal() {
         </section>
         <section>
           <h3>Storage</h3>
+          <div class="row backup-row">
+            <div>
+              <label>Back up my data</label>
+              <span id="settings-backup-note" class="description">Saves a .zip in the downloads folder with a copy of your favorites, settings, equalizer curves, song log and imported playlists, plus .m3u8 playlist files that other players can open. Playlist addresses can contain private links or account tokens, so share the backup only with people you trust.</span>
+              <span id="settings-backup-status" class="description backup-status" data-backup-status role="status" aria-live="polite"></span>
+            </div>
+            <div class="backup-actions">
+              <button class="btn" type="button" data-act="create-backup" aria-describedby="settings-backup-note settings-backup-status">Back up my data</button>
+              <button class="btn" type="button" data-act="backup-open-folder" hidden>Open folder</button>
+            </div>
+          </div>
+          <div class="row backup-row station-images-row" data-station-images>
+            <div>
+              <label>Station images</label>
+              <span id="settings-station-images-note" class="description">${STATION_IMAGES_HINT}</span>
+              <code class="station-images-path" data-station-images-path></code>
+              <span id="settings-station-images-status" class="description backup-status" data-station-images-status role="status" aria-live="polite"></span>
+            </div>
+            <div class="backup-actions">
+              <button class="btn" type="button" data-act="station-images-open" aria-describedby="settings-station-images-note">Open folder</button>
+              <button class="btn" type="button" data-act="station-images-refresh" aria-describedby="settings-station-images-status">Refresh</button>
+            </div>
+          </div>
           <div class="row">
             <div>
               <label>Clear local cache</label>
-              <span class="description">Removes favorites, preferences, equalizer settings, and job history. Downloaded media and FFmpeg tools are kept.</span>
+              <span class="description">Removes favorites, preferences, equalizer settings, the song log, and job history. Downloaded media and FFmpeg tools are kept.</span>
             </div>
             <button class="btn btn-danger" type="button" data-act="clear-cache">Clear cache</button>
           </div>
+          <p class="clear-cache-status" data-clear-cache-status role="status" aria-live="polite" hidden></p>
         </section>
         <section>
           <h3>About</h3>
@@ -429,13 +455,28 @@ function buildModal() {
       if (!disposed) openDownloads.disabled = false;
     }
   });
+  bindBackupControls({
+    button: root.querySelector('[data-act="create-backup"]'),
+    status: root.querySelector('[data-backup-status]'),
+    openButton: root.querySelector('[data-act="backup-open-folder"]'),
+    isDisposed: () => disposed,
+  });
+  bindStationImageControls({
+    path: root.querySelector('[data-station-images-path]'),
+    status: root.querySelector('[data-station-images-status]'),
+    openButton: root.querySelector('[data-act="station-images-open"]'),
+    refreshButton: root.querySelector('[data-act="station-images-refresh"]'),
+    isDisposed: () => disposed,
+  });
   refreshToolStatus();
 
-  root.querySelector('[data-act="clear-cache"]').addEventListener('click', () => {
-    if (confirm('Clear favorites, preferences, equalizer settings, and job history? Downloaded media and FFmpeg tools will be kept.')) {
-      clearCache();
-      close();
-    }
+  bindClearCache({
+    button: root.querySelector('[data-act="clear-cache"]'),
+    status: root.querySelector('[data-clear-cache-status]'),
+    confirmClear: () => confirm('Clear favorites, preferences, equalizer settings, the song log, and job history? Downloaded media and FFmpeg tools will be kept.'),
+    clear: clearCache,
+    onDone: () => close(),
+    isDisposed: () => disposed,
   });
 
   const onKeyDown = (e) => {
@@ -480,6 +521,43 @@ function buildModal() {
   };
 
   return root;
+}
+
+export const CLEAR_CACHE_FAILED = 'Cleared in this window, but the saved copy in your data folder could not be cleared, so your favorites and settings could come back. Try Clear cache again before closing World Media.';
+
+/**
+ * Clear cache waits until the saved copy in the data folder is cleared too
+ * (or the request fails or times out) before it reports done by closing
+ * Settings; a failure stays visible as one plain line.
+ */
+export function bindClearCache({ button, status, confirmClear, clear, onDone, isDisposed = () => false }) {
+  const label = button.textContent;
+  let running = false;
+  async function run() {
+    if (running || !confirmClear()) return;
+    running = true;
+    button.disabled = true;
+    button.textContent = 'Clearing…';
+    status.hidden = true;
+    status.textContent = '';
+    try {
+      await clear();
+      if (!isDisposed()) onDone();
+    } catch (_) {
+      if (isDisposed()) return;
+      status.textContent = CLEAR_CACHE_FAILED;
+      status.dataset.state = 'error';
+      status.hidden = false;
+    } finally {
+      running = false;
+      if (!isDisposed()) {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    }
+  }
+  button.addEventListener('click', () => { void run(); });
+  return { run };
 }
 
 export function openSettings() {

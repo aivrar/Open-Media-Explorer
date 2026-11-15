@@ -119,7 +119,6 @@ test('frozen adapter modules and normalized output contract are loadable without
 test('new-source caller policies are installed in the shared scheduler', async () => {
   const expected = {
     'media-ccc': { maxConcurrent: 2, minIntervalMs: 500 },
-    'library-of-congress': { maxConcurrent: 1, minIntervalMs: 6_000 },
     gpodder: { maxConcurrent: 4, minIntervalMs: 0 },
     peertube: { maxConcurrent: 2, minIntervalMs: 500 },
     owncast: { maxConcurrent: 1, minIntervalMs: 0 },

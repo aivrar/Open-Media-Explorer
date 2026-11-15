@@ -15,6 +15,22 @@ export class ControlApiError extends Error {
   }
 }
 
+/**
+ * True only when the local server really answered and refused the request,
+ * so it certainly did not act on it. Relies on ControlApiError.status, the
+ * HTTP status of a received reply: transport failures, aborts and timeouts
+ * reject with the raw fetch error (never a ControlApiError), and a 2xx reply
+ * whose body could not be read keeps its 2xx status. 4xx replies are
+ * validation/conflict refusals and 503 is a "busy/stopping" refusal. A 500
+ * comes from an unexpected server exception that may have happened after
+ * the work started, so it stays ambiguous.
+ */
+export function isDefinitiveRejection(error) {
+  if (!(error instanceof ControlApiError)) return false;
+  const status = Number(error.status) || 0;
+  return (status >= 400 && status < 500) || status === 503;
+}
+
 export async function getControlSession({ fetchImpl = fetch, signal } = {}) {
   if (!sessionPromise) {
     const options = {
@@ -44,12 +60,16 @@ export function listCaptureJobs(options = {}) {
 }
 
 export async function controlRequest(path, {
-  method = 'GET', body, fetchImpl = fetch, signal,
+  method = 'GET', body, fetchImpl = fetch, signal, keepalive = false, headers: extraHeaders = null,
 } = {}) {
   const session = await getControlSession({ fetchImpl, signal });
-  const headers = { 'X-WorldMedia-Token': session.token };
+  // Extra headers (the profile write order, see profile-transfer.js) never
+  // replace the session token.
+  const headers = { ...(extraHeaders || {}), 'X-WorldMedia-Token': session.token };
   const options = { method, headers, credentials: 'same-origin', cache: 'no-store' };
   if (signal) options.signal = signal;
+  // Lets a small request outlive the page (release on pagehide).
+  if (keepalive === true) options.keepalive = true;
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);

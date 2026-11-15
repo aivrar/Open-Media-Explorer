@@ -28,16 +28,22 @@ import {
   reconcileContentPreference,
 } from './chain.js';
 import {
-  renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus,
+  renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus, syncCardStars,
 } from './render.js';
 import { cancelThumbnailHydration, resetThumbnailHydrationScope } from './thumbnails.js';
-import { openDetail, closeDetail, getRestorableDetailItem } from './detail.js';
+import {
+  openDetail, closeDetail, getRestorableDetailItem, refreshDetailArtwork,
+} from './detail.js';
 import { filterItems } from './filter.js';
 import { libraryPool } from './personal.js';
 import { getPlaylistItems, loadPlaylists } from '../../lib/playlists.js';
-import { syncPersonalControls } from './personal-controls.js';
+import { syncFavoritesSort, syncPersonalControls } from './personal-controls.js';
 import { ui } from './shell-refs.js';
 import { selectSource } from './sidebar.js';
+import { syncFavoriteCategories } from './favorite-categories.js';
+import { closeCategoryMenu } from './card-category.js';
+import { FAVORITE_GROUPS_EVENT } from '../../lib/favorite-groups.js';
+import { onStationImagesChange } from '../../lib/station-images.js';
 
 const subs = [];
 
@@ -53,6 +59,7 @@ function tearDown() {
     thumbHydration.observerRoot = null;
   }
   cancelThumbnailHydration();
+  closeCategoryMenu({ restoreFocus: false });
   if (view.infiniteObserver) {
     try { view.infiniteObserver.disconnect(); } catch (_) {}
     view.infiniteObserver = null;
@@ -161,8 +168,20 @@ export function renderLibrary(host) {
   }));
   subs.push(subscribe('favorites-change', () => {
     updateSidebarCounts();
+    // Category counts follow the favorites (and Clear cache removes the categories).
+    syncFavoriteCategories();
+    if (view.activeSource === 'favorites') { renderResults(); renderStatus(); }
+    else syncCardStars();
+  }));
+  subs.push(subscribe(FAVORITE_GROUPS_EVENT, () => {
+    // A deleted category falls back to "All categories" before the cards are drawn.
+    syncFavoriteCategories();
     if (view.activeSource === 'favorites') { renderResults(); renderStatus(); }
   }));
+  // Station pictures listed, refreshed or failed: only the cards whose picture
+  // changed are redrawn (render.js compares each card's artwork), and an open
+  // detail panel swaps its picture if that one changed.
+  subs.push(onStationImagesChange(() => { renderResults(); refreshDetailArtwork(); }));
   subs.push(subscribe('playlists-change', () => {
     syncPersonalControls(); updateSidebarCounts();
     if (view.activeSource === 'playlists') { renderResults(); renderStatus(); updateSentinelStatus(); }
@@ -185,6 +204,8 @@ export function renderLibrary(host) {
     }
     reconcileEnabledSources();
     if (contentChanged) reconcileContentPreference(priorPreference, nextPreference);
+    // A new favorites sort reorders the mounted cards in place (render.js).
+    syncFavoritesSort();
     renderResults();
     renderStatus();
     updateSidebarCounts();

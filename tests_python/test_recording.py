@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from worldmedia_ffmpeg import ToolStatus
-from worldmedia_jobs import JobRegistry
+from worldmedia_jobs import JobRegistry, JobStateError
 from worldmedia_media import MediaRegistry, SafeConnector
 from worldmedia_recording import (
     PROFILES,
@@ -255,6 +255,17 @@ class RecordingServiceTests(unittest.TestCase):
         self.registry = MediaRegistry(SafeConnector(address_policy=lambda _address: True), ttl_seconds=300)
         self.jobs = JobRegistry()
         self.ffmpeg = FakeFfmpegService(base)
+        # An HLS registration makes the recorder read the master playlist
+        # first. Nothing serves the fixture URL, and on Windows a refused
+        # localhost connect takes about two seconds, which used most of the
+        # wait budget. Refuse at once; the recorder falls back to the root
+        # relay exactly as it does when the real fetch fails.
+        refuse = mock.patch.object(
+            self.registry.connector, "open",
+            side_effect=ConnectionRefusedError("fixture stream is not served"),
+        )
+        refuse.start()
+        self.addCleanup(refuse.stop)
 
     def tearDown(self) -> None:
         self.jobs.shutdown(timeout=2)
@@ -271,7 +282,8 @@ class RecordingServiceTests(unittest.TestCase):
             payload["recording_kind"] = recording_kind
         return self.registry.register(payload)
 
-    def wait_state(self, job_id, states, timeout=3):
+    def wait_state(self, job_id, states, timeout=15):
+        # Polls, so a generous deadline costs nothing when the machine is quick.
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             value = self.jobs.snapshot(job_id)
@@ -431,7 +443,10 @@ class RecordingServiceTests(unittest.TestCase):
 
         thread = threading.Thread(target=run_utility)
         thread.start()
-        deadline = time.monotonic() + 3
+        # Starting a child interpreter and tearing it down can be slow on a
+        # busy machine. Every wait below polls, so generous deadlines only
+        # matter when the machine is slow.
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             with service._lock:
                 if service._utility_processes:
@@ -439,11 +454,183 @@ class RecordingServiceTests(unittest.TestCase):
             time.sleep(0.01)
         else:
             self.fail("utility process was not tracked")
-        self.assertTrue(service.shutdown(timeout=0.05))
-        thread.join(timeout=2)
+        # KILL_TIMEOUT is how long shutdown waits for a killed child to be
+        # reaped; it returns as soon as the child is gone.
+        with mock.patch("worldmedia_recording.KILL_TIMEOUT", 15):
+            self.assertTrue(service.shutdown(timeout=0.05))
+        thread.join(timeout=15)
         self.assertTrue(finished.is_set())
         with service._lock:
             self.assertFalse(service._utility_processes)
+
+    def test_a_utility_child_started_as_shutdown_runs_is_terminated(self) -> None:
+        popen_entered = threading.Event()
+        release_popen = threading.Event()
+
+        class HungUtility:
+            def __init__(self) -> None:
+                self.returncode = None
+                self.terminated = False
+                self.ended = threading.Event()
+
+            def poll(self):
+                return self.returncode
+
+            def communicate(self, timeout=None):
+                if not self.ended.wait(timeout):
+                    raise subprocess.TimeoutExpired("ffprobe", timeout)
+                return "", ""
+
+            def wait(self, timeout=None):
+                return self.communicate(timeout)
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = -15
+                self.ended.set()
+
+            kill = terminate
+
+        child = HungUtility()
+
+        def slow_popen(_args, **_kwargs):
+            popen_entered.set()
+            release_popen.wait()  # The child exists but _run() has not tracked it yet.
+            return child
+
+        service = RecordingService(self.registry, self.jobs, self.ffmpeg, self.paths, utility_popen=slow_popen)
+        results = []
+        thread = threading.Thread(target=lambda: results.append(service._run(["ffprobe"], timeout=60)))
+        thread.start()
+        try:
+            self.assertTrue(popen_entered.wait(5))
+            self.assertTrue(service.shutdown(timeout=0.05))  # Nothing tracked yet: shutdown sees no child.
+        finally:
+            release_popen.set()
+        thread.join(5)  # Bounds a failure; with the fix the child ends at once.
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(child.terminated)
+        self.assertEqual(results[0].returncode, -15)
+        with service._lock:
+            self.assertFalse(service._utility_processes)
+
+    def test_a_job_cancelled_before_its_controller_attaches_cleans_up(self) -> None:
+        factory = ProcessFactory()
+        service = RecordingService(
+            self.registry, self.jobs, self.ffmpeg, self.paths, popen=factory, runner=Runner("audio"),
+        )
+        created = threading.Event()
+        proceed = threading.Event()
+        attach = self.jobs.attach_controller
+
+        def wait_then_attach(*args, **kwargs):
+            created.set()  # The job exists; its controller is not attached yet.
+            proceed.wait()
+            return attach(*args, **kwargs)
+
+        registration = self.registration()
+        outcome = []
+
+        def start() -> None:
+            try:
+                outcome.append(service.start(registration.token, "compact", "http://127.0.0.1:9124"))
+            except JobStateError as error:
+                outcome.append(error)
+
+        with mock.patch.object(self.jobs, "attach_controller", side_effect=wait_then_attach):
+            thread = threading.Thread(target=start)
+            thread.start()
+            try:
+                self.assertTrue(created.wait(5))
+                self.assertTrue(self.jobs.shutdown(timeout=0.05))  # Cancels the queued job.
+            finally:
+                proceed.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(outcome[0], JobStateError)
+        self.assertEqual(self.jobs.list()[0].state, "cancelled")  # Kept as it was.
+        self.assertTrue(self.registry._entries[registration.token].released)
+        self.assertEqual(factory.calls, [])
+        with service._lock:
+            self.assertFalse(service._workers)
+
+    def test_shutdown_cannot_report_success_while_a_worker_is_still_cleaning_up(self) -> None:
+        service = RecordingService(
+            self.registry, self.jobs, self.ffmpeg, self.paths,
+            popen=ProcessFactory(returncode=1, stderr="failed"), runner=Runner("audio"),
+        )
+        in_cleanup = threading.Event()
+        allow_cleanup = threading.Event()
+        release_root = self.registry.release_root
+
+        def blocked_release(token, **kwargs):
+            in_cleanup.set()
+            allow_cleanup.wait()
+            return release_root(token, **kwargs)
+
+        with mock.patch.object(self.registry, "release_root", side_effect=blocked_release), \
+                mock.patch("worldmedia_recording.GRACEFUL_STOP_TIMEOUT", 0.01), \
+                mock.patch("worldmedia_recording.KILL_TIMEOUT", 0.05):
+            service.start(self.registration().token, "compact", "http://127.0.0.1:9124")
+            try:
+                self.assertTrue(in_cleanup.wait(5))
+                self.assertFalse(service.shutdown(timeout=0.05))
+            finally:
+                allow_cleanup.set()
+            with service._lock:
+                workers = list(service._workers.values())
+            for worker in workers:
+                worker.join(5)
+            self.assertTrue(service.shutdown(timeout=1))
+
+    def test_a_start_racing_shutdown_is_refused_and_records_nothing(self) -> None:
+        factory = ProcessFactory()
+        service = RecordingService(
+            self.registry, self.jobs, self.ffmpeg, self.paths, popen=factory, runner=Runner("audio"),
+        )
+        in_start = threading.Event()
+        shutdown_done = threading.Event()
+        attach = self.jobs.attach_controller
+
+        def attach_then_wait(*args, **kwargs):
+            attach(*args, **kwargs)
+            in_start.set()  # Past start()'s first check, before its worker is registered.
+            shutdown_done.wait()
+
+        registration = self.registration()
+        outcome = []
+
+        def start() -> None:
+            try:
+                outcome.append(service.start(registration.token, "compact", "http://127.0.0.1:9124"))
+            except RecordingError as error:
+                outcome.append(error)
+
+        with mock.patch.object(self.jobs, "attach_controller", side_effect=attach_then_wait):
+            thread = threading.Thread(target=start)
+            thread.start()
+            try:
+                self.assertTrue(in_start.wait(5))
+                self.assertTrue(service.shutdown(timeout=0.05))
+            finally:
+                shutdown_done.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(outcome[0], RecordingError)
+        self.assertEqual(outcome[0].code, "RECORDING_SERVICE_STOPPED")
+        job = self.jobs.list()[0]
+        self.assertEqual(job.state, "failed")
+        self.assertEqual(job.error["code"], "RECORDING_SERVICE_STOPPED")
+        self.assertEqual(factory.calls, [])  # FFmpeg never started.
+        self.assertTrue(self.registry._entries[registration.token].released)
+        with service._lock:
+            self.assertFalse(service._workers)
+            self.assertFalse(service._controllers)
+        # Once shut down, a start is refused before any job is created.
+        with self.assertRaises(RecordingError) as refused:
+            service.start(self.registration().token, "compact", "http://127.0.0.1:9124")
+        self.assertEqual(refused.exception.code, "RECORDING_SERVICE_STOPPED")
+        self.assertEqual(len(self.jobs.list()), 1)
 
     def test_recoverable_failures_in_the_same_second_never_overwrite_each_other(self) -> None:
         service = RecordingService(

@@ -92,7 +92,6 @@ SEED_SCRIPT = f"""
       'wikimedia': false,
       'librivox': false,
       'media-ccc': false,
-      'library-of-congress': false,
       'gpodder': false,
       'peertube': false,
       'owncast': false
@@ -253,7 +252,7 @@ async function run() {
     assert(settings.querySelector('#recording-quality')?.value === 'balanced', 'Recording quality did not restore');
     const expectedSourceIds = [
       'radio-browser', 'iptv-org', 'internet-archive', 'nasa', 'wikimedia', 'librivox',
-      'media-ccc', 'library-of-congress', 'gpodder', 'peertube', 'owncast',
+      'media-ccc', 'gpodder', 'peertube', 'owncast',
     ];
     assert(settings.querySelectorAll('input[data-source]').length === expectedSourceIds.length,
       'Settings source switches are incomplete');
@@ -264,7 +263,7 @@ async function run() {
         `Library is missing the ${sourceId} source row`);
     }
     for (const sourceId of [
-      'media-ccc', 'library-of-congress', 'gpodder', 'peertube', 'owncast',
+      'media-ccc', 'gpodder', 'peertube', 'owncast',
     ]) {
       const sourceToggle = settings.querySelector(`input[data-source="${sourceId}"]`);
       assert(sourceToggle.checked === false, `${sourceId} did not restore its disabled test state`);

@@ -5,7 +5,11 @@
 import { browseLiveOne } from '../lib/search.js';
 import { playItem } from '../lib/player.js';
 import { subscribe, getState } from '../lib/state.js';
-import { isArtworkRelayUrl, loadArtworkImage, resolveArtworkRelay } from '../lib/artwork.js';
+import {
+  artworkSourceFor, isArtworkRelayUrl, isStationImageSource, loadArtworkImage, resolveArtworkRelay,
+  stationImageSourceFor,
+} from '../lib/artwork.js';
+import { onStationImagesChange } from '../lib/station-images.js';
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
@@ -66,8 +70,9 @@ function beginArtworkWork() {
 
 function hydrateTileArtwork(tile, logoWrap, item) {
   const appendImage = () => {
-    if (!tile.isConnected || !isArtworkRelayUrl(item.thumbnail)
-        || logoWrap.querySelector('img')) return;
+    // The user's own station picture first, then the item's relay artwork.
+    const source = artworkSourceFor(item);
+    if (!tile.isConnected || !source || logoWrap.querySelector('img')) return;
     const img = el('img', {
       className: 'channel-logo',
       attrs: {
@@ -78,21 +83,36 @@ function hydrateTileArtwork(tile, logoWrap, item) {
       },
     });
     logoWrap.appendChild(img);
-    void loadArtworkImage(img, item.thumbnail.trim(), {
+    void loadArtworkImage(img, source, {
       priority: 10,
       signal: artworkAbort?.signal,
     }).then(() => {
       if (img.naturalWidth > 0) img.style.opacity = '1';
     }).catch((error) => {
-      if (error?.name !== 'AbortError') img.style.display = 'none';
+      if (error?.name === 'AbortError') return;
+      img.style.display = 'none';
+      // A station picture that would not load: show the item's own artwork,
+      // unless the tile was already redrawn for it (syncTileStationImages).
+      if (isStationImageSource(source)) {
+        const replaced = img.parentNode !== logoWrap;
+        img.remove();
+        if (!replaced) showOwnArtwork();
+      }
     });
   };
-  if (isArtworkRelayUrl(item.thumbnail)) {
+  const showOwnArtwork = () => {
+    if (isArtworkRelayUrl(item.thumbnail)) {
+      appendImage();
+      return;
+    }
+    resolveArtworkRelay(item, { priority: 10, signal: artworkAbort?.signal })
+      .then(appendImage).catch(() => {});
+  };
+  if (artworkSourceFor(item)) {
     appendImage();
     return;
   }
-  resolveArtworkRelay(item, { priority: 10, signal: artworkAbort?.signal })
-    .then(appendImage).catch(() => {});
+  showOwnArtwork();
 }
 
 function el(tag, opts = {}, ...children) {
@@ -374,23 +394,49 @@ function renderTiles() {
     // target is observed while detached. Mount first so every visible Grid
     // tile either starts immediately or receives a reliable observer event.
     ui.tilesHost.appendChild(tile);
-    if (isArtworkRelayUrl(t.thumbnail)) hydrateTileArtwork(tile, logoWrap, t);
-    else if ('IntersectionObserver' in window) {
-      artworkObserver ||= new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          artworkObserver?.unobserve(entry.target);
-          const cfg = entry.target.__artworkHydration;
-          delete entry.target.__artworkHydration;
-          if (cfg) hydrateTileArtwork(entry.target, cfg.logoWrap, cfg.item);
-        }
-      }, { rootMargin: '480px 0px' });
-      tile.__artworkHydration = { logoWrap, item: t };
-      artworkObserver.observe(tile);
-    } else {
-      hydrateTileArtwork(tile, logoWrap, t);
-    }
+    mountTileArtwork(tile, logoWrap, t);
   }
+}
+
+function mountTileArtwork(tile, logoWrap, t) {
+  // Which station picture this tile shows, so a new list redraws only the
+  // tiles whose picture changed (syncTileStationImages).
+  tile.__stationImage = { logoWrap, item: t, source: stationImageSourceFor(t) };
+  if (artworkSourceFor(t)) hydrateTileArtwork(tile, logoWrap, t);
+  else if ('IntersectionObserver' in window) {
+    artworkObserver ||= new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        artworkObserver?.unobserve(entry.target);
+        const cfg = entry.target.__artworkHydration;
+        delete entry.target.__artworkHydration;
+        if (cfg) hydrateTileArtwork(entry.target, cfg.logoWrap, cfg.item);
+      }
+    }, { rootMargin: '480px 0px' });
+    tile.__artworkHydration = { logoWrap, item: t };
+    artworkObserver.observe(tile);
+  } else {
+    hydrateTileArtwork(tile, logoWrap, t);
+  }
+}
+
+/** The station pictures changed (startup list, Refresh, or one would not
+ *  load): swap the picture on the tiles it concerns and leave every other
+ *  tile, the focus and playback alone. Returns how many tiles were redrawn. */
+export function syncTileStationImages(host = ui.tilesHost) {
+  let redrawn = 0;
+  for (const tile of [...(host?.children || [])]) {
+    const shown = tile.__stationImage;
+    if (!shown || stationImageSourceFor(shown.item) === shown.source) continue;
+    if (tile.__artworkHydration) {
+      artworkObserver?.unobserve(tile);
+      delete tile.__artworkHydration;
+    }
+    for (const img of [...shown.logoWrap.children]) if (img.tagName === 'IMG') img.remove();
+    mountTileArtwork(tile, shown.logoWrap, shown.item);
+    redrawn += 1;
+  }
+  return redrawn;
 }
 
 function activateTile(item, options = {}) {
@@ -445,6 +491,7 @@ export function renderGrid(host) {
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'grid') tryNextTile();
   }));
+  subs.push(onStationImagesChange(() => { syncTileStationImages(); }));
   subs.push(subscribe('mode-change', (mode) => {
     if (mode !== 'grid') tearDown();
   }));

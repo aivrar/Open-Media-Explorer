@@ -64,7 +64,8 @@ test('sanitized provider captures contain no credentials, personal paths, or und
 });
 
 test('all Phase 8 source IDs, rating default, metadata, and stable identity vectors are registered', async () => {
-  const expectedNewIds = ['media-ccc', 'library-of-congress', 'gpodder', 'peertube', 'owncast'];
+  // Library of Congress was in this set; it was removed (loc.gov no longer answers apps).
+  const expectedNewIds = ['media-ccc', 'gpodder', 'peertube', 'owncast'];
   assert.deepEqual(contracts.sourceIds, expectedNewIds);
   assert.equal(new Set(contracts.sourceIds).size, contracts.sourceIds.length);
   assert.deepEqual(contracts.contentRating.values, ['explicit', 'not-explicit', 'unrated']);
@@ -113,7 +114,7 @@ test('all Phase 8 source IDs, rating default, metadata, and stable identity vect
     'favorite refresh must update in place instead of replacing the saved array entry');
 });
 
-test('the eleven-source paging, UI, settings, and packaged-chunk connections share one registry', async () => {
+test('the ten-source paging, UI, settings, and packaged-chunk connections share one registry', async () => {
   const originalIds = [
     'radio-browser', 'iptv-org', 'internet-archive', 'nasa', 'wikimedia', 'librivox',
     ...contracts.sourceIds,
@@ -142,7 +143,7 @@ test('the eleven-source paging, UI, settings, and packaged-chunk connections sha
     assert.match(`${chain}\n${render}`, new RegExp(`['"]${state}['"]`), `missing source state ${state}`);
   }
   assert.match(sidebar, /items:\s*SOURCES\.map/);
-  assert.match(sidebar, /headingNonFav\s*&&\s*\(poolIsEmpty\s*\|\|\s*pendingQuery\)/);
+  assert.match(sidebar, /headingNonFav\s*&&\s*\(\(poolIsEmpty\s*&&\s*chainIdle\)\s*\|\|\s*pendingQuery\)/);
   assert.match(sidebar, /const headingNonFav = !isPersonalSource\(sourceId\)/);
   assert.match(sidebar, /renderResults\(\);\s*renderStatus\(\);\s*updateSentinelStatus\(\);/s);
   assert.match(about, /import \{ SOURCES, getSourceColor \} from ['"]\.\.\/lib\/sources\.js['"]/);
@@ -167,13 +168,6 @@ test('provider fixtures retain every success, retry, safety, and schema-drift br
   assert.ok(ccc.graphqlError.errors.length > 0);
   assert.deepEqual(ccc.liveEmpty, []);
   assert.ok(ccc.liveNonEmpty[0].groups[0].rooms[0].streams.length >= 2);
-
-  const loc = JSON.parse(await readFixture('loc.json', 'utf8'));
-  assert.equal(loc.downloadableItem.resources[0].canDownload, true);
-  assert.equal(loc.restrictedItem.resources[0].download_restricted, true);
-  assert.equal(loc.rateLimit.status, 429);
-  assert.ok(Number(loc.rateLimit.headers['retry-after']) > 0);
-  assert.match(await readFixture('loc-captcha.html', 'utf8'), /captcha/i);
 
   const gpodder = JSON.parse(await readFixture('gpodder.json', 'utf8'));
   assert.ok(gpodder.toplist.length && gpodder.search.length);

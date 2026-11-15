@@ -16,6 +16,7 @@ import { getState } from '../../lib/state.js';
 import { isContentAllowed } from '../../lib/content-rating.js';
 import {
   artworkNeedsResolution,
+  artworkSourceFor,
   createTaskQueue,
   isArtworkRelayUrl,
   loadArtworkImage,
@@ -86,8 +87,9 @@ function startThumbImage(img, opts = {}) {
 
 export function createThumbImage(item, opts = {}) {
   if (!isContentAllowed(item, getState().settings) || item?.__contentHidden === true) return null;
-  if (!isValidThumbnailUrl(item.thumbnail)) return null;
-  const src = item.thumbnail.trim();
+  // The user's own station picture first, then the item's relay artwork.
+  const src = artworkSourceFor(item);
+  if (!src) return null;
   const eager = opts.eager === true;
   const img = el('img', { attrs: {
     alt: '',
@@ -110,7 +112,7 @@ export function createThumbImage(item, opts = {}) {
 }
 
 export function insertThumbImage(thumb, item, beforeNode = null, opts = {}) {
-  if (!isValidThumbnailUrl(item.thumbnail) || thumb.querySelector('img')) return;
+  if (!artworkSourceFor(item) || thumb.querySelector('img')) return;
   const img = createThumbImage(item, opts);
   if (!img) return;
   if (beforeNode?.parentNode === thumb) thumb.insertBefore(img, beforeNode);
@@ -131,7 +133,7 @@ export async function resolveItemArtwork(item, opts = {}) {
 async function hydrateCardThumbnail(item, thumb, beforeNode, opts = {}) {
   if (!item) return;
   try {
-    if (!isValidThumbnailUrl(item.thumbnail)) await resolveItemArtwork(item, opts);
+    if (!artworkSourceFor(item)) await resolveItemArtwork(item, opts);
     if (thumb && thumb.isConnected) {
       insertThumbImage(thumb, item, beforeNode, opts);
       startThumbImage(thumb.querySelector('img'), opts);
@@ -144,12 +146,12 @@ async function hydrateCardThumbnail(item, thumb, beforeNode, opts = {}) {
 
 export function requestThumbnailHydration(card, item, thumb, beforeNode, opts = {}) {
   if (!isContentAllowed(item, getState().settings) || item?.__contentHidden === true) return;
-  const hasRelayArtwork = isValidThumbnailUrl(item.thumbnail);
-  if (!hasRelayArtwork && !artworkNeedsResolution(item)) return;
+  const hasArtwork = Boolean(artworkSourceFor(item));
+  if (!hasArtwork && !artworkNeedsResolution(item)) return;
   const signal = opts.signal || getThumbnailHydrationSignal();
   const activate = (priority, eager) => {
     const activeOptions = { ...opts, signal, priority, eager };
-    if (isValidThumbnailUrl(item.thumbnail)) {
+    if (artworkSourceFor(item)) {
       startThumbImage(thumb?.querySelector('img'), activeOptions);
     } else {
       hydrateCardThumbnail(item, thumb, beforeNode, activeOptions);
@@ -186,7 +188,7 @@ export function requestThumbnailHydration(card, item, thumb, beforeNode, opts = 
           priority: visibleNow ? 20 : 5,
           eager: visibleNow,
         };
-        if (isValidThumbnailUrl(cfg.item.thumbnail)) {
+        if (artworkSourceFor(cfg.item)) {
           startThumbImage(cfg.thumb?.querySelector('img'), activeOptions);
         } else {
           hydrateCardThumbnail(cfg.item, cfg.thumb, cfg.beforeNode, activeOptions);

@@ -10,8 +10,8 @@
 4. Retry the smallest affected operation: source **Retry now**, player **Play**,
    capture **Retry**, or FFmpeg **Repair**.
 
-Do not clear the cache first. It deletes favorites, preferences, EQ, and job
-history.
+Do not clear the cache first. It deletes favorites, favorites categories,
+preferences, EQ, the song log, and job history.
 
 ## App will not start
 
@@ -67,8 +67,8 @@ sources show Done. Scroll near the bottom or press **Load more** when the
 rendered window is ahead of the active fetch. Disable a provider in Settings if
 it is persistently rate-limited, then re-enable it later.
 
-Library search and browse lanes are independent. A slow Library of Congress
-request, dead podcast feed, or offline Owncast server must not retire the other
+Library search and browse lanes are independent. A slow archive request, dead
+podcast feed, or offline Owncast server must not retire the other
 sources. Public providers can still be unavailable for hours; the app cannot
 invent missing records.
 
@@ -88,6 +88,26 @@ when an image failed after bounded retries, or while lazy hydration is pending.
 Grid mounts a tile before observing it so WebView2 receives the initial visibility
 event; rebuilding from the current source includes this fix.
 
+## My own station picture does not show
+
+Pictures in the `station-images` folder (Settings → Station images → **Open
+folder**) are matched by file name. Check:
+
+- The file name, without its extension, must be the station's name. Capital
+  letters, extra spaces, and characters Windows does not allow in file names
+  (`\ / : * ? " < > |`) do not matter, so `ACDC Radio.png` works for
+  `AC/DC Radio`. A longer or different name does not match.
+- Press **Refresh** under Station images. World Media looks at the folder when
+  it starts and when you press **Refresh**, not while you add files.
+- Read the line under the buttons. It says how many pictures were found and
+  why files were ignored, for example `1 ignored: too large.`
+- Only PNG, JPG, WebP and GIF files up to 2 MB are used, and each must be a
+  real picture of that kind. An SVG, or a file of another kind that was
+  renamed, is ignored.
+- Only plain files directly in the folder are used. Files in a subfolder and
+  shortcuts are ignored.
+- If two files match the same station, the one whose name sorts first is used.
+
 ## Playback will not start
 
 1. Press Play once more. A failed item rebuilds its relay/HLS/DASH session.
@@ -101,6 +121,15 @@ event; rebuilding from the current source includes this fix.
 For IPTV/PeerTube/Owncast/HLS, a directory record can outlive the broadcaster.
 For finite video, a missing codec or unsupported DRM can make playback
 unavailable even when the metadata card is valid.
+
+## A stream under Other streams does not play
+
+**Other streams** (in the detail panel of a Radio Browser station) lists other
+directory entries with the same station name and homepage. World Media does
+not test them first, and it never switches to one for you. An entry can be dead
+at its provider like any other station. Try another entry in the list, or go
+back to the first stream. One station name can also cover different channels,
+so an entry may be a different mix of the same station.
 
 ## Playback is jumpy or stops after starting
 
@@ -116,6 +145,35 @@ buffer, and can lower the HLS rendition after repeated stalls. Improve results b
 
 If the broadcaster's rolling window is missing segments, only the provider can
 fix it. A successful connection is not a guarantee of continuous uptime.
+
+## "Connection lost" in the player bar
+
+A live stream that was playing and then lost its connection is retried by
+itself, for up to ten minutes. The player bar says:
+
+| Text | Meaning |
+|---|---|
+| **Connection lost. Retrying...** | World Media is waiting for the next attempt, or making one. |
+| **Can't reconnect. Press Play.** | Ten minutes passed without success. The station may be offline. Press **Play** to try again, or use **Try next**. |
+| **Connection lost. Press Play.** | You paused while it was retrying. **Play** tries again at once. |
+
+A station that never started playing is not retried. It shows the usual error.
+A stream that freezes without any error is restarted after about 20 seconds.
+
+## No song title appears
+
+The title under the station name comes from the station, so there are a few
+reasons for none:
+
+- The station does not send titles. Many do not. Nothing is added to the Song
+  log for them.
+- The station is delivered as HLS. Titles are only read from streams that are
+  played directly.
+- The station sends a jingle name, an advertisement or filler text instead of
+  the song. World Media shows what the station sends.
+- A title can take a few seconds to appear, and again to change.
+- An old Shoutcast server that answers "ICY 200 OK" instead of a normal web
+  reply does not play in World Media at all.
 
 ## Download fails
 
@@ -143,6 +201,17 @@ fix it. A successful connection is not a guarantee of continuous uptime.
 Turning Recorder off requests an orderly stop/cancel once and prevents a retry
 storm. Downloads and ordinary playback remain available.
 
+## Backup does not work
+
+- "Backup not made: your latest favorites and settings could not be saved
+  first" means the copy in the data folder is not up to date, so no ZIP was
+  written. Try again in a moment, and check free disk space.
+- "The downloads folder is not available" means the backup ZIP has nowhere to
+  go. The ZIP is written to the `downloads` folder beside the app; check in
+  Settings that it is writable.
+- There is no restore button. See [Data, cache, and
+  portability](05-data-cache-and-portability.md) for how to copy a backup back.
+
 ## Shutdown does not finish
 
 Shutdown is terminal and gives catalog, asset, media, jobs, downloads, and
@@ -161,12 +230,15 @@ Never delete `WorldMediaWindows-data` to solve a shutdown delay.
 ## Provider-specific symptoms
 
 - **Radio Browser:** the app probes a public mirror and retries once with a new
-  mirror if it dies. Individual station URLs remain community-maintained.
+  mirror if it dies. Individual station URLs remain community-maintained. An
+  old Shoutcast server that answers "ICY 200 OK" does not play.
 - **iptv-org:** try next candidate; logos and streams are separate data lanes.
 - **Internet Archive:** metadata is rate-gated; retrying the same cursor is
   expected during an Archive brownout.
-- **Library of Congress:** CAPTCHA/429 can cause a long wait even below the
-  published limit; do not hammer Retry now repeatedly.
+- **Library of Congress:** no longer in the app. Its site stopped answering
+  apps (it asks for a browser check), so the source was removed. Saved items
+  from it stay listed; one that cannot be played without the old source says
+  "Source no longer available." in the player bar.
 - **gPodder:** a directory result can point to a slow/dead publisher feed; the
   feed scheduler isolates that host.
 - **PeerTube:** exact instance origins can return `Retry-After`; wait for the

@@ -1,0 +1,133 @@
+/* ============ Song log panel ============ */
+
+.song-log-modal {
+  width: min(720px, 92vw);
+  /* A steady height, so the dialog does not jump while songs come in. */
+  height: min(85vh, 760px);
+}
+
+.song-log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.song-log-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.song-log-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.song-log-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 0 18px;
+}
+.song-log-status:not(:has(> .song-log-status-text:empty)) {
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.song-log-status-text {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.song-log-status-text[data-state="error"] { color: var(--danger); }
+
+.song-log-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+}
+.song-log-empty {
+  margin: 0;
+  padding: 36px 24px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.song-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.song-log-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  /* Rows off screen are not laid out, so 500 songs open quickly. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
+}
+.song-log-row:last-child { border-bottom: 0; }
+.song-log-row:hover { background: var(--bg-elev-2); }
+
+.song-log-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.song-log-title {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  /* Long titles wrap to two lines, then are cut; the full text is on hover. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.song-log-meta {
+  display: flex;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.song-log-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.song-log-sep { flex: 0 0 auto; white-space: pre; }
+.song-log-station {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.song-log-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.btn.btn-small {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.song-log-modal .btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .song-log-modal { height: 92vh; }
+  .song-log-row { flex-wrap: wrap; }
+  .song-log-row-actions { margin-left: auto; }
+}

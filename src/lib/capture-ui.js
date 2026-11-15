@@ -54,6 +54,9 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   let refreshVersion = 0;
   let actionGeneration = 0;
   let observedItemId = currentItem()?.id || '';
+  // Play of this item failed before any playable stream: nothing is being
+  // checked any more. Cleared when the next Play of an item starts.
+  let unplayableItemId = '';
   let lastAnnouncementKey = '';
   let eqEngineStatus = { state: 'idle', reason: '' };
   let eqPreview = null;
@@ -98,7 +101,10 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
 
   function viewForCurrent() {
     const item = currentItem();
-    const capability = resolveMediaAction(item);
+    let capability = resolveMediaAction(item);
+    if (capability === 'checking' && item?.id && item.id === unplayableItemId) {
+      capability = 'unavailable';
+    }
     let view = deriveCaptureView({ item, capability, jobs, toolState, transient, ignoredJobIds });
     const activeRecording = jobs.some(
       (job) => job.kind?.startsWith('record-') && ACTIVE_JOB_STATES.has(job.state),
@@ -453,8 +459,15 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     });
     render();
   }));
+  unsubscribers.push(subscribe('media-unplayable', ({ itemId = '' } = {}) => {
+    if (!itemId || itemId !== currentItem()?.id) return;
+    unplayableItemId = itemId;
+    render();
+  }));
   unsubscribers.push(subscribe('current-item', (nextItem) => {
     const nextItemId = nextItem?.id || '';
+    // Every Play announces its item again: check afresh.
+    unplayableItemId = '';
     if (nextItemId !== observedItemId) {
       actionGeneration++;
       installWait?.abort();

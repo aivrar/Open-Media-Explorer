@@ -8,7 +8,12 @@
 
 import { registerCatalogAsset } from './catalog-client.js';
 import { safeExternalUrl } from './item-model.js';
-import { loadAdapter } from './sources.js';
+import { isRetiredSource, loadAdapter } from './sources.js';
+import {
+  isStationImageSource, markStationImageFailed, stationImageSourceFor, stationImageUrl,
+} from './station-images.js';
+
+export { isStationImageSource, stationImageSourceFor } from './station-images.js';
 
 export const ARTWORK_MAX_CONCURRENT = 12;
 export const ARTWORK_MAX_ATTEMPTS = 3;
@@ -27,6 +32,19 @@ const LOCAL_ASSET_RELAY = /^\/api\/v1\/assets\/[A-Za-z0-9_-]{16,}$/;
 
 export function isArtworkRelayUrl(value) {
   return typeof value === 'string' && LOCAL_ASSET_RELAY.test(value.trim());
+}
+
+/**
+ * What an item's image shows: the user's own picture from the station-images
+ * folder when one is named like the item (station-images.js), otherwise its
+ * relay artwork, otherwise '' (the initials tile). Every view asks this, so a
+ * custom picture takes priority everywhere without per-view rules. A custom
+ * picture that will not load is marked failed, and the item goes back to its
+ * own artwork.
+ */
+export function artworkSourceFor(item) {
+  return stationImageSourceFor(item)
+    || (isArtworkRelayUrl(item?.thumbnail) ? item.thumbnail.trim() : '');
 }
 
 /** Canonicalize provider artwork metadata without ever attaching it to DOM. */
@@ -217,6 +235,7 @@ function waitForArtworkImage(image, source, signal, requireConnected = true, tim
  */
 export async function loadArtworkImage(image, relayUrl, opts = {}) {
   const source = typeof relayUrl === 'string' ? relayUrl.trim() : '';
+  if (isStationImageSource(source)) return loadStationArtwork(image, source, opts);
   if (!isArtworkRelayUrl(source)) {
     throw imageLoadError('Artwork image source is not an opaque relay URL.');
   }
@@ -239,6 +258,24 @@ export async function loadArtworkImage(image, relayUrl, opts = {}) {
     }
   }
   throw lastError || imageLoadError();
+}
+
+/** A custom station picture: fetched once (with the session token) and shown
+ *  through its object URL, in the same bounded image queue. One try: a
+ *  picture that fails is marked failed so its item falls back to its own
+ *  artwork, never to a broken image. */
+async function loadStationArtwork(image, source, opts = {}) {
+  const signal = opts.signal;
+  try {
+    return await artworkImageQueue.enqueue(async () => {
+      const url = await stationImageUrl(source, { fetchImpl: opts.fetchImpl, createUrl: opts.createUrl });
+      if (signal?.aborted) throw artworkAbortError(signal.reason);
+      return waitForArtworkImage(image, url, signal, opts.requireConnected !== false, opts.imageTimeoutMs);
+    }, opts.priority || 0, { signal });
+  } catch (error) {
+    if (error?.name !== 'AbortError' && !signal?.aborted) markStationImageFailed(source);
+    throw error;
+  }
 }
 
 async function runArtworkTask(task, opts = {}) {
@@ -330,6 +367,9 @@ async function registerProviderArtwork(item, url, opts) {
 
 async function performResolution(item, candidate, opts) {
   if (candidate) return registerProviderArtwork(item, candidate, opts);
+  // A removed source has no adapter to ask. Artwork the item already carries
+  // was registered above like any other; without it, the initials tile shows.
+  if (isRetiredSource(item.source)) return { relayUrl: '', canonicalUrl: '' };
 
   const loadAdapterImpl = opts.loadAdapterImpl || loadAdapter;
   const adapter = await loadAdapterImpl(item.source);

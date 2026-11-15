@@ -29,6 +29,9 @@ API. Local relay IDs are short-lived and are removed from persisted favorites.
 - **Seek** is enabled for finite media with a known duration. Live streams
   normally have no seek range.
 - **Mute** and **volume** affect playback only. Volume is persisted locally.
+  The speaker button shows a crossed-out speaker when the sound is muted or the
+  volume is at zero. Point at the slider to see the volume as a percentage: it
+  starts at 80%, and 100% is full volume (there is no boost).
 - The player star changes the same favorite record as a card star.
 - The small video overlay sits above the bottom player and supports the browser
   media element's full-screen controls.
@@ -46,6 +49,70 @@ the current viewing session. The recovery controller retries recoverable fatal
 errors, waits for startup buffer, and reports a terminal error when the origin
 cannot provide a usable playlist/segment. This improves rough channels but
 cannot fix an overloaded broadcaster or poor network path.
+
+### Reconnecting a live stream
+
+When a live radio or TV stream that was playing loses its connection, World
+Media tries again by itself instead of stopping. The player bar says
+"Connection lost. Retrying...". The pauses between attempts grow (2, 4, 8 and 16
+seconds, then 30 seconds each) and the retrying lasts up to ten minutes. Each
+attempt rebuilds the stream exactly as **Play** does. Once the stream has
+played for about 30 seconds in total, the retrying is over. If nothing works
+in ten minutes, the bar says "Can't reconnect. Press Play." **Try next** stays
+available while it retries.
+
+- **Pause** ends the retrying, and the bar says "Connection lost. Press Play."
+  **Stop** and the sleep timer end it too.
+- **Play** tries again at once. So does Windows reporting that the network is
+  back.
+- A station that never started playing is not retried. It shows the usual
+  error and **Try next**.
+
+A live stream that is played directly (not as HLS or DASH) can also freeze
+without any error. If the sound or picture stands still for about 20 seconds
+while it should be playing, World Media treats that as a lost connection and
+reconnects in the same way.
+
+### Song title
+
+Many internet radio stations announce the song they are playing. When a
+station does, the player bar shows the title under the station name, with a
+note sign, in place of the usual line (source, country and language, which stay
+readable when you point at it). The Windows media overlay shows the song as the
+title and the station as the artist. The title changes by itself when the next
+song starts, and it goes away when playback stops or the station is changed.
+
+- It works for radio and audio streams that are played directly (Shoutcast
+  and Icecast style streams, which carry the title inside the audio).
+  Stations that are delivered as HLS do not show one.
+- Not every station sends titles. Some send a jingle name, an advertisement or
+  filler text instead of a song. World Media shows what the station sends.
+- A recording or a download never asks the station for titles, so the saved
+  file is the same as before. A station whose server breaks when it is asked
+  for titles is played without them, and is not asked again for an hour.
+- The title is plain text. A station cannot make World Media open a link or
+  show formatted text.
+
+Every new title is added to the **Song log** (the musical note in the top bar).
+See [Using the application](02-using-the-application.md) for the log.
+
+### Stream format and other streams
+
+Radio Browser stations list the format and bitrate of their stream. World
+Media shows it as one short label, for example "MP3 · 128 kbps", in the detail
+panel, on the card when **Show technical source details** is on, and when you
+point at the source line in the player bar. It is what the directory says, not
+a measurement of the stream. A station with no such information has no label.
+
+The detail panel of a Radio Browser station also has an **Other streams**
+button. It lists other Radio Browser entries for the same station (the same
+name, ignoring a trailing hint such as "128k" or "HD", and the same homepage),
+up to 20, each with a **Play** button and its own label. Entries the directory
+marks as broken are left out. Nothing is chosen or switched for you: pick one
+by hand when the first stream sounds poor or does not play. A station without a
+homepage lists stations with the same name, and the list says they may be
+different stations. Items from your own playlists have no **Other streams**
+button. A stream on the list can still be dead at its provider.
 
 ### Playback priority and thumbnails
 

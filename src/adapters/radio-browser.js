@@ -8,6 +8,8 @@
 
 import { getJson } from '../lib/http.js';
 import { makeItem, prefixId, detectStreamKind } from '../lib/item-model.js';
+import { cleanBitrate, cleanCodec, isHlsFlag } from '../lib/stream-quality.js';
+import { canFindOtherStreams, matchOtherStreams, otherStreamsQuery } from '../lib/other-streams.js';
 
 export const id = 'radio-browser';
 export const displayName = 'Radio Browser';
@@ -89,6 +91,7 @@ function normalize(station) {
   if (!station || !station.stationuuid || !station.url_resolved) return null;
   const tags = (station.tags || '').split(',').map((s) => s.trim()).filter(Boolean);
   let lang = (station.languagecodes || station.language || '').split(',')[0].trim();
+  const hls = isHlsFlag(station.hls);
   return makeItem({
     id: prefixId(id, station.stationuuid),
     title: station.name?.trim() || 'Unnamed Station',
@@ -96,7 +99,7 @@ function normalize(station) {
     source: id,
     type: 'radio',
     stream_url: station.url_resolved,
-    stream_kind: station.hls === true || Number(station.hls) === 1
+    stream_kind: hls || Number(station.hls) === 1
       ? 'hls'
       : detectStreamKind(station.url_resolved, 'audio'),
     delivery: 'live',
@@ -110,8 +113,22 @@ function normalize(station) {
     tags,
     license: 'See source',
     source_url: station.homepage || `https://www.radio-browser.info/`,
-    _extra: { stationuuid: station.stationuuid, clickcount: station.clickcount || 0 },
+    // Directory-reported format and bitrate (kbps, 0 = unknown), shown as a
+    // short label; see lib/stream-quality.js.
+    _extra: {
+      stationuuid: station.stationuuid,
+      clickcount: station.clickcount || 0,
+      bitrate: cleanBitrate(station.bitrate),
+      codec: cleanCodec(station.codec),
+      hls,
+    },
   });
+}
+
+/** Radio Browser marks a station whose last check failed with lastcheckok 0. */
+function isBrokenStation(station) {
+  const flag = station?.lastcheckok;
+  return flag === false || flag === 0 || flag === '0' || flag === 'false';
 }
 
 async function fetchStations(path, opts = {}) {
@@ -194,6 +211,26 @@ export async function random(opts = {}) {
   if (opts.tag) params.set('tag', opts.tag);
   const data = await fetchStations(`/json/stations/search?${params.toString()}`, opts);
   return data.map(normalize).filter(Boolean);
+}
+
+/**
+ * Other Radio Browser entries for the same station, for the user to pick by
+ * hand. One name search (the directory's own search endpoint), then the
+ * strict rule in lib/other-streams.js. Returns { streams, total, sameNameOnly }.
+ */
+export async function findOtherStreams(item, opts = {}) {
+  if (!canFindOtherStreams(item)) return matchOtherStreams(item, []);
+  const params = new URLSearchParams({
+    name: otherStreamsQuery(item.title),
+    limit: '100',
+    offset: '0',
+    hidebroken: 'true',
+    order: 'clickcount',
+    reverse: 'true',
+  });
+  const data = await fetchStations(`/json/stations/search?${params.toString()}`, opts);
+  const candidates = data.filter((station) => !isBrokenStation(station)).map(normalize).filter(Boolean);
+  return matchOtherStreams(item, candidates, { limit: opts.limit });
 }
 
 /**

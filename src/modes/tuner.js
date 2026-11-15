@@ -8,6 +8,8 @@
  *
  * Source "★ My favorites" puts only the user's starred stations for the band
  * on the dial (no network needed). That choice is remembered in settings.
+ * Each favorites category with stations in it follows as its own entry
+ * ("\u2605 Rock"), for this session; see lib/favorite-groups.js.
  */
 
 import { browseLiveOne } from '../lib/search.js';
@@ -17,6 +19,8 @@ import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js'
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
 import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
+import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorites-order.js';
+import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -42,10 +46,11 @@ const state = {
   loadGen: 0,
   rotationDeg: 0,
   requestAbort: null,
-  sourceFilter: 'all', // 'all' | 'favorites' | source id
+  sourceFilter: 'all', // 'all' | 'favorites' | 'favgroup:<category id>' | source id
   sourceStates: new Map(),
   enabledSignature: '',
   contentPreference: false,
+  favoritesSort: '',
 };
 
 const ui = {};
@@ -101,7 +106,7 @@ function buildShell() {
     attrs: { 'aria-label': 'Live media source' },
     on: { change: () => {
       state.sourceFilter = ui.sourceSel.value;
-      const favoritesOnly = state.sourceFilter === FAVORITES;
+      const favoritesOnly = isFavoritesSource(state.sourceFilter);
       if ((getState().settings.tunerFavoritesOnly === true) !== favoritesOnly) {
         saveSettings({ tunerFavoritesOnly: favoritesOnly });
       }
@@ -360,16 +365,51 @@ function contentAwareLiveSourceIds() {
 }
 
 const FAVORITES = 'favorites';
+const FAVORITE_GROUP_PREFIX = 'favgroup:';
+
+/** "My favorites" or one of its categories: starred stations only, no network. */
+function isFavoritesSource(value) {
+  return value === FAVORITES || String(value || '').startsWith(FAVORITE_GROUP_PREFIX);
+}
+
+function favoriteGroupSource(value = state.sourceFilter) {
+  return String(value || '').startsWith(FAVORITE_GROUP_PREFIX) ? value.slice(FAVORITE_GROUP_PREFIX.length) : '';
+}
+
+/** The categories offered on the Source list: those holding at least one
+ *  favorite (of any band), in the order they were made. */
+export function tunerFavoriteGroups(favorites = getState().favorites) {
+  const { counts } = favoriteGroupCounts(favorites);
+  return favoriteGroupsSnapshot().groups.filter((group) => (counts.get(group.id) || 0) > 0);
+}
+
+/** The Source choice to keep: a category that was deleted or has no
+ *  favorites left falls back to "My favorites"; anything else stays. */
+export function keptFavoriteSource(value, favorites = getState().favorites) {
+  const groupId = favoriteGroupSource(value);
+  if (!groupId) return value;
+  return tunerFavoriteGroups(favorites).some((group) => group.id === groupId) ? value : FAVORITES;
+}
+
+function reconcileFavoriteGroupSource() {
+  state.sourceFilter = keptFavoriteSource(state.sourceFilter);
+}
 
 function rebuildSourceSelect() {
   const sources = liveSources();
-  if (state.sourceFilter !== 'all' && state.sourceFilter !== FAVORITES
+  reconcileFavoriteGroupSource();
+  if (state.sourceFilter !== 'all' && !isFavoritesSource(state.sourceFilter)
       && !sources.some(({ id }) => id === state.sourceFilter)) {
     state.sourceFilter = 'all';
   }
   ui.sourceSel.innerHTML = '';
   ui.sourceSel.appendChild(el('option', { attrs: { value: 'all' }, text: 'All live sources' }));
   ui.sourceSel.appendChild(el('option', { attrs: { value: FAVORITES }, text: '★ My favorites' }));
+  for (const group of tunerFavoriteGroups()) {
+    ui.sourceSel.appendChild(el('option', {
+      attrs: { value: FAVORITE_GROUP_PREFIX + group.id, title: group.name }, text: `\u2605 ${group.name}`,
+    }));
+  }
   for (const source of sources) {
     ui.sourceSel.appendChild(el('option', { attrs: { value: source.id }, text: source.displayName }));
   }
@@ -382,8 +422,10 @@ function renderSourceStatus() {
   const failures = states.filter(({ state: value }) => value === 'error').length;
   const completed = states.filter(({ state: value }) => value === 'ready').length;
   const count = state.stations.length;
-  if (state.sourceFilter === FAVORITES) {
-    ui.status.textContent = `${count} favorite ${state.band === 'radio' ? 'stations' : 'channels'}`;
+  if (isFavoritesSource(state.sourceFilter)) {
+    const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
+    ui.status.textContent = `${count} favorite ${state.band === 'radio' ? 'stations' : 'channels'}`
+      + (groupName ? ` in ${groupName}` : '');
     return;
   }
   const noun = state.band === 'radio' ? 'stations' : 'channels';
@@ -396,10 +438,17 @@ function renderSourceStatus() {
     + (state.loading ? pendingSourcesText(state.sourceStates) : '');
 }
 
+/** The only way the station list changes, so the dial's hover glow
+ *  (`can-turn`) always matches whether the wheel can turn it. */
+function setStations(stations) {
+  state.stations = stations;
+  ui.dialWrap?.classList.toggle('can-turn', dialCanTurn(stations.length));
+}
+
 /** Put one source's stations on the dial without moving the user's place. */
 function publishStations(sourceId, items, fallbackId = '') {
   const keepId = state.stations[state.index]?.id || fallbackId;
-  state.stations = mergeSourceItems(state.stations, sourceId, items, state.band);
+  setStations(mergeSourceItems(state.stations, sourceId, items, state.band));
   const kept = keepId ? state.stations.findIndex((item) => item.id === keepId) : -1;
   state.index = kept >= 0 ? kept : Math.min(state.index, Math.max(0, state.stations.length - 1));
   // Re-anchor the dial: the station count changed, so the old angle would
@@ -436,15 +485,26 @@ function tuneCurrent({ restart = true } = {}) {
 }
 
 /** Starred stations for the current band (and country, when one is chosen),
- *  in the order they were saved. Purely local: no source requests. */
-export function favoriteStations(favorites, { band, country = '', settings = {} } = {}) {
+ *  in the order the Library shows favorites ("My order" or A-Z, from
+ *  settings.favoritesSort). With `groupId`, only that category's stations.
+ *  Purely local: no source requests. */
+export function favoriteStations(favorites, { band, country = '', settings = {}, groupId = '' } = {}) {
   const seen = new Set();
-  const matches = (favorites || []).filter((item) => (
+  const groups = groupId ? favoriteGroupsSnapshot() : null;
+  const matches = favoritesInDisplayOrder(favorites, settings).filter((item) => (
     item?.id && item.type === band
     && (!country || String(item.country || '').toUpperCase() === country)
+    && (!groups || groups.groupOf(item.id) === groupId)
     && !seen.has(item.id) && seen.add(item.id)
   ));
   return filterContentItems(matches, settings);
+}
+
+/** Where the dial lands after its list is rebuilt: on the selected station
+ *  when it is still listed, otherwise on the first station. */
+export function keptStationIndex(stations, selectedId) {
+  const kept = selectedId ? (stations || []).findIndex((item) => item?.id === selectedId) : -1;
+  return kept >= 0 ? kept : 0;
 }
 
 function loadFavoriteStations() {
@@ -454,11 +514,14 @@ function loadFavoriteStations() {
   state.loading = false;
   state.sourceStates = new Map();
   const selectedId = state.stations[state.index]?.id || getState().currentItem?.id || '';
-  state.stations = favoriteStations(getState().favorites, {
+  reconcileFavoriteGroupSource();
+  setStations(favoriteStations(getState().favorites, {
     band: state.band, country: state.country, settings: getState().settings,
-  });
-  const restored = selectedId ? state.stations.findIndex((item) => item.id === selectedId) : -1;
-  state.index = restored >= 0 ? restored : 0;
+    groupId: favoriteGroupSource(),
+  }));
+  // A reorder or a new sort keeps the dial on the same station, and nothing
+  // here tunes, so the stream playing now is not restarted.
+  state.index = keptStationIndex(state.stations, selectedId);
   state.rotationDeg = state.index * 12;
   rebuildSourceSelect();
   applyRotation();
@@ -468,7 +531,7 @@ function loadFavoriteStations() {
 }
 
 async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
-  if (state.sourceFilter === FAVORITES) {
+  if (isFavoritesSource(state.sourceFilter)) {
     loadFavoriteStations();
     return;
   }
@@ -478,7 +541,7 @@ async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
   state.loading = true;
   const selectedId = state.stations[state.index]?.id || '';
   if (!preserve) {
-    state.stations = [];
+    setStations([]);
     state.index = 0;
     state.rotationDeg = 0;
   }
@@ -496,7 +559,7 @@ async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
       && (!onlySourceIds || onlySourceIds.has(source.id))
     ));
     if (candidates.length === 0) {
-      if (!preserve) state.stations = [];
+      if (!preserve) setStations([]);
       state.loading = false;
       updateFrequencyDisplay();
       renderStrip();
@@ -532,7 +595,7 @@ async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
   } catch (err) {
     if (gen !== state.loadGen) return;
     if (err?.name !== 'AbortError') console.warn('Tuner load failed:', err);
-    if (!preserve) state.stations = [];
+    if (!preserve) setStations([]);
   }
   if (gen !== state.loadGen) return;
   state.requestAbort = null;
@@ -559,7 +622,7 @@ function applyContentPreference(showExplicit) {
   state.requestAbort = null;
   state.loading = false;
   const selectedId = state.stations[state.index]?.id || '';
-  state.stations = filterContentItems(state.stations, false);
+  setStations(filterContentItems(state.stations, false));
   const restoredIndex = selectedId
     ? state.stations.findIndex((item) => item.id === selectedId)
     : -1;
@@ -583,8 +646,8 @@ function applyContentPreference(showExplicit) {
 
 function setBand(b) {
   state.band = b;
-  // "My favorites" applies to both bands; a specific source may not.
-  if (state.sourceFilter !== FAVORITES) state.sourceFilter = 'all';
+  // "My favorites" (and its categories) applies to both bands; a specific source may not.
+  if (!isFavoritesSource(state.sourceFilter)) state.sourceFilter = 'all';
   for (const btn of document.querySelectorAll('.tuner-band-switch button')) {
     const active = btn.dataset.band === b;
     btn.classList.toggle('is-active', active);
@@ -598,7 +661,13 @@ function renderStrip() {
   ui.strip.innerHTML = '';
   if (state.stations.length === 0) {
     let text = state.loading ? 'Loading stations…' : 'No stations found for this country.';
-    if (state.sourceFilter === FAVORITES) {
+    const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
+    if (groupName) {
+      const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
+      text = state.country
+        ? `No favorite ${what} in ${groupName} for this country.`
+        : `No favorite ${what} in ${groupName}.`;
+    } else if (state.sourceFilter === FAVORITES) {
       const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
       text = state.country
         ? `No favorite ${what} for this country.`
@@ -667,12 +736,16 @@ function tearDown() {
 
 export function renderTuner(host) {
   tearDown();
-  if (getState().settings.tunerFavoritesOnly === true) state.sourceFilter = FAVORITES;
-  else if (state.sourceFilter === FAVORITES) state.sourceFilter = 'all';
+  // A category chosen earlier this session stays chosen; otherwise the saved
+  // "My favorites" choice decides.
+  if (getState().settings.tunerFavoritesOnly === true) {
+    if (!favoriteGroupSource()) state.sourceFilter = FAVORITES;
+  } else if (isFavoritesSource(state.sourceFilter)) state.sourceFilter = 'all';
   const root = buildShell();
   host.appendChild(root);
   state.enabledSignature = enabledSignature();
   state.contentPreference = getState().settings.showExplicitContent === true;
+  state.favoritesSort = normalizeFavoritesSort(getState().settings.favoritesSort);
   loadStations();
   root.focus();
   subs.push(subscribe('settings-change', (settings) => {
@@ -681,17 +754,25 @@ export function renderTuner(host) {
     const nextPreference = settings.showExplicitContent === true;
     const sourcesChanged = nextSignature !== state.enabledSignature;
     const contentChanged = nextPreference !== state.contentPreference;
+    const nextSort = normalizeFavoritesSort(settings.favoritesSort);
+    const sortChanged = nextSort !== state.favoritesSort;
     state.enabledSignature = nextSignature;
     state.contentPreference = nextPreference;
-    if (state.sourceFilter === FAVORITES) {
-      if (sourcesChanged || contentChanged) loadFavoriteStations();
+    state.favoritesSort = nextSort;
+    if (isFavoritesSource(state.sourceFilter)) {
+      if (sourcesChanged || contentChanged || sortChanged) loadFavoriteStations();
     } else if (sourcesChanged) loadStations();
     else if (contentChanged) applyContentPreference(nextPreference);
   }));
   subs.push(subscribe('favorites-change', () => {
     if (getState().mode !== 'tuner') return;
-    if (state.sourceFilter === FAVORITES) loadFavoriteStations();
-    else { updateFrequencyDisplay(); renderStrip(); }
+    if (isFavoritesSource(state.sourceFilter)) loadFavoriteStations();
+    else { rebuildSourceSelect(); updateFrequencyDisplay(); renderStrip(); }
+  }));
+  subs.push(subscribe(FAVORITE_GROUPS_EVENT, () => {
+    if (getState().mode !== 'tuner') return;
+    if (isFavoritesSource(state.sourceFilter)) loadFavoriteStations();
+    else rebuildSourceSelect();
   }));
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'tuner') step(1);

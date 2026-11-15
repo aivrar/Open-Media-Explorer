@@ -16,20 +16,25 @@
  *     tunerFavoritesOnly: bool,
  *     showTechnicalDetails: bool,
  *     videoSize: 'normal' | 'large',
+ *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
  *   },
  *   sleepTimer: { until: number | null }
  * }
  */
 
-import { SOURCE_IDS } from './sources.js';
+import { isRetiredSource, SOURCE_IDS } from './sources.js';
 import { makeItem } from './item-model.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
+  addFavoritesEq, saveEqState,
 } from './eq-store.js';
 import { DEFAULT_RECORDING_QUALITY, normalizeRecordingQuality } from './recording-profiles.js';
 import { repairFiniteMediaFields } from './media-capabilities.js';
 import { applyTheme, normalizeTheme } from './themes.js';
+import { FAVORITES_SORT_MANUAL, favoritesInDisplayOrder, normalizeFavoritesSort } from './favorites-order.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
+import { songLog } from './song-log.js';
+import { STREAM_QUALITY_FIELDS } from './stream-quality.js';
 import {
   cancelScheduledProfileHandoff,
   clearProfileHandoff,
@@ -42,6 +47,8 @@ export const STORAGE_KEYS = {
   settings: 'worldmedia.settings.v1',
   volume:    'worldmedia.volume.v1',
   jobs:      'worldmedia.jobs.v1',
+  // Favorites categories (lib/favorite-groups.js), kept apart from the list.
+  favoriteGroups: 'worldmedia.favgroups.v1',
 };
 
 export const SETTINGS_VERSION = 1;
@@ -73,6 +80,7 @@ const DEFAULT_SETTINGS = {
   tunerFavoritesOnly: false,
   showTechnicalDetails: false,
   videoSize: 'normal',
+  favoritesSort: FAVORITES_SORT_MANUAL,
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
 
@@ -93,6 +101,8 @@ export function normalizeSettings(value) {
   const enabledSources = { ...DEFAULT_SETTINGS.enabledSources };
   if (source.enabledSources && typeof source.enabledSources === 'object' && !Array.isArray(source.enabledSources)) {
     for (const [sourceId, enabled] of Object.entries(source.enabledSources)) {
+      // A switch saved for a source the app no longer offers is dropped quietly.
+      if (isRetiredSource(sourceId)) continue;
       if (typeof enabled === 'boolean') enabledSources[sourceId] = enabled;
     }
   }
@@ -112,6 +122,7 @@ export function normalizeSettings(value) {
     tunerFavoritesOnly: source.tunerFavoritesOnly === true,
     showTechnicalDetails: source.showTechnicalDetails === true,
     videoSize: source.videoSize === 'large' ? 'large' : 'normal',
+    favoritesSort: normalizeFavoritesSort(source.favoritesSort),
     enabledSources,
   };
 }
@@ -218,20 +229,72 @@ export function setPlaying(playing) {
 /* ============ Favorites ============ */
 
 export function addFavorite(item) {
-  if (!item || !item.id) return;
-  if (state.favorites.some((f) => f.id === item.id)) return;
-  emit('eq-before-scope-change', { itemId: item.id, scope: 'favorite' });
+  // Same identity rule as the bulk path (planFavoriteAdds): the stored,
+  // normalised id. An item whose id does not normalise to a non-empty string
+  // is refused, so it can never be saved as '' and duplicated on every star.
   const normalized = normalizeFavoriteItem(item);
-  if (!normalized) return;
+  if (!normalized?.id) return false;
+  const itemId = normalized.id;
+  if (state.favorites.some((f) => f.id === itemId)) return;
+  emit('eq-before-scope-change', { itemId, scope: 'favorite' });
   const eqState = loadEqState();
-  const effectiveCurve = getEffectiveEq(eqState, item.id, false);
+  const effectiveCurve = getEffectiveEq(eqState, itemId, false);
   const next = [normalized, ...state.favorites];
   if (!persistFavorites(next)) return false;
   state.favorites = next;
-  persistFavoriteEq(item.id, effectiveCurve);
+  persistFavoriteEq(itemId, effectiveCurve);
   emit('favorites-change', state.favorites);
-  if (state.currentItem?.id === item.id) emit('eq-scope-change', { itemId: item.id, scope: 'favorite' });
+  if (state.currentItem?.id === itemId) emit('eq-scope-change', { itemId, scope: 'favorite' });
   return true;
+}
+
+/** The most favorites a bulk add will build up to. The portable profile
+ *  backup holds 2 MiB for favorites, equalizer curves and settings together
+ *  (profile-transfer.js MAX_PROFILE_BYTES, worldmedia_runtime.py
+ *  PROFILE_TRANSFER_MAX_BYTES). A playlist channel costs about 0.7 KB there
+ *  (about 570 bytes of favorite plus 150 bytes of equalizer curve), so 1,000
+ *  uses roughly a third of it and leaves room for larger items. */
+export const BULK_FAVORITES_LIMIT = 1000;
+
+function planFavoriteAdds(items) {
+  const plan = { fresh: [], already: 0, refused: 0, leftOut: 0 };
+  const known = new Set(state.favorites.map((f) => f.id));
+  const room = Math.max(0, BULK_FAVORITES_LIMIT - state.favorites.length);
+  for (const item of items || []) {
+    // Identity is the stored (normalised) id; a non-string id normalises to ''.
+    const normalized = normalizeFavoriteItem(item);
+    if (!normalized?.id) { plan.refused += 1; continue; }
+    if (known.has(normalized.id)) { plan.already += 1; continue; }
+    known.add(normalized.id);
+    if (plan.fresh.length >= room) { plan.leftOut += 1; continue; }
+    plan.fresh.push({ item, normalized });
+  }
+  return plan;
+}
+
+/** How many of `items` addFavorites would add right now. */
+export function countNewFavorites(items) {
+  return planFavoriteAdds(items).fresh.length;
+}
+
+/** Add many favorites with one save, one favorites-change event and one
+ *  profile backup. New items keep their given order at the front of the list
+ *  (where addFavorite puts one); items already saved are left where they are. */
+export function addFavorites(items) {
+  const { fresh, already, refused, leftOut } = planFavoriteAdds(items);
+  const result = { added: 0, already, refused, leftOut, failed: false };
+  if (fresh.length === 0) return result;
+  const ids = fresh.map(({ normalized }) => normalized.id);
+  for (const itemId of ids) emit('eq-before-scope-change', { itemId, scope: 'favorite' });
+  const next = [...fresh.map(({ normalized }) => normalized), ...state.favorites];
+  if (!persistFavorites(next)) return { ...result, failed: true };
+  state.favorites = next;
+  let eqFailed = false;
+  saveEqState(addFavoritesEq(loadEqState(), ids), undefined, () => { eqFailed = true; });
+  emit('favorites-change', state.favorites);
+  const current = ids.find((itemId) => itemId === state.currentItem?.id);
+  if (current) emit('eq-scope-change', { itemId: current, scope: 'favorite' });
+  return { ...result, added: fresh.length, eqFailed };
 }
 
 export function removeFavorite(itemId) {
@@ -254,6 +317,62 @@ export function isFavorite(itemId) {
   return state.favorites.some((f) => f.id === itemId);
 }
 
+/** Favorites in the order the user chose to see them ("My order" or A-Z).
+ *  Every list of favorites uses this; see favorites-order.js. */
+export function displayFavorites() {
+  return favoritesInDisplayOrder(state.favorites, state.settings);
+}
+
+/** Where moveFavorite would put `itemId`, or -1 when it cannot move that way.
+ *  With `visibleIds`, up and down skip favorites the user cannot see (another
+ *  type, a search, a filter), so the item trades places with the neighbour it
+ *  is shown next to. "top" needs a shown favorite above it and goes to the
+ *  very start of the saved list. */
+function favoriteMoveTarget(list, from, direction, visibleIds) {
+  const visible = visibleIds ? new Set(visibleIds) : null;
+  const shown = (index) => !visible || visible.has(list[index].id);
+  if (direction === 'up' || direction === 'top') {
+    for (let i = from - 1; i >= 0; i -= 1) if (shown(i)) return direction === 'top' ? 0 : i;
+  } else if (direction === 'down') {
+    for (let i = from + 1; i < list.length; i += 1) if (shown(i)) return i;
+  }
+  return -1;
+}
+
+/** Rearrange "My order" by hand: 'up' or 'down' swaps the favorite with its
+ *  nearest shown neighbour, 'top' moves it to the start. One save and one
+ *  favorites-change event per move. Returns true when the order changed. */
+export function moveFavorite(itemId, direction, { visibleIds = null } = {}) {
+  const from = state.favorites.findIndex((favorite) => favorite.id === itemId);
+  if (from < 0) return false;
+  const to = favoriteMoveTarget(state.favorites, from, direction, visibleIds);
+  if (to < 0) return false;
+  const next = [...state.favorites];
+  if (direction === 'top') next.unshift(...next.splice(from, 1));
+  else [next[from], next[to]] = [next[to], next[from]];
+  if (!persistFavorites(next)) return false;
+  state.favorites = next;
+  emit('favorites-change', state.favorites);
+  return true;
+}
+
+/** The stream format and bitrate a favorite was saved with stay when the item
+ *  that rewrites it does not carry them (an older copy of the same station);
+ *  when it does carry them, its fresh values win. */
+function keepStreamQuality(next, saved) {
+  const isPlain = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  const savedExtra = saved?._extra;
+  if (!next || !isPlain(savedExtra)) return;
+  const kept = STREAM_QUALITY_FIELDS.filter((field) => field in savedExtra);
+  if (kept.length === 0) return;
+  // An incoming item without an `_extra` object lacks the fields too. `next`
+  // is the normalized copy, so this never changes the caller's item.
+  if (!isPlain(next._extra)) next._extra = {};
+  for (const field of kept) {
+    if (!(field in next._extra)) next._extra[field] = savedExtra[field];
+  }
+}
+
 /** Persist adapter resolution/capability metadata without changing favorite order. */
 export function persistFavoriteMetadata(item) {
   if (!item?.id) return false;
@@ -261,6 +380,7 @@ export function persistFavoriteMetadata(item) {
   if (index < 0) return false;
   const normalized = normalizeFavoriteItem(item);
   if (!normalized) return false;
+  keepStreamQuality(normalized, state.favorites[index]);
   // Dynamic favorites deliberately persist without short-lived stream/asset
   // URLs. If the player is resolving the favorite object itself, mutating that
   // same object with the restart-safe copy would erase the fresh stream before
@@ -364,6 +484,9 @@ export async function initState() {
   scheduleProfileHandoff();
 }
 
+/** Clears this window's saved data at once and returns a promise that settles
+ *  when the native copy has also been cleared (rejects if it was not), so the
+ *  caller can wait before reporting done. Not awaiting it is safe. */
 export function clearCache() {
   const previousExplicit = state.settings.showExplicitContent === true;
   const currentItem = state.currentItem;
@@ -372,10 +495,14 @@ export function clearCache() {
     localStorage.removeItem(STORAGE_KEYS.settings);
     localStorage.removeItem(STORAGE_KEYS.volume);
     localStorage.removeItem(STORAGE_KEYS.jobs);
+    localStorage.removeItem(STORAGE_KEYS.favoriteGroups);
     clearEqState(localStorage);
   } catch (_) {}
   cancelScheduledProfileHandoff();
-  void clearProfileHandoff().catch(() => {});
+  // The song log is kept apart from the profile (see song-log.js); it is
+  // cleared with it, here and in the data folder.
+  const nativeCleared = Promise.all([clearProfileHandoff(), songLog.clear()]).then(([cleared]) => cleared);
+  nativeCleared.catch(() => {}); // Callers that do not wait must not see an unhandled rejection.
   state.favorites = [];
   state.settings = freshDefaultSettings();
   applyTheme(state.settings.theme);
@@ -388,4 +515,5 @@ export function clearCache() {
     });
   }
   emit('settings-change', state.settings);
+  return nativeCleared;
 }

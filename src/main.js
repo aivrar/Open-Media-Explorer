@@ -4,7 +4,9 @@ import {
 import { catalogScheduler } from './lib/catalog-scheduler.js';
 import { setArtworkPlaybackPriority } from './lib/artwork.js';
 import { SOURCE_IDS } from './lib/sources.js';
-import { initPlayer } from './lib/player.js';
+import { initPlayer, getCurrentItem } from './lib/player.js';
+import { startSongLog } from './lib/song-log.js';
+import { openSongLog } from './lib/song-log-panel.js';
 import { initCaptureUi } from './lib/capture-ui.js';
 import { initSettings, openSettings } from './lib/settings.js';
 import { initEqOverlay } from './lib/eq-overlay.js';
@@ -17,6 +19,7 @@ import { renderDiscovery } from './modes/discovery.js';
 import { renderAbout } from './modes/about.js';
 import { initPersistenceNotice } from './lib/persistence-notice.js';
 import { initPlaylistDrop } from './lib/playlist-drop.js';
+import { loadStationImages } from './lib/station-images.js';
 
 const MODES = {
   library: renderLibrary,
@@ -89,18 +92,26 @@ function bindTopBar() {
     setMode(btn.dataset.mode);
   });
   document.getElementById('settings-btn').addEventListener('click', () => openSettings());
+  document.getElementById('song-log-btn')?.addEventListener('click', () => { openSongLog(); });
 }
 
 async function boot() {
   initPersistenceNotice();
   await initState();
   initPlayer();
+  // The song log names the station from the item that is playing.
+  startSongLog(subscribe, (itemId) => {
+    const item = getCurrentItem();
+    return item?.id === itemId ? item : null;
+  });
   initCaptureUi();
   initSettings();
   initEqOverlay();
   initSleepTimer();
   bindTopBar();
   initPlaylistDrop({ onPlaylist: importDroppedPlaylist });
+  // The user's own station pictures: listed once now, again on Refresh in Settings.
+  loadStationImages().catch(() => {});
   const state = getState();
   syncCatalogSourceSettings(state.settings);
   syncTechnicalDetails(state.settings);
