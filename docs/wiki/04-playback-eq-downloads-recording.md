@@ -114,6 +114,31 @@ homepage lists stations with the same name, and the list says they may be
 different stations. Items from your own playlists have no **Other streams**
 button. A stream on the list can still be dead at its provider.
 
+### Sound meter
+
+The player bar has a small LED-style sound meter beside **EQ**: 14 bars from
+about 40 Hz on the left to about 16 kHz on the right, 10 to 12 segments high
+(depending on the Windows display scale), each with a peak segment that holds for a moment and then falls. It is there so you
+can see that something is really playing; it is not a measuring instrument.
+It lifts quiet sound a little (up to 18 dB, adjusting over a few seconds) so
+that a quiet station still moves the bars.
+
+- It reads the sound after the equalizer, through a separate listening point
+  that is not connected to the speakers. It never changes what you hear, what
+  the EQ does, or what is recorded.
+- It updates 15 times a second while something plays and the window is
+  visible. It stops completely (no work at all) while playback is paused or
+  stopped, while the sound is muted or the volume is at zero, and when it is
+  switched off with **Settings > Appearance > Sound meter in the player bar**.
+  While the window is minimised it slows to about one update a second. It also stays still when
+  Windows is set to show fewer animations.
+- It shows flat bars when the sound does not go through World Media's local
+  relay and audio engine: when a stream has to be played directly because the
+  relay could not be used (the EQ is unavailable then too), or while Windows
+  has suspended the app's audio. A stream normally plays through the relay.
+- A recording reads the station separately, so the meter shows what you hear,
+  not what is being saved.
+
 ### Playback priority and thumbnails
 
 When media emits `play`/`playing`, the catalog scheduler enters playback

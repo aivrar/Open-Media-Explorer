@@ -9,6 +9,12 @@
     linear-gradient(180deg, var(--bg-elev-1), var(--bg));
   color: var(--text);
 }
+/* Before anything has played there is no player bar. Keep its room free, so
+   the dial does not jump smaller when the bar appears on the first play. */
+#app:not(.has-player) .tuner-root {
+  box-sizing: border-box;
+  padding-bottom: var(--player-h);
+}
 
 .tuner-controls {
   display: flex;
@@ -148,6 +154,11 @@
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
+  /* As tall with the "Loading stations" or "No stations" message as with
+     cards (border 1 + padding 24 + card 39 + scrollbar 6), so the dial keeps
+     its size while a list loads or is empty. */
+  box-sizing: border-box;
+  min-height: 70px;
 }
 .tuner-strip::-webkit-scrollbar { height: 6px; }
 /* Room at both ends of the strip, so every station can scroll to the centre,
@@ -158,7 +169,15 @@
   content: '';
   flex: 0 0 50%;
 }
+/* Every card is the same height, whatever its name. With the default line
+   height ("normal") a name in another script (Chinese, for example) is drawn
+   with a fallback font that has a taller line: its card grew 2 px, every card
+   in the strip stretched with it, and the dial above lost those pixels while
+   that station was in the strip. Fixed line heights keep the usual 39 px. */
 .station-pill {
+  box-sizing: border-box;
+  height: 39px;
+  line-height: 14px;
   flex: 0 0 auto;
   padding: 6px 12px;
   background: var(--bg-elev-2);
@@ -179,6 +198,7 @@
   color: var(--text-mute);
   font-size: 9px;
   font-weight: 500;
+  line-height: 10px;
 }
 .station-pill > .content-rating-badge { grid-column: 2; grid-row: 1 / span 2; }
 .station-pill.is-active > small { color: color-mix(in srgb, var(--accent-contrast) 72%, transparent); }
@@ -200,8 +220,134 @@
   text-align: center;
 }
 
+/* Tuner card size (Settings > Appearance). Small is the card above, exactly
+   as it was, with no picture. Medium and Large show the station's picture
+   beside bigger text. Each size has one fixed card height built from fixed
+   parts (border 1 + padding + picture + padding + border 1), and the strip's
+   minimum grows by exactly as much (border-top 1 + padding 12 + 12 + card +
+   scrollbar 6; padding 10 + 10 at 760 px or narrower), so the dial keeps its
+   size within a size: with cards or a message, with or without pictures. */
+.tuner-root[data-card-size='medium'] {
+  --card-h: 56px;
+  --card-pad: 7px;
+  --card-art: 40px;
+  --card-name: 14px;
+  --card-name-line: 18px;
+  --card-source: 10px;
+  --card-source-line: 12px;
+  --card-line-gap: 2px;
+  --card-initials: 15px;
+}
+.tuner-root[data-card-size='large'] {
+  --card-h: 84px;
+  --card-pad: 9px;
+  --card-art: 64px;
+  --card-name: 16px;
+  --card-name-line: 20px;
+  --card-source: 11px;
+  --card-source-line: 14px;
+  --card-line-gap: 3px;
+  --card-initials: 22px;
+}
+.tuner-root[data-card-size='medium'] .tuner-strip { min-height: 87px; }
+.tuner-root[data-card-size='large'] .tuner-strip { min-height: 115px; }
+.tuner-root[data-card-size='medium'] .tuner-empty,
+.tuner-root[data-card-size='large'] .tuner-empty { align-self: center; }
+/* The picture fills the card's content box; the two rows split it, the name
+   sitting on the middle line and the source just under it. */
+.station-pill.has-art {
+  height: var(--card-h);
+  padding: var(--card-pad) 14px var(--card-pad) var(--card-pad);
+  grid-template-columns: var(--card-art) auto auto;
+  grid-template-rows: 1fr 1fr;
+  gap: var(--card-line-gap) 10px;
+  font-size: var(--card-name);
+  line-height: var(--card-name-line);
+  border-radius: 9px;
+}
+.station-pill.has-art > .pill-art { grid-column: 1; grid-row: 1 / span 2; }
+.station-pill.has-art > .pill-art + span {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  max-width: 18em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.station-pill.has-art > small {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  font-size: var(--card-source);
+  line-height: var(--card-source-line);
+}
+.station-pill.has-art > .content-rating-badge { grid-column: 3; grid-row: 1 / span 2; }
+/* A fixed box: the initials on the station's colour until a picture has
+   loaded over them, and for good when there is none or it fails. */
+.pill-art {
+  position: relative;
+  width: var(--card-art);
+  height: var(--card-art);
+  border-radius: 6px;
+  overflow: hidden;
+  background: hsl(var(--ph-hue, 200) 42% 38%);
+}
+.pill-initials {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #fff;
+  font-size: var(--card-initials);
+  font-weight: 700;
+  line-height: var(--card-initials);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+/* The station's own logo: whole, on a plain surface over the initials. */
+.pill-art-img {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 3px;
+  object-fit: contain;
+  background: var(--bg-elev-3);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.pill-art-img.loaded { opacity: 1; }
+/* The user's own station picture: whole and centred (never cropped) on the
+   card itself, with no box colour or initials around it. */
+.pill-art-img.is-station-image {
+  padding: 0;
+  object-fit: contain;
+  background: transparent;
+}
+.pill-art:has(> .pill-art-img.is-station-image.loaded) { background: transparent; }
+.pill-art:has(> .pill-art-img.is-station-image.loaded) > .pill-initials { visibility: hidden; }
+/* Bigger cards leave a smaller dial in a short window. When the dial is too
+   small for all three lines on its knob, the station name (also on the
+   highlighted card below) and then the count step aside, instead of being
+   cut off by the round dial. Laid over the dial, so its size never changes. */
+@container (max-width: 159px) {
+  .tuner-root[data-card-size='medium'] .tuner-frequency .station-name,
+  .tuner-root[data-card-size='large'] .tuner-frequency .station-name { display: none; }
+}
+@container (max-width: 99px) {
+  .tuner-root[data-card-size='medium'] .tuner-frequency .freq-unit,
+  .tuner-root[data-card-size='large'] .tuner-frequency .freq-unit { display: none; }
+}
+
+/* One line, so a longer message never takes height from the dial. */
 .tuner-source-status {
   min-height: 26px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 4px 16px 8px;
   background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
   color: var(--text-mute);
@@ -257,5 +403,9 @@
 
   .tuner-strip {
     padding: 10px 12px;
+    min-height: 66px;
   }
+
+  .tuner-root[data-card-size='medium'] .tuner-strip { min-height: 83px; }
+  .tuner-root[data-card-size='large'] .tuner-strip { min-height: 111px; }
 }

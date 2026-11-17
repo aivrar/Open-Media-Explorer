@@ -65,6 +65,11 @@
   background: var(--bg-elev-3);
   object-fit: cover;
 }
+/* The user's own station picture: whole and centred on the card itself. */
+.discovery-now img.is-station-image {
+  object-fit: contain;
+  background: transparent;
+}
 .discovery-now .now-text {
   min-width: 0;
   flex: 1;

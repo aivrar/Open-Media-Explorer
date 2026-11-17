@@ -17,6 +17,13 @@ discover something unexpected, shape playback with a ten-band EQ, download
 finite media, and optionally record live streams. No account, subscription,
 API key, or telemetry.
 
+**New in v0.1.10:** a small sound meter in the player bar shows that a station
+is really playing, the Tuner's station cards come in three sizes (Medium and
+Large show station pictures), and the knob shows only the station's name.
+Fixes: your own station pictures are no longer cut off, and the Tuner dial
+keeps its size. Reported in [issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
+and requested in [discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8).
+
 **New in v0.1.9:** sort Favorites by hand or A-Z and group them in categories,
 import `.pls` and `.xspf` playlists, see the song a radio station plays (with a
 song log), use your own station pictures, and back up your data with one
@@ -72,7 +79,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.9-portable.zip
+WorldMediaWindows-0.1.10-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -114,7 +121,9 @@ LibriVox, media.ccc.de/C3VOC, gPodder Podcasts, PeerTube, and Owncast.
 scroll the mouse wheel, or use arrow keys; the dial shows each station's place
 in the list ("12 of 80"). Pick **★ My favorites**, or one of your own
 categories, as the source to spin through only those stations, in the order of
-your Favorites.
+your Favorites. **Settings > Appearance > Tuner card size** makes the station
+cards under the dial Small, Medium or Large; Medium and Large show each
+station's picture.
 
 ![Tuner - analog dial](screenshots/2.PNG)
 
@@ -167,7 +176,8 @@ delivered as HLS do not show one.
 
 Put a picture named exactly like a station (PNG, JPG, WebP or GIF, up to 2 MB)
 in the `station-images` folder (**Settings → Station images → Open folder**),
-press **Refresh**, and it replaces that station's artwork. Radio Browser
+press **Refresh**, and it replaces that station's artwork, shown whole and
+never cut off. Radio Browser
 stations show their format and bitrate in the detail panel, and **Other
 streams** lists other listings of the same station to pick from by hand.
 
@@ -202,6 +212,11 @@ exact palette color; Windows 10 uses the matching dark or light caption style.
 Video plays in a movable overlay with fullscreen support. Live radio and TV
 that lose their connection reconnect by themselves for up to ten minutes; the
 player bar says "Connection lost. Retrying..." meanwhile.
+
+A small LED-style sound meter beside **EQ** moves with the sound, so you can see
+that a station is really playing. It only reads the sound, rests while nothing
+is heard, and can be switched off in **Settings > Appearance > Sound meter in
+the player bar**.
 
 ![Fullscreen TV - live IPTV from iptv-org](screenshots/4.PNG)
 
@@ -322,7 +337,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.9-portable.zip
+dist\WorldMediaWindows-0.1.10-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

@@ -538,6 +538,16 @@ html, body {
   height: 100%;
   object-fit: cover;
 }
+/* The user's own station picture: whole and centred, never cropped. While it
+   is shown, the box and the initials behind it step aside, so the sides of a
+   tall or wide picture and the clear parts of a transparent one show the bar
+   itself (in every theme), and no initials colour shows at its corners. */
+#player-art.is-station-image {
+  object-fit: contain;
+  background: transparent;
+}
+.player-art-box:has(> #player-art.is-station-image[src]) { background: transparent; }
+.player-art-box:has(> #player-art.is-station-image[src]) > .player-art-initials { visibility: hidden; }
 
 /* Shown behind the artwork; a loaded image covers it. */
 .player-art-initials {
@@ -786,6 +796,70 @@ html, body {
   border-color: color-mix(in srgb, var(--danger) 48%, var(--border));
 }
 .player-eq.is-unavailable .player-eq-state { color: var(--danger); }
+
+/* Sound meter (lib/player-meter.js), right after EQ. The same small canvas
+   exists twice, once for each bar layout; at most one is laid out, and only
+   a laid-out one listens to the sound.
+   - Wide bar (over 1000 px): #player-meter opens the progress cell. It shows
+     only while that cell is at least 330 px wide, so the seek slider keeps
+     120 px or more; the title, the buttons and the volume never move for it.
+     With less room it is simply not there.
+   - Stacked bar (1000 px and under): #player-meter-compact ends the actions
+     row. Its block wants 96 px but needs none (min-content 0) and gives way
+     before any button (flex-shrink 1000); squeezed below 96 px its canvas is
+     not shown. The -6px margin cancels the row's flex gap.
+   Nothing plays while the bar only shows a capture, so it is hidden then. */
+.player-meter { display: none; }
+/* Switched off in Settings (the hidden attribute): neither copy is laid out at
+   any width, whatever the layout rules below say. */
+.player-meter[hidden] { display: none !important; }
+.player-meter-canvas {
+  display: block;
+  width: 90px;
+  height: 36px;
+  /* Read by the script: lit segments use `color`, the top (hot) segments the
+     zero-width border's colour, unlit segments the lit colours at this alpha. */
+  color: var(--accent);
+  border: 0 solid var(--warm);
+  --meter-off-alpha: 0.18;
+}
+:root[data-theme='light'] .player-meter-canvas {
+  border-color: #b86a00;
+  --meter-off-alpha: 0.2;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .player-meter-canvas {
+    border-color: #b86a00;
+    --meter-off-alpha: 0.2;
+  }
+}
+.player-progress { container: player-progress / inline-size; }
+@media (min-width: 1001px) {
+  @container player-progress (min-width: 330px) {
+    #player-meter { display: block; flex: none; }
+    /* Beside the meter the time labels keep their full 44 px. */
+    .player-progress:has(> #player-meter:not([hidden])) .player-time { flex-shrink: 0; }
+  }
+}
+@media (max-width: 1000px) {
+  #player-meter-compact {
+    display: grid;
+    grid-template-columns: minmax(0, 96px);
+    flex: 0 1000 auto;
+    min-width: 0;
+    margin-left: -6px;
+    overflow: hidden;
+  }
+  .player-meter-well {
+    container-type: inline-size;
+    min-width: 0;
+  }
+  .player-meter-well > .player-meter-canvas { margin-left: 6px; }
+}
+@container (max-width: 95.98px) {
+  .player-meter-well > .player-meter-canvas { display: none; }
+}
+.player-bar.is-capture-only .player-meter { display: none !important; }
 
 .player-capture-status {
   grid-area: status;

@@ -8,7 +8,7 @@ import { getState, setCurrentItem, setPlaying, emit, subscribe, loadVolume, save
          saveSettings } from './state.js';
 import { getSourceLabel, loadAdapter } from './sources.js';
 import { postSilent } from './http.js';
-import { isArtworkRelayUrl, resolveArtworkRelay } from './artwork.js';
+import { STATION_IMAGE_CLASS, isArtworkRelayUrl, resolveArtworkRelay } from './artwork.js';
 import {
   markStationImageFailed, onStationImagesChange, peekStationImageUrl, stationImageSourceFor, stationImageUrl,
 } from './station-images.js';
@@ -25,6 +25,7 @@ import {
 import { createRelayMemory } from './relay-memory.js';
 import { resolveFailureMessage } from './resolve-message.js';
 import { createAudioEngine } from './audio-engine.js';
+import { createAudioSignal } from './audio-signal.js';
 import { getEffectiveEq, loadEqState } from './eq-store.js';
 import { createDashPlayback } from './dash-player.js';
 import {
@@ -58,6 +59,31 @@ let metadataArtworkToken = 0;
 const audioEngine = createAudioEngine({
   onStatus: (status) => emit('eq-engine-change', status),
 });
+
+// The sound for visuals (the player-bar meter), read from the engine's side
+// tap. Only an element that is playing through the relay and is attached to
+// a running graph is read; nothing here creates or resumes the context.
+const audioSignal = createAudioSignal({
+  source: {
+    isPlaying: () => getState().isPlaying === true,
+    // Muted or turned all the way down (by hand or a sleep-timer fade): the
+    // meter rests. Both elements are muted and set together (setMuted,
+    // setVolume); a volumechange on either calls refresh() (initPlayer).
+    isAudible: () => {
+      const el = playback.activeElement || elements?.audio;
+      return !el || (!el.muted && el.volume > 0);
+    },
+    getAnalyser: () => {
+      const el = playback.activeElement;
+      if (!el || !activePlaybackRelayed || playbackProblem || el.paused || el.ended) return null;
+      return audioEngine.visualTapFor(el);
+    },
+    release: () => audioEngine.releaseVisualTap(),
+  },
+});
+
+/** The shared sound signal for visuals (audio-signal.js). */
+export function getAudioSignal() { return audioSignal; }
 
 function effectiveEqCurve(item = currentItem) {
   if (!item?.id) return getEffectiveEq(loadEqState(), '', false);
@@ -846,18 +872,35 @@ function setPlayerArtwork(item) {
   const artworkToken = ++metadataArtworkToken;
   playerStationImage = stationImageSourceFor(item);
   const current = () => artworkToken === metadataArtworkToken && currentItem === item;
-  const showSource = (src, onFail = null) => {
+  const latest = () => artworkToken === metadataArtworkToken;
+  // The class follows what the bar shows: on only while a station picture is
+  // on screen (shown whole on the bar, base.css), off while the box is empty,
+  // loading, or showing remote artwork (which fills the square).
+  const setFit = (custom) => elements.art.classList?.toggle?.(STATION_IMAGE_CLASS, custom);
+  const clearArt = () => {
+    setFit(false);
+    elements.art.removeAttribute('src');
+    elements.art.style.opacity = '0';
+  };
+  const showSource = (src, onFail = null, custom = false) => {
     elements.art.referrerPolicy = 'no-referrer';
-    elements.art.onload = () => { elements.art.style.opacity = '1'; };
+    // A newer picture replaces these handlers; a stale event changes nothing.
+    elements.art.onload = () => {
+      if (!latest()) return;
+      setFit(custom);
+      elements.art.style.opacity = '1';
+    };
     elements.art.onerror = () => {
-      elements.art.removeAttribute('src');
-      elements.art.style.opacity = '0';
+      if (!latest()) return;
+      clearArt();
       if (current()) onFail?.();
     };
     if (elements.art.getAttribute('src') !== src) {
+      setFit(false);
       elements.art.style.opacity = '0';
       elements.art.src = src;
     } else if (elements.art.complete && elements.art.naturalWidth > 0) {
+      setFit(custom);
       elements.art.style.opacity = '1';
     }
   };
@@ -869,8 +912,7 @@ function setPlayerArtwork(item) {
     if (isArtworkRelayUrl(item.thumbnail)) {
       attachArtwork();
     } else {
-      elements.art.removeAttribute('src');
-      elements.art.style.opacity = '0';
+      clearArt();
       resolveArtworkRelay(item, { priority: 20 }).then(attachArtwork).catch(() => {});
     }
   };
@@ -886,12 +928,13 @@ function setPlayerArtwork(item) {
   };
   const ready = peekStationImageUrl(custom);
   if (ready) {
-    showSource(ready, failed);
+    showSource(ready, failed, true);
     return;
   }
-  elements.art.removeAttribute('src');
-  elements.art.style.opacity = '0';
-  stationImageUrl(custom).then((url) => { if (current()) showSource(url, failed); }, failed);
+  // Initials while the picture is fetched; a fetch that stalls or fails
+  // leaves the box empty and unmarked.
+  clearArt();
+  stationImageUrl(custom).then((url) => { if (current()) showSource(url, failed, true); }, failed);
 }
 
 /** Reflect the favorited state of the currently-playing item on the player
@@ -1551,6 +1594,12 @@ export function initPlayer() {
   subscribe('eq-change', () => applyCurrentEq());
   subscribe('eq-scope-change', () => applyCurrentEq());
   subscribe('eq-user-gesture', () => { resumeEqualizerFromGesture().catch(() => {}); });
+  // The visual signal runs only while something plays (and someone listens).
+  subscribe('playing-change', () => audioSignal.refresh());
+  // ...and only while it can be heard: muting or volume 0 rests it.
+  for (const el of [elements.audio, elements.video]) {
+    el?.addEventListener?.('volumechange', () => audioSignal.refresh());
+  }
   subscribe('content-policy-change', ({ current, currentItem: changedItem } = {}) => {
     if (current !== true && changedItem?.id === currentItem?.id
         && !isContentAllowed(currentItem, false)) stop();

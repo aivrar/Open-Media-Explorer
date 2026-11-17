@@ -393,12 +393,20 @@ initialization="init-$RepresentationID$.mp4" />
             self.assertEqual(rejected.exception.code, "NON_GLOBAL_MEDIA_TARGET")
 
 
+RELAY_TEST_IDLE_TIMEOUT = 10.0
+
+
 class RelayIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.fixture = MediaFixtureServer()
         cls.fixture.__enter__()
-        connector = SafeConnector(address_policy=lambda _address: True, idle_timeout=1)
+        # No test here is about the idle timeout. It was 1 s, and the relay sends
+        # a stream's headers before its first 64 KiB read completes: on a busy
+        # machine the in-process fixture can fall silent for a second, the read
+        # times out and the client sees a 200 with an empty body (the flaky
+        # endless test). A pause shorter than this is covered below.
+        connector = SafeConnector(address_policy=lambda _address: True, idle_timeout=RELAY_TEST_IDLE_TIMEOUT)
         cls.registry = MediaRegistry(connector, ttl_seconds=60)
         cls.old_registry = worldmedia_server.MEDIA_REGISTRY
         worldmedia_server.MEDIA_REGISTRY = cls.registry
@@ -583,10 +591,34 @@ class RelayIntegrationTests(unittest.TestCase):
         self.assertEqual(b"".join(chunks), LARGE_BYTES)
         self.assertLessEqual(worldmedia_server.RELAY_CHUNK_SIZE, 64 * 1024)
 
+    def test_a_pause_before_the_first_relay_read_completes_does_not_end_the_stream(self) -> None:
+        # The upstream sends about 4.4 KB, then nothing for 1.5 s: the relay's
+        # first 64 KiB read waits through it (the idle timeout is per socket
+        # read) and the client gets the body, not a 200 with no data.
+        self.assertLess(1.5, RELAY_TEST_IDLE_TIMEOUT)
+        self.fixture.state.stream_cancelled.clear()
+        stream = self.register("/stream/endless?pause=1.5")
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=RELAY_TEST_IDLE_TIMEOUT + 5)
+        try:
+            connection.request("GET", stream["relay_url"])
+            response = connection.getresponse()
+            try:
+                self.assertEqual(response.status, 200)
+                started = time.monotonic()
+                body = response.read(64 * 1024)
+                self.assertEqual(len(body), 64 * 1024)
+                self.assertGreaterEqual(time.monotonic() - started, 1.0)  # It did wait out the pause.
+                self.assertEqual(body[:14], b"stream-fixture")
+            finally:
+                response.close()  # The response holds the socket open past connection.close().
+        finally:
+            connection.close()
+        self.assertTrue(self.fixture.state.stream_cancelled.wait(RELAY_TEST_IDLE_TIMEOUT + 5))
+
     def test_endless_disconnect_cancels_upstream_and_expiry_revokes_token(self) -> None:
         self.fixture.state.stream_cancelled.clear()
         stream = self.register("/stream/endless")
-        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=RELAY_TEST_IDLE_TIMEOUT + 5)
         connection.request("GET", stream["relay_url"])
         response = connection.getresponse()
         self.assertEqual(response.status, 200)

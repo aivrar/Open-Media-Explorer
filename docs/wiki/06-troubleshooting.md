@@ -107,6 +107,12 @@ folder**) are matched by file name. Check:
 - Only plain files directly in the folder are used. Files in a subfolder and
   shortcuts are ignored.
 - If two files match the same station, the one whose name sorts first is used.
+- A picture that is not square is shown whole, with plain space beside or
+  above it. This is on purpose (since v0.1.10): nothing of it is cut off. For
+  a picture that fills the box, use a square one.
+- On the Tuner's station cards, pictures show only with **Settings >
+  Appearance > Tuner card size** set to Medium or Large, and only once the
+  dial has stopped turning.
 
 ## Playback will not start
 
@@ -174,6 +180,23 @@ reasons for none:
 - A title can take a few seconds to appear, and again to change.
 - An old Shoutcast server that answers "ICY 200 OK" instead of a normal web
   reply does not play in World Media at all.
+
+## The sound meter does not move
+
+The bars beside **EQ** in the player bar move only while sound is playing:
+
+- They rest while playback is paused or stopped, while the sound is muted or
+  the volume is at zero.
+- Check **Settings > Appearance > Sound meter in the player bar**. When it is
+  off, the meter is not shown at all.
+- The meter also stays still when Windows is set to show fewer animations.
+- In a window wider than 1000 px the meter sits in the progress row and is
+  left out when that row has no room for it beside a usable seek slider. Make
+  the window wider.
+- Flat bars while you can hear the station mean the sound is not going through
+  World Media's audio engine, for example when the stream had to be played
+  directly because the local relay could not be used. The EQ is unavailable
+  then too. Press Stop and Play to try the relay again.
 
 ## Download fails
 

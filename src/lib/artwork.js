@@ -47,6 +47,19 @@ export function artworkSourceFor(item) {
     || (isArtworkRelayUrl(item?.thumbnail) ? item.thumbnail.trim() : '');
 }
 
+/** Class on an <img> while it shows the user's own station picture. The
+ *  views' styles show such a picture whole and centred (object-fit: contain)
+ *  on the surface around it, never cropped and never over the initials tile.
+ *  Remote artwork keeps each view's own fit. */
+export const STATION_IMAGE_CLASS = 'is-station-image';
+
+/** The class follows what an <img> actually shows: set only once a station
+ *  picture has loaded into it, cleared when it starts loading something else,
+ *  fails, or is emptied (waitForArtworkImage). */
+function markArtworkFit(image, custom) {
+  image?.classList?.toggle?.(STATION_IMAGE_CLASS, custom === true);
+}
+
 /** Canonicalize provider artwork metadata without ever attaching it to DOM. */
 export function canonicalArtworkUrl(value) {
   if (typeof value !== 'string') return '';
@@ -173,7 +186,7 @@ function imageLoadError(message = 'Artwork image could not load.') {
   return error;
 }
 
-function waitForArtworkImage(image, source, signal, requireConnected = true, timeoutMs = 20_000) {
+function waitForArtworkImage(image, source, signal, requireConnected = true, timeoutMs = 20_000, custom = false) {
   return new Promise((resolve, reject) => {
     if (!image || typeof image.addEventListener !== 'function') {
       reject(imageLoadError('Artwork image target is unavailable.'));
@@ -196,17 +209,28 @@ function waitForArtworkImage(image, source, signal, requireConnected = true, tim
       if (error) reject(error);
       else resolve(image);
     };
+    // Only while this load still owns the element (its src) does it touch the
+    // station-picture class; a newer load replaces the src first.
     const onLoad = () => {
       if (image.getAttribute('src') !== source) return;
-      if (image.naturalWidth > 0) finish();
-      else finish(imageLoadError('Artwork image decoded without pixels.'));
+      if (image.naturalWidth > 0) {
+        markArtworkFit(image, custom);
+        finish();
+      } else {
+        markArtworkFit(image, false);
+        finish(imageLoadError('Artwork image decoded without pixels.'));
+      }
     };
     const onError = () => {
       if (image.getAttribute('src') !== source) return;
+      markArtworkFit(image, false);
       finish(imageLoadError());
     };
     const onAbort = () => {
-      if (image.getAttribute('src') === source) image.removeAttribute('src');
+      if (image.getAttribute('src') === source) {
+        image.removeAttribute('src');
+        markArtworkFit(image, false);
+      }
       finish(artworkAbortError(signal?.reason));
     };
 
@@ -219,8 +243,13 @@ function waitForArtworkImage(image, source, signal, requireConnected = true, tim
     signal?.addEventListener('abort', onAbort, { once: true });
     timer = setTimeout(() => {
       finish(imageLoadError('Artwork image timed out.'));
-      if (image.getAttribute('src') === source) image.removeAttribute('src');
+      if (image.getAttribute('src') === source) {
+        image.removeAttribute('src');
+        markArtworkFit(image, false);
+      }
     }, Math.max(1, Number(timeoutMs) || 20_000));
+    // Not a station picture on screen until this one has loaded.
+    markArtworkFit(image, false);
     image.src = source;
     // Cached images can complete before the browser dispatches a new event.
     queueMicrotask(() => {
@@ -268,9 +297,11 @@ async function loadStationArtwork(image, source, opts = {}) {
   const signal = opts.signal;
   try {
     return await artworkImageQueue.enqueue(async () => {
-      const url = await stationImageUrl(source, { fetchImpl: opts.fetchImpl, createUrl: opts.createUrl });
+      // The view's signal stops the wait (and the shared fetch, once no view
+      // wants it), so a view that is gone starts no further request or retry.
+      const url = await stationImageUrl(source, { fetchImpl: opts.fetchImpl, createUrl: opts.createUrl, signal });
       if (signal?.aborted) throw artworkAbortError(signal.reason);
-      return waitForArtworkImage(image, url, signal, opts.requireConnected !== false, opts.imageTimeoutMs);
+      return waitForArtworkImage(image, url, signal, opts.requireConnected !== false, opts.imageTimeoutMs, true);
     }, opts.priority || 0, { signal });
   } catch (error) {
     if (error?.name !== 'AbortError' && !signal?.aborted) markStationImageFailed(source);

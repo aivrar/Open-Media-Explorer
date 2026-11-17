@@ -149,6 +149,12 @@ v0.1.8 does not show favorites categories, the song log, or station pictures,
 and it does not open or change those files. It also ignores the Favorites sort
 choice. Back up the data folder before you switch, as for any update.
 
+Version 0.1.10 adds no new saved files. Its two new choices, **Tuner card
+size** and **Sound meter in the player bar**, are stored inside the existing
+settings. Going back from v0.1.10 to v0.1.9 keeps your favorites, settings and
+everything else; v0.1.9 ignores the two choices, and they are still there when
+you return to v0.1.10.
+
 ## Cache semantics
 
 Provider metadata cache records are bounded (256 total/64 per provider, 2 MiB

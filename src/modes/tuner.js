@@ -17,7 +17,10 @@ import { playItem } from '../lib/player.js';
 import { subscribe, getState, saveSettings, isFavorite } from '../lib/state.js';
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
-import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
+import { contentBadgeText, filterContentItems, isContentAllowed } from '../lib/content-rating.js';
+import { normalizeTunerCardSize, tunerCardsShowPictures } from '../lib/tuner-card-size.js';
+import { createTunerCardArt } from '../lib/tuner-card-art.js';
+import { onStationImagesChange } from '../lib/station-images.js';
 import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
 import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorites-order.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
@@ -51,9 +54,30 @@ const state = {
   enabledSignature: '',
   contentPreference: false,
   favoritesSort: '',
+  cardSize: 'small', // Settings > Appearance > Tuner card size
 };
 
 const ui = {};
+
+/** True when a card's picture box is inside the visible part of the strip. */
+function artInView(box) {
+  const strip = ui.strip;
+  if (!strip?.isConnected || !box?.isConnected) return false;
+  const stripBox = strip.getBoundingClientRect();
+  const boxRect = box.getBoundingClientRect();
+  return boxRect.width > 0 && boxRect.right > stripBox.left && boxRect.left < stripBox.right;
+}
+
+// Pictures on medium and large cards; see lib/tuner-card-art.js for how they
+// wait for the dial to rest and load only for cards in view.
+const cardArt = createTunerCardArt({
+  isInView: artInView,
+  allowed: (item) => item?.__contentHidden !== true && isContentAllowed(item, getState().settings),
+});
+
+function cardPictures() {
+  return tunerCardsShowPictures(state.cardSize);
+}
 
 function el(tag, opts = {}, ...children) {
   const e = document.createElement(tag);
@@ -77,8 +101,10 @@ function buildShell() {
     attrs: {
       tabindex: '0',
       'aria-label': 'Tuner dial. Use arrow keys to change station and Enter or Space to play.',
+      'data-card-size': state.cardSize,
     },
   });
+  ui.root = root;
   // Controls
   const controls = el('div', { className: 'tuner-controls' });
   const band = el('div', { className: 'tuner-band-switch' });
@@ -142,6 +168,8 @@ function buildShell() {
 
   // Bottom strip of nearby stations
   ui.strip = el('div', { className: 'tuner-strip' });
+  // Scrolling the strip by hand waits again before pictures load.
+  ui.strip.addEventListener('scroll', () => { if (cardPictures()) cardArt.poke(); }, { passive: true });
   root.appendChild(ui.strip);
   ui.status = el('div', { className: 'tuner-source-status', attrs: { role: 'status', 'aria-live': 'polite' } });
   root.appendChild(ui.status);
@@ -341,7 +369,10 @@ function updateFrequencyDisplay() {
   }
   ui.freqNum.textContent = String(state.index + 1);
   ui.freqUnit.textContent = `of ${state.stations.length}`;
-  ui.stationName.textContent = `${isFavorite(s.id) ? '★ ' : ''}${s.title} · ${getSourceLabel(s.source)}`;
+  // Only the name: the knob has little room. The source stays on the
+  // station's card in the strip below: its second line (so also the card's
+  // accessible name) and its tooltip.
+  ui.stationName.textContent = `${isFavorite(s.id) ? '\u2605 ' : ''}${s.title}`;
 }
 
 function liveSources() {
@@ -658,8 +689,10 @@ function setBand(b) {
 
 function renderStrip() {
   if (!ui.strip) return;
+  const pictures = cardPictures();
   ui.strip.innerHTML = '';
   if (state.stations.length === 0) {
+    if (pictures) cardArt.commit();
     let text = state.loading ? 'Loading stations…' : 'No stations found for this country.';
     const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
     if (groupName) {
@@ -685,19 +718,33 @@ function renderStrip() {
     const rating = contentBadgeText(s);
     const saved = isFavorite(s.id);
     const pill = el('button', {
-      className: 'station-pill' + (i === state.index ? ' is-active' : '') + (saved ? ' is-favorite' : ''),
+      className: 'station-pill' + (i === state.index ? ' is-active' : '') + (saved ? ' is-favorite' : '')
+        + (pictures ? ' has-art' : ''),
       attrs: {
         title: `${saved ? '★ Favorite · ' : ''}${s.title} · ${getSourceLabel(s.source)}`,
         'aria-pressed': i === state.index ? 'true' : 'false',
       },
       on: { click: () => { state.index = i; state.rotationDeg = i * 12; applyRotation(); tuneCurrent(); } },
     },
+    // Medium and large cards: the station's picture box (reused across steps).
+    pictures ? cardArt.box(s) : null,
     el('span', { text: saved ? `★ ${s.title}` : s.title }),
     el('small', { text: getSourceLabel(s.source) }),
     rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
     ui.strip.appendChild(pill);
   }
   centerActivePill();
+  if (pictures) cardArt.commit();
+}
+
+/** Show the card size chosen in Settings, at once. */
+function applyCardSize(size) {
+  const next = normalizeTunerCardSize(size);
+  if (next === state.cardSize) return;
+  state.cardSize = next;
+  ui.root?.setAttribute('data-card-size', next);
+  if (!cardPictures()) cardArt.clear();
+  renderStrip();
 }
 
 /** Scroll position that puts a pill in the middle of the strip. */
@@ -730,6 +777,7 @@ function tearDown() {
   state.requestAbort?.abort();
   state.requestAbort = null;
   state.loading = false;
+  cardArt.clear();
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
   if (ui.unbindDial) { try { ui.unbindDial(); } catch (_) {} ui.unbindDial = null; }
 }
@@ -741,6 +789,7 @@ export function renderTuner(host) {
   if (getState().settings.tunerFavoritesOnly === true) {
     if (!favoriteGroupSource()) state.sourceFilter = FAVORITES;
   } else if (isFavoritesSource(state.sourceFilter)) state.sourceFilter = 'all';
+  state.cardSize = normalizeTunerCardSize(getState().settings.tunerCardSize);
   const root = buildShell();
   host.appendChild(root);
   state.enabledSignature = enabledSignature();
@@ -759,6 +808,7 @@ export function renderTuner(host) {
     state.enabledSignature = nextSignature;
     state.contentPreference = nextPreference;
     state.favoritesSort = nextSort;
+    applyCardSize(settings.tunerCardSize);
     if (isFavoritesSource(state.sourceFilter)) {
       if (sourcesChanged || contentChanged || sortChanged) loadFavoriteStations();
     } else if (sourcesChanged) loadStations();
@@ -774,6 +824,14 @@ export function renderTuner(host) {
     if (isFavoritesSource(state.sourceFilter)) loadFavoriteStations();
     else rebuildSourceSelect();
   }));
+  // A new or removed picture in the station-images folder (Refresh).
+  subs.push(onStationImagesChange(() => {
+    if (getState().mode === 'tuner' && cardPictures() && cardArt.stationImagesChanged()) renderStrip();
+  }));
+  // A wider window shows more cards: wait, then load the ones now in view.
+  const onResize = () => { if (cardPictures()) cardArt.poke(); };
+  window.addEventListener('resize', onResize);
+  subs.push(() => window.removeEventListener('resize', onResize));
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'tuner') step(1);
   }));

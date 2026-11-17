@@ -14,6 +14,8 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 | Player and failover | `src/lib/player.js`, `src/lib/media-failover.js`, `src/lib/hls-recovery.js`, `src/lib/dash-player.js` |
 | Artwork | `src/lib/artwork.js`, `src/modes/library/thumbnails.js` |
 | EQ | `src/lib/audio-engine.js`, `src/lib/eq-store.js`, `src/lib/eq-overlay.js` |
+| Sound meter | `src/lib/audio-signal.js`, `src/lib/player-meter.js`, the visual side tap in `src/lib/audio-engine.js` |
+| Tuner card size and pictures | `src/lib/tuner-card-size.js`, `src/lib/tuner-card-art.js`, `src/modes/tuner.js`, `src/styles/tuner.css` |
 | Personal playlists | `src/lib/playlists.js`, `src/modes/library/personal-controls.js`, `worldmedia_playlists.py` |
 | Favorites order and categories | `src/lib/favorites-order.js`, `src/lib/favorite-groups.js`, `src/modes/library/favorite-categories.js`, `src/modes/library/card-category.js` |
 | Song title and song log | `src/lib/now-playing.js`, `src/lib/song-log.js`, `src/lib/song-log-panel.js`, `worldmedia_icy.py`, `worldmedia_songlog.py` |
@@ -52,7 +54,7 @@ Build the frontend:
 npm run build
 ```
 
-The current repository baseline is 651 JavaScript tests and 466 Python tests
+The current repository baseline is 711 JavaScript tests and 467 Python tests
 (4 of them skipped); the exact count should be reported by the command rather
 than assumed after future changes.
 
@@ -79,7 +81,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.9-portable.zip
+dist\WorldMediaWindows-0.1.10-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -106,8 +108,8 @@ Before replacing the EXE:
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For v0.1.9 evidence and limitations, see the
-[release record](../RELEASE_RECORD_0.1.9.md). The optional
+For v0.1.10 evidence and limitations, see the
+[release record](../RELEASE_RECORD_0.1.10.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review

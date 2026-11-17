@@ -72,6 +72,72 @@ rapid-switch cancellation, relay lifetime, HLS/DASH cleanup, Web Audio EQ,
 media-session controls, and the player bar. A failed media element is rebuilt on
 Play rather than repeatedly poked after an error.
 
+## Sound meter
+
+The player-bar meter is built in three layers, so that a later visual can
+share the same reading:
+
+- **Visual side tap** (`src/lib/audio-engine.js`): `visualTapFor(element)`
+  makes a second `AnalyserNode` (`VISUAL_ANALYSER_SETTINGS`: FFT size 2048,
+  -85 to -15 dB, no smoothing) fed from the same point as the EQ analyser (the
+  sum of the dry and wet paths, so after the EQ curve and its limiter). It is
+  connected to nothing, so it changes neither what is heard nor what
+  `verifySignal()` measures. It is made only for an element that is attached
+  to an existing graph whose context is already running; it never creates the
+  graph or the context and never resumes a suspended context (that stays tied
+  to the user's Play). `releaseVisualTap()` disconnects it.
+- **Shared signal** (`src/lib/audio-signal.js`): one loop reads the tap once per
+  frame into one frame object (byte spectrum, waveform, RMS level, bass, mid
+  and high levels, and log-spaced bars on request) and hands it to every
+  subscriber. It runs only while there is a subscriber, something plays, the
+  sound is audible (not muted, volume above 0) and the document is visible;
+  otherwise nothing is scheduled and the tap is released. It is paced by a
+  timer at the fastest rate a subscriber asks for, and each tick asks for one
+  animation frame, so it does not run at the display refresh rate. With no
+  readable tap it looks again every 250 ms on a plain timer.
+- **Meter** (`src/lib/player-meter.js`): 14 bars from 40 Hz to 16 kHz with a
+  3 dB per octave tilt, a boost-only auto-gain (up to 18 dB overall and 6 dB per
+  band), attack, release and peak hold, drawn on a 90 x 36 px canvas in whole
+  device pixels (10 to 12 segments, depending on the display scale).
+  It asks for 15 frames a second and redraws its canvas only when a lit
+  segment changes. It listens only while the setting is on, its canvas is laid
+  out, and reduced motion is not requested.
+
+`src/lib/player.js` gives the signal a tap only while the active element plays
+through the relay (`activePlaybackRelayed`) with no playback problem, and
+refreshes it on `playing-change` and on `volumechange`. Playback that falls
+back to direct, cross-origin media (no relay, EQ unavailable) has no tap, and
+the meter stays flat. `src/index.html` holds two meter blocks, one for the wide
+player bar (in the progress row, shown only when that row is at least 330 px
+wide) and one for the stacked bar at 1000 px and under (at the end of the
+button row, giving way before any button); CSS lays out at most one, and only a
+laid-out one listens.
+
+## Tuner layout and card pictures
+
+The dial is sized from the height the Tuner's other rows leave, so those rows
+have fixed heights: every strip card has a fixed height and line height (a
+name in another script no longer makes its card taller), the strip keeps its
+minimum height while it shows a message instead of cards, the status line
+stays on one line, and before the first play `#app:not(.has-player)
+.tuner-root` keeps the player bar's height free as bottom padding.
+
+`src/lib/tuner-card-size.js` holds the card size (`small`, `medium`, `large`;
+anything else means `small`). Medium and Large set per-size CSS variables on
+`.tuner-root[data-card-size]` and raise the strip's fixed minimum by exactly the
+card's extra height. `src/lib/tuner-card-art.js` gives each Medium or Large
+card a fixed picture box with initials, waits until the strip has not been
+rebuilt or scrolled for 350 ms, then loads pictures only for the cards in view,
+each once, through `artwork.js` (the user's own station picture first, then the
+station's relay artwork). A card that leaves the strip stops its load; the last
+120 finished boxes are kept so the dial can come back to them without a new
+request.
+
+A user's own station picture carries the `is-station-image` class (set by
+`artwork.js` and the player bar only once it has loaded) and is shown with
+`object-fit: contain` on a plain surface in every view, so it is never
+cropped. Remote artwork keeps each view's own fit.
+
 ## Song titles
 
 `worldmedia_icy.py` reads the song titles that Shoutcast and Icecast stations
@@ -141,6 +207,11 @@ the data that version 0.1.9 added is kept apart:
 | `state/profile-preferences-extra.json` | Newer keys: the favorites categories (`worldmedia.favgroups.v1`) | `worldmedia_runtime.py` |
 | `state/song-log.json` | The song log, at most 500 songs | `worldmedia_songlog.py` |
 | `station-images/` | The user's own station pictures | `worldmedia_station_images.py` |
+
+The two settings added in 0.1.10, `tunerCardSize` and `soundMeter`, are fields
+inside the existing settings value (`worldmedia.settings.v1`), not new profile
+keys. Every release keeps settings fields it does not know, so going back to
+0.1.9 and returning keeps them.
 
 A profile save writes the main file first and then the extra file (or removes
 it when nothing is left for it). If the second write fails, favorites and

@@ -114,7 +114,8 @@ export function refreshDetailArtwork() {
   const shown = detailArtworkShown;
   const panel = ui.detailPanel;
   if (!panel || !shown || stationImageSourceFor(shown.item) === shown.source) return false;
-  const old = [...panel.children].find((node) => node.className === 'detail-thumb');
+  // By class, not the whole class name: a station picture adds is-station-image.
+  const old = [...panel.children].find((node) => String(node.className || '').split(/\s+/).includes('detail-thumb'));
   if (!old) return false;
   const artwork = detailArtwork(shown.item);
   panel.insertBefore(artwork.thumb, old);

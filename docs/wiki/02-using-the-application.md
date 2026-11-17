@@ -5,7 +5,8 @@ or newer. Opening on Favorites, the Tuner's **★ My favorites** source, compact
 saved-item cards, and the simplified source labels require v0.1.4 or newer.
 Favorites sorting and categories, the media type buttons, **Star all**, `.pls`
 and `.xspf` import, the song title and Song log, station images, stream
-quality, and **Back up my data** require v0.1.9 or newer.
+quality, and **Back up my data** require v0.1.9 or newer. The sound meter in
+the player bar and the **Tuner card size** setting require v0.1.10 or newer.
 
 ## Window layout
 
@@ -32,6 +33,20 @@ volume is at zero. Point at the volume slider to see the volume as a
 percentage: it starts at 80%, and 100% is full volume (there is no boost).
 When a radio station sends the title of its current song, the bar shows it
 under the station name with a note sign; see **Song log** below.
+
+The **sound meter** is a row of small LED-style bars beside **EQ** that move
+with the sound, so you can see that a station is really playing. It has 14 bars,
+from the lows on the left (about 40 Hz) to the highs on the right (about
+16 kHz), and each bar keeps a falling peak segment. It only reads the sound and
+never changes what you hear. It rests, with flat bars, while playback is
+paused or stopped and while the sound is muted or the volume is at zero, and it
+slows to about one update a second while the window is minimised. In a wide window it sits at the start of the
+progress row and is left out when that row is too short; in a window up to
+1000 px wide it sits at the end of the button row. Turn it off with **Settings >
+Appearance > Sound meter in the player bar**. It also stays off when Windows is
+set to show fewer animations. See
+[Playback](04-playback-eq-downloads-recording.md) for when it has no sound to
+show.
 
 ## Library
 
@@ -272,6 +287,23 @@ sits in the centre. When the mouse is over a dial that the wheel can turn, the
 dial glows softly; a dial with one station does not.
 The knob's marker rests at the same angle for the same station, with the first
 station at the top. With a single station on the dial, the dial does not turn.
+The knob shows only the station's name; its source (for example "My Playlist")
+is on the station's card in the strip below.
+
+**Settings > Appearance > Tuner card size** sets the size of the station cards
+in the strip: **Small** (the default, text only, as in earlier versions),
+**Medium** or **Large**. Medium and Large cards have bigger names and show the
+station's picture: your own station picture if you have one, otherwise the
+station's logo, otherwise its initials on a coloured square. Pictures load only
+for the cards you can see, and only after the strip has stopped moving, so
+turning the dial quickly through many stations asks for nothing until it
+rests. Bigger cards leave less room for the dial in a short window; when the
+dial gets too small, the station name and then the count are left off the knob.
+
+The dial keeps the same size while you use it: it does not change between
+stations, while a list is loading or empty, or when the player bar appears on
+the first play. Before anything has played, the Tuner keeps the player bar's
+room free.
 Stations appear as each live source answers; a source
 that does not answer within 20 seconds is marked unavailable instead of holding
 the dial on "Loading". Tuner reuses the live adapter/snapshot lane and
@@ -307,6 +339,10 @@ restart; the local server port is explicitly marked **for next launch**.
   Ember · Orange, or Amethyst · Violet.
 - **Default mode on launch:** Library, Tuner, Grid, or Discovery (About is
   accepted by the state normalizer but is not offered as a default selector).
+- **Tuner card size:** Small (default), Medium or Large. Medium and Large show
+  each station's picture on its card under the Tuner dial. Updates immediately.
+- **Sound meter in the player bar:** on by default. Shows the small bars beside
+  EQ that move with the sound. Updates immediately.
 - **Show technical source details:** off by default. Turn it on to see the
   per-source status words (Pull, Wait, Done, Live, Stale), boxed source badges,
   and license notes on cards.
@@ -415,9 +451,12 @@ line says how many pictures were found and why any were ignored, for example
 - If two files would match the same station, the one whose file name sorts
   first is used, so `Radio Paradise.jpg` wins over `Radio Paradise.png`.
 - The picture is used everywhere the station appears: cards, favorites,
-  imported playlists, the detail panel, the player bar and the Tuner. If a
-  picture cannot be shown, the station's own logo (or its initials) is shown
-  instead.
+  imported playlists, the detail panel, the player bar, Discovery and the
+  Tuner (on Medium and Large cards). If a picture cannot be shown, the
+  station's own logo (or its initials) is shown instead.
+- Your picture is always shown whole and centred, never cut off, so a picture
+  that is not square (a wide logo, for example) keeps its sides. The space
+  beside it stays plain.
 - Only plain files directly in the folder are used. Subfolders, shortcuts and
   links are ignored.
 

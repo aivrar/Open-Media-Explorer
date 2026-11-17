@@ -394,6 +394,18 @@
     radial-gradient(circle at center, rgba(255,255,255,0.04), transparent 62%),
     linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
 }
+/* The user's own station picture, whatever the item type: whole and centred
+   (never cropped), on the picture area's own surface, which also keeps the
+   initials tile from showing around it or through a transparent picture.
+   Radio and TV cards keep the logo padding above. */
+.card-thumb img.is-station-image {
+  object-fit: contain;
+  background:
+    radial-gradient(circle at center, rgba(255,255,255,0.04), transparent 62%),
+    linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
+}
+/* ...and nothing of the initials tile shows at its rounded corners either. */
+.card-thumb:has(> img.is-station-image.loaded) > .placeholder { visibility: hidden; }
 .card-thumb img.loaded { opacity: 1; }
 .card-thumb img.errored { display: none; }
 
@@ -547,6 +559,11 @@
   background: var(--bg-elev-3);
   aspect-ratio: 16 / 9;
   object-fit: cover;
+}
+/* The user's own station picture: whole and centred on the panel itself. */
+.detail-thumb.is-station-image {
+  object-fit: contain;
+  background: transparent;
 }
 .detail-title {
   font-size: 18px;

@@ -17,6 +17,8 @@
  *     showTechnicalDetails: bool,
  *     videoSize: 'normal' | 'large',
  *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
+ *     tunerCardSize: 'small' | 'medium' | 'large',   // Tuner strip cards (tuner-card-size.js)
+ *     soundMeter: bool,   // LED sound meter in the player bar (player-meter.js), default on
  *   },
  *   sleepTimer: { until: number | null }
  * }
@@ -33,6 +35,7 @@ import { repairFiniteMediaFields } from './media-capabilities.js';
 import { applyTheme, normalizeTheme } from './themes.js';
 import { FAVORITES_SORT_MANUAL, favoritesInDisplayOrder, normalizeFavoritesSort } from './favorites-order.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
+import { TUNER_CARD_SMALL, normalizeTunerCardSize } from './tuner-card-size.js';
 import { songLog } from './song-log.js';
 import { STREAM_QUALITY_FIELDS } from './stream-quality.js';
 import {
@@ -81,6 +84,8 @@ const DEFAULT_SETTINGS = {
   showTechnicalDetails: false,
   videoSize: 'normal',
   favoritesSort: FAVORITES_SORT_MANUAL,
+  tunerCardSize: TUNER_CARD_SMALL,
+  soundMeter: true,
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
 
@@ -123,6 +128,9 @@ export function normalizeSettings(value) {
     showTechnicalDetails: source.showTechnicalDetails === true,
     videoSize: source.videoSize === 'large' ? 'large' : 'normal',
     favoritesSort: normalizeFavoritesSort(source.favoritesSort),
+    tunerCardSize: normalizeTunerCardSize(source.tunerCardSize),
+    // Only an explicit false turns it off; older builds keep the field as is.
+    soundMeter: source.soundMeter !== false,
     enabledSources,
   };
 }

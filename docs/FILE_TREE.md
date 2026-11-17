@@ -27,6 +27,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.7.md
 |   |-- RELEASE_NOTES_0.1.8.md
 |   |-- RELEASE_NOTES_0.1.9.md
+|   |-- RELEASE_NOTES_0.1.10.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -34,6 +35,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.7.md
 |   |-- RELEASE_RECORD_0.1.8.md
 |   |-- RELEASE_RECORD_0.1.9.md
+|   |-- RELEASE_RECORD_0.1.10.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -146,6 +148,10 @@ WorldMediaWindows/
 | `src/lib/stream-quality.js` | The format and bitrate label for Radio Browser stations. |
 | `src/lib/other-streams.js` | The rule that decides which Radio Browser entries are listed as other streams of a station. |
 | `src/modes/library/other-streams.js` | The **Other streams** button and list in the Library detail panel. |
+| `src/lib/audio-signal.js` | Reads the sound for visuals from the audio engine's side tap, once per frame for every listener; runs only while something audible plays and the window is visible. |
+| `src/lib/player-meter.js` | The LED-style sound meter in the player bar (14 bars), switched by Settings > Appearance > Sound meter in the player bar. |
+| `src/lib/tuner-card-size.js` | The Tuner card size choice (Small, Medium, Large) and which sizes show pictures. |
+| `src/lib/tuner-card-art.js` | Pictures on Medium and Large Tuner cards: initials first, pictures only for cards in view once the strip has stopped moving. |
 | `src/` | Vite frontend source. |
 | `src/lib/media-capabilities.js` | Pure download/record capability and manifest-delivery resolver. |
 | `src/lib/eq-store.js` | Versioned global, favorite, and custom-preset EQ persistence contract. |
@@ -168,9 +174,12 @@ WorldMediaWindows/
 | `tests/relay-cleanup.test.js`, `tests/profile-write-queue.test.js` | Relay release after rejected starts and reloads, and ordered profile saves and Clear cache. |
 | `tests_python/test_icy_metadata.py`, `tests_python/test_songlog.py`, `tests_python/test_station_images.py`, `tests_python/test_backup.py` | The Python side of song titles, the song log, station pictures and the backup ZIP. |
 | `tests_python/test_favorite_groups_profile.py`, `tests_python/test_playlists_pls.py`, `tests_python/test_playlists_xspf.py`, `tests_python/test_relay_lifecycle.py` | The split profile files, `.pls` and `.xspf` import, and relay release for downloads and recordings. |
+| `tests/station-images-fit.test.js`, `tests/issue6-steady-dial.test.js` | Issue #6: station pictures shown whole, and a Tuner dial that keeps its size. |
+| `tests/sound-meter.test.js` | The sound signal and the player-bar sound meter. |
+| `tests/tuner-card-size.test.js`, `tests/tuner-card-art-stop.test.js` | Tuner card sizes, knob text, and the card pictures (when they load and stop). |
 | `screenshots/` | Versioned README and documentation screenshots. |
 | `build_windows.py` | Builds the signed-runtime portable folder and release ZIP. |
 | `build_single_exe.py` | Builds the classic unsigned one-file `dist\WorldMediaWindows.exe` with the current frontend, icon, and WebView bridge. |
 | `assets/` | App icon, Windows metadata, and embedded-runtime launcher assets. |
 | `docs/PROVIDERS.md` | All ten public endpoints, cache/refresh rules, limitations, and content/retry behavior. |
-| `docs/RELEASE_NOTES_0.1.9.md` | GitHub release notes for the `v0.1.9` tag and its release assets. |
+| `docs/RELEASE_NOTES_0.1.10.md` | GitHub release notes for the `v0.1.10` tag and its release assets. |

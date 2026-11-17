@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.9` behavior in this repository: how to
+It describes the shipped `0.1.10` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, download finite files, record live streams, preserve portable data,
 and diagnose provider or runtime problems.
@@ -18,6 +18,20 @@ providers at run time and can change without an app update.
 | ![World Media Tuner](<../../screenshots/updated screenshots/tuner.PNG>) | ![World Media Discovery](<../../screenshots/updated screenshots/discovery.PNG>) |
 
 ![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
+
+## New in 0.1.10
+
+- A small sound meter beside **EQ** in the player bar shows that something is
+  really playing. Switch it in **Settings > Appearance > Sound meter in the
+  player bar**. See [Playback, EQ, downloads, and
+  recording](04-playback-eq-downloads-recording.md).
+- **Settings > Appearance > Tuner card size** makes the station cards under the
+  Tuner dial Medium or Large, with each station's picture. The knob shows only
+  the station's name. See [Using the
+  application](02-using-the-application.md).
+- Fixes: your own station pictures are shown whole instead of cut off, and the
+  Tuner dial keeps the same size between stations, while a list loads, and on
+  the first play.
 
 ## New in 0.1.9
 
@@ -64,7 +78,7 @@ providers at run time and can change without an app update.
 5. Use the bottom player bar to play/pause, stop, seek finite media, mute, set
    volume, favorite the current item, open EQ, and download or record when the
    source supports that action. The bar also shows the song a radio station is
-   playing, when the station sends it.
+   playing, when the station sends it, and a small sound meter beside EQ.
 6. Use the gear for appearance, content, recorder, quality, source toggles,
    server-port handoff, FFmpeg, downloads, and cache controls.
 7. Bring your own channels with **Library → My Playlists → Add link / Import playlist**.
@@ -80,7 +94,8 @@ providers at run time and can change without an app update.
   limited for performance.
 - **Tuner** is a live station/channel selector with a rotary presentation.
   The dial shows the station's place in the list, not a broadcast frequency,
-  and can be limited to your starred stations or one of your categories.
+  and can be limited to your starred stations or one of your categories. Its
+  station cards come in three sizes; Medium and Large show station pictures.
 - **Grid** is a guide-style view for live TV and radio. It uses the same live
   adapters as Tuner but presents tiles, category/country/source filters, and a
   text filter.

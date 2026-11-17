@@ -4,7 +4,8 @@ import {
 import { catalogScheduler } from './lib/catalog-scheduler.js';
 import { setArtworkPlaybackPriority } from './lib/artwork.js';
 import { SOURCE_IDS } from './lib/sources.js';
-import { initPlayer, getCurrentItem } from './lib/player.js';
+import { initPlayer, getCurrentItem, getAudioSignal } from './lib/player.js';
+import { initPlayerMeter } from './lib/player-meter.js';
 import { startSongLog } from './lib/song-log.js';
 import { openSongLog } from './lib/song-log-panel.js';
 import { initCaptureUi } from './lib/capture-ui.js';
@@ -99,6 +100,12 @@ async function boot() {
   initPersistenceNotice();
   await initState();
   initPlayer();
+  // The LED sound meter after EQ; Settings > Appearance switches it.
+  initPlayerMeter({
+    signal: getAudioSignal(),
+    getSettings: () => getState().settings,
+    subscribeSettings: (fn) => subscribe('settings-change', fn),
+  });
   // The song log names the station from the item that is playing.
   startSongLog(subscribe, (itemId) => {
     const item = getCurrentItem();

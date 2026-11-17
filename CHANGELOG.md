@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.1.10 - 2026-11-16
+
+Fixes for issue #6 and three more requests from discussion #8.
+
+- Your own station pictures that are not square were cut off at the sides or
+  at the top and bottom. They are now shown whole and centred, on a plain
+  background, in the player bar, the Library cards, the detail panel, Discovery
+  and the Tuner cards. Other artwork is shown as before (issue #6).
+- Tuner: the dial no longer grows and shrinks by a few pixels on some stations.
+  A station name in another script, for example Chinese, made its card 2 px
+  taller; all cards now have a fixed height (issue #6).
+- Tuner: the dial no longer becomes smaller the first time something is played
+  after starting the app. The Tuner now keeps room for the player bar before
+  the first play, so the dial has the same size before and after (issue #6).
+- Tuner: the dial no longer jumps when the strip under it shows a message
+  instead of cards, for example while stations load or when none are found.
+  The strip keeps its height (issue #6).
+- Sound meter: small LED-style bars beside **EQ** in the player bar move with
+  the sound, so you can see that a station is really playing. 14 bars, from
+  about 40 Hz to 16 kHz. The meter only reads the sound and never changes it.
+  It rests completely while playback is paused or stopped, muted or at volume
+  0, and slows to about one update a second while the window is minimised.
+  **Settings > Appearance > Sound meter
+  in the player bar** switches it; it is on by default. In a window up to
+  1000 px wide it sits at the end of the button row (discussion #8).
+- Tuner: the knob shows only the station's name. The source (for example
+  "My Playlist") is no longer added after it; it is still on the station's card
+  in the strip (discussion #8).
+- Tuner card size: **Settings > Appearance > Tuner card size** offers
+  **Small** (as before, the default), **Medium** and **Large**. Medium and
+  Large cards are bigger and show the station's picture: your own station
+  picture, otherwise the station's logo, otherwise its initials. Pictures load
+  only for the cards you can see, after the strip stops moving
+  (discussion #8).
+- Internal: the two new choices are stored inside the existing settings, so
+  going back to v0.1.9 keeps your favorites and settings.
+- Internal: a Python relay test that sometimes failed on a busy machine now
+  waits long enough, and a new test covers a short pause in a stream.
+
 ## 0.1.9 - 2026-11-15
 
 Most of this release answers the feature requests in discussion #8.

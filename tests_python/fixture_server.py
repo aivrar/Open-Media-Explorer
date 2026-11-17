@@ -209,7 +209,9 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/malformed.m3u8":
             return self._send(200, b"this is not an HLS manifest", "application/vnd.apple.mpegurl")
         if parsed.path == "/stream/endless":
-            return self._send_endless()
+            # ?pause=S: one silence of S seconds (at most 5) after the first ten chunks.
+            pause = min(float(urllib.parse.parse_qs(parsed.query).get("pause", ["0"])[0]), 5.0)
+            return self._send_endless(pause=max(0.0, pause))
         if parsed.path == "/requests":
             with self.state.lock:
                 body = json.dumps(self.state.requests).encode("utf-8")
@@ -282,16 +284,20 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
         if body and not head:
             self.wfile.write(body)
 
-    def _send_endless(self) -> None:
+    def _send_endless(self, *, pause: float = 0.0) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "audio/mpeg")
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
         chunk = b"stream-fixture" * 32
+        sent = 0
         try:
             while True:
                 self.wfile.write(f"{len(chunk):X}\r\n".encode("ascii") + chunk + b"\r\n")
                 self.wfile.flush()
+                sent += 1
+                if sent == 10 and pause:
+                    time.sleep(pause)  # About 4.4 KB sent: far short of one 64 KiB relay read.
                 time.sleep(0.002)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             self.state.stream_cancelled.set()

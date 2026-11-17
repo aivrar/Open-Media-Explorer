@@ -102,6 +102,11 @@
             <span class="player-eq-label">EQ</span>
             <span id="player-eq-state" class="player-eq-state">Bypassed</span>
           </button>
+          <div id="player-meter-compact" class="player-meter" data-player-meter aria-hidden="true">
+            <div class="player-meter-well">
+              <canvas class="player-meter-canvas" width="90" height="36"></canvas>
+            </div>
+          </div>
         </div>
         <div id="player-capture-status" class="player-capture-status" hidden>
           <span id="player-capture-status-text"></span>
@@ -111,6 +116,9 @@
         </div>
         <span id="player-capture-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         <div class="player-progress">
+          <div id="player-meter" class="player-meter" data-player-meter aria-hidden="true">
+            <canvas class="player-meter-canvas" width="90" height="36"></canvas>
+          </div>
           <span id="player-time" class="player-time">--:--</span>
           <input id="player-seek" class="player-seek" type="range" min="0" max="100" value="0" aria-label="Seek position" disabled />
           <span id="player-dur" class="player-time">--:--</span>

@@ -163,11 +163,22 @@ function requestError(message, status = 0, code = 'STATION_IMAGE_FAILED') {
   return error;
 }
 
-async function fetchStationImage(source, { fetchImpl = globalThis.fetch, sleep } = {}) {
+function abortError(reason) {
+  if (reason?.name === 'AbortError') return reason;
+  const error = new Error(typeof reason === 'string' ? reason : 'The station picture is no longer wanted.');
+  error.name = 'AbortError';
+  return error;
+}
+
+async function fetchStationImage(source, { fetchImpl = globalThis.fetch, sleep, signal } = {}) {
   const id = SOURCE_PATTERN.exec(source)[1];
   const wait = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  // Stopped (nobody waits for it any more): no further request or retry.
+  const check = () => { if (signal?.aborted) throw abortError(signal.reason); };
   for (let attempt = 0; ; attempt += 1) {
+    check();
     const session = await getControlSession({ fetchImpl });
+    check();
     const response = await fetchImpl(`${STATION_IMAGES_ROUTE}/${id}`, {
       method: 'GET',
       headers: { 'X-WorldMedia-Token': session.token },
@@ -175,7 +186,9 @@ async function fetchStationImage(source, { fetchImpl = globalThis.fetch, sleep }
       // Always ask again: a replaced file keeps its address, and the ETag
       // makes an unchanged one cheap.
       cache: 'no-cache',
+      ...(signal ? { signal } : {}),
     });
+    check();
     if (response.ok) {
       const type = String(response.headers?.get?.('content-type') || '').split(';', 1)[0].trim().toLowerCase();
       if (!IMAGE_TYPES.has(type)) throw requestError('The station picture is not an image.', response.status);
@@ -199,18 +212,59 @@ async function fetchStationImage(source, { fetchImpl = globalThis.fetch, sleep }
   }
 }
 
-/** An object URL for a picture, fetched once and shared by every view. */
+/** The caller's own view of a shared fetch. With `signal`, the caller can
+ *  stop waiting: it is answered with an AbortError at once and a late result
+ *  is never handed to it. When every caller that asked has stopped (and none
+ *  asked without a signal, like the player bar), the fetch itself stops too,
+ *  with no further retry, and is forgotten so a later request starts fresh. */
+function waitForEntry(source, entry, signal) {
+  if (!signal) {
+    entry.held = true;
+    return entry.promise;
+  }
+  if (signal.aborted) return Promise.reject(abortError(signal.reason));
+  if (entry.url) return entry.promise;
+  entry.waiters += 1;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const leave = () => {
+      if (settled) return false;
+      settled = true;
+      entry.waiters -= 1;
+      signal.removeEventListener('abort', onAbort);
+      return true;
+    };
+    const onAbort = () => {
+      if (!leave()) return;
+      if (!entry.held && entry.waiters <= 0 && !entry.url) {
+        entry.controller.abort();
+        if (objectUrls.get(source) === entry) objectUrls.delete(source);
+      }
+      reject(abortError(signal.reason));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    entry.promise.then((url) => { if (leave()) resolve(url); }, (error) => { if (leave()) reject(error); });
+  });
+}
+
+/** An object URL for a picture, fetched once and shared by every view.
+ *  `options.signal` lets a caller stop waiting (see waitForEntry). */
 export function stationImageUrl(source, options = {}) {
   if (!isStationImageSource(source)) return Promise.reject(requestError('Not a station picture.'));
+  const { signal, ...fetchOptions } = options;
+  if (signal?.aborted) return Promise.reject(abortError(signal.reason));
   const cached = objectUrls.get(source);
   if (cached) {
     objectUrls.delete(source);
     objectUrls.set(source, cached);
-    return cached.promise;
+    return waitForEntry(source, cached, signal);
   }
-  const createUrl = options.createUrl || globalThis.URL?.createObjectURL?.bind(globalThis.URL);
-  const entry = { url: '', promise: null, released: false };
-  entry.promise = fetchStationImage(source, options).then((blob) => {
+  const createUrl = fetchOptions.createUrl || globalThis.URL?.createObjectURL?.bind(globalThis.URL);
+  const controller = new AbortController();
+  const entry = { url: '', promise: null, released: false, held: false, waiters: 0, controller };
+  entry.promise = fetchStationImage(source, { ...fetchOptions, signal: controller.signal }).then((blob) => {
+    // Stopped while the bytes arrived: no object URL is made for nobody.
+    if (controller.signal.aborted) throw abortError(controller.signal.reason);
     const url = createUrl(blob);
     entry.url = url;
     if (entry.released) {
@@ -222,9 +276,11 @@ export function stationImageUrl(source, options = {}) {
     if (objectUrls.get(source) === entry) objectUrls.delete(source);
     throw error;
   });
+  // A fetch stopped because nobody waits for it has nobody to tell.
+  entry.promise.catch(() => {});
   objectUrls.set(source, entry);
   while (objectUrls.size > MAX_OBJECT_URLS) releaseObjectUrl(objectUrls.keys().next().value);
-  return entry.promise;
+  return waitForEntry(source, entry, signal);
 }
 
 /** Ask the backend for the list (it scans the folder) and take it in. */

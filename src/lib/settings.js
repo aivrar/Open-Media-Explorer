@@ -11,6 +11,7 @@ import { THEME_OPTIONS } from './themes.js';
 import { saveProfileHandoff } from './profile-transfer.js';
 import { bindBackupControls } from './backup.js';
 import { STATION_IMAGES_HINT, bindStationImageControls } from './station-images.js';
+import { TUNER_CARD_SIZES, TUNER_CARD_SIZE_LABELS, normalizeTunerCardSize } from './tuner-card-size.js';
 import {
   FFMPEG_APPROX_SIZE,
   FFMPEG_PROVIDER,
@@ -24,7 +25,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.9';
+const VERSION = '0.1.10';
 
 function buildModal() {
   const state = getState();
@@ -64,6 +65,22 @@ function buildModal() {
               <option value="grid">Grid</option>
               <option value="discovery">Discovery</option>
             </select>
+          </div>
+          <div class="row">
+            <div>
+              <label for="settings-tuner-card-size">Tuner card size</label>
+              <span class="description">The station cards under the Tuner dial. Medium and Large show bigger names and each station's picture. Updates immediately.</span>
+            </div>
+            <select id="settings-tuner-card-size" data-field="tunerCardSize">
+              ${TUNER_CARD_SIZES.map((id) => `<option value="${id}">${TUNER_CARD_SIZE_LABELS[id]}</option>`).join('')}
+            </select>
+          </div>
+          <div class="row">
+            <div>
+              <label for="settings-sound-meter">Sound meter in the player bar</label>
+              <span class="description">Small bars beside EQ that move with the sound, so you can see a station is really playing. They rest while nothing plays. Updates immediately.</span>
+            </div>
+            <input id="settings-sound-meter" type="checkbox" class="switch" data-field="soundMeter" />
           </div>
           <div class="row">
             <div>
@@ -237,6 +254,14 @@ function buildModal() {
   const modeSel = root.querySelector('select[data-field="defaultMode"]');
   modeSel.value = state.settings.defaultMode;
   modeSel.addEventListener('change', () => saveSettings({ defaultMode: modeSel.value }));
+
+  const cardSizeSel = root.querySelector('select[data-field="tunerCardSize"]');
+  cardSizeSel.value = normalizeTunerCardSize(state.settings.tunerCardSize);
+  cardSizeSel.addEventListener('change', () => saveSettings({ tunerCardSize: cardSizeSel.value }));
+
+  const meterToggle = root.querySelector('input[data-field="soundMeter"]');
+  meterToggle.checked = state.settings.soundMeter !== false;
+  meterToggle.addEventListener('change', () => saveSettings({ soundMeter: meterToggle.checked }));
 
   const techToggle = root.querySelector('input[data-field="showTechnicalDetails"]');
   techToggle.checked = state.settings.showTechnicalDetails === true;

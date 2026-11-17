@@ -17,6 +17,19 @@ export const EQ_FILTER_Q = Math.SQRT2;
 export const EQ_SMOOTHING_SECONDS = 0.015;
 export const EQ_SIGNAL_RMS_FLOOR = 1e-5;
 
+/* The visual side tap (audio-signal.js reads it). A second AnalyserNode fed
+   from the same point as the EQ analyser and connected to nothing, so it never
+   changes what is heard or what verifySignal() measures. maxDecibels sits well
+   above the default -30 so loud mastered music does not pin every bin at the
+   top; minDecibels is low enough that quiet speech still registers. Smoothing
+   is off here: consumers smooth over real time (dt), not per read. */
+export const VISUAL_ANALYSER_SETTINGS = Object.freeze({
+  fftSize: 2048,
+  minDecibels: -85,
+  maxDecibels: -15,
+  smoothingTimeConstant: 0,
+});
+
 function clamp(value, minimum, maximum) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
@@ -306,6 +319,42 @@ export class AudioEngine {
 
   getFrequencyResponse(frequencies) {
     return computeEqResponseDb(this.curve, frequencies, this.context?.sampleRate || 48000);
+  }
+
+  /** The visual side tap for `element`, or null. Only an existing graph with a
+   *  running context and this element attached qualifies: this never creates
+   *  the context or the graph and never resumes a suspended context (that stays
+   *  tied to the user's Play gesture). The tap is made on first use and stays
+   *  until releaseVisualTap(). */
+  visualTapFor(element) {
+    if (!element || !this.graph || !this.context || this.fatal || this.externalReason) return null;
+    if (this.state !== 'ready' || this.context.state !== 'running' || !this.isAttached(element)) return null;
+    if (this.graph.visual) return this.graph.visual;
+    try {
+      const tap = this.context.createAnalyser();
+      tap.fftSize = VISUAL_ANALYSER_SETTINGS.fftSize;
+      // min first: each assignment must keep min < max (defaults -100 / -30).
+      tap.minDecibels = VISUAL_ANALYSER_SETTINGS.minDecibels;
+      tap.maxDecibels = VISUAL_ANALYSER_SETTINGS.maxDecibels;
+      tap.smoothingTimeConstant = VISUAL_ANALYSER_SETTINGS.smoothingTimeConstant;
+      // Fed exactly like the EQ analyser (dry + wet sum); no output connection.
+      this.graph.dry.connect(tap);
+      this.graph.wet.connect(tap);
+      this.graph.visual = tap;
+      return tap;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Disconnect the visual tap (meter off, paused, window hidden), so the audio
+   *  thread no longer feeds it. A later visualTapFor() makes a new one. */
+  releaseVisualTap() {
+    const tap = this.graph?.visual;
+    if (!tap) return;
+    this.graph.visual = null;
+    try { this.graph.dry.disconnect(tap); } catch (_) {}
+    try { this.graph.wet.disconnect(tap); } catch (_) {}
   }
 
   async destroy() {
