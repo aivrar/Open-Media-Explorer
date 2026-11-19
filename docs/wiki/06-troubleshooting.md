@@ -38,6 +38,18 @@ The current process does not jump ports while it is running. A blank WebView
 usually means the local server did not start; inspect `native.log` for the
 binding error and confirm the next-launch port.
 
+Since v0.1.11, on Windows a second copy of World Media cannot share a port that
+the first copy is using (before, both could listen and the page's requests were
+split between them). At start, if the usual port is busy and the program holding
+it answers as World Media, the new copy waits up to 8 seconds before it tries
+another port, because another port would be another browser origin with other
+saved favorites. It cannot tell whether that copy is closing, so the wait
+covers a copy that was just closed (it keeps its port for a few seconds) and
+one that is still running. If another program holds the port, the new copy
+moves to a fallback port at once. The line that starts with `listening` in
+`native.log` shows the port, the process id and a short note on how the port
+was chosen.
+
 ## Favorites or settings appear missing
 
 Usually the app is using a different profile/origin, not that the records were
@@ -51,6 +63,38 @@ deleted. Check:
 Close both copies, restore the backed-up `WorldMediaWindows-data` directory,
 then launch only the intended EXE. A port change should use the built-in profile
 handoff; a complete directory copy is still the safest migration.
+
+## A favorite station is not on the Tuner dial
+
+The Tuner shows the favorites saved as the type you are on: radio stations on
+the **Radio** dial and TV channels on the **TV** dial. When some of your
+favorites are saved as the other type, the status line says so, for example "3
+more saved as TV (switch to TV to see them)". Switch the band to see them.
+
+This usually happens with a station from your own playlist whose address does
+not say radio or TV. It is saved as the type of the playlist's **Add as**
+choice. Since v0.1.11 **Add as** starts on **Auto**, which uses the type that
+most channels in the same file say. When some channels needed a type from
+**Add as**, the import result says how many and, with Auto, what it chose. To
+change a station's type, choose the other **Add as** and import the
+playlist again under the same file name. Its favorites move to the new channel
+and keep their place, category and equalizer. If a favorite stays behind, check
+that the channel's name did not change, and that the new channel is not already
+a favorite.
+
+## My Playlists is empty or shows an error
+
+If the saved playlists could not be read when the app started, for example
+because the local server was still busy, My Playlists says "Your playlists could
+not be loaded" and why. Since v0.1.11 the read is tried again each time you open
+My Playlists, so open it again. If it keeps failing, check `native.log` (it
+notes how many playlists and channels were listed or saved, never names or
+addresses) and that `WorldMediaWindows-data\state\playlists.json` exists and can
+be read.
+
+An import can also skip entries on purpose. The result says how many entries
+were skipped because they point at this computer or a private network address,
+and why, and counts unsupported entries and duplicates.
 
 ## Catalog stopped, counts vanished, or a source says Wait
 
@@ -94,13 +138,24 @@ Pictures in the `station-images` folder (Settings → Station images → **Open
 folder**) are matched by file name. Check:
 
 - The file name, without its extension, must be the station's name. Capital
-  letters, extra spaces, and characters Windows does not allow in file names
-  (`\ / : * ? " < > |`) do not matter, so `ACDC Radio.png` works for
-  `AC/DC Radio`. A longer or different name does not match.
+  letters and extra spaces do not matter. A longer or different name does not
+  match.
+- Windows does not allow `\ / : * ? " < > |` in file names. For a station whose
+  name has one of them, write each one in the file name as `-`, `_` or a space,
+  or leave it out. `Nu-Metal-Alternative.png` works for `Nu-Metal/Alternative`,
+  and `ACDC Radio.png` or `AC-DC Radio.png` for `AC/DC Radio`. A name Windows
+  keeps for itself (`CON`, `AUX`, `NUL`, `COM1`, `LPT1` and so on) takes a `_`
+  or `-` at the end, such as `AUX_.png`. The rule is also shown in **Settings >
+  Station images**. Before v0.1.11 only leaving the character out worked.
 - Press **Refresh** under Station images. World Media looks at the folder when
   it starts and when you press **Refresh**, not while you add files.
 - Read the line under the buttons. It says how many pictures were found and
   why files were ignored, for example `1 ignored: too large.`
+- Read **Pictures to check**, the list under that line. It names each file that
+  was not used, with the reason, such as "too large (the limit is 2 MB)" or "SVG
+  is not allowed". It also names a picture that fits more than one station,
+  and a picture that no favorite or playlist station is named like, which
+  usually means the name has a typo. It shows ten lines and then "and N more".
 - Only PNG, JPG, WebP and GIF files up to 2 MB are used, and each must be a
   real picture of that kind. An SVG, or a file of another kind that was
   renamed, is ignored.
@@ -197,6 +252,40 @@ The bars beside **EQ** in the player bar move only while sound is playing:
   World Media's audio engine, for example when the stream had to be played
   directly because the local relay could not be used. The EQ is unavailable
   then too. Press Stop and Play to try the relay again.
+
+## The Visualizer is slow, does not move, or shows a message
+
+See [Visualizer](09-visualizer.md) for every control. Common causes:
+
+- **The picture is still.** Check that something is playing and that the sound
+  is not muted or at zero. The Visualizer reads the sound like the sound meter,
+  so if the meter is flat, the picture has no sound to follow either (see the
+  section above). With no sound it moves slowly for about 20 seconds and then
+  holds still. It is also still until you press **Continue** on the notice (or
+  **Start the visualizer** after **Not now**), and when Windows is set to show
+  fewer animations ("Windows is set to reduce animations, so the picture stays
+  still.").
+- **"The visualizer needs WebGL graphics, which are not available on this
+  computer right now."** The Visualizer draws with the graphics card. Update
+  the graphics driver and restart World Media. A remote desktop session or a
+  virtual machine without graphics acceleration may not offer WebGL.
+- **"The graphics driver was reset. The picture comes back by itself when it is
+  ready."** Wait a moment. If it does not come back, open another tab and then
+  the Visualizer again.
+- **The picture is jumpy or the computer is busy.** Set **Quality** to Low and
+  **Frame rate** to 15 or 30, choose Light scenes (or set the shuffle's
+  **Scenes** to **Light only**), and turn effects and overlays off. Turn on
+  **Show measured fps** to see the rate it gets. The automatic step-down does
+  part of this for you when a scene cannot keep up, and says so at the bottom
+  right.
+- **You want it to stop using the computer.** Open another tab. Leaving the
+  Visualizer stops all its work and gives the graphics back, so it costs
+  nothing while it is closed.
+- **The picture is too bright or too busy.** Turn the effects and overlays
+  off, lower **Brightness**, or leave the tab. The flash limiter is always on
+  and cannot be turned off.
+- **The notice came back.** **Clear local cache** resets the Visualizer's
+  choices, so the notice is shown again.
 
 ## Download fails
 

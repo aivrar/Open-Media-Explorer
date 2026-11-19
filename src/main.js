@@ -18,6 +18,7 @@ import { renderTuner, tunerBand } from './modes/tuner.js';
 import { renderGrid } from './modes/grid.js';
 import { renderDiscovery } from './modes/discovery.js';
 import { renderAbout } from './modes/about.js';
+import { renderVisualizer } from './modes/visualizer.js';
 import { initPersistenceNotice } from './lib/persistence-notice.js';
 import { initPlaylistDrop } from './lib/playlist-drop.js';
 import { loadStationImages } from './lib/station-images.js';
@@ -27,6 +28,8 @@ const MODES = {
   tuner: renderTuner,
   grid: renderGrid,
   discovery: renderDiscovery,
+  // A thin shell; the visualizer itself is a separate chunk loaded on first open.
+  visualizer: renderVisualizer,
   about: renderAbout,
 };
 

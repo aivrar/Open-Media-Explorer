@@ -268,6 +268,28 @@ export function assignFavoriteToGroup(favoriteId, groupId = '') {
   return commit(doc.groups, assignments, { action: 'assign', favoriteId, groupId: target });
 }
 
+/** The stored categories text with favorites given new ids: `ids` maps an
+ *  old favorite id to its new id. Only the assignments change; everything
+ *  else is kept as stored. Missing, unreadable or newer-layout data comes
+ *  back unchanged (null stays null). Used by favorite-migration.js, which
+ *  saves it together with the favorites list. */
+export function favoriteGroupsTextWithNewIds(raw, ids) {
+  if (raw == null) return raw;
+  let value;
+  try { value = JSON.parse(raw); } catch (_) { return raw; }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== FAVORITE_GROUPS_VERSION) return raw;
+  const stored = value.assign;
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return raw;
+  let changed = false;
+  const assign = Object.create(null);
+  for (const [favoriteId, groupId] of Object.entries(stored)) {
+    const next = ids.get(favoriteId);
+    if (next && !Object.hasOwn(stored, next)) { assign[next] = groupId; changed = true; }
+    else if (!Object.hasOwn(assign, favoriteId)) assign[favoriteId] = groupId;
+  }
+  return changed ? JSON.stringify({ ...value, assign }) : raw;
+}
+
 /** Drop assignments for favorites that are no longer saved. Saves only when
  *  there is something to drop. Returns true when it saved. */
 export function pruneFavoriteGroups() {

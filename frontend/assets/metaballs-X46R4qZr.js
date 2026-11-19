@@ -1,0 +1,66 @@
+function o(e){return e.EffectRegistry.register({name:"metaballs",label:"Metaballs",category:"Demoscene",description:"Organic blobs that merge and split like living organisms",params:[{name:"speed",label:"Speed",min:.1,max:3,default:1,step:.1},{name:"count",label:"Blob Count",min:3,max:12,default:6,step:1,type:"int"},{name:"size",label:"Blob Size",min:.02,max:.2,default:.08,step:.01},{name:"glow",label:"Glow",min:0,max:2,default:.8,step:.1},{name:"color_mode",label:"Color Mode",type:"select",options:["Rainbow","Neon","Monochrome","Acid"],default:0}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_speed;
+uniform float u_count;
+uniform float u_size;
+uniform float u_glow;
+uniform float u_color_mode;
+
+vec2 ballPos(float id, float t) {
+    float a = id * 2.399 + t;
+    float r = 0.3 + 0.15 * sin(id * 1.7 + t * 0.5);
+    return vec2(
+        0.5 + r * sin(a + sin(t * 0.3 + id) * 0.5),
+        0.5 + r * cos(a * 0.7 + cos(t * 0.4 + id * 2.0) * 0.5)
+    );
+}
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / u_resolution;
+    float aspect = u_resolution.x / u_resolution.y;
+    uv.x *= aspect;
+
+    float t = u_time * u_speed + seedPhase();
+    float field = 0.0;
+    vec3 colorAccum = vec3(0.0);
+
+    for (float i = 0.0; i < 12.0; i++) {
+        if (i >= u_count) break;
+
+        vec2 pos = ballPos(i, t);
+        pos.x *= aspect;
+
+        float d = length(uv - pos);
+        float contribution = u_size / (d * d + 0.0001);
+        field += contribution;
+
+        // Color per ball
+        float hue = fract(i / u_count + t * 0.05);
+        vec3 bc = hsv2rgb(vec3(hue, 0.8, 1.0));
+        colorAccum += bc * contribution;
+    }
+
+    colorAccum /= max(field, 0.001);
+
+    // Threshold - scale based on blob count and size
+    float threshold = u_count * u_size * 15.0;
+    float edge = smoothstep(threshold * 0.6, threshold, field);
+    float glow = u_glow * 0.5 / (1.0 + exp(-(field - threshold * 0.3) * 5.0 / max(threshold, 0.01)));
+
+    vec3 col = vec3(0.0);
+
+    int mode = int(u_color_mode);
+    if (mode == 0) {
+        col = colorAccum * edge + colorAccum * glow;
+    } else if (mode == 1) {
+        col = vec3(0.1, 0.8, 1.0) * edge + vec3(0.0, 0.3, 0.8) * glow;
+    } else if (mode == 2) {
+        col = vec3(edge) + vec3(glow * 0.5);
+    } else {
+        col = rainbow(field * 0.05 + t * 0.1) * (edge + glow);
+    }
+
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{o as default};

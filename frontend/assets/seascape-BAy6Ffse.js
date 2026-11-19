@@ -1,0 +1,111 @@
+function o(e){return e.EffectRegistry.register({name:"seascape",label:"Seascape",category:"Nature",description:"Rolling ocean at sunset with reflections, sun glitter and foam",params:[{name:"wave_height",label:"Wave Height",min:.1,max:2.5,default:.9,step:.01},{name:"choppy",label:"Choppiness",min:.5,max:4,default:1.8,step:.01},{name:"wind",label:"Wind Speed",min:0,max:3,default:1,step:.01},{name:"sun_height",label:"Sun Height",min:-.1,max:.8,default:.1,step:.01},{name:"cam_height",label:"Camera Height",min:.6,max:6,default:2.2,step:.01},{name:"foam",label:"Foam",min:0,max:1,default:.4,step:.01},{name:"detail",label:"Wave Detail",type:"int",min:3,max:7,default:6,step:1},{name:"scheme",label:"Sky",type:"select",options:["Golden Sunset","Pink Dusk","Moonlit Night","Stormy Grey","Tropical Noon"],default:0},{name:"audio_react",label:"Beat Reaction",min:0,max:2,default:1,step:.01}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_wave_height;
+uniform float u_choppy;
+uniform float u_wind;
+uniform float u_sun_height;
+uniform float u_cam_height;
+uniform float u_foam;
+uniform float u_detail;
+uniform float u_scheme;
+uniform float u_audio_react;
+uniform vec4 u_audio;
+uniform vec4 u_beat;
+
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+float gWaveScale;
+
+float seaH(vec2 p, float t, float octaves) {
+    float h = 0.0;
+    float amp = 0.55;
+    float freq = 0.14;
+    vec2 dir = vec2(1.0, 0.3);
+    for (int i = 0; i < 7; i++) {
+        if (float(i) >= octaves) break;
+        dir = rot2(1.71) * dir;
+        float x = dot(p, dir) * freq + t * (0.5 + freq * 0.7) + vnoise(p * freq * 0.35 + float(i) * 7.3) * 1.8;
+        float crest = 1.0 - abs(sin(x));
+        h += amp * (pow(crest, u_choppy) - 0.45);
+        freq *= 1.87;
+        amp *= 0.42;
+    }
+    return h * gWaveScale;
+}
+
+void skyColors(out vec3 top, out vec3 horizon, out vec3 sun, out vec3 deep) {
+    float s = floor(u_scheme + 0.5);
+    if (s < 0.5) { top = vec3(0.12, 0.2, 0.45); horizon = vec3(1.0, 0.55, 0.25); sun = vec3(1.0, 0.75, 0.4); deep = vec3(0.01, 0.05, 0.11); }
+    else if (s < 1.5) { top = vec3(0.18, 0.12, 0.38); horizon = vec3(1.0, 0.45, 0.6); sun = vec3(1.0, 0.7, 0.75); deep = vec3(0.04, 0.05, 0.13); }
+    else if (s < 2.5) { top = vec3(0.01, 0.02, 0.06); horizon = vec3(0.1, 0.16, 0.3); sun = vec3(0.85, 0.9, 1.0); deep = vec3(0.0, 0.015, 0.03); }
+    else if (s < 3.5) { top = vec3(0.22, 0.25, 0.3); horizon = vec3(0.55, 0.58, 0.6); sun = vec3(0.9, 0.9, 0.85); deep = vec3(0.04, 0.07, 0.08); }
+    else { top = vec3(0.15, 0.45, 0.85); horizon = vec3(0.7, 0.9, 1.0); sun = vec3(1.0, 0.98, 0.9); deep = vec3(0.0, 0.18, 0.25); }
+}
+
+vec3 sky(vec3 rd, vec3 sunDir, vec3 top, vec3 horizon, vec3 sunCol) {
+    float up = max(rd.y, 0.0);
+    vec3 col = mix(horizon, top, pow(up, 0.55));
+    float sd = max(dot(rd, sunDir), 0.0);
+    col += sunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 60.0) * 0.5 + pow(sd, 6.0) * 0.18);
+    return col;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    float react = u_audio_react;
+    float t = u_time * u_wind;
+    gWaveScale = u_wave_height * (1.0 + u_audio.x * react * 0.5);
+    float kick = u_beat.x * react;
+    vec3 top, horizon, sunCol, deep;
+    skyColors(top, horizon, sunCol, deep);
+    vec3 sunDir = normalize(vec3(0.0, u_sun_height, 1.0));
+
+    float bob = sin(u_beat.w * 1.5708) * 0.12 * react + sin(u_time * 0.6) * 0.1;
+    vec3 ro = vec3(0.0, u_cam_height + bob, u_time * 1.2);
+    vec3 rd = normalize(vec3(uv.x, uv.y - 0.12, 1.4));
+
+    vec3 col;
+    if (rd.y >= -0.005) {
+        col = sky(rd, sunDir, top, horizon, sunCol);
+    } else {
+        // Heightfield: bisection between a point above and one below the surface.
+        float tNear = 0.0;
+        float tFar = min(220.0, (ro.y + 3.0 * gWaveScale) / max(-rd.y, 0.004));
+        float hFar = (ro + rd * tFar).y - seaH((ro + rd * tFar).xz, t, 3.0);
+        float tm = tFar;
+        if (hFar < 0.0) {
+            for (int i = 0; i < 28; i++) {
+                tm = 0.5 * (tNear + tFar);
+                vec3 p = ro + rd * tm;
+                if (p.y - seaH(p.xz, t, 4.0) < 0.0) tFar = tm; else tNear = tm;
+            }
+        }
+        vec3 p = ro + rd * tm;
+        float eps = 0.02 + tm * 0.0015;
+        float octaves = mix(u_detail, 3.0, clamp(tm / 120.0, 0.0, 1.0));
+        float h = seaH(p.xz, t, octaves);
+        vec3 n = normalize(vec3(h - seaH(p.xz + vec2(eps, 0.0), t, octaves), eps, h - seaH(p.xz + vec2(0.0, eps), t, octaves)));
+        // Fine wind ripples on top of the swell, fading with distance
+        float rip = (1.0 - smoothstep(10.0, 70.0, tm)) * 0.22;
+        vec2 rq = p.xz * 2.3 + vec2(t * 0.9, t * 0.4);
+        n = normalize(n + vec3(vnoise(rq) - 0.5, 0.0, vnoise(rq.yx * 1.3 + 5.0) - 0.5) * rip);
+        float fres = clamp(pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0) * 0.7 + 0.04, 0.0, 1.0);
+        vec3 refl = sky(reflect(rd, n), sunDir, top, horizon, sunCol);
+        vec3 water = deep + horizon * 0.025 + vec3(0.05, 0.25, 0.22) * max(h / max(gWaveScale, 0.05) + 0.3, 0.0) * 0.25;
+        col = mix(water, refl, fres);
+        float spec = pow(max(dot(reflect(rd, n), sunDir), 0.0), 220.0);
+        col += sunCol * spec * (2.5 + kick * 4.0);
+        float foam = smoothstep(0.32, 0.6, h / max(gWaveScale, 0.05)) * u_foam;
+        col = mix(col, vec3(0.92), foam * 0.6 * (0.6 + 0.4 * vnoise(p.xz * 3.0)));
+        col = mix(col, sky(vec3(rd.x, 0.0, rd.z), sunDir, top, horizon, sunCol), smoothstep(40.0, 200.0, tm));
+    }
+    col = 1.0 - exp(-col * 1.25);
+    FRAG_OUT = vec4(pow(col, vec3(0.9)), 1.0);
+}
+`}),{}}export{o as default};

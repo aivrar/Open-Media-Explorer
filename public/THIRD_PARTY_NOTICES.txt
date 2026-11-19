@@ -1,5 +1,5 @@
-Open Media Explorer 0.1.10 - Third-Party Notices
-================================================
+Open Media Explorer 0.1.11 - Third-Party Notices
+=================================================
 
 This notice is distributed inside the World Media portable folder and is served
 only by the app's localhost runtime at /THIRD_PARTY_NOTICES.txt.
@@ -19,6 +19,209 @@ License: Apache License, Version 2.0
 Source: https://github.com/video-dev/hls.js/tree/v1.5.13
 License: https://github.com/video-dev/hls.js/blob/v1.5.13/LICENSE
 Apache License text: https://www.apache.org/licenses/LICENSE-2.0.txt
+
+Visualizer
+----------
+
+Psychedelia Studio (shader manager, effect registry, 3D flight helpers, Beat
+Reactor, post effects library, overlays and scenes)
+Copyright (c) 2026 aivrar
+License: MIT (the same terms as World Media's own LICENSE), except the
+borrowed parts listed below under their own licences
+Files, copied unchanged except where the manifest records an import patch:
+  src/engine/shader-manager.js, src/engine/audio-signal.js,
+  src/engine/audio-reactor.js, src/engine/post-fx-library.js,
+  src/engine/overlays.js,
+  src/effects/registry.js, src/effects/fractal-flight-common.js,
+  src/effects/plasma.js, src/effects/tunnel.js, src/effects/starfield.js,
+  src/effects/metaballs.js, src/effects/voronoi.js,
+  src/effects/synthwave-grid.js, src/effects/truchet-tiles.js,
+  src/effects/quasicrystal.js, src/effects/islamic-stars.js,
+  src/effects/spiral-galaxy.js, src/effects/domain-colouring.js,
+  src/effects/aurora.js, src/effects/black-hole.js,
+  src/effects/burning-ship.js, src/effects/color-cycle.js,
+  src/effects/domain-warp.js, src/effects/droste.js,
+  src/effects/endless-terrain.js, src/effects/fire.js,
+  src/effects/flow-field.js, src/effects/fractal-brownian.js,
+  src/effects/fractal-flame.js, src/effects/glow-lab.js,
+  src/effects/gyroid-tunnels.js, src/effects/hyperbolic-tiling.js,
+  src/effects/julia-set.js, src/effects/kaleidoscope.js,
+  src/effects/kleinian.js, src/effects/liquid-chrome.js,
+  src/effects/liquid-light.js, src/effects/living-sun.js,
+  src/effects/lyapunov-fractal.js, src/effects/mandelbrot-deep.js,
+  src/effects/mandelbrot-power.js, src/effects/mandelbrot.js,
+  src/effects/mandelbulb-slice.js, src/effects/moire.js,
+  src/effects/nebula.js, src/effects/newton-fractal.js,
+  src/effects/nova-fractal.js, src/effects/op-art.js,
+  src/effects/orbit-trap.js, src/effects/perlin-noise.js,
+  src/effects/phoenix-fractal.js, src/effects/phyllotaxis.js,
+  src/effects/polar-spiral.js, src/effects/rainy-window.js,
+  src/effects/rotozoom.js, src/effects/seascape.js, src/effects/sierpinski.js,
+  src/effects/sine-interference.js, src/effects/soap-bubbles.js,
+  src/effects/swirl.js, src/effects/tricorn.js, src/effects/underwater.js,
+  src/effects/water-ripple.js, src/effects/wave-distort.js,
+  src/effects/mandelbulb-flight.js, src/effects/triplex-mutation-flight.js,
+  src/effects/kifs-flight.js, src/effects/difs-tunnel-flight.js,
+  src/effects/mandelbox-flight.js, src/effects/folded-box-variants-flight.js,
+  src/effects/quaternion-julia-flight.js,
+  src/effects/hypercomplex-slice-flight.js,
+  src/effects/schottky-inversion-flight.js,
+  src/effects/apollonian-foam-flight.js, src/effects/polyfold-flight.js,
+  src/effects/fractal-flame-volume-flight.js,
+  src/effects/strange-attractor-flight.js,
+  src/effects/lsystem-tube-flight.js,
+  src/effects/path-traced-fractal-flight.js,
+  src/effects/endless-scenes.js, src/effects/endless-sky-crystal.js
+Methods (no third-party code): src/effects/islamic-stars.js follows
+E. H. Hankin's polygons-in-contact method as described by Craig S. Kaplan,
+"Islamic Star Patterns from Polygons in Contact", Graphics Interface 2005;
+src/effects/domain-colouring.js follows the domain colouring method credited
+to Frank Farris; src/effects/black-hole.js follows Otto Seiskari's photon
+orbit equation (oseiskar.github.io/black-hole); src/effects/fractal-flame.js
+and src/effects/fractal-flame-volume-flight.js use the variation functions of
+Scott Draves and Erik Reckase's fractal flame algorithm;
+src/effects/mandelbulb-slice.js, mandelbulb-flight.js and
+triplex-mutation-flight.js are the Mandelbulb of Daniel White and Paul
+Nylander; src/effects/burning-ship.js is the fractal of Michael Michelitsch
+and Otto E. Roessler; src/effects/lyapunov-fractal.js follows Mario Markus;
+src/effects/phyllotaxis.js and lsystem-tube-flight.js follow Prusinkiewicz
+and Lindenmayer, "The Algorithmic Beauty of Plants"; every raymarched scene
+uses John C. Hart's sphere tracing; the 3D flights follow Mikael Hvidtfeldt
+Christensen's (Syntopia) distance-estimated 3D fractals series;
+mandelbox-flight.js, folded-box-variants-flight.js and
+path-traced-fractal-flight.js are Tom Lowe's Mandelbox; kifs-flight.js,
+polyfold-flight.js, difs-tunnel-flight.js and endless-scenes.js use
+kaleidoscopic IFS folds and Menger constructions (Tim McGraw; Paul Bourke);
+several flight modes follow Fractal Forums formulas as collected in
+Fragmentarium and Mandelbulber; quaternion-julia-flight.js and
+hypercomplex-slice-flight.js follow Keenan Crane, "Ray Tracing Quaternion
+Julia Sets on the GPU"; strange-attractor-flight.js follows Edward Lorenz
+(1963) and J. C. Sprott (1994); endless-sky-crystal.js uses Rayleigh and Mie
+scattering after Sean O'Neil, GPU Gems 2.
+
+Borrowed code inside the Psychedelia files, one entry per piece, as
+Psychedelia's THIRD_PARTY_NOTICES.md credits it (per scene:
+src/visualizer/vendor/psychedelia/manifest.json, "borrowed"):
+
+3D simplex noise (snoise and helpers; the shader prelude of every scene)
+Copyright (C) 2011 by Ashima Arts (Simplex noise)
+Copyright (C) 2011-2016 by Stefan Gustavson (Classic noise and others)
+Author: Ian McEwan, Ashima Arts, with Stefan Gustavson
+Source: https://github.com/ashima/webgl-noise/blob/master/src/noise3D.glsl
+File: src/engine/shader-manager.js
+License: MIT
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+  THE SOFTWARE.
+
+RGB to HSV and HSV to RGB conversion (rgb2hsv, hsv2rgb, toHsv; every scene
+and the post effects)
+Author: Sam Hocevar
+Source: https://stackoverflow.com/a/17897228
+Files: src/engine/shader-manager.js, src/engine/post-fx-library.js
+License: WTFPL
+
+Cosine palette palette() (every scene)
+Author: Inigo Quilez
+Source: https://iquilezles.org/articles/palettes/
+File: src/engine/shader-manager.js
+License: MIT for code snippets ("all technical code snippets you'll find are
+under the MIT license", https://iquilezles.org/articles/); the MIT terms are
+as given for the simplex noise above.
+
+ACES filmic tone-mapping curve fit (psyTonemap; every scene)
+Author: Krzysztof Narkowicz
+Source: https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
+File: src/engine/shader-manager.js
+License: "free to use under public domain CC0 or MIT license"
+
+Hash without Sine (with adjusted constants)
+Copyright (c) 2014 David Hoskins
+Source: https://www.shadertoy.com/view/4djSRW
+Scenes: Endless Terrain, Living Sun, Nebula Flythrough, Menger Citadel,
+Recursive Cathedral, Fractal Canyon, Infinite Lattice, Crystal Geode,
+Golden-Hour Clouds, Planet Sunrise
+Files: src/effects/endless-terrain.js, src/effects/living-sun.js,
+src/effects/nebula.js, src/effects/endless-scenes.js,
+src/effects/endless-sky-crystal.js
+License: MIT (MIT License, Copyright (c)2014 David Hoskins); the MIT terms
+are as given for the simplex noise above.
+
+Distance functions sdBox, sdTorus, sdOctahedron (bound version), 2D box
+Author: Inigo Quilez
+Source: https://iquilezles.org/articles/distfunctions/
+Scenes: Sierpinski, Apollonian Foam Flight, DIFS Tunnel Flight, Folded Box
+Variants Flight, KIFS Fold Flight, Mandelbox Flight, Glass Fractal DE Flight,
+Polyfold Flight
+License: MIT for code snippets (as for the cosine palette)
+
+Polynomial smooth minimum smin
+Author: Inigo Quilez
+Source: https://iquilezles.org/articles/smin/
+Scene: Liquid Chrome
+License: MIT for code snippets (as for the cosine palette)
+
+Tetrahedron technique for numerical normals (calcNormal, estimateNormal),
+credited by its author to Paulo Falcao and Paul Malin
+Author: Inigo Quilez
+Source: https://iquilezles.org/articles/normalsSDF/
+Scenes: Gyroid Tunnels, Liquid Chrome; the flights Apollonian Foam, DIFS
+Tunnel, Folded Box Variants, Hypercomplex Slice, KIFS Fold, L-System Tube,
+Mandelbox, Mandelbulb, Glass Fractal DE, Polyfold, Quaternion Julia, Schottky
+Inversion, Triplex Mutation
+License: MIT for code snippets (as for the cosine palette)
+
+Soft shadows from a distance field (softShadow)
+Author: Inigo Quilez
+Source: https://iquilezles.org/articles/rmshadows/
+Scenes: the thirteen flights named for the normals above
+License: MIT for code snippets (as for the cosine palette)
+
+Domain warping with the offsets 5.2/1.3, 1.7/9.2 and 8.3/2.8
+Author: Inigo Quilez
+Source: https://iquilezles.org/articles/warp/
+Scene: Domain Warp
+License: MIT for code snippets (as for the cosine palette)
+
+Apollonian sphere-packing distance estimator (Apollonian Cell and Sphere
+Chain modes)
+Author: Inigo Quilez
+Source: his Shadertoy shader "Apollonian" (2013); Psychedelia's notices give
+no link
+Scene: Apollonian Foam Flight (src/effects/apollonian-foam-flight.js)
+License: Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported
+(CC BY-NC-SA 3.0), https://creativecommons.org/licenses/by-nc-sa/3.0/
+This part of the file stays under CC BY-NC-SA 3.0; non-commercial use only.
+It is not covered by the MIT licence above.
+
+Pseudo-Kleinian fold (Knighty Foam, Pseudo-Kleinian Cathedral and Kleinian
+Box Hybrid modes)
+Author: Knighty, after Theli-at
+Source: https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Knighty%20Collection/PseudoKleinian.frag
+Scene: Apollonian Foam Flight (src/effects/apollonian-foam-flight.js)
+License: no licence stated at the source ("Made by Knighty"; the
+Fragmentarium application is offered under LGPL 2.1 or GPL 3). Used with
+credit; it remains under its author's terms.
+
+The post effects library's Oil Paint pass implements the Kuwahara filter
+(Michiyoshi Kuwahara and colleagues, 1976) and its Retro Dither pass ordered
+(Bayer) dithering (Bryce Bayer, 1973); both are published algorithms,
+written afresh.
 
 Bundled desktop/runtime components
 ----------------------------------

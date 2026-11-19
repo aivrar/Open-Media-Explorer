@@ -13,9 +13,17 @@ space media, cultural archives, audiobooks, conference recordings, PeerTube,
 and independent Owncast streams from ten public sources.
 
 Search everything, save favorites, browse a live-channel Grid, spin the Tuner,
-discover something unexpected, shape playback with a ten-band EQ, download
-finite media, and optionally record live streams. No account, subscription,
-API key, or telemetry.
+discover something unexpected, watch the Visualizer move with the sound, shape
+playback with a ten-band EQ, download finite media, and optionally record live
+streams. No account, subscription, API key, or telemetry.
+
+**New in v0.1.11:** a **Visualizer** tab shows pictures that move with the
+sound of what is playing (71 scenes, effects, overlays and a shuffle). It shows
+moving, flashing pictures, so a photosensitivity notice comes first. Importing
+a playlist starts on **Add as: Auto**, which works out radio or TV by itself,
+and Favorites get **Move to bottom** and **Remove all favorites**. Reported in
+[issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
+and requested in [discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8).
 
 **New in v0.1.10:** a small sound meter in the player bar shows that a station
 is really playing, the Tuner's station cards come in three sizes (Medium and
@@ -79,7 +87,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.10-portable.zip
+WorldMediaWindows-0.1.11-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -108,8 +116,8 @@ The full end-to-end user and developer wiki is in
 
 ## What You Get
 
-Five tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**, and
-**About**.
+Six tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**,
+**Visualizer**, and **About**.
 
 **Library** - search and browse everything. Left sidebar groups results by type
 and source: Radio Browser, iptv-org, Internet Archive, NASA, Wikimedia Commons,
@@ -136,6 +144,18 @@ play it.
 
 **Discovery** - random open media from the enabled sources.
 
+**Visualizer** - pictures that move with the sound of whatever is playing. It
+has 71 scenes (flat patterns and 3D scenes), a **Look** choice for the scenes
+that have ready-made looks, a scene shuffle you can limit to **Light only**,
+**Light and medium**, or all scenes (heavy too), post effects and overlays
+(off until you turn them on), a star that keeps a scene with its
+effects and overlays, and a quality, frame rate and brightness choice. When the
+computer cannot keep up it lowers the load by itself, and it costs nothing while
+its tab is closed. It never changes the sound. It shows moving, flashing
+pictures: a notice about photosensitivity comes before the first picture, and a
+flash limiter is always on. Work on it continues. See the
+[Visualizer page](docs/wiki/09-visualizer.md).
+
 Library discovery collects concurrently from enabled sources, with independent
 provider pacing and backoff. There is no fixed total-item cap. Only 300 cards
 are mounted at a time to keep scrolling responsive; collected items are kept.
@@ -152,6 +172,12 @@ file. You can also drop
 a local playlist file anywhere on the window. A direct HLS
 `.m3u8` stream belongs under **Single channel**. These are Library collections,
 not subscriptions: importing the same link again updates the saved list.
+**Add as** (Auto, TV or Radio) gives a type to channels that do not say whether
+they are radio or TV. Auto, the default, uses what most channels in the same
+file say. When some channels needed a type from **Add as**, the result tells
+you how many, and with Auto what it chose. To change or remove stations,
+edit your own playlist file and import it again under the same file name, or
+press **Remove playlist**.
 
 In **Favorites** and **My Playlists**, use the **All / Radio / TV / Audio /
 Video** buttons and local search to find saved channels. **Star all** in My
@@ -159,10 +185,11 @@ Playlists adds every listed channel to Favorites. Removing a playlist keeps its
 favorites. Playlist URLs may contain access tokens: keep your data folder
 private.
 
-Favorites can be sorted **My order** (move a card up, down or to the top with
-the buttons on it) or **A-Z**. Use the tag button on a favorite card to put it
-in a category of your own, such as "Rock" or "Talk", and the category buttons
-above the list to show one category.
+Favorites can be sorted **My order** (move a card up, down, to the top or to
+the bottom with the buttons on it) or **A-Z**. Use the tag button on a favorite
+card to put it in a category of your own, such as "Rock" or "Talk", and the
+category buttons above the list to show one category. **Remove all favorites**
+asks first and says how many it will remove.
 
 ![My Playlists and the Add link form, shown with public sample channels](screenshots/v0.1.3/my-playlists.png)
 
@@ -177,7 +204,9 @@ delivered as HLS do not show one.
 Put a picture named exactly like a station (PNG, JPG, WebP or GIF, up to 2 MB)
 in the `station-images` folder (**Settings → Station images → Open folder**),
 press **Refresh**, and it replaces that station's artwork, shown whole and
-never cut off. Radio Browser
+never cut off. A name Windows cannot use in a file, such as the "/" in
+"AC/DC Radio", is written with `-`, `_`, a space or nothing in its place.
+Settings lists the pictures that were not used and why. Radio Browser
 stations show their format and bitrate in the detail panel, and **Other
 streams** lists other listings of the same station to pick from by hand.
 
@@ -311,6 +340,10 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - No song title under a station means the station does not send one (or is
   delivered as HLS). See the
   [troubleshooting guide](docs/wiki/06-troubleshooting.md).
+- A favorite missing from the Tuner dial may be saved as the other type: the
+  Tuner's status line says so. The same guide tells how to fix it.
+- If the Visualizer is slow, set **Quality** to Low, **Frame rate** to 15 or 30,
+  and choose Light scenes; effects and overlays are off by default.
 - Runtime diagnostics are under `WorldMediaWindows-data\logs\` beside the
   launcher and do
   not contain upstream media URLs or authentication secrets.
@@ -337,7 +370,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.10-portable.zip
+dist\WorldMediaWindows-0.1.11-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke
@@ -361,6 +394,14 @@ HLS playback uses vendored
 [Apache License 2.0](https://github.com/video-dev/hls.js/blob/v1.5.13/LICENSE).
 The packaged app exposes its complete third-party notice at
 `/THIRD_PARTY_NOTICES.txt` on its localhost runtime.
+
+### Visualizer scenes
+
+The Visualizer's scenes, effects and overlays are ported from
+[Psychedelia Studio](https://github.com/aivrar/psychedelia-studio) (MIT, same
+author). Some of its shader code is borrowed from others and keeps its own
+licence. It is credited under **Visualizer credits** on the About page, in
+[CREDITS.md](CREDITS.md) and in `/THIRD_PARTY_NOTICES.txt`.
 
 ### Optional FFmpeg recording tool
 

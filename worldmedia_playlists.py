@@ -58,6 +58,27 @@ def _playlist_url(value: str, base_url: str) -> str:
         return ''
 
 
+def _points_at_private(value: str, base_url: str) -> bool:
+    """True for an entry _playlist_url refuses only because its address is
+    this computer or a private network (localhost, 127.0.0.1, 192.168.x.x...),
+    so the import can say why. The rule itself is _web_url's and is unchanged."""
+    if not value or re.search(r'[\x00-\x20\x7f\\|]', value):
+        return False
+    try:
+        url = urlsplit(urljoin(base_url, value) if base_url else value)
+        host = (url.hostname or '').lower().rstrip('.')
+        if url.scheme not in {'http', 'https'} or not host or url.username is not None or url.password is not None:
+            return False
+        if host == 'localhost' or host.endswith('.localhost'):
+            return True
+        try:
+            return not ipaddress.ip_address(host).is_global
+        except ValueError:
+            return False
+    except ValueError:
+        return False
+
+
 _PLS_KEY = re.compile(r'(file|title)(\d{1,9})')
 
 
@@ -264,40 +285,113 @@ def as_m3u(text: str) -> str:
     return pls_to_m3u(text) if is_pls(text) else text
 
 
-def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '') -> dict:
+TRUE_MARKS = frozenset({'true', '1', 'yes'})
+FALSE_MARKS = frozenset({'false', '0', 'no'})
+AUTO_FALLBACK_TYPE = 'tv'
+_AUDIO_PATH = re.compile(r'\.(mp3|aac|ogg|oga|flac|wav|m4a)$')
+
+
+def _extinf_parts(line: str) -> tuple[dict, str]:
+    """The attributes (lower-case names) and the raw display name of an
+    #EXTINF line. Only a comma outside a quoted attribute starts the name."""
+    quote = ''
+    split_at = len(line)
+    for index, char in enumerate(line):
+        if char in {'"', "'"}:
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ''
+        elif char == ',' and not quote:
+            split_at = index
+            break
+    attrs = {m[1].lower(): next((v for v in m.groups()[1:] if v is not None), '')
+             for m in _ATTR.finditer(line[:split_at])}
+    return attrs, line[split_at + 1:]
+
+
+def auto_type(text: str, base_url: str = '') -> str:
+    """The type "Add as: Auto" gives a channel whose file entry does not say
+    radio or TV: the type most entries of the same file do say (a radio="..."
+    mark, or an audio file ending for radio). A tie, or a file where no entry
+    says, gives TV, the type every import used before Auto existed.
+
+    The result is what gets saved as the playlist's default type, so the saved
+    store only ever holds 'tv' or 'radio' and older versions can still read it."""
+    radio, tv = typed_counts(text, base_url)
+    if radio > tv:
+        return 'radio'
+    if tv > radio:
+        return 'tv'
+    return AUTO_FALLBACK_TYPE
+
+
+def typed_counts(text: str, base_url: str = '') -> tuple[int, int]:
+    """How many entries of an M3U text say radio and how many say TV."""
+    radio = tv = 0
+    marked = ''
+    for raw in text.lstrip('\N{ZERO WIDTH NO-BREAK SPACE}').splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.upper().startswith('#EXTINF:'):
+            marked = _extinf_parts(line)[0].get('radio', '').lower()
+            continue
+        if line.startswith('#'):
+            continue
+        url = _playlist_url(line, base_url)
+        if url:
+            if marked in TRUE_MARKS or (marked not in FALSE_MARKS and _AUDIO_PATH.search(urlsplit(url).path.lower())):
+                radio += 1
+            elif marked in FALSE_MARKS:
+                tv += 1
+        marked = ''
+    return radio, tv
+
+
+def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, count_defaulted: bool = False) -> dict:
+    """Channels of an M3U text. With ``count_defaulted``, the result also says
+    how many channels took ``default_type`` (the "Add as" choice) because
+    neither a radio="..." mark nor an audio file ending told their type
+    (``defaulted``), and how many of the skipped entries point at this
+    computer or a private network (``private``).
+
+    ``default_type`` 'auto' is resolved with auto_type() first; the result then
+    has ``default_type`` (what was used) and ``auto``: 'majority' when most
+    entries that say their type decided it, 'fallback' when none said or it
+    was a tie (TV then).
+
+    Two entries with the same address and type are one channel when their
+    names are the same too. With different names both are kept: the first
+    keeps the id it always had (type + address), each later one gets an id
+    that also includes its name, so saved favorites keep pointing at the same
+    channel."""
     if not isinstance(text, str) or not text.strip():
         raise ValueError('Choose a non-empty M3U, M3U8, PLS or XSPF channel playlist.')
     if len(text.encode('utf-8')) > MAX_PLAYLIST_BYTES:
         raise ValueError('Playlist file exceeds the 8 MiB import limit; split it into smaller files.')
+    auto = ''
+    if default_type == 'auto':
+        radio_count, tv_count = typed_counts(text, base_url if base_url and _web_url(base_url) else '')
+        auto = 'majority' if radio_count != tv_count else 'fallback'
+        default_type = ('radio' if radio_count > tv_count else 'tv' if tv_count > radio_count
+                        else AUTO_FALLBACK_TYPE)
     if not isinstance(default_type, str) or default_type not in {'tv', 'radio'}:
-        raise ValueError('Default channel type must be TV or Radio.')
+        raise ValueError('Default channel type must be Auto, TV or Radio.')
     if base_url and not _web_url(base_url):
         raise ValueError('Playlist base URL is invalid.')
     if re.search(r'^\s*#EXT-X-', text, re.MULTILINE | re.IGNORECASE):
         raise ValueError('This is an HLS playback manifest. Use Add link and choose Single channel for its public URL.')
-    items, seen = [], set()
+    items, seen, names_at = [], set(), {}
     attrs, title, group, headers = {}, '', '', {}
-    skipped = duplicates = 0
+    skipped = duplicates = defaulted = private = 0
     for raw in text.lstrip('\ufeff').splitlines():
         line = raw.strip()
         if not line:
             continue
         if line.upper().startswith('#EXTINF:'):
-            # Only a comma outside a quoted attribute starts the display name.
-            quote = ''
-            split_at = len(line)
-            for index, char in enumerate(line):
-                if char in {'"', "'"}:
-                    if not quote:
-                        quote = char
-                    elif quote == char:
-                        quote = ''
-                elif char == ',' and not quote:
-                    split_at = index
-                    break
-            attrs = {m[1].lower(): next((v for v in m.groups()[1:] if v is not None), '')
-                     for m in _ATTR.finditer(line[:split_at])}
-            title = _label(line[split_at + 1:])
+            attrs, name = _extinf_parts(line)
+            title = _label(name)
             group = _label(attrs.get('group-title', ''))
             headers = {}
             continue
@@ -316,21 +410,33 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '') -> d
         url = _playlist_url(line, base_url)
         if not url:
             skipped += 1
+            if count_defaulted and _points_at_private(line, base_url):
+                private += 1
         else:
             path = urlsplit(url).path.lower()
-            audio = bool(re.search(r'\.(mp3|aac|ogg|oga|flac|wav|m4a)$', path))
+            audio = bool(_AUDIO_PATH.search(path))
             radio = attrs.get('radio', '').lower()
-            media_type = ('radio' if radio in {'true', '1', 'yes'} else 'tv'
-                          if radio in {'false', '0', 'no'} else 'radio' if audio else default_type)
+            media_type = ('radio' if radio in TRUE_MARKS else 'tv'
+                          if radio in FALSE_MARKS else 'radio' if audio else default_type)
             kind = ('hls' if path.endswith('.m3u8') else 'dash' if path.endswith('.mpd')
                     else 'audio' if media_type == 'radio' else 'video')
-            identity = 'playlist:' + hashlib.sha256((media_type + '\n' + url).encode('utf-8')).hexdigest()
-            if identity in seen:
+            name = title or _label(attrs.get('tvg-name', ''))
+            address = 'playlist:' + hashlib.sha256((media_type + '\n' + url).encode('utf-8')).hexdigest()
+            identity = address
+            if address in seen:
+                # Same address and type: the same channel again unless it has
+                # another name (then it gets an id of its own; see above).
+                identity = ('playlist:' + hashlib.sha256((media_type + '\n' + url + '\n' + name).encode('utf-8')).hexdigest()
+                            if name and name not in names_at.get(address, ()) else '')
+            if not identity or identity in seen:
                 duplicates += 1
             else:
                 seen.add(identity)
+                names_at.setdefault(address, set()).add(name)
+                if radio not in TRUE_MARKS | FALSE_MARKS and not audio:
+                    defaulted += 1
                 items.append({
-                    'id': identity, 'source': 'playlist', 'title': title or _label(attrs.get('tvg-name', '')) or f'Channel {len(items) + 1}',
+                    'id': identity, 'source': 'playlist', 'title': name or f'Channel {len(items) + 1}',
                     'description': group, 'type': media_type, 'stream_url': url,
                     'stream_kind': kind, 'delivery': 'live', 'download_url': '',
                     'download_name': '', 'thumbnail': '', 'source_url': '',
@@ -343,7 +449,15 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '') -> d
         attrs, title, group, headers = {}, '', '', {}
     if not items:
         raise ValueError('No supported public HTTP(S) channels found. Local files, relative paths, private IPs and non-web streams are not supported.')
-    return {'items': items, 'skipped': skipped, 'duplicates': duplicates}
+    result = {'items': items, 'skipped': skipped, 'duplicates': duplicates}
+    if count_defaulted:
+        result['defaulted'] = defaulted
+        # Part of ``skipped``: entries pointing at this computer or a private network.
+        result['private'] = private
+    if auto:
+        result['default_type'] = default_type
+        result['auto'] = auto
+    return result
 
 
 class PlaylistStore:
@@ -400,9 +514,11 @@ class PlaylistStore:
         if not name:
             raise ValueError('Playlist name is required.')
         text = as_m3u(payload['text'])
-        parsed = parse_playlist(text, payload['default_type'])
+        parsed = parse_playlist(text, payload['default_type'], count_defaulted=True)
         identity = hashlib.sha256(name.lower().encode('utf-8')).hexdigest()
-        entry = {'id': identity, 'name': name, 'text': text, 'default_type': payload['default_type']}
+        # "Auto" is saved as the type it chose, so the store keeps 'tv'/'radio'.
+        entry = {'id': identity, 'name': name, 'text': text,
+                 'default_type': parsed.get('default_type', payload['default_type'])}
         return self._store(entry, parsed)
 
     def _store(self, entry: dict, parsed: dict) -> dict:
@@ -424,8 +540,8 @@ class PlaylistStore:
         url = urlunsplit(urlsplit(url)._replace(fragment=''))
         kind = payload['kind']
         default_type = payload['default_type']
-        if kind not in {'stream', 'playlist'} or default_type not in {'tv', 'radio'}:
-            raise ValueError('Choose Single channel or Online playlist, and TV or Radio.')
+        if kind not in {'stream', 'playlist'} or default_type not in {'auto', 'tv', 'radio'}:
+            raise ValueError('Choose Single channel or Online playlist, and Auto, TV or Radio.')
         name = _label(payload['name'], 160) or _label(urlsplit(url).hostname or 'My channel', 160)
         base_url = ''
         if kind == 'stream':
@@ -433,8 +549,12 @@ class PlaylistStore:
             # connection is validated by the media relay when the user plays it.
             if urlsplit(url).path.lower().endswith(('.m3u', '.pls', '.xspf')):
                 raise ValueError('This looks like a channel list. Choose Online playlist instead.')
-            radio = 'true' if default_type == 'radio' else 'false'
-            text = f'#EXTM3U\n#EXTINF:-1 radio="{radio}",{name}\n{url}\n'
+            if default_type == 'auto':
+                # Auto: an audio file ending says radio, anything else is TV.
+                text = f'#EXTM3U\n#EXTINF:-1,{name}\n{url}\n'
+            else:
+                radio = 'true' if default_type == 'radio' else 'false'
+                text = f'#EXTM3U\n#EXTINF:-1 radio="{radio}",{name}\n{url}\n'
         else:
             if not self._import_slots.acquire(blocking=False):
                 raise ValueError('Another playlist import is running. Please wait and try again.')
@@ -469,9 +589,9 @@ class PlaylistStore:
                 base_url = fetched.url  # Relative entries follow the final redirect location.
             finally:
                 self._import_slots.release()
-        parsed = parse_playlist(text, default_type, base_url)
+        parsed = parse_playlist(text, default_type, base_url, count_defaulted=True)
         identity = hashlib.sha256(('link\n' + url).encode('utf-8')).hexdigest()
-        entry = {'id': identity, 'name': name, 'text': text, 'default_type': default_type}
+        entry = {'id': identity, 'name': name, 'text': text, 'default_type': parsed.get('default_type', default_type)}
         if base_url:
             entry['base_url'] = base_url
         return {**self._store(entry, parsed), 'kind': kind}

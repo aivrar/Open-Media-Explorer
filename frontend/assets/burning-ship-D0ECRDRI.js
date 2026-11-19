@@ -1,0 +1,101 @@
+function o(t){return t.EffectRegistry.register({name:"burning_ship",label:"Burning Ship",category:"Fractals",description:"The eerie Burning Ship fractal with flame-like tendrils",params:[{name:"zoom_speed",label:"Zoom Speed",min:0,max:1.5,default:.55,step:.05},{name:"zoom_mode",label:"Zoom Mode",type:"select",options:["Infinite Dive","Classic One-Way"],default:0},{name:"zoom_depth",label:"Loop Depth",min:6,max:24,default:9,step:1},{name:"max_iter",label:"Iterations",min:50,max:400,default:150,step:10,type:"int"},{name:"target_x",label:"Target X",min:-2,max:1,default:-1.755,step:.001},{name:"target_y",label:"Target Y",min:-1,max:1,default:-.03,step:.001},{name:"color_speed",label:"Color Speed",min:0,max:8,default:.5,step:.05},{name:"smoothing",label:"Smoothing",type:"select",options:["Off","2x2 Anti-Alias"],default:1},{name:"palette_type",label:"Palette",type:"select",palette:!0,options:["Ember Hull","Blue Furnace","Acid Smoke","Magenta Brass","Ghost Flame","Solar Ash"],default:0}],diveTargets:{resolve:function(e){return{kind:"burning_ship",power:2,centerX:Number(e.target_x)||0,centerY:Number(e.target_y)||0}}},shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_zoom_speed;
+uniform float u_zoom_mode;
+uniform float u_zoom_depth;
+uniform float u_max_iter;
+uniform float u_target_x;
+uniform float u_target_y;
+uniform float u_color_speed;
+uniform float u_palette_type;
+uniform float u_smoothing;
+
+vec3 shipPalette(float t) {
+    t = fract(t);
+    if (u_palette_type > 5.5) return psyLut(t);
+    vec3 a, b, f, d;
+    if (u_palette_type < 0.5) { a = vec3(0.38,0.16,0.04); b = vec3(0.62,0.32,0.12); f = vec3(1.0,0.68,0.28); d = vec3(0.0,0.15,0.20); }
+    else if (u_palette_type < 1.5) { a = vec3(0.04,0.14,0.28); b = vec3(0.20,0.48,0.72); f = vec3(0.42,0.82,1.0); d = vec3(0.62,0.18,0.04); }
+    else if (u_palette_type < 2.5) { a = vec3(0.10,0.22,0.08); b = vec3(0.42,0.76,0.28); f = vec3(0.82,1.0,0.38); d = vec3(0.10,0.34,0.60); }
+    else if (u_palette_type < 3.5) { a = vec3(0.34,0.10,0.24); b = vec3(0.62,0.24,0.38); f = vec3(1.0,0.45,0.80); d = vec3(0.08,0.25,0.52); }
+    else if (u_palette_type < 4.5) { a = vec3(0.16,0.18,0.22); b = vec3(0.58,0.62,0.72); f = vec3(0.78,0.92,1.0); d = vec3(0.05,0.18,0.38); }
+    else { a = vec3(0.44,0.26,0.05); b = vec3(0.70,0.48,0.18); f = vec3(1.0,0.78,0.32); d = vec3(0.56,0.05,0.16); }
+    // The colour cycle drifts with time; deep in a dive most of the screen
+    // shares one escape count, so a dark stretch of the palette blacked out
+    // the whole view. Keep a dim glow in the palette's own tint instead.
+    return max(palette(t, a, b, f, d), a * 0.6 + 0.04);
+}
+
+vec3 renderBurningShipView(vec2 uv, vec2 target, float dive, float effectTime) {
+    float zoom = pow(2.0, -dive);
+    vec2 c = target + uv * zoom * 3.0;
+
+    vec2 z = vec2(0.0);
+    float iter = 0.0;
+    float maxI = psyDiveIterations(u_max_iter, dive, 400.0);
+    float escaped = 0.0;
+    // Orbit point closest to the origin: the inside of the set is coloured
+    // from it, not from the last iterate, so it holds still as the dive's
+    // iteration budget grows (the last iterate jumps with every extra step).
+    vec2 zMin = vec2(1e3);
+
+    for (float i = 0.0; i < 400.0; i++) {
+        if (i >= maxI) break;
+        // Burning ship: abs before squaring
+        z = vec2(abs(z.x), abs(z.y));
+        z = vec2(z.x*z.x - z.y*z.y, 2.0*z.x*z.y) + c;
+        iter = i + 1.0;
+        if (dot(z, z) < dot(zMin, zMin)) zMin = z;
+        if (dot(z, z) > 256.0) {
+            escaped = 1.0;
+            break;
+        }
+    }
+
+    vec3 col = vec3(0.0);
+    if (escaped > 0.5) {
+        float sl = iter + 1.0 - log(log(max(length(z), 1.000001))) / log(2.0);
+        float t = sl / u_max_iter;
+        col = shipPalette(t * 3.0 + effectTime * u_color_speed * 0.1);
+    } else if (u_zoom_mode < 0.5) {
+        float orbit = length(zMin);
+        float angle = atan(zMin.y, zMin.x);
+        float t = fract(orbit * 0.42 + angle * 0.15915 + length(uv) * 0.3 + effectTime * u_color_speed * 0.05);
+        col = shipPalette(t) * (0.30 + 0.70 * smoothstep(0.0, 1.2, orbit));
+    }
+
+    return col;
+}
+
+void main() {
+    float effectTime = u_unwrapped_time;
+    float dive = psyZoomDive(effectTime, u_zoom_speed, u_zoom_mode, u_zoom_depth);
+    vec2 baseTarget = vec2(u_target_x, u_target_y);
+    vec2 target = psyZoomTarget(baseTarget, effectTime, u_zoom_speed, u_zoom_mode, u_zoom_depth, 0.018);
+    float handoff = psyZoomHandoff(effectTime, u_zoom_speed, u_zoom_mode, u_zoom_depth);
+    float nextDive = psyZoomNextDive(effectTime, u_zoom_speed, u_zoom_depth);
+    vec2 nextTarget = psyZoomNextTarget(baseTarget, effectTime, u_zoom_speed, u_zoom_mode, u_zoom_depth, 0.018);
+
+    // The ship's chaotic regions flicker between neighbouring pixels; 2x2
+    // supersampling turns that static into readable structure.
+    float grid = u_smoothing > 0.5 ? 2.0 : 1.0;
+    vec3 col = vec3(0.0);
+    vec2 centerUv = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+    for (int s = 0; s < 4; s++) {
+        float fs = float(s);
+        if (fs >= grid * grid) break;
+        vec2 offset = (vec2(mod(fs, 2.0), floor(fs / 2.0)) + 0.5) / grid - 0.5;
+        vec2 uv = (gl_FragCoord.xy + offset - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+        vec3 sampleCol = renderBurningShipView(uv, target, dive, effectTime);
+        if (handoff > 0.0) {
+            vec3 nextCol = renderBurningShipView(uv, nextTarget, nextDive, effectTime);
+            sampleCol = mix(sampleCol, nextCol, psyZoomPortal(centerUv, handoff));
+        }
+        col += sampleCol;
+    }
+    col /= grid * grid;
+
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{o as default};

@@ -73,12 +73,22 @@ const audioSignal = createAudioSignal({
       const el = playback.activeElement || elements?.audio;
       return !el || (!el.muted && el.volume > 0);
     },
+    // The volume the tap hears the sound at (it is after the element's
+    // volume); read once per frame, so the visualizer can make up for it.
+    getVolume: () => {
+      const el = playback.activeElement || elements?.audio;
+      const volume = Number(el?.volume);
+      return Number.isFinite(volume) ? volume : 1;
+    },
     getAnalyser: () => {
       const el = playback.activeElement;
       if (!el || !activePlaybackRelayed || playbackProblem || el.paused || el.ended) return null;
       return audioEngine.visualTapFor(el);
     },
     release: () => audioEngine.releaseVisualTap(),
+    // Changes with every new item (playToken) and every element switch or
+    // reconnect (playback.generation), so visuals can reset beat tracking.
+    getSourceKey: () => `${playToken}:${playback.generation}`,
   },
 });
 
@@ -412,7 +422,12 @@ function syncPlaybackUi(reason = 'sync') {
   // A reconnecting or given-up live stream keeps Play available even after its
   // media was torn down: pressing it runs the full rebuild.
   const canRetry = Boolean(currentItem && playbackProblem?.retry);
-  elements.play.hidden = !currentItem || (!hasSource && !canRetry);
+  // While the next item connects (no source yet, no problem) Play stays in
+  // place, only disabled: hiding it for that moment narrowed the controls
+  // column, so the whole bar (title, sound meter, times) jumped sideways and
+  // back on every station change, for example each step of the Tuner dial.
+  const switching = Boolean(currentItem && !hasSource && !playbackProblem);
+  elements.play.hidden = !currentItem || (!hasSource && !canRetry && !switching);
   elements.play.disabled = !hasSource && !canRetry;
 
   if (el) {

@@ -1,0 +1,86 @@
+function t(e){return e.EffectRegistry.register({name:"soap_bubbles",label:"Soap Bubbles",category:"Psychedelic",description:"Iridescent soap bubbles with swirling thin-film colours and glassy reflections",params:[{name:"count",label:"Bubbles",type:"int",min:1,max:16,default:8,step:1},{name:"size",label:"Size",min:.3,max:2,default:1,step:.01},{name:"variety",label:"Size Variety",min:0,max:1,default:.6,step:.01},{name:"speed",label:"Float Speed",min:0,max:2,default:.5,step:.01},{name:"film",label:"Film Thickness",min:.3,max:3,default:1.2,step:.01},{name:"swirl",label:"Film Swirl",min:0,max:2,default:.8,step:.01},{name:"background",label:"Background",type:"select",options:["Dark Room","Night City Bokeh","Pastel Sky","Deep Purple"],default:1},{name:"audio_react",label:"Beat Reaction",min:0,max:2,default:1,step:.01}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_count;
+uniform float u_size;
+uniform float u_variety;
+uniform float u_speed;
+uniform float u_film;
+uniform float u_swirl;
+uniform float u_background;
+uniform float u_audio_react;
+uniform vec4 u_audio;
+uniform vec4 u_beat;
+
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), f.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+vec3 background(vec2 p) {
+    float b = floor(u_background + 0.5);
+    if (b < 0.5) return mix(vec3(0.02, 0.02, 0.03), vec3(0.08, 0.07, 0.1), smoothstep(-0.6, 0.6, p.y));
+    if (b < 1.5) {
+        vec3 c = vec3(0.01, 0.01, 0.03);
+        for (int i = 0; i < 2; i++) {
+            vec2 g = p * (3.0 + float(i) * 2.0) + float(i) * 5.0;
+            vec2 id = floor(g);
+            vec3 h = hash3(id + 11.0);
+            float d = length(fract(g) - 0.5 - (h.xy - 0.5) * 0.5);
+            c += mix(vec3(1.0, 0.6, 0.2), vec3(0.3, 0.6, 1.0), h.z) * smoothstep(0.32, 0.1, d) * step(0.55, h.x) * 0.45;
+        }
+        return c;
+    }
+    if (b < 2.5) return mix(vec3(0.95, 0.75, 0.8), vec3(0.55, 0.75, 0.95), smoothstep(-0.6, 0.6, p.y)) * 0.85;
+    return mix(vec3(0.05, 0.0, 0.1), vec3(0.25, 0.05, 0.35), smoothstep(-0.7, 0.7, p.y + 0.2 * sin(p.x * 2.0)));
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    float aspect = u_resolution.x / u_resolution.y;
+    float react = u_audio_react;
+    float bass = u_audio.x * react;
+    float kick = u_beat.x * react;
+    float hat = u_beat.z * react;
+    float t = u_time * u_speed + seedPhase();
+
+    vec3 col = background(uv);
+    for (int i = 0; i < 16; i++) {
+        if (float(i) >= u_count) break;
+        float fi = float(i);
+        vec3 h = hash3(vec2(fi, 3.7));
+        vec2 c = vec2(sin(t * 0.21 * (0.6 + h.x) + h.y * 40.0) * aspect * 0.42,
+                      sin(t * 0.17 * (0.6 + h.z) + h.x * 30.0) * 0.36);
+        float r = u_size * (0.13 + u_variety * 0.12 * (h.z - 0.3)) * (1.0 + sin(u_time * 2.3 + fi) * 0.04 * (1.0 + bass * 2.0));
+        vec2 d = uv - c;
+        // Bass wobble: the outline ripples a little.
+        float ang = atan(d.y, d.x);
+        r *= 1.0 + bass * 0.04 * sin(ang * 3.0 + u_time * 4.0 + fi);
+        float dist = length(d);
+        if (dist > r * 1.05) continue;
+        float edge = smoothstep(r, r * 0.985, dist);
+        vec2 q = d / r;
+        float z = sqrt(max(1.0 - dot(q, q), 0.0));
+        vec3 n = vec3(q, z);
+        // Film: thinner at the top (drainage), swirling with noise.
+        // A kick nudges the swirl forward by a fixed amount. (Multiplying the
+        // running time by the kick made the jump grow the longer the app ran,
+        // until the film colours snapped on every kick.)
+        float swirlT = (u_time * 0.25 + kick * 0.3) * u_swirl;
+        float thick = u_film * (1.15 - 0.45 * n.y) + u_swirl * 0.35 * (vnoise(q * 2.5 + vec2(swirlT, fi * 7.0)) - 0.5) + 0.15 * vnoise(q * 6.0 - swirlT);
+        vec3 film = 0.5 + 0.5 * cos(6.28318 * (thick * (0.6 + 0.4 * z) * 2.2 * vec3(1.0, 1.17, 1.36)));
+        float fres = pow(1.0 - z, 2.2) * 0.85 + 0.06;
+        // Background seen through the bubble, flipped like a lens.
+        vec3 inside = background(c - d * 0.7);
+        vec3 bubble = mix(col, inside, 0.35) * (1.0 - fres * 0.4) + film * fres * 1.1;
+        float hl = smoothstep(0.2, 0.0, length(q - vec2(-0.38, 0.42))) * 0.9 + smoothstep(0.08, 0.0, length(q - vec2(0.42, -0.35))) * 0.5;
+        bubble += vec3(1.0) * hl * (0.8 + hat * 0.8);
+        bubble += film * smoothstep(0.9, 1.0, dist / r) * 0.6;
+        col = mix(col, bubble, edge);
+    }
+    col = 1.0 - exp(-col * 1.5);
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{t as default};

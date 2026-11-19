@@ -456,7 +456,10 @@ function renderSourceStatus() {
   if (isFavoritesSource(state.sourceFilter)) {
     const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
     ui.status.textContent = `${count} favorite ${state.band === 'radio' ? 'stations' : 'channels'}`
-      + (groupName ? ` in ${groupName}` : '');
+      + (groupName ? ` in ${groupName}` : '')
+      + otherBandFavoritesText(getState().favorites, {
+        band: state.band, country: state.country, settings: getState().settings, groupId: favoriteGroupSource(),
+      });
     return;
   }
   const noun = state.band === 'radio' ? 'stations' : 'channels';
@@ -529,6 +532,18 @@ export function favoriteStations(favorites, { band, country = '', settings = {},
     && !seen.has(item.id) && seen.add(item.id)
   ));
   return filterContentItems(matches, settings);
+}
+
+/** The favorites the dial leaves out because they are saved as the other
+ *  band, as a note for the status line ('' when there are none). A playlist
+ *  channel whose address does not say radio or TV is saved as the playlist's
+ *  "Add as" type, so a radio station imported "as TV" is only on the TV dial;
+ *  this says where it went. */
+export function otherBandFavoritesText(favorites, { band, ...filters } = {}) {
+  const other = band === 'radio' ? 'tv' : 'radio';
+  const count = favoriteStations(favorites, { ...filters, band: other }).length;
+  if (count === 0) return '';
+  return ` \u00b7 ${count} more saved as ${other === 'tv' ? 'TV' : 'radio'} (switch to ${other === 'tv' ? 'TV' : 'Radio'} to see ${count === 1 ? 'it' : 'them'})`;
 }
 
 /** Where the dial lands after its list is rebuilt: on the selected station

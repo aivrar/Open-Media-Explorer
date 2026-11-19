@@ -3,7 +3,7 @@
  *
  * State shape:
  * {
- *   mode: 'library' | 'tuner' | 'grid' | 'discovery',
+ *   mode: 'library' | 'tuner' | 'grid' | 'discovery' | 'visualizer' | 'about',
  *   currentItem: Item | null,
  *   isPlaying: bool,
  *   favorites: Item[],
@@ -19,6 +19,15 @@
  *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
  *     tunerCardSize: 'small' | 'medium' | 'large',   // Tuner strip cards (tuner-card-size.js)
  *     soundMeter: bool,   // LED sound meter in the player bar (player-meter.js), default on
+ *     visualizerQuality: 'low' | 'medium' | 'high',   // Visualizer picture sharpness (visualizer-settings.js)
+ *     visualizerFps: 15 | 30 | 60,   // Visualizer frames a second while sound plays, default 30
+ *     visualizerBrightness: number,   // Visualizer brightness, 30-100 (%), default 100
+ *     visualizerScene: string,   // last Visualizer scene id, default 'plasma'
+ *     visualizerShowFps: bool,   // measured frame-rate readout in the Visualizer tab, default off
+ *     visualizerDebug: bool,   // developer strip with the sound values, default off
+ *     visualizerLooks: object,   // Visualizer look chosen per scene, { sceneId: number }, default {}
+ *     visualizerPanelOpen, visualizerShuffle, visualizerShufflePool, visualizerShuffleCost,
+ *     visualizerShuffleBars, visualizerFavourites, visualizerNoticeSeen: see normalizeVisualizerExtras
  *   },
  *   sleepTimer: { until: number | null }
  * }
@@ -36,6 +45,11 @@ import { applyTheme, normalizeTheme } from './themes.js';
 import { FAVORITES_SORT_MANUAL, favoritesInDisplayOrder, normalizeFavoritesSort } from './favorites-order.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 import { TUNER_CARD_SMALL, normalizeTunerCardSize } from './tuner-card-size.js';
+import {
+  DEFAULT_VISUALIZER_BRIGHTNESS, DEFAULT_VISUALIZER_DEBUG, DEFAULT_VISUALIZER_FPS, DEFAULT_VISUALIZER_QUALITY,
+  DEFAULT_VISUALIZER_SCENE, DEFAULT_VISUALIZER_SHOW_FPS, normalizeVisualizerBrightness, normalizeVisualizerFps,
+  normalizeVisualizerQuality, normalizeVisualizerScene, normalizeVisualizerLooks, normalizeVisualizerExtras,
+} from './visualizer-settings.js';
 import { songLog } from './song-log.js';
 import { STREAM_QUALITY_FIELDS } from './stream-quality.js';
 import {
@@ -86,6 +100,12 @@ const DEFAULT_SETTINGS = {
   favoritesSort: FAVORITES_SORT_MANUAL,
   tunerCardSize: TUNER_CARD_SMALL,
   soundMeter: true,
+  visualizerQuality: DEFAULT_VISUALIZER_QUALITY,
+  visualizerFps: DEFAULT_VISUALIZER_FPS,
+  visualizerBrightness: DEFAULT_VISUALIZER_BRIGHTNESS,
+  visualizerScene: DEFAULT_VISUALIZER_SCENE,
+  visualizerShowFps: DEFAULT_VISUALIZER_SHOW_FPS,
+  visualizerDebug: DEFAULT_VISUALIZER_DEBUG,
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
 
@@ -131,6 +151,15 @@ export function normalizeSettings(value) {
     tunerCardSize: normalizeTunerCardSize(source.tunerCardSize),
     // Only an explicit false turns it off; older builds keep the field as is.
     soundMeter: source.soundMeter !== false,
+    visualizerQuality: normalizeVisualizerQuality(source.visualizerQuality),
+    visualizerFps: normalizeVisualizerFps(source.visualizerFps),
+    visualizerBrightness: normalizeVisualizerBrightness(source.visualizerBrightness),
+    visualizerScene: normalizeVisualizerScene(source.visualizerScene),
+    visualizerLooks: normalizeVisualizerLooks(source.visualizerLooks),
+    // Off unless turned on (an explicit true).
+    visualizerShowFps: source.visualizerShowFps === true,
+    visualizerDebug: source.visualizerDebug === true,
+    ...normalizeVisualizerExtras(source),
     enabledSources,
   };
 }
@@ -321,6 +350,44 @@ export function removeFavorite(itemId) {
   return true;
 }
 
+/** Empty the favorites list with one save and one favorites-change event, and
+ *  drop the favorites' own equalizer curves. Categories and every other
+ *  setting stay. The caller asks first.
+ *
+ *  All or nothing: the curves are removed first; if that cannot be saved,
+ *  nothing changes. If the empty list then cannot be saved, the curves are
+ *  put back. Returns { removed, failed }: failed is '' on success, 'nothing'
+ *  when nothing changed, or 'curves' in the one case that cannot be undone
+ *  (the list could not be saved and the curves could not be put back: the
+ *  favorites stay, without their own equalizer settings). */
+export function removeAllFavorites() {
+  const removed = state.favorites;
+  if (removed.length === 0) return { removed: 0, failed: '' };
+  const currentId = state.currentItem?.id;
+  const playingFavorite = Boolean(currentId) && removed.some((f) => f.id === currentId);
+  const eq = loadEqState();
+  const curves = { ...eq.favorites };
+  let hadCurves = false;
+  for (const favorite of removed) {
+    if (Object.hasOwn(curves, favorite.id)) { delete curves[favorite.id]; hadCurves = true; }
+  }
+  if (playingFavorite) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
+  const undoScope = () => { if (playingFavorite) emit('eq-scope-change', { itemId: currentId, scope: 'favorite' }); };
+  let eqFailed = false;
+  if (hadCurves) saveEqState({ ...eq, favorites: curves }, undefined, () => { eqFailed = true; });
+  if (eqFailed) { undoScope(); return { removed: 0, failed: 'nothing' }; }
+  if (!persistFavorites([])) {
+    let restoreFailed = false;
+    if (hadCurves) saveEqState(eq, undefined, () => { restoreFailed = true; });
+    undoScope();
+    return { removed: 0, failed: restoreFailed ? 'curves' : 'nothing' };
+  }
+  state.favorites = [];
+  emit('favorites-change', state.favorites);
+  if (playingFavorite) emit('eq-scope-change', { itemId: currentId, scope: 'global' });
+  return { removed: removed.length, failed: '' };
+}
+
 export function isFavorite(itemId) {
   return state.favorites.some((f) => f.id === itemId);
 }
@@ -335,20 +402,22 @@ export function displayFavorites() {
  *  With `visibleIds`, up and down skip favorites the user cannot see (another
  *  type, a search, a filter), so the item trades places with the neighbour it
  *  is shown next to. "top" needs a shown favorite above it and goes to the
- *  very start of the saved list. */
+ *  very start of the saved list; "bottom" needs one below it and goes to the
+ *  very end. */
 function favoriteMoveTarget(list, from, direction, visibleIds) {
   const visible = visibleIds ? new Set(visibleIds) : null;
   const shown = (index) => !visible || visible.has(list[index].id);
   if (direction === 'up' || direction === 'top') {
     for (let i = from - 1; i >= 0; i -= 1) if (shown(i)) return direction === 'top' ? 0 : i;
-  } else if (direction === 'down') {
-    for (let i = from + 1; i < list.length; i += 1) if (shown(i)) return i;
+  } else if (direction === 'down' || direction === 'bottom') {
+    for (let i = from + 1; i < list.length; i += 1) if (shown(i)) return direction === 'bottom' ? list.length - 1 : i;
   }
   return -1;
 }
 
 /** Rearrange "My order" by hand: 'up' or 'down' swaps the favorite with its
- *  nearest shown neighbour, 'top' moves it to the start. One save and one
+ *  nearest shown neighbour, 'top' moves it to the start and 'bottom' to the
+ *  end. One save and one
  *  favorites-change event per move. Returns true when the order changed. */
 export function moveFavorite(itemId, direction, { visibleIds = null } = {}) {
   const from = state.favorites.findIndex((favorite) => favorite.id === itemId);
@@ -357,6 +426,7 @@ export function moveFavorite(itemId, direction, { visibleIds = null } = {}) {
   if (to < 0) return false;
   const next = [...state.favorites];
   if (direction === 'top') next.unshift(...next.splice(from, 1));
+  else if (direction === 'bottom') next.push(...next.splice(from, 1));
   else [next[from], next[to]] = [next[to], next[from]];
   if (!persistFavorites(next)) return false;
   state.favorites = next;

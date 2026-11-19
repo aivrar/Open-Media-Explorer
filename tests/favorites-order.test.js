@@ -370,7 +370,7 @@ const shownIds = (host) => host.children.map((node) => node.dataset.id);
 const moveButton = (host, id, direction) => host.children.find((node) => node.dataset.id === id)
   ?.__orderControls?.__buttons[direction] ?? null;
 
-test('Favorites cards get Move up / Move down / Move to top buttons named after the item', () => {
+test('Favorites cards get Move to top / up / down / to bottom buttons named after the item', () => {
   withLibrary([card('a', 'Alpha'), card('b', 'Radio Paradise'), card('c', 'Gamma')], ({ host }) => {
     renderResults();
     assert.deepEqual(shownIds(host), ['a', 'b', 'c']);
@@ -381,15 +381,19 @@ test('Favorites cards get Move up / Move down / Move to top buttons named after 
       ['BUTTON', 'button', 'Move Radio Paradise to top'],
       ['BUTTON', 'button', 'Move Radio Paradise up'],
       ['BUTTON', 'button', 'Move Radio Paradise down'],
+      ['BUTTON', 'button', 'Move Radio Paradise to bottom'],
     ]);
+    assert.deepEqual(buttons.map((button) => button.getAttribute('title')),
+      ['Move to top', 'Move up', 'Move down', 'Move to bottom']);
     // The buttons sit before the star, so tab order follows the layout.
     const star = paradise.children.at(-1);
     assert.equal(star.className.startsWith('card-star'), true);
     assert.equal(paradise.children.at(-2), paradise.__orderControls);
     const disabled = (id, direction) => moveButton(host, id, direction).getAttribute('aria-disabled') === 'true';
-    assert.deepEqual([disabled('a', 'top'), disabled('a', 'up'), disabled('a', 'down')], [true, true, false]);
-    assert.deepEqual([disabled('b', 'top'), disabled('b', 'up'), disabled('b', 'down')], [false, false, false]);
-    assert.deepEqual([disabled('c', 'top'), disabled('c', 'up'), disabled('c', 'down')], [false, false, true]);
+    const states = (id) => ['top', 'up', 'down', 'bottom'].map((direction) => disabled(id, direction));
+    assert.deepEqual(states('a'), [true, true, false, false]);
+    assert.deepEqual(states('b'), [false, false, false, false]);
+    assert.deepEqual(states('c'), [false, false, true, true]);
   });
 });
 

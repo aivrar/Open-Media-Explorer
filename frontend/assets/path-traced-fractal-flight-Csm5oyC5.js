@@ -1,0 +1,321 @@
+function o(e){var t=e.EffectRegistry,a=e.FractalFlight;return t.register({name:"path_traced_fractal_flight",label:"Glass Fractal DE Flight",category:"Fractals",description:"Distance-estimator scenes with glass, mirror, refraction, and a secondary reflection march",fractalFlight:a.metadata({family:"Glass Fractal DE",familyKey:"path_traced_fractal",modeParam:"trace_mode",modes:["Glass Mandelbox","Crystal Bulb","Mirror Menger","Void Caustic Shell"],depthParams:["flight_depth"],requiredParams:["trace_mode","iterations","march_steps","fold_scale","surface_mix","roughness","ior","bounce_mix","detail","flight_depth","refraction_flow","caustic_spin"],animationParams:["flight_speed","flight_depth","orbit_radius","orbit_spin","motion_mode","motion_phase","refraction_flow","caustic_spin","roll","roll_speed","fov","color_speed"],smokePresets:[{name:"Glass Mandelbox Dive",values:{trace_mode:0,iterations:12,march_steps:92,fold_scale:2.18,surface_mix:.72,roughness:.18,ior:1.46,bounce_mix:.78,detail:1.18,flight_speed:2.08,flight_depth:1.5,orbit_radius:1.18,orbit_spin:1.42,motion_mode:2,motion_phase:.2,refraction_flow:.82,caustic_spin:.76,roll:.28,roll_speed:1.34,fov:.98,color_speed:.78,palette:0,shade_mode:2,fog:.2,glow:1.76}},{name:"Crystal Bulb Chamber",values:{trace_mode:1,iterations:14,march_steps:104,fold_scale:1.86,surface_mix:.82,roughness:.12,ior:1.54,bounce_mix:.88,detail:1.3,flight_speed:2.24,flight_depth:1.62,orbit_radius:1.12,orbit_spin:1.6,motion_mode:0,motion_phase:.34,refraction_flow:.96,caustic_spin:.92,roll:.34,roll_speed:1.48,fov:.94,color_speed:.88,palette:1,shade_mode:3,fog:.18,glow:1.94}},{name:"Mirror Menger Corridor",values:{trace_mode:2,iterations:9,march_steps:108,fold_scale:2.42,surface_mix:.66,roughness:.22,ior:1.36,bounce_mix:.96,detail:1.36,flight_speed:2.44,flight_depth:1.78,orbit_radius:1.02,orbit_spin:1.78,motion_mode:2,motion_phase:.46,refraction_flow:1.04,caustic_spin:1.1,roll:.4,roll_speed:1.62,fov:.9,color_speed:.96,palette:2,shade_mode:1,fog:.16,glow:2.08}},{name:"Void Caustic Shell Orbit",values:{trace_mode:3,iterations:12,march_steps:112,fold_scale:2.28,surface_mix:.78,roughness:.26,ior:1.62,bounce_mix:1.08,detail:1.42,flight_speed:2.36,flight_depth:1.7,orbit_radius:1.16,orbit_spin:1.58,motion_mode:1,motion_phase:.6,refraction_flow:1.18,caustic_spin:-1.04,roll:-.34,roll_speed:1.54,fov:.92,color_speed:.92,palette:3,shade_mode:2,fog:.18,glow:2.1}}]}),params:[{name:"trace_mode",label:"DE Scene",group:"Formula",type:"select",options:["Glass Mandelbox","Crystal Bulb","Mirror Menger","Void Caustic Shell"],default:0},{name:"iterations",label:"Formula Iterations",group:"Formula",min:5,max:22,default:12,step:1,type:"int"},{name:"march_steps",label:"Ray Steps",group:"Formula",min:48,max:140,default:92,step:4,type:"int"},{name:"fold_scale",label:"Fold Scale",group:"Formula",min:1.1,max:3.2,default:2.15,step:.02},{name:"surface_mix",label:"Surface Mix",group:"Formula",min:0,max:1,default:.72,step:.02},{name:"roughness",label:"Roughness",group:"Formula",min:.02,max:.75,default:.18,step:.01},{name:"ior",label:"Glass IOR",group:"Formula",min:1.05,max:2.2,default:1.45,step:.01},{name:"bounce_mix",label:"Bounce Mix",group:"Formula",min:0,max:1.4,default:.78,step:.02},{name:"detail",label:"Trace Detail",group:"Formula",min:.5,max:2.5,default:1.15,step:.05},{name:"flight_speed",label:"Flight Speed",group:"Flight",min:0,max:8,default:.72,step:.05},{name:"flight_depth",label:"Dive Depth",group:"Flight",min:0,max:4.6,default:.95,step:.05},{name:"orbit_radius",label:"Orbit Radius",group:"Flight",min:.2,max:5.8,default:1.18,step:.05},{name:"orbit_spin",label:"Orbit Spin Speed",group:"Flight",min:-5,max:5,default:.58,step:.05},{name:"motion_mode",label:"Motion Path",group:"Animation",type:"select",options:["Trace Orbit","Figure Eight","Glass Corridor","Surface Graze"],default:2},{name:"motion_phase",label:"Motion Phase",group:"Animation",min:0,max:1,default:0,step:.01},{name:"refraction_flow",label:"Refraction Flow",group:"Animation",min:0,max:1.8,default:.78,step:.05},{name:"caustic_spin",label:"Caustic Spin",group:"Animation",min:-2,max:2,default:.72,step:.02},{name:"roll",label:"Roll Drift",group:"Animation",min:-1.8,max:1.8,default:.24,step:.05},{name:"roll_speed",label:"Roll Speed",group:"Animation",min:0,max:6,default:.68,step:.05},{name:"fov",label:"Field of View",group:"Animation",min:.55,max:1.9,default:.98,step:.05},{name:"color_speed",label:"Color Speed",group:"Visual",min:0,max:8,default:.52,step:.05},{name:"palette",label:"Palette",group:"Visual",type:"select",palette:!0,options:["Glass Prism","Opal Flame","Chrome Cyan","Void Gold"],default:0},{name:"shade_mode",label:"Shade Mode",group:"Visual",type:"select",options:["Fresnel Glass","Mirror Bands","Caustic Core","Milky Crystal"],default:0},{name:"fog",label:"Depth Fog",group:"Visual",min:0,max:1.5,default:.28,step:.05},{name:"glow",label:"Edge Glow",group:"Visual",min:0,max:3,default:1.42,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_trace_mode;
+uniform float u_iterations;
+uniform float u_march_steps;
+uniform float u_fold_scale;
+uniform float u_surface_mix;
+uniform float u_roughness;
+uniform float u_ior;
+uniform float u_bounce_mix;
+uniform float u_detail;
+uniform float u_flight_speed;
+uniform float u_flight_depth;
+uniform float u_orbit_radius;
+uniform float u_orbit_spin;
+uniform float u_motion_mode;
+uniform float u_motion_phase;
+uniform float u_refraction_flow;
+uniform float u_caustic_spin;
+uniform float u_roll;
+uniform float u_roll_speed;
+uniform float u_fov;
+uniform float u_color_speed;
+uniform float u_palette;
+uniform float u_shade_mode;
+uniform float u_fog;
+uniform float u_glow;
+
+struct TraceHit {
+    float dist;
+    float trap;
+    float iter;
+    float mat;
+};
+
+float phaseOffset() {
+    return u_motion_phase * 6.28318530718;
+}
+
+float traceMode() {
+    return clamp(floor(u_trace_mode + 0.5), 0.0, 3.0);
+}
+
+vec3 paletteTrace(float t, float paletteMode) {
+    t = fract(t);
+    if (paletteMode > 3.5) return psyLutLinear(t);
+    if (paletteMode < 0.5) {
+        return palette(t, vec3(0.10, 0.16, 0.25), vec3(0.42, 0.58, 0.72), vec3(0.82, 0.92, 1.00), vec3(0.02, 0.18, 0.44));
+    } else if (paletteMode < 1.5) {
+        return palette(t, vec3(0.34, 0.12, 0.20), vec3(0.62, 0.28, 0.46), vec3(1.00, 0.62, 0.84), vec3(0.04, 0.20, 0.42));
+    } else if (paletteMode < 2.5) {
+        return palette(t, vec3(0.04, 0.22, 0.32), vec3(0.22, 0.58, 0.72), vec3(0.48, 0.94, 1.00), vec3(0.08, 0.32, 0.58));
+    }
+    return palette(t, vec3(0.34, 0.20, 0.06), vec3(0.64, 0.42, 0.16), vec3(1.00, 0.76, 0.32), vec3(0.03, 0.14, 0.34));
+}
+
+float sdBox(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sdTorus(vec3 p, vec2 t) {
+    vec2 q = vec2(length(p.xz) - t.x, p.y);
+    return length(q) - t.y;
+}
+
+float mengerFold(vec3 p, out float trap) {
+    float scale = clamp(u_fold_scale, 1.1, 3.2);
+    vec3 z = p;
+    trap = 10.0;
+    float s = 1.0;
+    for (int i = 0; i < 12; i++) {
+        if (float(i) >= u_iterations) break;
+        z = abs(z);
+        if (z.x < z.y) z.xy = z.yx;
+        if (z.x < z.z) z.xz = z.zx;
+        if (z.y < z.z) z.yz = z.zy;
+        z = z * scale - vec3(scale - 1.0);
+        z.z += 0.35 * sin(u_time * 0.11 + float(i) + u_refraction_flow);
+        s *= scale;
+        trap = min(trap, length(z));
+    }
+    return (sdBox(z, vec3(1.0)) - 0.035) / s;
+}
+
+float mandelboxFold(vec3 p, out float trap, out float iterOut) {
+    vec3 z = p;
+    float scale = clamp(u_fold_scale, 1.1, 3.0);
+    float dr = 1.0;
+    trap = 10.0;
+    iterOut = 0.0;
+    for (int i = 0; i < 24; i++) {
+        if (float(i) >= u_iterations) break;
+        z = clamp(z, -1.0, 1.0) * 2.0 - z;
+        float r2 = dot(z, z);
+        trap = min(trap, length(z));
+        float k = max(0.32 / max(r2, 0.05), 0.32);
+        z *= k;
+        dr *= abs(k);
+        z = z * scale + p;
+        dr = dr * abs(scale) + 1.0;
+        iterOut = float(i) + 1.0;
+    }
+    return length(z) / abs(dr);
+}
+
+float bulbFold(vec3 p, out float trap, out float iterOut) {
+    vec3 z = p;
+    float dr = 1.0;
+    float r = length(z);
+    float powerValue = 6.0 + clamp(u_fold_scale, 1.1, 3.2) * 1.25 + sin(u_time * 0.17) * u_refraction_flow * 0.4;
+    trap = 10.0;
+    iterOut = 0.0;
+    for (int i = 0; i < 24; i++) {
+        if (float(i) >= u_iterations) break;
+        r = max(length(z), 0.000001);
+        trap = min(trap, r);
+        if (r > 4.0) break;
+        float theta = acos(clamp(z.z / r, -1.0, 1.0));
+        float phi = atan(z.y, z.x) + u_caustic_spin * 0.05 * sin(u_time * 0.2 + float(i));
+        dr = pow(r, powerValue - 1.0) * powerValue * dr + 1.0;
+        float zr = pow(r, powerValue);
+        theta *= powerValue;
+        phi *= powerValue;
+        z = zr * vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta)) + p;
+        iterOut = float(i) + 1.0;
+    }
+    r = max(length(z), 0.000001);
+    return 0.5 * log(r) * r / max(dr, 0.000001);
+}
+
+TraceHit mapTrace(vec3 p) {
+    float mode = traceMode();
+    float phase = u_time * 0.11 + phaseOffset() + seedPhase() * 0.08;
+    p.xy = rot2(u_caustic_spin * 0.06 * sin(p.z + phase)) * p.xy;
+    p.xz = rot2(u_global_rotation * 0.08 + u_refraction_flow * 0.04 * sin(phase)) * p.xz;
+
+    float trap = 10.0;
+    float iter = 0.0;
+    float d;
+    if (mode < 0.5) {
+        d = mandelboxFold(p, trap, iter);
+    } else if (mode < 1.5) {
+        d = bulbFold(p * 0.82, trap, iter) / 0.82;
+    } else if (mode < 2.5) {
+        d = mengerFold(p, trap);
+        iter = u_iterations;
+    } else {
+        float boxTrap;
+        float boxIter;
+        float boxD = mandelboxFold(p, boxTrap, boxIter);
+        float mengerTrap;
+        float mengerD = mengerFold(p * 1.12 + vec3(0.12 * sin(phase), 0.0, 0.0), mengerTrap);
+        vec3 q = p;
+        q.xy = rot2(phase * 0.34 + u_caustic_spin * 0.22) * q.xy;
+        q.z = mod(q.z + 0.95, 1.9) - 0.95;
+        float ring = sdTorus(q.xzy, vec2(0.58 + 0.08 * sin(phase * 0.9), 0.028 + 0.026 * u_surface_mix));
+        float lens = abs(length(q.xy * vec2(1.0, 1.32)) - (0.42 + 0.06 * sin(phase + q.z))) - (0.014 + 0.014 * u_surface_mix);
+        float causticShell = min(ring, lens);
+        d = min(mix(boxD, mengerD / 1.12, 0.45 + 0.35 * sin(phase * 0.7)), causticShell);
+        trap = min(boxTrap, mengerTrap);
+        trap = min(trap, abs(causticShell) * 2.4 + 0.05);
+        iter = max(boxIter, u_iterations * 0.65);
+    }
+
+    float shell = abs(length(p) - (1.12 + 0.10 * sin(phase))) - 0.018 * (0.5 + u_surface_mix);
+    d = mix(d, min(d, shell), u_surface_mix * 0.45);
+    return TraceHit(max(d * (0.86 + 0.12 * u_detail), 0.00001), trap, iter, mode);
+}
+
+float mapScene(vec3 p) {
+    return mapTrace(p).dist;
+}
+
+// Tetrahedral normal from a single mapScene() call site inside a loop.
+// Six separate calls inlined six copies of the whole distance estimator,
+// which made shader compiles take tens of seconds on Windows (D3D).
+vec3 estimateNormal(vec3 p, float eps) {
+    vec3 n = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        vec3 e = i == 0 ? vec3(1.0, -1.0, -1.0) :
+            (i == 1 ? vec3(-1.0, -1.0, 1.0) :
+            (i == 2 ? vec3(-1.0, 1.0, -1.0) : vec3(1.0)));
+        n += e * mapScene(p + e * eps);
+    }
+    return normalize(n);
+}
+
+// Clear radius around the primary ray origin (the camera); 0 for bounce rays.
+float g_camClear = 0.0;
+
+TraceHit marchTrace(vec3 ro, vec3 rd, float maxDist) {
+    float travel = 0.0;
+    TraceHit hit = TraceHit(-1.0, 0.0, 0.0, 0.0);
+    int maxSteps = int(clamp(u_march_steps, 48.0, 140.0));
+    for (int i = 0; i < 148; i++) {
+        if (i >= maxSteps) break;
+        vec3 p = ro + rd * travel;
+        TraceHit h = mapTrace(p);
+        h.dist = max(h.dist, g_camClear - travel);
+        if (h.dist < 0.0016 + travel * 0.00018) {
+            hit = h;
+            hit.dist = travel;
+            return hit;
+        }
+        travel += clamp(h.dist * 0.82, 0.012, 0.20);
+        if (travel > maxDist) break;
+    }
+    hit.dist = -travel;
+    return hit;
+}
+
+float softShadow(vec3 ro, vec3 rd, float minT, float maxT) {
+    float result = 1.0;
+    float travel = minT;
+    for (int i = 0; i < 36; i++) {
+        if (travel >= maxT) break;
+        float h = mapScene(ro + rd * travel);
+        result = min(result, 12.0 * h / max(travel, 0.03));
+        travel += clamp(h, 0.025, 0.22);
+    }
+    return clamp(result, 0.16, 1.0);
+}
+
+vec3 envTrace(vec3 rd, float t) {
+    float horizon = smoothstep(-0.55, 0.75, rd.y);
+    float caustic = pow(abs(sin((rd.x * 5.0 + rd.y * 3.0 + rd.z * 2.0) + t * (0.65 + u_caustic_spin * 0.22))), 14.0);
+    float ring = pow(max(0.0, 1.0 - abs(rd.x * 0.58 + rd.y * 0.34)), 7.0);
+    vec3 base = mix(vec3(0.006, 0.008, 0.016), vec3(0.035, 0.044, 0.070), horizon);
+    base += paletteTrace(t * 0.020 + rd.z * 0.08, u_palette) * (ring * 0.065 + caustic * 0.035 * (1.0 + u_glow * 0.20));
+    return base;
+}
+
+vec3 targetOffset(float mode, float t) {
+    if (mode < 0.5) return vec3(0.0, 0.04, 0.0);
+    if (mode < 1.5) return vec3(0.10 * sin(t * 0.22), 0.10, 0.12 * cos(t * 0.18));
+    if (mode < 2.5) return vec3(0.08 * sin(t * 0.20), -0.02, 0.10 * cos(t * 0.17));
+    return vec3(-0.08 + 0.12 * sin(t * 0.19), 0.02, 0.14 * cos(t * 0.16));
+}
+
+void main() {
+    float mode = traceMode();
+    float t = u_time * u_flight_speed + phaseOffset() + seedPhase() * 0.08;
+    float spinT = u_time * u_orbit_spin + phaseOffset() + mode * 0.84 + seedPhase() * 0.07;
+    float rollT = u_time * u_roll_speed + phaseOffset() + mode;
+    float dive = sin(t * 0.27 + mode) * u_flight_depth;
+    float radius = u_orbit_radius * (1.0 + 0.10 * sin(spinT * 0.18 + mode));
+    vec3 target = targetOffset(mode, t);
+
+    vec3 orbitPath = vec3(sin(spinT * 0.33 + mode) * radius, 0.28 + cos(t * 0.24 + mode) * 0.32, 2.92 - dive + cos(spinT * 0.33 + mode) * radius * 0.35);
+    vec3 figurePath = vec3(sin(spinT * 0.40 + mode) * radius * 0.92, 0.22 + sin(t * 0.72 + mode) * 0.30, 2.62 - dive * 0.70 + sin(spinT * 0.40) * cos(spinT * 0.40) * radius * 0.70);
+    vec3 corridorPath = vec3(sin(spinT * 0.24 + mode) * radius * 0.48, 0.12 + cos(t * 0.34 + mode) * 0.23, 2.12 - dive * 1.24 + cos(spinT * 0.24 + mode) * radius * 0.20);
+    vec3 grazePath = vec3(sin(spinT * 0.29 + mode) * radius * 0.64, 0.06 + cos(t * 0.46 + mode) * 0.18, 1.90 - dive * 0.58 + cos(spinT * 0.29 + mode) * radius * 0.24);
+    vec3 ro = orbitPath;
+    if (u_motion_mode >= 0.5 && u_motion_mode < 1.5) ro = figurePath;
+    else if (u_motion_mode >= 1.5 && u_motion_mode < 2.5) ro = corridorPath;
+    else if (u_motion_mode >= 2.5) ro = grazePath;
+    ro.xz = rot2(mode * 0.44 + spinT * 0.12) * ro.xz;
+
+    float rollValue = u_roll * sin(rollT * 0.48 + mode) + u_global_rotation * 0.2;
+    vec3 rd = psyRayDirection(gl_FragCoord.xy, u_resolution, ro, target, u_fov, rollValue);
+    float maxDist = 7.2 + u_flight_depth * 0.68;
+    g_camClear = 0.05; // a camera inside the glass used to show a dark frame
+    TraceHit hit = marchTrace(ro, rd, maxDist);
+    g_camClear = 0.0;
+
+    vec3 col = envTrace(rd, t);
+    if (hit.dist > 0.0) {
+        vec3 p = ro + rd * hit.dist;
+        vec3 n = estimateNormal(p, 0.004 + hit.dist * 0.0008);
+        vec3 lightDir = normalize(vec3(-0.45, 0.68, 0.52));
+        float diff = max(dot(n, lightDir), 0.0);
+        float sh = softShadow(p + n * 0.018, lightDir, 0.035, 2.6);
+        float fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+        vec3 refl = reflect(rd, n);
+        vec3 refr = refract(rd, n, 1.0 / max(u_ior, 1.05));
+        if (length(refr) < 0.001) refr = refl;
+        vec3 jitter = normalize(n + vec3(
+            sin(dot(p, vec3(12.7, 31.1, 7.3)) + t),
+            sin(dot(p, vec3(9.2, 17.7, 23.4)) - t * 0.7),
+            sin(dot(p, vec3(14.1, 8.3, 19.5)) + t * 0.4)
+        ) * u_roughness);
+        refl = normalize(mix(refl, jitter, clamp(u_roughness, 0.0, 1.0)));
+        refr = normalize(mix(refr, -jitter, clamp(u_roughness * 0.45, 0.0, 1.0)));
+
+        TraceHit bounceHit = marchTrace(p + refl * 0.045, refl, 2.8 + u_bounce_mix);
+        vec3 bounceCol = envTrace(refl, t);
+        if (bounceHit.dist > 0.0) {
+            vec3 bp = p + refl * (0.045 + bounceHit.dist);
+            TraceHit bi = mapTrace(bp);
+            bounceCol = paletteTrace(bi.trap * 0.12 + bi.iter * 0.035 + t * u_color_speed * 0.045, u_palette) * (0.38 + 0.44 * smoothstep(0.0, 1.0, bi.iter / max(u_iterations, 1.0)));
+        }
+        vec3 refrCol = envTrace(refr, t + u_refraction_flow * 0.35);
+        float caustic = pow(abs(sin((p.x + p.y * 1.7 + p.z * 0.9) * 8.0 + t * (0.8 + u_caustic_spin * 0.25))), 10.0);
+        vec3 base = paletteTrace(hit.trap * 0.10 + hit.iter * 0.035 + t * u_color_speed * 0.045 + mode * 0.10, u_palette);
+        if (u_shade_mode >= 0.5 && u_shade_mode < 1.5) {
+            base = mix(base, paletteTrace(fract(hit.iter / max(u_iterations, 1.0) + t * 0.04), u_palette), 0.54);
+        } else if (u_shade_mode >= 1.5 && u_shade_mode < 2.5) {
+            base += paletteTrace(caustic + t * 0.025, u_palette) * caustic * 0.42;
+        } else if (u_shade_mode >= 2.5) {
+            base = mix(base, vec3(0.86, 0.94, 1.0), 0.30 + 0.30 * fres);
+        }
+
+        vec3 direct = base * (0.12 + diff * sh * 0.62);
+        vec3 glass = mix(refrCol, bounceCol, fres * (0.62 + u_bounce_mix * 0.28));
+        col = mix(direct + glass * (0.42 + u_bounce_mix * 0.44), base + bounceCol * 0.55, u_surface_mix * 0.35);
+        col += paletteTrace(caustic + t * 0.030, u_palette) * caustic * (0.06 + u_glow * 0.055);
+        col += base * fres * (0.38 + u_glow * 0.28);
+        float fogAmount = 1.0 - exp(-hit.dist * (0.048 + u_fog * 0.082));
+        fogAmount = max(fogAmount, 1.0 - smoothstep(0.05, 0.16, hit.dist)); // grazing hits fade into fog
+        col = mix(col, envTrace(rd, t) + paletteTrace(t * 0.025, u_palette) * 0.050, fogAmount);
+    }
+
+    vec2 screenUv = gl_FragCoord.xy / max(u_resolution, vec2(1.0));
+    float weave = smoothstep(0.18, 1.0, abs(sin(screenUv.x * 36.0 + t * 0.52) * sin(screenUv.y * 41.0 - t * 0.43)));
+    col += paletteTrace(t * 0.04 + weave * 0.20 + mode * 0.1, u_palette) * weave * (0.028 + 0.017 * u_glow);
+    col = psyGamma(psyTonemap(col));
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{o as default};

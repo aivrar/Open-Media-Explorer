@@ -1,5 +1,11 @@
-import { addPlaylistLink, getPlaylists, importPlaylistFile, loadPlaylists, playlistName, removePlaylist } from '../../lib/playlists.js';
-import { addFavorites, BULK_FAVORITES_LIMIT, countNewFavorites, getState, saveSettings } from '../../lib/state.js';
+import {
+  addPlaylistLink, getPlaylistItems, getPlaylists, importPlaylistFile, loadPlaylists, playlistName, playlistsLoaded,
+  removePlaylist,
+} from '../../lib/playlists.js';
+import { moveFavoritesToNewIds, planTypeMoves, typeMoveMessage } from '../../lib/favorite-migration.js';
+import {
+  addFavorites, BULK_FAVORITES_LIMIT, countNewFavorites, getState, removeAllFavorites, saveSettings,
+} from '../../lib/state.js';
 import { FAVORITES_SORT_MANUAL, FAVORITES_SORT_NAME, normalizeFavoritesSort } from '../../lib/favorites-order.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
@@ -9,6 +15,29 @@ import { filteredItemsForCurrentView, renderResults, renderStatus, updateSentine
 import { buildFavoriteCategories, syncFavoriteCategories } from './favorite-categories.js';
 
 function refresh() { renderResults(); renderStatus(); updateSentinelStatus(); }
+
+/** Read the saved playlists if that has not worked yet. A failed read (for
+ *  example a busy local server just after start) is tried again each time My
+ *  Playlists is opened, instead of leaving the list empty for the session.
+ *  The error is shown under the playlist buttons. */
+export function ensurePlaylistsLoaded(load = loadPlaylists) {
+  if (playlistsLoaded()) return Promise.resolve(true);
+  const mountedRoot = ui.root;
+  return Promise.resolve().then(() => load()).then(() => {
+    if (ui.root === mountedRoot && ui.playlistMessage?.dataset?.loadError === 'true') {
+      ui.playlistMessage.textContent = '';
+      delete ui.playlistMessage.dataset.loadError;
+    }
+    return true;
+  }, (error) => {
+    if (ui.root === mountedRoot && ui.playlistMessage) {
+      ui.playlistMessage.textContent = `Your playlists could not be loaded: ${error?.message || 'the app did not answer.'} `
+        + 'Open My Playlists again to try again.';
+      ui.playlistMessage.dataset.loadError = 'true';
+    }
+    return false;
+  });
+}
 
 /** Starring more new channels than this at once asks first: there is no bulk un-star. */
 export const STAR_ALL_CONFIRM_ABOVE = 25;
@@ -45,6 +74,86 @@ export function starAllListed({ confirmImpl = (text) => globalThis.confirm(text)
   }
   const result = addFavorites(listed);
   return { ...result, cancelled: false, message: starAllMessage(result) };
+}
+
+/** "Add as" choices. Auto (the default) gives a channel that does not say
+ *  radio or TV the type most channels in the same file say; TV and Radio
+ *  give it that type (worldmedia_playlists.py auto_type). */
+export const ADD_AS_CHOICES = [['auto', 'Auto'], ['tv', 'TV'], ['radio', 'Radio']];
+
+/** Plain-words result of an import or an added online playlist. `type` is the
+ *  "Add as" choice ('auto', 'tv' or 'radio'); with Auto the backend says which
+ *  type it chose (`playlist.default_type`) and why (`playlist.auto`). */
+export function importResultMessage(data, type = 'tv') {
+  const playlist = data?.playlist || {};
+  const count = (value) => (Number.isInteger(value) && value > 0 ? value : 0);
+  const plural = (number, one, many) => `${number} ${number === 1 ? one : many}`;
+  // Entries pointing at this computer or a private network are part of
+  // `skipped`; they get their own sentence saying why.
+  const skipped = count(playlist.skipped);
+  const privateSkipped = Math.min(count(playlist.private), skipped);
+  let text = `${data?.replaced ? 'Updated' : 'Imported'} ${plural(count(playlist.items?.length), 'channel', 'channels')}; `
+    + `${plural(skipped - privateSkipped, 'unsupported entry', 'unsupported entries')} skipped; `
+    + `${plural(count(playlist.duplicates), 'duplicate', 'duplicates')} removed.`;
+  if (privateSkipped) {
+    text += privateSkipped === 1
+      ? ' 1 entry was skipped because it points at this computer or a private network address.'
+      : ` ${privateSkipped} entries were skipped because they point at this computer or a private network address.`;
+  }
+  const defaulted = count(playlist.defaulted);
+  if (!defaulted) return text;
+  const auto = type === 'auto' ? playlist.auto : '';
+  const radio = (auto ? playlist.default_type : type) === 'radio';
+  const one = defaulted === 1;
+  const as = radio ? 'radio' : 'TV';
+  const other = radio ? 'TV' : 'Radio';
+  const otherWhat = radio ? (one ? 'a TV channel' : 'TV channels') : (one ? 'a radio station' : 'radio stations');
+  text += one
+    ? ' 1 channel does not say in the file whether it is radio or TV'
+    : ` ${defaulted} channels do not say in the file whether they are radio or TV`;
+  if (auto === 'majority') {
+    text += `. Most channels in the file that do say are ${as}, so ${one ? 'it was' : 'these were'} added as ${as} too.`
+      + ` If that is wrong, choose Add as ${other} and import the file again.`;
+  } else {
+    text += auto === 'fallback' ? ', and the rest of the file does not decide it,' : ',';
+    text += ` so ${one ? 'it was' : 'they were'} added as ${as}.`
+      + ` If ${one ? 'it is' : 'they are'} ${otherWhat}, choose Add as ${other} and import the file again.`;
+  }
+  return text;
+}
+
+/** Each saved playlist's channels, taken before an import replaces one. */
+export function playlistSnapshot() {
+  return new Map(getPlaylists().map((entry) => [entry.id, entry.items]));
+}
+
+/** After a playlist was imported again (same name, or the same link), move
+ *  favorites whose channel changed between radio and TV to the new channel
+ *  (favorite-migration.js). Returns the words to add to the import message. */
+export function followTypeChanges(before, data) {
+  if (!data?.replaced) return '';
+  const old = before.get(data.playlist?.id);
+  if (!old) return '';
+  const moves = planTypeMoves(old, getPlaylistItems(data.playlist.id), getState().favorites);
+  if (moves.size === 0) return '';
+  return typeMoveMessage(moveFavoritesToNewIds(moves), moves);
+}
+
+/** Remove every favorite after the user agrees. Nothing changes without a yes. */
+export function removeAllFavoritesAsked({ confirmImpl = (text) => globalThis.confirm(text) } = {}) {
+  const count = getState().favorites.length;
+  if (count === 0) return { removed: 0, message: 'There are no favorites to remove.' };
+  const what = count === 1 ? 'the 1 favorite' : `all ${count} favorites`;
+  if (!confirmImpl(`Remove ${what}? This cannot be undone. To keep a copy, first use Back up my data in Settings > Storage.`)) {
+    return { removed: 0, cancelled: true, message: 'Nothing was removed.' };
+  }
+  const { removed, failed } = removeAllFavorites();
+  if (failed === 'curves') {
+    return { removed: 0, message: 'Favorites could not be saved, so they were kept, but their own equalizer settings '
+      + 'were lost; they now use the main equalizer.' };
+  }
+  if (failed) return { removed: 0, message: 'Favorites could not be saved. Nothing was removed.' };
+  return { removed, message: removed === 1 ? 'The favorite was removed.' : `All ${removed} favorites were removed.` };
 }
 
 // Set while the Library is mounted; lets a dropped file use the same import
@@ -119,14 +228,14 @@ export function buildPersonalControls() {
     view.playlistId = event.target.value;
     syncPersonalControls(); refresh();
   });
-  const defaultType = selectControl('Media type for new channels; playlist radio metadata overrides this', [
-    ['tv', 'TV'], ['radio', 'Radio'],
-  ], () => {});
+  const defaultType = selectControl('Radio or TV, for channels the playlist does not mark. '
+    + 'Auto uses what most channels in the same file say, else TV.', ADD_AS_CHOICES, () => {});
   const file = el('input', { attrs: { type: 'file', accept: '.m3u,.m3u8,.pls,.xspf', 'aria-label': 'Choose channel playlist' }, style: { display: 'none' } });
   const message = el('span', { className: 'playlist-message', attrs: { role: 'status', 'aria-live': 'polite' } });
   ui.playlistMessage = message;
   const importButton = el('button', { className: 'btn', text: 'Import playlist',
-    attrs: { type: 'button', title: 'Import a local .m3u, .m3u8, .pls or .xspf channel list. A matching filename replaces that playlist; favorites are kept.' },
+    attrs: { type: 'button', title: 'Import a local .m3u, .m3u8, .pls or .xspf channel list. A matching filename replaces that playlist; favorites are kept. '
+      + 'To change the stations, edit your own playlist file and import it again under the same file name; the copy the app keeps is not meant to be edited by hand.' },
     on: { click: () => file.click() } });
   const linkForm = el('form', { className: 'playlist-link-form', attrs: { 'aria-label': 'Add a channel or playlist link' } });
   linkForm.hidden = true;
@@ -147,7 +256,9 @@ export function buildPersonalControls() {
     el('label', { text: 'Link contains' }, linkKind), saveLink, cancelLink,
     el('p', { className: 'playlist-link-help', text: 'Paste a direct TV/radio stream, or select Online playlist for an M3U, PLS or XSPF channel list. Adding the same link updates it; favorites are kept. Website and login pages are not supported.' }));
   ui.playlistLinkForm = linkForm;
-  const removeButton = el('button', { className: 'btn', text: 'Remove playlist', attrs: { type: 'button' } });
+  const removeButton = el('button', { className: 'btn', text: 'Remove playlist', attrs: {
+    type: 'button', title: 'Remove the playlist chosen in the list from My Playlists. Favorites and your own file are kept.',
+  } });
   ui.playlistRemove = removeButton;
   const starAll = el('button', { className: 'btn', text: 'Star all', attrs: { type: 'button', title: 'Add every channel shown to Favorites' },
     on: { click: () => { if (!busy) message.textContent = starAllListed().message; } } });
@@ -158,7 +269,7 @@ export function buildPersonalControls() {
     importButton.disabled = value;
     for (const control of [addLink, linkUrl, linkName, linkKind, saveLink, cancelLink]) control.disabled = value;
     defaultType.disabled = value;
-    removeButton.disabled = value || !view.playlistId;
+    removeButton.disabled = value || getPlaylists().length === 0;
     starAll.disabled = value;
     ui.playlistSelect.disabled = value;
   };
@@ -168,11 +279,13 @@ export function buildPersonalControls() {
     setBusy(true);
     message.textContent = linkKind.value === 'playlist' ? 'Fetching channel list...' : 'Saving channel link...';
     try {
+      await loadPlaylists();
+      const before = playlistSnapshot();
       const data = await addPlaylistLink({ url: linkUrl.value, name: linkName.value, kind: linkKind.value, defaultType: defaultType.value });
       view.playlistId = data.playlist.id;
-      message.textContent = data.kind === 'stream'
+      message.textContent = (data.kind === 'stream'
         ? 'Channel saved. Select it below to play.'
-        : `${data.replaced ? 'Updated' : 'Imported'} ${data.playlist.items.length} channels; ${data.playlist.skipped} unsupported entries skipped; ${data.playlist.duplicates} duplicates removed.`;
+        : importResultMessage(data, defaultType.value)) + followTypeChanges(before, data);
       linkUrl.value = ''; linkName.value = '';
       linkForm.hidden = true;
       addLink.setAttribute('aria-expanded', 'false');
@@ -193,9 +306,10 @@ export function buildPersonalControls() {
         message.textContent = 'Import cancelled.';
         return false;
       }
+      const before = playlistSnapshot();
       const data = await importPlaylistFile(selected, defaultType.value);
       view.playlistId = data.playlist.id;
-      message.textContent = `${data.replaced ? 'Updated' : 'Imported'} ${data.playlist.items.length} channels; ${data.playlist.skipped} unsupported entries skipped; ${data.playlist.duplicates} duplicates removed.`;
+      message.textContent = importResultMessage(data, defaultType.value) + followTypeChanges(before, data);
       syncPersonalControls(); refresh();
       return true;
     } catch (error) {
@@ -209,8 +323,20 @@ export function buildPersonalControls() {
     importLocal(selected);
   });
   removeButton.addEventListener('click', async () => {
-    const selected = getPlaylists().find((entry) => entry.id === view.playlistId);
-    if (!selected || busy || !globalThis.confirm(`Remove ${selected.name}? Saved favorites and the original file will be kept.`)) return;
+    if (busy) return;
+    const lists = getPlaylists();
+    // "All playlists" with only one imported: that one is meant.
+    const selected = lists.find((entry) => entry.id === view.playlistId) || (lists.length === 1 ? lists[0] : null);
+    if (!selected) {
+      message.textContent = lists.length
+        ? 'Choose the playlist to remove in the list that says All playlists, then press Remove playlist.'
+        : 'There is no imported playlist to remove.';
+      if (lists.length) ui.playlistSelect.focus?.();
+      return;
+    }
+    const channelCount = selected.items?.length || 0;
+    if (!globalThis.confirm(`Remove the playlist ${selected.name} with its ${channelCount} ${channelCount === 1 ? 'channel' : 'channels'}? `
+      + 'Saved favorites and your own file will be kept.')) return;
     setBusy(true);
     try {
       await removePlaylist(selected.id);
@@ -223,11 +349,23 @@ export function buildPersonalControls() {
   ui.playlistActions = el('div', { className: 'playlist-actions' },
     el('label', { className: 'playlist-media-type', text: 'Add as ' }, defaultType), addLink, importButton, removeButton, starAll, file, linkForm);
   ui.favoritesSort = buildFavoritesSort();
+  // Remove all favorites: asks first, with the count (removeAllFavoritesAsked).
+  const favoritesMessage = el('span', { className: 'playlist-message', attrs: { role: 'status', 'aria-live': 'polite' } });
+  ui.favoritesRemoveAll = el('button', { className: 'btn', text: 'Remove all favorites', attrs: {
+    type: 'button', title: 'Remove every favorite. You are asked first; a backup can be made in Settings > Storage.',
+  }, on: { click: () => { favoritesMessage.textContent = removeAllFavoritesAsked().message; } } });
+  ui.favoritesActions = el('div', { className: 'favorites-actions' }, ui.favoritesRemoveAll, favoritesMessage);
   // Favorites categories: a second row of chips (favorite-categories.js).
   buildFavoriteCategories();
-  ui.personalControls.append(ui.personalType, ui.favoritesSort, ui.favoriteCategories, ui.playlistSelect, ui.playlistActions, message);
+  ui.personalControls.append(ui.personalType, ui.favoritesSort, ui.favoritesActions, ui.favoriteCategories,
+    ui.playlistSelect, ui.playlistActions, message);
   syncPersonalControls();
   return ui.personalControls;
+}
+
+/** "Remove all favorites" can be pressed only while there are favorites. */
+export function syncFavoritesActions() {
+  if (ui.favoritesRemoveAll) ui.favoritesRemoveAll.disabled = getState().favorites.length === 0;
 }
 
 export function syncPersonalControls() {
@@ -238,6 +376,7 @@ export function syncPersonalControls() {
   ui.root?.classList.toggle('is-personal-view', personal);
   ui.personalControls.style.display = personal ? 'flex' : 'none';
   ui.favoritesSort.style.display = view.activeSource === 'favorites' ? '' : 'none';
+  ui.favoritesActions.style.display = view.activeSource === 'favorites' ? '' : 'none';
   syncFavoritesSort();
   ui.favoriteCategories.style.display = view.activeSource === 'favorites' ? '' : 'none';
   syncFavoriteCategories();
@@ -254,7 +393,10 @@ export function syncPersonalControls() {
       ...lists.map((entry) => el('option', { attrs: { value: entry.id }, text: entry.name })));
   }
   ui.playlistSelect.value = view.playlistId;
-  ui.playlistRemove.disabled = !view.playlistId;
+  // Enabled whenever there is a playlist; with several and none chosen, a
+  // press says which list to choose it in.
+  ui.playlistRemove.disabled = lists.length === 0;
+  syncFavoritesActions();
   if (ui.searchInput) {
     ui.searchInput.value = personal ? personalFilters().query : view.query;
     ui.searchInput.placeholder = personal ? 'Search saved titles and groups...' : 'Search radio, TV, archives...';

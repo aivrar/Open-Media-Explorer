@@ -7,7 +7,7 @@
 
 import { getState, isFavorite, addFavorite, removeFavorite } from '../../lib/state.js';
 import { getSourceLabel } from '../../lib/sources.js';
-import { safeExternalUrl } from '../../lib/item-model.js';
+import { safeExternalUrl, shownLicense } from '../../lib/item-model.js';
 import {
   artworkSourceFor, isArtworkRelayUrl, isStationImageSource, loadArtworkImage, stationImageSourceFor,
 } from '../../lib/artwork.js';
@@ -168,7 +168,7 @@ export function openDetail(item, options = {}) {
   if (item.year) meta.appendChild(el('span', { text: String(item.year) }));
   if (item.country) meta.appendChild(el('span', { text: item.country }));
   if (item.language) meta.appendChild(el('span', { text: item.language }));
-  if (item.license) meta.appendChild(el('span', { text: item.license }));
+  if (shownLicense(item)) meta.appendChild(el('span', { text: shownLicense(item) }));
   const qualityLabel = streamQualityLabel(item);
   if (qualityLabel) {
     meta.appendChild(el('span', {

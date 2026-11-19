@@ -10,6 +10,8 @@ let loaded = false;
 let revision = 0;
 
 export function getPlaylists() { return playlists; }
+/** True once the saved playlists have been read from the data folder. */
+export function playlistsLoaded() { return loaded; }
 export function playlistName(value) {
   return Array.from(String(value).replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim()).slice(0, 160).join('');
 }

@@ -489,14 +489,17 @@ test('each tick asks for one animation frame and reads once inside it, at the fa
   h.run(1000, 1000 / 144); // one second on a 144 Hz display
   near(h.signal.stats.reads - reads, METER_FPS, 1, 'the same rate at 144 Hz');
   assert.ok(unread() === 0 || unread() === 1);
-  // A second, faster subscriber: one read per frame, shared by both.
+  // A second, faster subscriber: one read per frame, shared by both. Each is
+  // called at its own rate (per-subscriber pacing, added for the visualizer):
+  // the meter stays at 15 while the loop reads at 30.
   h.signal.subscribe((frame) => b.push(frame), { fps: 30 });
   const aBefore = a.length;
   reads = h.signal.stats.reads;
   h.run(1000);
   near(h.signal.stats.reads - reads, 30, 1, 'the fastest asked rate');
-  assert.equal(b.length, a.length - aBefore);
-  assert.ok(b.every((entry, index) => entry === a[aBefore + index]), 'the same frame object for both');
+  near(b.length, h.signal.stats.reads - reads, 1, 'the faster one gets (nearly) every read');
+  near(a.length - aBefore, METER_FPS, 1, 'the meter keeps its own rate');
+  assert.ok([...a.slice(aBefore), ...b].every((entry) => entry === h.signal.frame), 'the same frame object for both');
   assert.equal(h.counts.maxPending, 1);
   assert.equal(frame.spectrum, spectrum, 'arrays are reused, not reallocated');
   // Frame contents.

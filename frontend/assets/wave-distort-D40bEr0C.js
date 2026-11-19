@@ -1,0 +1,50 @@
+function t(e){return e.EffectRegistry.register({name:"waves",label:"Wave Distortion",category:"Distortion",description:"Rippling wave distortions creating liquid, flag-like motion",params:[{name:"speed",label:"Speed",min:.1,max:5,default:1.5,step:.1},{name:"amplitude",label:"Amplitude",min:.01,max:.3,default:.08,step:.01},{name:"frequency",label:"Frequency",min:1,max:20,default:8,step:.5},{name:"layers",label:"Layers",min:1,max:6,default:3,step:1,type:"int"},{name:"color_mode",label:"Source",type:"select",options:["Rainbow Grid","Noise","Circles","Plasma"],default:0}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_speed;
+uniform float u_amplitude;
+uniform float u_frequency;
+uniform float u_layers;
+uniform float u_color_mode;
+
+void main() {
+    vec2 uv = v_uv + seedOffset() * 0.01;
+    float t = u_time * u_speed + seedPhase();
+
+    // Apply wave distortion
+    vec2 distorted = uv;
+    for (float i = 0.0; i < 6.0; i++) {
+        if (i >= u_layers) break;
+        float phase = t + i * 1.3;
+        float freq = u_frequency * (1.0 + i * 0.5);
+        float amp = u_amplitude / (1.0 + i * 0.5);
+
+        distorted.x += amp * sin(distorted.y * freq + phase);
+        distorted.y += amp * sin(distorted.x * freq * 0.8 + phase * 1.3);
+    }
+
+    int mode = int(u_color_mode);
+    vec3 col;
+
+    if (mode == 0) {
+        // Rainbow grid
+        vec2 g = fract(distorted * 8.0);
+        col = hsv2rgb(vec3(distorted.x * 0.5 + distorted.y * 0.3 + t * 0.05, 0.7, 0.8));
+        float grid = smoothstep(0.02, 0.04, g.x) * smoothstep(0.02, 0.04, g.y);
+        col *= 0.5 + 0.5 * grid;
+    } else if (mode == 1) {
+        float n = snoise(vec3(distorted * 4.0, t * 0.3));
+        col = rainbow(n * 0.5 + 0.5 + t * 0.03);
+    } else if (mode == 2) {
+        float d = length(distorted - 0.5) * 10.0;
+        float rings = sin(d - t * 2.0) * 0.5 + 0.5;
+        col = rainbow(rings + t * 0.05);
+    } else {
+        float v = sin(distorted.x * 8.0 + t) + sin(distorted.y * 6.0 + t * 0.7);
+        v += sin(length(distorted - 0.5) * 10.0 - t);
+        col = rainbow(v * 0.15 + t * 0.05);
+    }
+
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{t as default};

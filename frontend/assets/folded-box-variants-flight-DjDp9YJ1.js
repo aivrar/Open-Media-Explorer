@@ -1,0 +1,435 @@
+function t(e){var a=e.EffectRegistry,o=e.FractalFlight;return a.register({name:"folded_box_variants_flight",label:"Folded Box Variants Flight",category:"Fractals",description:"Raymarched Mandelbox-family variants with Amazing Box, surf-like sheet folds, smooth folds, ABox modulation, and box-bulb hybrid motion",fractalFlight:o.metadata({family:"Folded Box Variants",familyKey:"folded_box_variants",modeParam:"family",modes:["Amazing Box","Amazing Surf","Smooth Mandelbox","ABoxMod","Box-Bulb Hybrid"],depthParams:["flight_depth"],requiredParams:["family","iterations","fold_scale","box_fold","sphere_min","sphere_fixed","fold_offset","surf_amp","bulb_power","bailout","detail","flight_depth","fold_rotation","scale_pulse","surf_motion","bulb_mix"],animationParams:["flight_speed","flight_depth","orbit_radius","orbit_spin","motion_mode","motion_phase","fold_rotation","scale_pulse","surf_motion","bulb_mix","roll","roll_speed","fov","color_speed"],smokePresets:[{name:"Amazing Box Orbit",values:{family:0,iterations:13,fold_scale:-1.72,box_fold:1.06,sphere_min:.25,sphere_fixed:1.04,fold_offset:.1,surf_amp:.32,bulb_power:4.6,flight_speed:2.28,flight_depth:1.55,orbit_spin:1.56,motion_mode:0,motion_phase:.14,fold_rotation:.76,scale_pulse:.72,surf_motion:.58,bulb_mix:.34,roll_speed:1.48,color_speed:.78,palette:0,shade_mode:2,fog:.22,glow:1.74}},{name:"Amazing Surf Tunnel",values:{family:1,iterations:14,fold_scale:-1.74,box_fold:1.02,sphere_min:.25,sphere_fixed:1.08,fold_offset:.34,surf_amp:.96,bulb_power:5.2,bailout:9.5,detail:1.6,flight_speed:2.18,flight_depth:1.72,orbit_radius:1.34,orbit_spin:1.62,motion_mode:2,motion_phase:.26,fold_rotation:1.08,scale_pulse:.94,surf_motion:1.2,bulb_mix:.56,roll:.38,roll_speed:1.52,fov:1,color_speed:1.1,palette:1,shade_mode:3,fog:.18,glow:1.48}},{name:"Smooth Mandelbox Drift",values:{family:2,iterations:13,fold_scale:-1.48,box_fold:1.1,sphere_min:.3,sphere_fixed:1.1,fold_offset:.08,surf_amp:.42,bulb_power:5.2,flight_speed:2.22,flight_depth:1.58,orbit_spin:1.52,motion_mode:1,motion_phase:.36,fold_rotation:.68,scale_pulse:.62,surf_motion:.7,bulb_mix:.44,roll_speed:1.46,color_speed:.8,palette:2,shade_mode:1,fog:.24,glow:1.72}},{name:"ABoxMod Deep Fold",values:{family:3,iterations:14,fold_scale:-1.76,box_fold:.98,sphere_min:.23,sphere_fixed:1.08,fold_offset:.48,surf_amp:1.04,bulb_power:5.8,bailout:9.5,detail:1.6,flight_speed:2.34,flight_depth:1.42,orbit_radius:1.18,orbit_spin:1.78,motion_mode:3,motion_phase:.64,fold_rotation:1.42,scale_pulse:1.12,surf_motion:1.16,bulb_mix:.74,roll:.44,roll_speed:1.62,fov:1.02,color_speed:1.12,palette:3,shade_mode:3,fog:.16,glow:1.72}},{name:"Box-Bulb Hybrid",values:{family:4,iterations:13,fold_scale:-1.46,box_fold:1.02,sphere_min:.24,sphere_fixed:1.02,fold_offset:.18,surf_amp:.62,bulb_power:5.6,flight_speed:2.42,flight_depth:1.72,orbit_spin:1.78,motion_mode:2,motion_phase:.34,fold_rotation:.92,scale_pulse:.78,surf_motion:.86,bulb_mix:.92,roll_speed:1.66,color_speed:.86,palette:2,shade_mode:3,fog:.22,glow:1.86}}]}),params:[{name:"family",label:"Variant Mode",group:"Formula",type:"select",options:["Amazing Box","Amazing Surf","Smooth Mandelbox","ABoxMod","Box-Bulb Hybrid"],default:1},{name:"iterations",label:"Fold Iterations",group:"Formula",min:4,max:24,default:12,step:1,type:"int"},{name:"fold_scale",label:"Fold Scale",group:"Formula",min:-3.4,max:4.2,default:-1.62,step:.02},{name:"box_fold",label:"Box Fold",group:"Formula",min:.35,max:2.2,default:1.04,step:.02},{name:"sphere_min",label:"Sphere Min",group:"Formula",min:.04,max:.9,default:.28,step:.01},{name:"sphere_fixed",label:"Sphere Fixed",group:"Formula",min:.35,max:2,default:1.02,step:.02},{name:"fold_offset",label:"Fold Offset",group:"Formula",min:-1.4,max:1.4,default:.12,step:.02},{name:"surf_amp",label:"Surf Amplitude",group:"Formula",min:0,max:1.8,default:.46,step:.02},{name:"bulb_power",label:"Bulb Power",group:"Formula",min:2,max:8,default:5,step:.1},{name:"bailout",label:"Bailout",group:"Formula",min:2,max:18,default:9,step:.25},{name:"detail",label:"Surface Detail",group:"Formula",min:.5,max:2.5,default:1.18,step:.05},{name:"flight_speed",label:"Flight Speed",group:"Flight",min:0,max:8,default:.72,step:.05},{name:"flight_depth",label:"Dive Depth",group:"Flight",min:0,max:4.4,default:.92,step:.05},{name:"orbit_radius",label:"Orbit Radius",group:"Flight",min:.2,max:5.8,default:1.18,step:.05},{name:"orbit_spin",label:"Orbit Spin Speed",group:"Flight",min:-5,max:5,default:.56,step:.05},{name:"motion_mode",label:"Motion Path",group:"Animation",type:"select",options:["Box Orbit","Figure Eight","Fold Tunnel","Surface Graze"],default:2},{name:"motion_phase",label:"Motion Phase",group:"Animation",min:0,max:1,default:0,step:.01},{name:"fold_rotation",label:"Fold Rotation",group:"Animation",min:-2,max:2,default:.58,step:.02},{name:"scale_pulse",label:"Scale Pulse",group:"Animation",min:0,max:1.8,default:.52,step:.05},{name:"surf_motion",label:"Surf Motion",group:"Animation",min:0,max:1.8,default:.62,step:.05},{name:"bulb_mix",label:"Bulb Mix",group:"Animation",min:0,max:1.5,default:.48,step:.05},{name:"roll",label:"Roll Drift",group:"Animation",min:-1.8,max:1.8,default:.24,step:.05},{name:"roll_speed",label:"Roll Speed",group:"Animation",min:0,max:6,default:.66,step:.05},{name:"fov",label:"Field of View",group:"Animation",min:.55,max:1.9,default:1,step:.05},{name:"color_speed",label:"Color Speed",group:"Visual",min:0,max:8,default:.5,step:.05},{name:"palette",label:"Palette",group:"Visual",type:"select",palette:!0,options:["Box Brass","Surf Azure","Smooth Violet","ABox Ember"],default:1},{name:"shade_mode",label:"Shade Mode",group:"Visual",type:"select",options:["Trap Glow","Normal Metal","Iteration Bands","Fold Cavities"],default:0},{name:"fog",label:"Depth Fog",group:"Visual",min:0,max:1.5,default:.32,step:.05},{name:"glow",label:"Edge Glow",group:"Visual",min:0,max:3,default:1.45,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_family;
+uniform float u_iterations;
+uniform float u_fold_scale;
+uniform float u_box_fold;
+uniform float u_sphere_min;
+uniform float u_sphere_fixed;
+uniform float u_fold_offset;
+uniform float u_surf_amp;
+uniform float u_bulb_power;
+uniform float u_bailout;
+uniform float u_detail;
+uniform float u_flight_speed;
+uniform float u_flight_depth;
+uniform float u_orbit_radius;
+uniform float u_orbit_spin;
+uniform float u_motion_mode;
+uniform float u_motion_phase;
+uniform float u_fold_rotation;
+uniform float u_scale_pulse;
+uniform float u_surf_motion;
+uniform float u_bulb_mix;
+uniform float u_roll;
+uniform float u_roll_speed;
+uniform float u_fov;
+uniform float u_color_speed;
+uniform float u_palette;
+uniform float u_shade_mode;
+uniform float u_fog;
+uniform float u_glow;
+
+struct VariantHit {
+    float dist;
+    float iter;
+    float trap;
+    float cell;
+    float bulb;
+};
+
+float phaseOffset() {
+    return u_motion_phase * 6.28318530718;
+}
+
+float familyMode() {
+    return clamp(floor(u_family + 0.5), 0.0, 4.0);
+}
+
+mat3 rotX3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c);
+}
+
+mat3 rotY3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
+}
+
+mat3 rotZ3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0);
+}
+
+float sdBox(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sdOctahedron(vec3 p, float s) {
+    p = abs(p);
+    return (p.x + p.y + p.z - s) * 0.57735027;
+}
+
+float sdCross(vec3 p, float bar, float len) {
+    vec3 q = abs(p);
+    float xy = max(max(q.x, q.y) - bar, q.z - len);
+    float xz = max(max(q.x, q.z) - bar, q.y - len);
+    float yz = max(max(q.y, q.z) - bar, q.x - len);
+    return min(xy, min(xz, yz));
+}
+
+vec3 hardBoxFold(vec3 p, float limit) {
+    vec3 l = vec3(max(limit, 0.001));
+    return clamp(p, -l, l) * 2.0 - p;
+}
+
+vec3 smoothBoxFold(vec3 p, float limit, float amount) {
+    float l = max(limit, 0.001);
+    vec3 hard = hardBoxFold(p, l);
+    vec3 soft = p / (vec3(1.0) + abs(p / l)) * 2.0;
+    return mix(hard, soft, clamp(amount, 0.0, 1.0));
+}
+
+vec3 sortFold(vec3 p) {
+    p = abs(p);
+    if (p.x < p.y) p.xy = p.yx;
+    if (p.x < p.z) p.xz = p.zx;
+    if (p.y < p.z) p.yz = p.zy;
+    return p;
+}
+
+vec3 repeatCell(vec3 p, float spacing) {
+    vec3 c = vec3(max(spacing, 0.001));
+    return mod(p + c * 0.5, c) - c * 0.5;
+}
+
+vec3 bulbVector(vec3 p, float powerValue, float phase) {
+    float r = max(length(p), 0.000001);
+    float theta = acos(clamp(p.z / r, -1.0, 1.0));
+    float phi = atan(p.y, p.x);
+    float rp = pow(r, powerValue);
+    theta = theta * powerValue + sin(phase) * 0.04 * u_surf_motion;
+    phi = phi * powerValue + phase * 0.05 * u_fold_rotation;
+    return rp * vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+}
+
+vec3 paletteFoldedBox(float t, float paletteMode) {
+    t = fract(t);
+    if (paletteMode > 3.5) return psyLutLinear(t);
+    if (paletteMode < 0.5) {
+        return palette(t, vec3(0.36, 0.23, 0.10), vec3(0.56, 0.42, 0.20), vec3(0.95, 0.72, 0.34), vec3(0.03, 0.22, 0.45));
+    } else if (paletteMode < 1.5) {
+        return palette(t, vec3(0.03, 0.13, 0.26), vec3(0.18, 0.42, 0.66), vec3(0.26, 0.74, 1.00), vec3(0.58, 0.18, 0.82));
+    } else if (paletteMode < 2.5) {
+        return palette(t, vec3(0.28, 0.13, 0.44), vec3(0.48, 0.26, 0.64), vec3(0.82, 0.48, 1.00), vec3(0.48, 0.08, 0.20));
+    }
+    return palette(t, vec3(0.38, 0.12, 0.05), vec3(0.62, 0.24, 0.10), vec3(1.00, 0.48, 0.16), vec3(0.02, 0.18, 0.38));
+}
+
+// Standard Mandelbox-family estimators with a correctly tracked running
+// derivative (DE = |z| / |dr|). The previous version clamped dr and scaled
+// the result up, which made rays step through surfaces (noise).
+VariantHit foldedBoxDE(vec3 p) {
+    vec3 z = p;
+    float mode = familyMode();
+    float phase = u_time * 0.17 + phaseOffset() + mode * 0.84 + seedPhase() * 0.11;
+    float pulse = sin(phase * 1.07) * u_scale_pulse;
+    float surf = sin(phase * 0.86) * u_surf_motion;
+    float scaleValue = u_fold_scale + pulse * 0.12;
+    float signScale = scaleValue < 0.0 ? -1.0 : 1.0;
+    if (abs(scaleValue) < 1.2) scaleValue = signScale * 1.2;
+    float foldLimit = max(u_box_fold + surf * 0.030, 0.1);
+    float minR = max(u_sphere_min + pulse * 0.010, 0.02);
+    float fixedR = max(u_sphere_fixed, minR + 0.05);
+    float minR2 = minR * minR;
+    float fixedR2 = fixedR * fixedR;
+    vec3 offset = vec3(u_fold_offset * 0.1, -u_fold_offset * 0.06, u_fold_offset * 0.08);
+    float dr = 1.0;
+    float trap = 1000.0;
+    float cell = 0.0;
+    float bulb = 0.0;
+    float iter = 0.0;
+    float bulbPower = clamp(u_bulb_power, 2.0, 8.0);
+
+    for (int i = 0; i < 26; i++) {
+        if (float(i) >= u_iterations) break;
+        float fi = float(i);
+        // Rigid per-iteration rotation keeps the estimator valid.
+        float spin = u_fold_rotation * 0.06 + surf * 0.02;
+        z = rotY3(spin) * rotZ3(spin * 0.7 + fi * 0.01 * u_surf_amp) * z;
+
+        bool bulbStep = mode > 3.5 && mod(fi, 3.0) > 1.5 && u_bulb_mix > 0.05;
+        if (bulbStep) {
+            // Box-Bulb hybrid: every third iteration is a Mandelbulb step.
+            float r = max(length(z), 0.000001);
+            dr = pow(r, bulbPower - 1.0) * bulbPower * dr + 1.0;
+            z = bulbVector(z, bulbPower, phase + fi * 0.19) + p;
+            bulb += 1.0;
+        } else {
+            if (mode > 0.5 && mode < 1.5) {
+                // Amazing Surf: fold x and y only, sheared by the surf amount.
+                z.xy = clamp(z.xy, -foldLimit, foldLimit) * 2.0 - z.xy;
+                z.z += z.x * u_surf_amp * 0.04;
+            } else if (mode > 1.5 && mode < 2.5) {
+                z = smoothBoxFold(z, foldLimit, 0.55);
+            } else if (mode > 2.5 && mode < 3.5) {
+                // ABoxMod: abs-based fold with an offset.
+                z = abs(z + foldLimit) - abs(z - foldLimit) - z + offset * 2.0;
+            } else {
+                z = hardBoxFold(z, foldLimit);
+            }
+            float r2 = max(dot(z, z), 0.000001);
+            float k = 1.0;
+            if (r2 < minR2) k = fixedR2 / minR2;
+            else if (r2 < fixedR2) k = fixedR2 / r2;
+            z *= k;
+            dr *= k;
+            cell += abs(k - 1.0) * 0.02;
+            z = z * scaleValue + p + offset;
+            dr = dr * abs(scaleValue) + 1.0;
+        }
+        trap = min(trap, length(z));
+        cell += abs(sdBox(z, vec3(foldLimit))) * 0.01;
+        iter = fi + 1.0;
+        if (dot(z, z) > u_bailout * u_bailout * 16.0) break;
+    }
+
+    float r = length(z);
+    float dist = mode > 3.5 ? 0.5 * r * log(max(r, 1.0001)) / abs(dr) : r / abs(dr);
+    dist = min(dist, r / abs(dr));
+    return VariantHit(max(dist, 0.00003), iter, trap, cell, bulb);
+}
+
+// Clear bubble around the camera: the path can pass through the fractal,
+// and a ray starting inside it filled the screen with one flat colour.
+const float CAM_CLEAR = 0.05;
+vec3 g_cam = vec3(1e5);
+float camClear(vec3 p) { return CAM_CLEAR - length(p - g_cam); }
+
+float mapScene(vec3 p) {
+    return max(foldedBoxDE(p).dist, camClear(p));
+}
+
+vec3 safeNormalize3(vec3 v, vec3 fallback) {
+    float l2 = dot(v, v);
+    if (l2 > 0.0000000001) return v * inversesqrt(l2);
+    float f2 = dot(fallback, fallback);
+    if (f2 > 0.0000000001) return fallback * inversesqrt(f2);
+    return vec3(0.0, 1.0, 0.0);
+}
+
+float cleanFloat(float value, float fallback) {
+    return ((value >= 0.0 || value < 0.0) && abs(value) < 100000.0) ? value : fallback;
+}
+
+vec3 cleanColor(vec3 value, vec3 fallback) {
+    return vec3(
+        cleanFloat(value.r, fallback.r),
+        cleanFloat(value.g, fallback.g),
+        cleanFloat(value.b, fallback.b)
+    );
+}
+
+// Tetrahedral normal from a single mapScene() call site inside a loop.
+// Six separate calls inlined six copies of the whole distance estimator,
+// which made shader compiles take tens of seconds on Windows (D3D).
+vec3 estimateNormal(vec3 p, float eps) {
+    vec3 grad = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        vec3 e = i == 0 ? vec3(1.0, -1.0, -1.0) :
+            (i == 1 ? vec3(-1.0, -1.0, 1.0) :
+            (i == 2 ? vec3(-1.0, 1.0, -1.0) : vec3(1.0)));
+        grad += e * mapScene(p + e * eps);
+    }
+    return safeNormalize3(grad, p);
+}
+
+float softShadow(vec3 ro, vec3 rd, float minT, float maxT) {
+    float result = 1.0;
+    float t = minT;
+    for (int i = 0; i < 34; i++) {
+        if (t >= maxT) break;
+        float h = max(mapScene(ro + rd * t), 0.001);
+        result = min(result, 10.0 * h / t);
+        t += clamp(h, 0.024, 0.22);
+    }
+    return clamp(result, 0.12, 1.0);
+}
+
+vec3 targetOffset(float mode, float t) {
+    if (mode < 0.5) return vec3(0.0, 0.04, 0.0);
+    if (mode < 1.5) return vec3(0.12 * sin(t * 0.20), -0.02, 0.14 * cos(t * 0.18));
+    if (mode < 2.5) return vec3(0.04 * sin(t * 0.24), 0.10, 0.06 * cos(t * 0.21));
+    if (mode < 3.5) return vec3(-0.10 + 0.16 * sin(t * 0.25), 0.02, 0.10 * cos(t * 0.19));
+    return vec3(0.08 * sin(t * 0.21), 0.08 * cos(t * 0.17), -0.06);
+}
+
+vec3 background(vec3 rd, float t) {
+    float shaft = pow(max(0.0, 1.0 - abs(rd.x * 0.56 + rd.y * 0.20)), 8.0);
+    float wave = pow(max(0.0, 1.0 - length(rd.xy * vec2(0.90, 1.18))), 5.0);
+    float angle = atan(rd.y, rd.x);
+    float ribs = 0.5 + 0.5 * sin(angle * 18.0 + rd.z * 8.6 + t * 0.37);
+    float halo = pow(max(0.0, 1.0 - length(rd.xy * vec2(0.74, 1.10))), 2.5);
+    vec3 base = mix(vec3(0.009, 0.011, 0.019), vec3(0.030, 0.042, 0.064), smoothstep(-0.60, 0.66, rd.y));
+    vec3 accent = paletteFoldedBox(t * 0.026 + rd.z * 0.078 + ribs * 0.08, u_palette);
+    return base + accent * (shaft * 0.052 + wave * 0.020 + halo * ribs * 0.044);
+}
+
+void main() {
+    float mode = familyMode();
+    float t = u_time * u_flight_speed + phaseOffset() + seedPhase() * 0.12;
+    float motionMode = u_motion_mode;
+    float familyPhase = mode * 0.98;
+    float spinT = u_time * u_orbit_spin + phaseOffset() + familyPhase + seedPhase() * 0.09;
+    float rollT = u_time * u_roll_speed + phaseOffset() + familyPhase;
+    float dive = sin(t * 0.27 + familyPhase) * u_flight_depth;
+    float radius = u_orbit_radius * (1.0 + 0.10 * sin(spinT * 0.18 + familyPhase));
+    vec3 target = targetOffset(mode, t);
+    target += vec3(
+        sin(spinT * 0.19 + familyPhase),
+        cos(t * 0.23 + 1.2),
+        sin(spinT * 0.32 + mode)
+    ) * (0.050 * (u_scale_pulse + u_surf_motion + u_bulb_mix));
+
+    vec3 orbitPath = vec3(
+        sin(spinT * 0.34 + familyPhase) * radius,
+        0.32 + cos(t * 0.24 + familyPhase) * 0.34,
+        2.96 - dive + cos(spinT * 0.34 + familyPhase) * radius * 0.36
+    );
+    vec3 figurePath = vec3(
+        sin(spinT * 0.41 + familyPhase) * radius * 0.94,
+        0.26 + sin(t * 0.76 + familyPhase) * 0.32,
+        2.72 - dive * 0.66 + sin(spinT * 0.41) * cos(spinT * 0.41) * radius * 0.76
+    );
+    vec3 tunnelPath = vec3(
+        sin(spinT * 0.23 + familyPhase) * radius * 0.48,
+        0.18 + cos(t * 0.32 + familyPhase) * 0.23,
+        2.32 - dive * 1.34 + cos(spinT * 0.23 + familyPhase) * radius * 0.20
+    );
+    vec3 grazePath = vec3(
+        sin(spinT * 0.29 + familyPhase) * radius * 0.66,
+        0.09 + cos(t * 0.47 + familyPhase) * 0.20,
+        2.02 - dive * 0.60 + cos(spinT * 0.29 + familyPhase) * radius * 0.24
+    );
+
+    vec3 ro = orbitPath;
+    if (motionMode >= 0.5 && motionMode < 1.5) ro = figurePath;
+    else if (motionMode >= 1.5 && motionMode < 2.5) ro = tunnelPath;
+    else if (motionMode >= 2.5) ro = grazePath;
+    if (mode >= 3.5) ro = target + (ro - target) * 0.74;
+    ro.xz = rot2(familyPhase * 0.46 + spinT * 0.11 + sin(spinT * 0.12) * 0.16) * ro.xz;
+
+    float rollValue = u_roll * sin(rollT * (0.44 + motionMode * 0.05) + familyPhase) + u_global_rotation * 0.2;
+    float fovBreath = u_fov * (1.0 + 0.07 * sin(t * 0.21 + familyPhase) + 0.02 * u_surf_motion * sin(t * 0.57));
+    vec3 rd = psyRayDirection(gl_FragCoord.xy, u_resolution, ro, target, fovBreath, rollValue);
+
+    g_cam = ro;
+    float total = 0.0;
+    float hitT = -1.0;
+    VariantHit hitInfo = VariantHit(0.0, 0.0, 0.0, 0.0, 0.0);
+    float glowAccum = 0.0;
+    float epsBase = mix(0.0048, 0.00120, clamp(u_detail / 2.5, 0.0, 1.0));
+
+    // When the camera starts inside solid box material every ray "hits" at
+    // once and the frame goes flat; step through to open space first, which
+    // turns those views into cavern fly-throughs.
+    bool escaping = false;
+    for (int i = 0; i < 150; i++) {
+        if (float(i) >= 78.0 + u_detail * 26.0) break;
+        vec3 p = ro + rd * total;
+        VariantHit h = foldedBoxDE(p);
+        float dist = max(h.dist, camClear(p));
+        // The escape test uses the real distance (the camera bubble would hide
+        // the solid it is meant to detect).
+        if (i == 0 && h.dist < epsBase * 3.0) escaping = true;
+        if (escaping) {
+            if (h.dist > epsBase * 8.0) {
+                escaping = false;
+            } else {
+                total += 0.03;
+                if (total > 10.2) break;
+                continue;
+            }
+        }
+        glowAccum += exp(-dist * 36.0) * 0.006;
+        if (dist < epsBase * max(1.0, total * 0.50)) {
+            hitT = total;
+            hitInfo = h;
+            break;
+        }
+        total += max(dist, epsBase * 1.28) * 0.68;
+        if (total > 10.2) break;
+    }
+
+    vec3 col = background(rd, t);
+    if (hitT >= 0.0) {
+        vec3 p = ro + rd * hitT;
+        vec3 n = estimateNormal(p, epsBase * 2.12);
+        vec3 lightDir = normalize(vec3(0.42, 0.78, 0.48));
+        vec3 fillDir = normalize(vec3(-0.62, 0.28, -0.22));
+        float diff = max(dot(n, lightDir), 0.0);
+        float fill = max(dot(n, fillDir), 0.0) * 0.36;
+        float rim = pow(max(0.0, 1.0 + dot(rd, n)), 2.10);
+        float shadow = softShadow(p + n * epsBase * 3.0, lightDir, 0.04, 3.7);
+        float iterTone = hitInfo.iter / max(u_iterations, 1.0);
+        float trapTone = -log(max(hitInfo.trap, 0.0001)) * 0.15;
+        float bulbTone = hitInfo.bulb * 0.11;
+        float hue = trapTone + iterTone * 0.48 + hitInfo.cell * 0.16 + bulbTone + t * u_color_speed * 0.046 + mode * 0.10;
+        vec3 base = paletteFoldedBox(hue, u_palette);
+        if (mode >= 2.5 && mode < 3.5) {
+            float ridgeA = sin(p.x * 7.4 + p.z * 4.9 + t * (0.38 + u_color_speed * 0.24));
+            float ridgeB = sin(p.y * 8.1 - p.x * 3.6 + t * 0.29 + u_fold_offset * 2.0);
+            float cells = 0.5 + 0.5 * sin((p.x + p.y - p.z) * 5.8 + hitInfo.cell * 1.4 + t * 0.33);
+            float aboxTexture = clamp(0.46 + 0.24 * ridgeA + 0.18 * ridgeB + 0.30 * cells, 0.0, 1.0);
+            base = mix(base, paletteFoldedBox(hue + aboxTexture * 0.34 + 0.13, u_palette), 0.48);
+            base *= 0.66 + aboxTexture * 0.72;
+        } else if (mode >= 3.5) {
+            float bulbRidge = sin(length(p.xz) * 8.8 + p.y * 5.6 + t * (0.35 + u_color_speed * 0.22));
+            float bulbCells = 0.5 + 0.5 * sin(dot(p, vec3(4.4, -5.2, 6.1)) + hitInfo.bulb * 0.22 + t * 0.31);
+            float bulbTexture = clamp(0.48 + 0.26 * bulbRidge + 0.36 * bulbCells, 0.0, 1.0);
+            base = mix(base, paletteFoldedBox(hue + bulbTexture * 0.28 + 0.18, u_palette), 0.42);
+            base *= 0.70 + bulbTexture * 0.62;
+        }
+        float cavity = clamp(1.20 - hitInfo.trap * 1.06 + hitInfo.bulb * 0.04, 0.0, 1.0);
+        if (u_shade_mode >= 0.5 && u_shade_mode < 1.5) {
+            vec3 normalCol = n * 0.5 + 0.5;
+            base = mix(base, normalCol, 0.34 + rim * 0.22);
+        } else if (u_shade_mode >= 1.5 && u_shade_mode < 2.5) {
+            float bands = 0.5 + 0.5 * sin(iterTone * 42.0 + hitInfo.cell * 1.7 + t * (0.58 + u_color_speed));
+            base *= 0.66 + bands * 0.68;
+        } else if (u_shade_mode >= 2.5) {
+            float folds = 0.5 + 0.5 * sin(hitInfo.cell * 2.2 + bulbTone * 4.0 + t * (0.46 + u_color_speed));
+            base = mix(base, paletteFoldedBox(folds + trapTone + mode * 0.08, u_palette), 0.56);
+        }
+        float ao = 0.40 + 0.60 * smoothstep(0.0, 1.0, iterTone + cavity * 0.55);
+        vec3 light = base * (0.22 + diff * shadow * 1.54 + fill) * ao;
+        light += paletteFoldedBox(hue + 0.20, u_palette) * rim * (0.35 + u_glow * 0.50);
+        light += vec3(0.82, 0.92, 1.0) * cavity * 0.20;
+        col = light;
+    }
+
+    float textureGate = 0.0;
+    if (mode >= 0.5 && mode < 1.5) textureGate = 0.26;
+    else if (mode >= 2.5) textureGate = 0.55;
+    vec2 screenUv = gl_FragCoord.xy / max(u_resolution, vec2(1.0));
+    float weaveA = sin((screenUv.x * 34.0 + screenUv.y * 16.0) + t * 0.62 + mode);
+    float weaveB = sin((screenUv.y * 41.0 - screenUv.x * 13.0) - t * 0.47 + u_fold_offset);
+    float weave = smoothstep(0.16, 1.0, abs(weaveA * weaveB));
+    vec3 textureCol = paletteFoldedBox(t * 0.04 + weave * 0.22 + mode * 0.08, u_palette) * weave * textureGate * (0.022 + 0.010 * u_glow);
+    vec3 hardFallback = vec3(0.012, 0.014, 0.020) + textureCol;
+    col += paletteFoldedBox(t * 0.035 + total * 0.034, u_palette) * glowAccum * u_glow;
+    float fogAmount = cleanFloat(1.0 - exp(-total * (0.049 + u_fog * 0.080)), 0.35);
+    // Hits right at the bubble (camera grazing or inside the surface) fade
+    // into the fog instead of popping in as a flat full-screen colour.
+    if (hitT >= 0.0) fogAmount = max(fogAmount, 1.0 - smoothstep(CAM_CLEAR, 0.16, hitT));
+    vec3 fallbackCol = cleanColor(background(rd, t) + paletteFoldedBox(t * 0.02, u_palette) * 0.046, hardFallback);
+    col = mix(cleanColor(col, fallbackCol), fallbackCol, clamp(fogAmount, 0.0, 1.0));
+    col += textureCol;
+    col *= 1.0 + (weave - 0.5) * textureGate * 0.14;
+    col = cleanColor(col, hardFallback);
+    col = psyGamma(psyTonemap(col));
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{t as default};

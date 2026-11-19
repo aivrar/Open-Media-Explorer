@@ -103,6 +103,8 @@
   --accent-deep: #075f58;
   --accent-contrast: #001311;
   --chrome: #dfeaf1;
+  /* Seek and volume track: 3.2:1 against the player bar (--chrome). */
+  --slider-track: #738290;
   --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
   --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
   --source-radio-browser: #0b63b6;
@@ -218,6 +220,7 @@
     --accent-deep: #075f58;
     --accent-contrast: #001311;
     --chrome: #dfeaf1;
+    --slider-track: #738290;
     --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
     --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
     --source-radio-browser: #0b63b6;
@@ -878,6 +881,9 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Room for descenders (g, y, p): the row around it is a fixed 18 px (or
+     more), so the player bar keeps its height. */
+  line-height: 1.4;
 }
 .player-capture-progress {
   position: relative;
@@ -927,16 +933,18 @@ html, body {
   cursor: pointer;
   padding: 0;
 }
+/* --slider-track is set only by the light palettes (Light, and System on a
+   light Windows), where --bg-elev-3 is almost the player bar's own colour. */
 .player-seek::-webkit-slider-runnable-track,
 #player-volume::-webkit-slider-runnable-track {
   height: 4px;
-  background: var(--bg-elev-3);
+  background: var(--slider-track, var(--bg-elev-3));
   border-radius: 2px;
 }
 .player-seek::-moz-range-track,
 #player-volume::-moz-range-track {
   height: 4px;
-  background: var(--bg-elev-3);
+  background: var(--slider-track, var(--bg-elev-3));
   border-radius: 2px;
 }
 .player-seek::-webkit-slider-thumb,
@@ -1113,7 +1121,8 @@ html, body {
   pointer-events: none;
 }
 .eq-response > span:nth-of-type(1) { bottom: 3px; }
-.eq-response > span:nth-of-type(2) { top: calc(50% - 6px); }
+/* "0 dB" just above the flat line (at 50%, 3 px wide), not across it. */
+.eq-response > span:nth-of-type(2) { bottom: calc(50% + 3px); line-height: 10px; }
 .eq-response > span:nth-of-type(3) { top: 3px; }
 .eq-bands {
   display: grid;
@@ -1200,6 +1209,19 @@ html, body {
   user-select: text;
 }
 .station-images-path:empty { display: none; }
+/* Pictures in the folder that are not used, and why (station-images.js). */
+.station-images-problems {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.station-images-problems[hidden] { display: none; }
+.station-images-problems ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+}
 .clear-cache-status {
   margin: 4px 0 0;
   font-size: 12px;

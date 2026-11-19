@@ -19,6 +19,9 @@
 .playlist-message { flex-basis: 100%; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
 .playlist-message:empty { display: none; }
 .playlist-actions { flex: 1 1 400px; max-width: 100%; }
+/* Favorites: "Remove all favorites" at the end of the sort row; its result
+   line wraps underneath. */
+.favorites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
 .playlist-media-type { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .playlist-link-form {
   display: flex; flex-wrap: wrap; align-items: end; gap: 10px;
@@ -896,8 +899,9 @@
 }
 .library-root.is-personal-view .card-star:hover { transform: translateY(-50%) scale(1.08); }
 
-/* Favorites in "My order": a narrow column of move buttons (top, up, down)
-   just left of the star. The star keeps its place; the text makes room. */
+/* Favorites in "My order": a narrow column of move buttons (top, up, down,
+   bottom) just left of the star. The star keeps its place; the text makes
+   room. Four 16 px buttons and their gaps (70 px) fit the 76 px card. */
 .card-order {
   position: absolute;
   top: 50%;
@@ -911,7 +915,7 @@
 .card-order-btn {
   appearance: none;
   width: 22px;
-  height: 18px;
+  height: 16px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 5px;

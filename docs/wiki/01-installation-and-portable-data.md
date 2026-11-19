@@ -87,7 +87,10 @@ The localhost port is part of the WebView2 origin. Settings therefore offers
 3. Restart World Media.
 
 The app normally uses `9124` and, when that port is occupied, tries a bounded
-fallback range. The active process keeps its current port until it exits. The
+fallback range. If the usual port is busy and answers as World Media, the new
+copy waits up to 8 seconds before it tries another port (see
+[Troubleshooting](06-troubleshooting.md)). The active process keeps its current
+port until it exits. The
 profile handoff copies only the documented favorites/settings/volume/jobs/EQ
 keys into `state\profile-preferences.json`, and the favorites categories into
 `state\profile-preferences-extra.json`, before an origin change.

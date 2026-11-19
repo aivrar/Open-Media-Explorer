@@ -1,0 +1,636 @@
+/* Visualizer tab (visualizer/index.js). Loaded with the visualizer chunk,
+   only once the tab has been opened. No blur or other effect that would be
+   recomputed over the moving picture every frame. Everything over the
+   picture brings its own dark backing, the same in every theme. */
+
+.viz-root {
+  --viz-panel-width: 300px;
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.viz-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000; /* what Brightness dims the picture towards */
+}
+/* The buttons have faded and the mouse rests: no pointer over the picture. */
+.viz-stage.viz-hud-away { cursor: none; }
+
+/* Brightness sets this element's opacity (index.js): the compositor blends
+   it over the black stage, so nothing is redrawn for it. */
+.viz-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The outgoing scene's last picture during a cross-fade: faded out by the
+   compositor (an opacity animation), then emptied. */
+.viz-fade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.viz-fade[hidden] { display: none; }
+
+/* The overlays drawn plain on top (overlay-layer.js): the compositor lays
+   this canvas over the picture (its opacity is brightness times the
+   overlays' fade), so nothing is uploaded or drawn again for it. Hidden and
+   empty (0 x 0) while no overlay is on. */
+.viz-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.viz-overlay[hidden] { display: none; }
+
+.viz-message {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(520px, calc(100% - 32px));
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.72);
+  color: #f1f4f7;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+/* ---- The buttons over the picture (hud.js) ----
+   Shown at full strength; faded out as a whole (opacity 0, a compositor
+   transition) after a few seconds without movement, and back with movement
+   or keyboard focus. While shown they are never half dimmed. */
+.viz-hud {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.78);
+  color: #f1f4f7;
+  transition: opacity 0.4s ease;
+}
+.viz-hud.viz-hud-faded {
+  opacity: 0;
+  pointer-events: none;
+}
+.viz-hud:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.viz-hud[hidden] { display: none; }
+.viz-panel-open .viz-hud { right: calc(var(--viz-panel-width) + 12px); }
+
+.viz-hud-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.viz-hud-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.viz-hud-btn[aria-pressed="true"],
+.viz-hud-btn[aria-expanded="true"] {
+  background: #f1f4f7;
+  color: #15161a;
+}
+.viz-hud-star[aria-pressed="true"] { color: #8a5a00; }
+.viz-hud-btn:disabled { cursor: default; color: #b4bcc8; }
+
+/* ---- The side panel ---- */
+.viz-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: var(--viz-panel-width);
+  max-width: calc(100% - 48px);
+  padding: 10px 12px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(12, 13, 17, 0.94);
+  color: #f1f4f7;
+  font-size: 12px;
+}
+.viz-panel[hidden] { display: none; }
+.viz-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.viz-panel-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.viz-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.viz-section-title {
+  color: #a7b0bc;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.viz-field,
+.viz-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.viz-field { justify-content: space-between; cursor: pointer; }
+.viz-group { gap: 3px; }
+
+.viz-select,
+.viz-btn,
+.viz-seg {
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-sm);
+}
+.viz-select { padding: 3px 6px; }
+.viz-field .viz-select { min-width: 0; max-width: 62%; }
+.viz-select option { color: #15161a; background: #f6f8fb; }
+
+/* Scene: a button with the name and cost badge that opens the list in place. */
+.viz-scene-group {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.viz-scene {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.viz-scene-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* How hard a scene works the graphics card. Text, not just colour. */
+.viz-cost {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.viz-cost-light { color: #9fdcaa; }
+.viz-cost-medium { color: #f0d68c; }
+.viz-cost-heavy { color: #f5a985; }
+
+.viz-scene-panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius);
+  background: #111318;
+  color: #f1f4f7;
+  white-space: normal;
+}
+.viz-scene-tools {
+  display: flex;
+  gap: 6px;
+}
+.viz-scene-search {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-sm);
+}
+.viz-fav-filter { flex: none; border-radius: var(--radius-sm); }
+.viz-scene-search:focus-visible { outline: 2px solid #f1f4f7; outline-offset: 1px; }
+.viz-scene-options {
+  max-height: min(45vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.viz-scene-heading {
+  position: sticky;
+  top: 0;
+  padding: 6px 6px 2px;
+  background: #111318;
+  color: #a7b0bc;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.viz-scene-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.viz-scene-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viz-scene-star { flex: none; color: #f0d68c; }
+.viz-scene-option:hover,
+.viz-scene-option.viz-active { background: rgba(255, 255, 255, 0.12); }
+.viz-scene-option[aria-selected="true"] { font-weight: 600; }
+.viz-scene-empty { margin: 4px 6px; color: #a7b0bc; }
+.viz-scene-panel[hidden],
+.viz-scene-group[hidden],
+.viz-scene-option[hidden],
+.viz-scene-star[hidden],
+.viz-scene-empty[hidden],
+.viz-look-group[hidden] { display: none; }
+
+/* Look: previous, the look's name, next. */
+.viz-look-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  white-space: nowrap;
+}
+.viz-look-group .viz-label { margin-right: 4px; }
+
+.viz-mood { margin: 0; color: #a7b0bc; }
+.viz-mood:empty { display: none; }
+
+/* "Preparing scene..." and the step-down's note: bottom right (the
+   developer strip is bottom left). */
+.viz-note {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.78);
+  color: #f1f4f7;
+  font-size: 12px;
+}
+.viz-note[hidden] { display: none; }
+.viz-panel-open .viz-note { right: calc(var(--viz-panel-width) + 12px); }
+.viz-btn {
+  min-width: 24px;
+  padding: 1px 6px;
+  font-size: 14px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+/* Frame rate: three joined buttons; the chosen one is light with dark text. */
+.viz-segments { display: inline-flex; }
+.viz-seg {
+  min-width: 2.6em;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 0;
+}
+.viz-segments .viz-seg + .viz-seg { border-left-width: 0; }
+.viz-segments .viz-seg:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.viz-segments .viz-seg:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.viz-seg[aria-pressed="true"] {
+  background: #f1f4f7;
+  color: #15161a;
+  font-weight: 600;
+}
+
+.viz-btn:focus-visible,
+.viz-seg:focus-visible,
+.viz-select:focus-visible,
+.viz-brightness:focus-visible,
+.viz-fps-toggle:focus-visible,
+.viz-hud-btn:focus-visible,
+.viz-link:focus-visible,
+.viz-notice-btn:focus-visible {
+  outline: 2px solid #f1f4f7;
+  outline-offset: 1px;
+}
+
+.viz-brightness {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 120px;
+  margin: 0;
+  accent-color: #c9d1db;
+  cursor: pointer;
+}
+.viz-bright-value {
+  min-width: 4ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Show measured fps": a small switch, not a setting of the frame rate. */
+.viz-minor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.viz-fps-toggle { margin: 0; }
+
+/* The panel's line that shows the photosensitivity notice again. */
+.viz-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #a9cdff;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* The measured frame rate, top left over the picture. */
+.viz-fps {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.78);
+  color: #f1f4f7;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.viz-fps:empty,
+.viz-fps[hidden] { display: none; }
+
+/* ---- The photosensitivity notice (notice.js) ---- */
+.viz-notice {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.86);
+}
+.viz-notice[hidden] { display: none; }
+.viz-notice-box {
+  box-sizing: border-box;
+  max-width: 460px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 18px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius);
+  background: #111318;
+  color: #f1f4f7;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.viz-notice-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.viz-notice-text p { margin: 0 0 8px; }
+.viz-notice-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.viz-notice-btn {
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f4f7;
+  font: inherit;
+  cursor: pointer;
+}
+.viz-notice-continue {
+  background: #f1f4f7;
+  color: #15161a;
+  font-weight: 600;
+}
+/* "Not now": the still picture's start button. */
+.viz-start {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.84);
+  color: #f1f4f7;
+  font-size: 13px;
+  transform: translateX(-50%);
+}
+.viz-start[hidden] { display: none; }
+.viz-start-text { margin: 0; }
+
+/* ---- Effects (fx-chain.js): the switches and one per effect ---- */
+.viz-fx-now { align-self: flex-start; }
+.viz-fx-line { margin: 0; color: #a7b0bc; overflow-wrap: anywhere; }
+.viz-fx-line[hidden] { display: none; }
+/* Effects the scene drawn now leaves out (calm scenes): still chosen, shown
+   as unavailable here, back on a scene that allows them. */
+.viz-fx-note { margin: 0; color: #c9b27a; font-size: 0.9em; }
+.viz-fx-note[hidden] { display: none; }
+.viz-fx-unavailable > span { color: #7d8692; text-decoration: line-through; }
+.viz-fx-unavailable > .viz-fx-box { opacity: 0.55; }
+/* Two columns, so the 38 effects take half the height; the panel scrolls. */
+.viz-fx-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 8px;
+}
+.viz-fx-list:empty { display: none; }
+.viz-fx-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+/* A long name ("Heat Haze & Caustic Light") wraps; nothing is cut off. */
+.viz-fx-item span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.viz-fx-box { flex: none; margin: 1px 0 0; }
+.viz-fx-box:focus-visible { outline: 2px solid #f1f4f7; outline-offset: 1px; }
+.viz-fx-box:disabled + span { color: #7d8692; }
+
+/* ---- Overlays (overlay-layer.js): a section that folds ---- */
+.viz-ov-head {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.viz-ov-head::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+}
+.viz-ov-head[aria-expanded="true"]::before { transform: rotate(90deg); }
+.viz-ov-head:focus-visible { outline: 2px solid #f1f4f7; outline-offset: 2px; }
+.viz-ov-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.viz-ov-body[hidden] { display: none; }
+.viz-ov-now { align-self: flex-start; }
+/* One small block per chosen overlay: its name, then Blend and Show on a
+   line each, then the switches, which wrap. */
+.viz-ov-blends {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.viz-ov-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+}
+.viz-ov-row[hidden] { display: none; }
+.viz-ov-name {
+  flex: 1 1 0;
+  align-self: center;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.viz-ov-row .viz-field {
+  flex: 1 1 100%;
+  font-size: 11px;
+}
+.viz-ov-row .viz-ov-mode-field { flex: 0 1 auto; max-width: 55%; }
+.viz-ov-row .viz-ov-mode-field .viz-select { max-width: 100%; }
+.viz-ov-mode-field > .viz-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.viz-ov-row .viz-minor { white-space: normal; }
+.viz-ov-row select:disabled,
+.viz-ov-row input:disabled + span { color: #7d8692; }
+
+/* Developer strip (Ctrl+Shift+D): what the Beat Reactor gives the scene. */
+.viz-debug {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  box-sizing: border-box;
+  max-width: calc(100% - 24px);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.82);
+  color: #f1f4f7;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+.viz-debug[hidden] { display: none; }
+
+@media (max-width: 700px) {
+  .viz-root { --viz-panel-width: 260px; }
+}
+
+/* A short window (the tab down to about 320 px tall): the panel keeps
+   scrolling as a whole (the scene list does not get a scroll box of its own
+   inside it), tighter gaps, and the notice and start button keep clear of
+   the edges. */
+@media (max-height: 480px) {
+  .viz-panel { gap: 8px; padding-top: 6px; padding-bottom: 10px; }
+  .viz-scene-options { max-height: none; overflow-y: visible; }
+  .viz-notice { padding: 8px; }
+  .viz-notice-box { padding: 12px 14px; }
+  .viz-start { bottom: 8px; padding: 6px 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viz-hud { transition: none; }
+}

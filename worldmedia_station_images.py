@@ -18,6 +18,16 @@ and trailing dots are removed. A file is used for a station when its name
 without the extension normalizes to the same text as the station's name.
 When several files normalize to the same name, the one whose file name comes
 first in plain character-code order is used and the others are ignored.
+
+A station's name can hold characters a file name cannot. The page (and only
+the page: this module never sees station names) therefore also accepts a file
+in which each such character of the station's name is written as "-", "_" or
+a space, or left out, and a name Windows reserves (CON, PRN, AUX, NUL, COM1 to
+COM9, LPT1 to LPT9) followed by "_" or "-". So "Nu-Metal/Alternative" can use
+"Nu-Metal-Alternative.png" and "AUX" can use "AUX_.png". See the loose rule
+in src/lib/station-images.js (which picture wins when several fit, and which
+station when one fits several). File names themselves are checked exactly as
+before (filename_allowed).
 """
 from __future__ import annotations
 
@@ -60,6 +70,26 @@ IGNORE_REASONS = {
     "too_many": "over the 2,000 picture limit",
     "unreadable": "could not be read",
 }
+
+# Why one file is not used, for the short list in Settings: the plain reason
+# per file. "svg" is counted under "not_image" or "unsupported_type" above.
+REJECT_DETAILS = {
+    "too_large": "too large (the limit is 2 MB)",
+    "not_image": "not a valid picture",
+    "svg": "SVG is not allowed",
+    "unsupported_type": "not a supported picture type",
+    "duplicate": "another picture has the same name",
+    "link": "a link, not a file",
+    "bad_name": "file name not allowed",
+    "too_many": "over the 2,000 picture limit",
+    "unreadable": "could not be read",
+}
+# Files named in the listing at most; the rest are only counted.
+MAX_REJECTED_LISTED = 20
+# Characters left out of a file name when it is shown: invisible direction
+# marks and control characters.
+_HIDDEN_IN_NAMES = re.compile(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff\ud800-\udfff]")
+_SVG_TAG = re.compile(rb"<svg[\s>/]", re.IGNORECASE)
 
 UNSAFE_FOLDER = ("The station-images folder is a link or is not inside your data folder, "
                  "so its pictures are not used.")
@@ -115,6 +145,20 @@ def picture_key(filename: str) -> str:
     """The normalized name of a picture file, from its name without extension."""
 
     return normalize_station_name(filename.rsplit(".", 1)[0]) if "." in filename else ""
+
+
+def shown_name(filename: str) -> str:
+    """A file name as it may be shown in Settings: plain text, at most 120 characters."""
+
+    text = _HIDDEN_IN_NAMES.sub("", filename)
+    return text if len(text) <= 120 else text[:119] + "\u2026"
+
+
+def looks_like_svg(data: bytes) -> bool:
+    """True when the bytes start like an SVG drawing (which is never shown)."""
+
+    head = data[:2048].lstrip(b"\xef\xbb\xbf \t\r\n")
+    return head.startswith(b"<") and _SVG_TAG.search(head) is not None
 
 
 def picture_id(key: str) -> str:
@@ -175,6 +219,8 @@ class Scan:
     pictures: dict[str, Picture] = field(default_factory=dict)
     ignored: dict[str, int] = field(default_factory=dict)
     version: str = ""
+    # (file name, detail key of REJECT_DETAILS) in file-name order, capped.
+    rejected: tuple[tuple[str, str], ...] = ()
 
 
 class StationImages:
@@ -264,9 +310,14 @@ class StationImages:
 
     def _check_file(self, name: str, folder: os.stat_result) -> str:
         try:
-            _, content_type = validated_picture(self._read_file(name, folder))
+            data = self._read_file(name, folder)
         except _Refused as refused:
             return "!" + refused.reason
+        try:
+            _, content_type = validated_picture(data)
+        except _Refused as refused:
+            # Counted as "not a picture"; Settings names the reason.
+            return "!svg" if looks_like_svg(data) else "!" + refused.reason
         return content_type
 
     # ---- scanning ------------------------------------------------------
@@ -282,6 +333,12 @@ class StationImages:
             return Scan(None, False, version=_digest(["missing"]))
         ignored: Counter[str] = Counter()
         candidates: list[tuple[str, os.stat_result]] = []
+        rejected: list[tuple[str, str]] = []
+
+        def refuse(name: str, reason: str, detail: str = "") -> None:
+            ignored[reason] += 1
+            rejected.append((name, detail or reason))
+
         try:
             with os.scandir(self.folder) as entries:
                 for count, entry in enumerate(entries):
@@ -295,16 +352,17 @@ class StationImages:
                     try:
                         info = entry.stat(follow_symlinks=False)
                     except OSError:
-                        ignored["unreadable"] += 1
+                        refuse(name, "unreadable")
                         continue
                     if _is_link(info):
-                        ignored["link"] += 1
+                        refuse(name, "link")
                     elif stat.S_ISDIR(info.st_mode):
                         continue  # Subfolders are not looked into.
                     elif not stat.S_ISREG(info.st_mode) or not lowered.endswith(EXTENSIONS):
-                        ignored["unsupported_type"] += 1
+                        refuse(name, "unsupported_type",
+                               "svg" if stat.S_ISREG(info.st_mode) and lowered.endswith((".svg", ".svgz")) else "")
                     elif not filename_allowed(name) or not picture_key(name):
-                        ignored["bad_name"] += 1
+                        refuse(name, "bad_name")
                     else:
                         candidates.append((name, info))
         except OSError:
@@ -312,20 +370,22 @@ class StationImages:
             return Scan(self._folder_stamp(), True, UNREADABLE_FOLDER, version=_digest(["unreadable"]))
 
         candidates.sort(key=lambda candidate: candidate[0])
-        ignored["too_many"] += max(0, len(candidates) - MAX_FILES)
+        for name, _info in candidates[MAX_FILES:]:
+            refuse(name, "too_many")
         checked: dict[tuple[str, int, int], str] = {}
         groups: dict[str, list[Picture]] = {}
         described: list[list[object]] = []
         for name, info in candidates[:MAX_FILES]:
             if info.st_size > MAX_FILE_BYTES:
-                ignored["too_large"] += 1
+                refuse(name, "too_large")
                 continue
             cache_key = (name, info.st_size, info.st_mtime_ns)
             result = self._checked.get(cache_key) or self._check_file(name, folder)
             if result != "!unreadable":  # A file being saved right now is looked at again.
                 checked[cache_key] = result
             if result.startswith("!"):
-                ignored[result[1:]] += 1
+                detail = result[1:]
+                refuse(name, "not_image" if detail == "svg" else detail, detail)
                 continue
             key = picture_key(name)
             stamp = _digest([name, info.st_size, info.st_mtime_ns, result], 12)
@@ -336,12 +396,15 @@ class StationImages:
             # Candidates are in file-name order, so the first is the one used.
             winner = group[0]
             pictures[winner.id] = winner
-            ignored["duplicate"] += len(group) - 1
+            for loser in group[1:]:
+                refuse(loser.filename, "duplicate")
             described.append([key, winner.filename, winner.stamp])
         counts = {reason: ignored[reason] for reason in IGNORE_REASONS if ignored.get(reason)}
         described.sort()
+        rejected.sort()
         stamp = (folder.st_ino, folder.st_dev, folder.st_mtime_ns)
-        return Scan(stamp, True, "", pictures, counts, _digest([described, sorted(counts.items())]))
+        return Scan(stamp, True, "", pictures, counts, _digest([described, sorted(counts.items())]),
+                    tuple(rejected))
 
     def _current(self) -> Scan:
         """The last scan, scanning again when the folder itself has changed."""
@@ -357,9 +420,14 @@ class StationImages:
         with self._lock:
             self._scan = scan = self._scan_locked()
         images = sorted(
-            ({"key": picture.key, "id": picture.id, "v": picture.stamp} for picture in scan.pictures.values()),
+            ({"key": picture.key, "id": picture.id, "v": picture.stamp, "file": shown_name(picture.filename)}
+             for picture in scan.pictures.values()),
             key=lambda entry: entry["key"],
         )
+        rejected = [
+            {"file": shown_name(name), "reason": detail, "text": REJECT_DETAILS.get(detail, REJECT_DETAILS["unreadable"])}
+            for name, detail in scan.rejected[:MAX_REJECTED_LISTED]
+        ]
         return {
             "folder": str(self.folder),
             "exists": scan.exists,
@@ -371,6 +439,10 @@ class StationImages:
                 {"reason": reason, "text": IGNORE_REASONS[reason], "count": count}
                 for reason, count in scan.ignored.items()
             ],
+            # The files not used and why, in file-name order; rejected_more says
+            # how many more there are (the directory-entry limit is only counted).
+            "rejected": rejected,
+            "rejected_more": max(0, len(scan.rejected) - len(rejected)),
             "problem": scan.problem,
         }
 

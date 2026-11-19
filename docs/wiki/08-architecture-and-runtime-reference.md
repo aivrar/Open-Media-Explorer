@@ -12,7 +12,7 @@ Windows EXE
       │   ├─ opaque artwork relay
       │   └─ opaque media/HLS/DASH relay
       └─ WebView2 desktop window
-          ├─ Library / Tuner / Grid / Discovery / About
+          ├─ Library / Tuner / Grid / Discovery / Visualizer / About
           ├─ catalog scheduler and adapters
           ├─ global player + HLS/DASH engines
           ├─ artwork queue
@@ -113,6 +113,69 @@ wide) and one for the stacked bar at 1000 px and under (at the end of the
 button row, giving way before any button); CSS lays out at most one, and only a
 laid-out one listens.
 
+## Visualizer
+
+`src/modes/visualizer.js` is a thin shell in the main bundle. The first time the
+tab opens it imports `src/visualizer/visualizer.js`, a separate chunk that holds
+`src/visualizer/index.js` (the panel and the wiring) and its styles. Each scene
+is a further chunk, fetched when it is chosen or prepared ahead. The effects
+library and the overlays are loaded the first time they are switched on.
+`mountVisualizer()` returns `destroy()`, which stops every timer and frame,
+drops the sound subscription, removes every listener and gives the WebGL context
+back. Leaving the tab calls it, so a closed tab costs nothing.
+
+- **Sound.** The loop subscribes to the shared signal
+  (`src/lib/audio-signal.js`) at the chosen frame rate and asks for the float
+  spectrum. Each subscriber is paced on its own, so a 60 frames a second visual
+  does not make the 15 frames a second meter run at 60. A frame also carries
+  `version` (it changes with a new item or media element, so tempo tracking
+  restarts then and not on a pause), `tapVersion` and `volume`. `reactor.js` is
+  the port of Psychedelia's Beat Reactor: it turns the frame into kick, snare and
+  hat hits, tempo, the beat clock and the mood (`mood.js`) that the scenes and the
+  shuffles use.
+- **Flash limiter** (`src/visualizer/flash-limiter.js`). Every sound-derived
+  value a scene gets passes it. At most three large pulses reach the picture in
+  any rolling second, counted together over every channel, the beat clock,
+  trigger effects, overlay hits and scene changes. No pulse is deeper than 0.6,
+  and levels and speed may swell but not snap. The window is kept for the page,
+  so closing and opening the tab does not start a fresh second. It limits the
+  sound values a scene is given. It does not look at the picture, so each scene,
+  look, effect and overlay is also checked by hand with the flash-check scripts
+  (see the developer guide). A scene that fails is held back in
+  `HELD_SCENES` (`scenes.js`) and is not offered.
+- **Drawing.** `scene-renderer.js` draws one scene at a time, as one shader pass
+  on a WebGL canvas, with the uniforms Psychedelia's own renderer feeds.
+  `fx-chain.js` runs the post effects over it and is bypassed while none are on.
+  `overlay-layer.js` draws the Canvas 2D overlays on a second canvas laid over
+  the picture. One overlay at a time can be uploaded and blended into the
+  picture by the chain. `transition.js` cross-fades every visible change.
+- **When it draws.** `loop.js` draws inside the signal's frames at the chosen
+  rate while sound plays. With nothing to hear it draws at 5 frames a second for
+  20 seconds, then holds the last picture and schedules nothing. Nothing is
+  drawn while the document is hidden, or before the photosensitivity notice is
+  accepted.
+- **Step-down.** `step-down.js` measures only the intervals between drawn frames
+  (nothing is read back from the graphics card). After two 3-second windows in a
+  row below 80% of the chosen rate (or of the display's), it takes one notch:
+  effects, then overlays, then quality, then frame rate. It belongs to the scene
+  shown, and the saved settings are not touched.
+- **Choosing.** `shuffle.js` picks scenes (a bag, a recent list, category and
+  mood rules, the cost filter), `fx-shuffle.js` and `overlay-shuffle.js` pick
+  effects and overlays within a cost budget per quality, and `favourites.js`
+  stores a star as a short string: the scene, `:look`, `|effects` and `/overlays`.
+- **Saved fields.** The choices are fields of the settings value
+  (`worldmedia.settings.v1`), named `visualizer...` (see
+  `src/lib/visualizer-settings.js`), not new profile keys or files. `Ctrl+Shift+D`
+  shows a developer strip with the sound values the scenes get
+  (`visualizerDebug`); it is off by default and costs nothing while off.
+- **Copied code.** `src/visualizer/vendor/psychedelia/` holds files copied from
+  Psychedelia Studio by `scripts/import_psychedelia.mjs`, with a `manifest.json`
+  of their sources and SHA-256 values. `npm test` checks them against it. The
+  About page's **Visualizer credits** (`src/modes/about-credits.js`) are built
+  from the manifest's `borrowed` list. `CREDITS.md` and
+  `public/THIRD_PARTY_NOTICES.txt` list the same pieces, and a test checks that
+  they name every borrowed piece's author and source as the manifest does.
+
 ## Tuner layout and card pictures
 
 The dial is sized from the height the Tuner's other rows leave, so those rows
@@ -167,6 +230,24 @@ while it plays that token (`src/lib/now-playing.js`) and shows the title in the
 player bar and the Windows media overlay. `src/lib/song-log.js` adds each new
 title to the song log.
 
+## Local port at start
+
+`worldmedia_native.py` chooses the port (`choose_port`). A forced port
+(`WORLDMEDIA_WINDOWS_PORT`) is used as it is. Otherwise it tries the configured
+port (normally `9124`), then a bounded fallback range. If the preferred port is
+busy and the program holding it answers `/api/health` as World Media, it waits
+up to 8 seconds before trying another port, because another port would be
+another browser origin with other saved favorites. It cannot tell whether that
+copy is closing (a copy that was just closed keeps its port for a few seconds),
+so the wait also covers a copy that is still running. A port held by any other
+program is passed over at once. Checking
+that a port is free and binding it are two steps, so a lost race moves to
+another port (up to five tries) instead of failing. On Windows the server takes
+its port exclusively (`SO_EXCLUSIVEADDRUSE`, with no `SO_REUSEADDR`), so two
+copies can no longer listen on the same port and split the page's requests. The
+`listening` line in `native.log` shows the port, the process id and a note on how
+the port was chosen.
+
 ## Capture jobs
 
 The frontend registers an opaque media ID; it never submits an upstream URL to a
@@ -211,7 +292,8 @@ the data that version 0.1.9 added is kept apart:
 The two settings added in 0.1.10, `tunerCardSize` and `soundMeter`, are fields
 inside the existing settings value (`worldmedia.settings.v1`), not new profile
 keys. Every release keeps settings fields it does not know, so going back to
-0.1.9 and returning keeps them.
+0.1.9 and returning keeps them. The Visualizer's fields added in 0.1.11 (all
+named `visualizer...`) are stored the same way.
 
 A profile save writes the main file first and then the extra file (or removes
 it when nothing is left for it). If the second write fails, favorites and
@@ -239,8 +321,17 @@ headers (an older client) is applied as it always was.
   when its bytes pass the same image check as remote artwork. Names are
   compared with `normalize_station_name`, the same rule as
   `src/lib/station-images.js` (shared cases are in
-  `tests/fixtures/station-image-names.json`). The code only reads the folder,
-  and makes it when the user asks to open it.
+  `tests/fixtures/station-image-names.json`). A station whose name has a
+  character a file name cannot have also matches a picture in which each such
+  character is written as `-`, `_` or a space, or left out, and a reserved
+  Windows name (`CON`, `AUX`, `COM1` and so on) matches a file with `_` or `-`
+  after it. The Python side never sees station names, so this loose rule, and
+  the choice of which picture goes to which station, are in
+  `src/lib/station-images.js` only. The listing names each used file (`file`)
+  and the files that were not used (`rejected`: at most 20, each with a reason
+  and plain-words `text`; `rejected_more` counts the rest), which Settings shows
+  as **Pictures to check**. The code only reads the folder, and makes it when
+  the user asks to open it.
 - **Backup** (`worldmedia_backup.py`): reads only a fixed list of files (the
   state files above and the station pictures), never a path from a request. The
   ZIP is written to a partial file in `downloads` and renamed when complete,
@@ -258,8 +349,8 @@ These are local implementation routes, not a public API contract:
 | `GET /api/v1/session` | Obtain the current control-session token/origin |
 | `GET /api/v1/runtime` | Runtime roots, writability, current/next port |
 | `GET /api/v1/playlists` | Load locally saved channel lists |
-| `POST /api/v1/playlists/import` | Parse and save a local M3U/M3U8, PLS or XSPF list (PLS and XSPF are stored as M3U) |
-| `POST /api/v1/playlists/link` | Save a direct link or safely fetch an online list |
+| `POST /api/v1/playlists/import` | Parse and save a local M3U/M3U8, PLS or XSPF list (PLS and XSPF are stored as M3U). The default type is `auto`, `tv` or `radio`; `auto` is saved as the type it chose |
+| `POST /api/v1/playlists/link` | Save a direct link or safely fetch an online list (the same default types) |
 | `POST /api/v1/playlists/remove` | Remove a list, keeping favorites |
 | `GET` / `POST /api/v1/profile/preferences` | Bounded cross-port preference backup (two files; a write carries an order number) |
 | `GET` / `POST /api/v1/song-log` | Load the song log, or save it (writes are ordered by a revision) |

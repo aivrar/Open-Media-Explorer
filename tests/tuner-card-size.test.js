@@ -158,6 +158,23 @@ test('each size has one fixed card height, and the strip grows by exactly as muc
   assert.match(box, /overflow: hidden;/);
   assert.match(rule(css, '.pill-initials'), /position: absolute;\s+inset: 0;/);
   assert.match(rule(css, '.pill-initials'), /line-height: var\(--card-initials\);/);
+  // Three and four letters (SWR3, WWWW) fit the box with room on both sides:
+  // bold Segoe UI is at most about 1.005 em a letter (W), measured in Chromium.
+  const boxes = { medium: px(rule(css, ".tuner-root[data-card-size='medium']"), '--card-art'),
+    large: px(rule(css, ".tuner-root[data-card-size='large']"), '--card-art') };
+  for (const letters of [3, 4]) {
+    const body = rule(css, `.pill-initials[data-length='${letters}']`);
+    const factor = Number(body.match(/font-size: calc\(var\(--card-art\) \* ([\d.]+)\);/)?.[1]);
+    assert.ok(factor > 0, `${letters} letters have a size from the box`);
+    assert.match(body, /letter-spacing: 0;/);
+    for (const [size, box] of Object.entries(boxes)) {
+      const width = letters * 1.005 * factor * box;
+      assert.ok(width <= box - 2, `${letters} wide letters (${width.toFixed(1)} px) fit the ${size} ${box} px box`);
+    }
+  }
+  // One or two letters keep the size they had; the box keeps its size.
+  assert.match(rule(css, ".tuner-root[data-card-size='medium']"), /--card-art: 40px;[\s\S]*--card-initials: 15px;/);
+  assert.match(rule(css, ".tuner-root[data-card-size='large']"), /--card-art: 64px;[\s\S]*--card-initials: 22px;/);
   const img = rule(css, '.pill-art-img');
   assert.match(img, /position: absolute;\s+inset: 0;/);
   assert.match(img, /width: 100%;\s+height: 100%;/);
@@ -408,6 +425,7 @@ test('a picture that fails keeps the initials and is not asked for again', async
   assert.equal(box.getAttribute('aria-hidden'), 'true');
   assert.deepEqual(box.children.map((child) => child.className), ['pill-initials']);
   assert.equal(box.children[0].textContent, 'S2'); // "Station 20"
+  assert.equal(box.children[0].getAttribute('data-length'), '2');
   assert.match(box.style.props['--ph-hue'], /^\d+$/);
   for (let step = 21; step <= 25; step += 1) { render(step); fire(); await flush(); }
   render(20);
@@ -416,6 +434,20 @@ test('a picture that fails keeps the initials and is not asked for again', async
   // Only the five cards new to the view were tried; the failed ones were not retried.
   assert.equal(calls.load.length, 12);
   assert.equal(art.stats.started, 12);
+});
+
+test('the initials carry their letter count, and never more than four letters', () => {
+  const { art } = harness();
+  const initialsOf = (title) => art.box({ id: `t-${title}`, title }).children[0];
+  for (const [title, text] of [['SWR3', 'SWR3'], ['BBC Radio 1', 'BBC'], ['France Info', 'FI'], ['X', 'X'], ['', '']]) {
+    const node = initialsOf(title);
+    assert.equal(node.textContent, text, title);
+    assert.equal(node.getAttribute('data-length'), String(text.length), title);
+  }
+  // A sharp s and a ligature grow to five letters when upper-cased.
+  const grown = initialsOf('ßﬃ');
+  assert.equal(grown.textContent, 'SSFF');
+  assert.equal(grown.getAttribute('data-length'), '4');
 });
 
 test('a station picture that fails falls back to the station\'s own artwork', async () => {

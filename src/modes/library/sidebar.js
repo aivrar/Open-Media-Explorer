@@ -21,7 +21,7 @@ import {
 import { focusViewSources, runSearch } from './chain.js';
 import { closeDetail } from './detail.js';
 import { isPersonalSource } from './personal.js';
-import { syncPersonalControls } from './personal-controls.js';
+import { ensurePlaylistsLoaded, syncPersonalControls } from './personal-controls.js';
 
 export function buildSidebar() {
   const sections = [
@@ -106,6 +106,8 @@ export function selectSource(sourceId) {
   view.activeSource = sourceId;
   view.searchDebounced?.cancel?.();
   syncPersonalControls();
+  // The first read may have failed (the playlists-change event redraws).
+  if (sourceId === 'playlists') void ensurePlaylistsLoaded();
   if (sourceId && sourceId.startsWith('type:')) {
     view.filters.type = sourceId.slice('type:'.length);
   } else {

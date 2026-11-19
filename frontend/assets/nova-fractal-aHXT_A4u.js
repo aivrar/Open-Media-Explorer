@@ -1,0 +1,86 @@
+function a(e){return e.EffectRegistry.register({name:"nova",label:"Nova Fractal",category:"Fractals",description:"Newton's method with relaxation - creates explosive stellar nova patterns",params:[{name:"power",label:"Power",min:2,max:8,default:3,step:1,type:"int"},{name:"relax_r",label:"Relaxation Real",min:.1,max:3,default:1,step:.05},{name:"relax_i",label:"Relaxation Imag",min:-1,max:1,default:0,step:.05},{name:"seed_r",label:"Seed Real",min:-2,max:2,default:0,step:.05},{name:"seed_i",label:"Seed Imag",min:-2,max:2,default:0,step:.05},{name:"zoom",label:"Zoom",min:.3,max:5,default:1.5,step:.1},{name:"max_iter",label:"Iterations",min:20,max:200,default:80,step:5,type:"int"},{name:"color_speed",label:"Color Speed",min:0,max:8,default:.3,step:.05},{name:"brightness",label:"Brightness",min:.5,max:2,default:1.25,step:.05},{name:"morph",label:"Auto Morph",min:0,max:1,default:.2,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_power;
+uniform float u_relax_r;
+uniform float u_relax_i;
+uniform float u_seed_r;
+uniform float u_seed_i;
+uniform float u_zoom;
+uniform float u_max_iter;
+uniform float u_color_speed;
+uniform float u_brightness;
+uniform float u_morph;
+
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x); }
+vec2 cdiv(vec2 a, vec2 b) { float d = max(dot(b,b), 0.000000000001); return vec2(a.x*b.x + a.y*b.y, a.y*b.x - a.x*b.y) / d; }
+
+vec2 cpow(vec2 z, int n) {
+    vec2 result = vec2(1.0, 0.0);
+    for (int i = 0; i < 8; i++) {
+        if (i >= n) break;
+        result = cmul(result, z);
+    }
+    return result;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+    uv *= 5.625 / max(u_zoom, 0.05);
+
+    float t = u_time;
+    int n = int(u_power);
+
+    vec2 relaxation = vec2(u_relax_r, u_relax_i);
+    vec2 nova_seed = vec2(u_seed_r, u_seed_i);
+
+    if (u_morph > 0.0) {
+        relaxation += vec2(sin(t * 0.3), cos(t * 0.4)) * u_morph * 0.5;
+        nova_seed += vec2(sin(t * 0.2), cos(t * 0.15)) * u_morph * 0.3;
+    }
+
+    // Nova: z_{n+1} = z_n - R * f(z)/f'(z) + c
+    // f(z) = z^p - 1
+    vec2 z = uv;
+    float iter = 0.0;
+    float smooth_iter = 0.0;
+    float trap = 1000.0;
+    int rootIdx = 0;
+
+    for (float i = 0.0; i < 200.0; i++) {
+        if (i >= u_max_iter) break;
+
+        vec2 fz = cpow(z, n) - vec2(1.0, 0.0);
+        int nm1 = n - 1;
+        vec2 fpz = float(n) * cpow(z, nm1);
+        if (dot(fpz, fpz) < 1e-12) break;
+
+        vec2 dz = cmul(relaxation, cdiv(fz, fpz));
+        vec2 stepDelta = -dz + nova_seed;
+        z += stepDelta;
+        trap = min(trap, length(z));
+
+        float dLen = length(stepDelta);
+        if (dLen < 1e-6) break;
+
+        iter = i;
+        smooth_iter += exp(-dLen);
+    }
+
+    float angle = atan(z.y, z.x);
+    float rootAngle = angle / 6.28318 * float(n);
+
+    float hue = fract(smooth_iter * 0.05 + angle * 0.15 + t * u_color_speed * 0.05);
+    float val = 1.0 - iter / u_max_iter;
+    float trapGlow = exp(-trap * 0.9);
+    val = pow(max(val, 0.0), 0.45);
+    val = clamp((0.14 + val * 0.88 + trapGlow * 0.28 + smooth_iter / max(u_max_iter, 1.0) * 0.12) * u_brightness, 0.0, 1.0);
+
+    vec3 col = hsv2rgb(vec3(hue, 0.78, val));
+    // Add fractal detail shimmer
+    col += rainbow(smooth_iter * 0.1 + t * 0.02) * 0.18 * val * u_brightness;
+    col = psyTonemap(col);
+
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{a as default};

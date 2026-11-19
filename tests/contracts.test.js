@@ -54,6 +54,24 @@ test('capture status is isolated from player title and source metadata', async (
   assert.match(capture, /current-item/);
 });
 
+test('the status line under the player has room for descenders; the bar keeps its height', async () => {
+  const css = await read('src/styles/base.css');
+  const text = css.match(/#player-capture-status-text \{([^}]*)\}/)[1];
+  assert.match(text, /overflow: hidden;/);
+  // 1.4 x 11 px = 15.4 px (14 px at the 10 px narrow size): inside the 18 px row.
+  assert.match(text, /line-height: 1\.4;/);
+  assert.match(css, /\.player-bar \{[^}]*grid-template-rows: minmax\(56px, auto\) 18px;/);
+  assert.match(css, /--player-h: 96px;/);
+});
+
+test('the EQ graph shows "0 dB" above its flat line, not across it', async () => {
+  const css = await read('src/styles/base.css');
+  const label = css.match(/\.eq-response > span:nth-of-type\(2\) \{([^}]*)\}/)[1];
+  assert.match(label, /bottom: calc\(50% \+ 3px\);/);
+  assert.doesNotMatch(label, /top:/);
+  assert.match(css, /\.eq-response \{[^}]*height: 116px;/);
+});
+
 test('EQ overlay contract exposes automatic, scoped, keyboard-accessible controls', async () => {
   const overlay = await read('src/lib/eq-overlay.js');
   const presets = await read('src/lib/eq-presets.js');

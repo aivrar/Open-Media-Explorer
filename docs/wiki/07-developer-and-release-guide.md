@@ -15,8 +15,10 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 | Artwork | `src/lib/artwork.js`, `src/modes/library/thumbnails.js` |
 | EQ | `src/lib/audio-engine.js`, `src/lib/eq-store.js`, `src/lib/eq-overlay.js` |
 | Sound meter | `src/lib/audio-signal.js`, `src/lib/player-meter.js`, the visual side tap in `src/lib/audio-engine.js` |
+| Visualizer | `src/modes/visualizer.js` (tab shell), `src/lib/visualizer-settings.js`, `src/visualizer/` (the tab, its scenes, effects and overlays), `src/visualizer/vendor/psychedelia/` (copied code, do not edit), `scripts/import_psychedelia.mjs` |
+| Visualizer credits | `src/modes/about-credits.js`, `src/modes/about-credits-load.js`, `CREDITS.md`, `public/THIRD_PARTY_NOTICES.txt` |
 | Tuner card size and pictures | `src/lib/tuner-card-size.js`, `src/lib/tuner-card-art.js`, `src/modes/tuner.js`, `src/styles/tuner.css` |
-| Personal playlists | `src/lib/playlists.js`, `src/modes/library/personal-controls.js`, `worldmedia_playlists.py` |
+| Personal playlists | `src/lib/playlists.js`, `src/modes/library/personal-controls.js`, `src/lib/favorite-migration.js`, `worldmedia_playlists.py` |
 | Favorites order and categories | `src/lib/favorites-order.js`, `src/lib/favorite-groups.js`, `src/modes/library/favorite-categories.js`, `src/modes/library/card-category.js` |
 | Song title and song log | `src/lib/now-playing.js`, `src/lib/song-log.js`, `src/lib/song-log-panel.js`, `worldmedia_icy.py`, `worldmedia_songlog.py` |
 | Live stream reconnect | `src/lib/live-resume.js`, `src/lib/relay-memory.js`, `src/lib/player.js` |
@@ -54,7 +56,7 @@ Build the frontend:
 npm run build
 ```
 
-The current repository baseline is 711 JavaScript tests and 467 Python tests
+The current repository baseline is 990 JavaScript tests and 490 Python tests
 (4 of them skipped); the exact count should be reported by the command rather
 than assumed after future changes.
 
@@ -81,7 +83,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.10-portable.zip
+dist\WorldMediaWindows-0.1.11-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -108,8 +110,8 @@ Before replacing the EXE:
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For v0.1.10 evidence and limitations, see the
-[release record](../RELEASE_RECORD_0.1.10.md). The optional
+For v0.1.11 evidence and limitations, see the
+[release record](../RELEASE_RECORD_0.1.11.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review
@@ -124,6 +126,27 @@ the resulting diff before committing/pushing that checkout.
   packaging contracts.
 - The optional real FFmpeg/download smoke test only when deliberately enabled;
   it downloads a large external toolchain and is not part of the default suite.
+- The Visualizer's flash checks, by hand and not part of `npm test`:
+  `tests/helpers/visualizer-flash-check.mjs` with
+  `tests/helpers/visualizer-flash-check.py` (scenes), and
+  `tests/helpers/visualizer-fx-check.mjs` with
+  `tests/helpers/visualizer-fx-check.py` (effects and overlays). They need
+  Python Playwright with Chromium, and `--gpu` draws on the graphics card. Run
+  them again after changing a scene, a look, an effect or an overlay.
+
+## Updating the Visualizer's copied code
+
+`src/visualizer/vendor/psychedelia/` holds code copied from Psychedelia Studio
+(same author, MIT) by `scripts/import_psychedelia.mjs`, with a `manifest.json`
+that records each file's source and SHA-256. Do not edit those files by hand.
+`npm test` checks them against the manifest only. To bring in newer code, run
+`node scripts/import_psychedelia.mjs --check-drift` to see what changed
+upstream, then run the script again (it only takes committed upstream files
+unless told otherwise), repeat the flash checks above, and update `CREDITS.md`
+and `public/THIRD_PARTY_NOTICES.txt` when the borrowed pieces change. The About
+page's **Visualizer credits** are built from the manifest, so they follow it. A
+scene that fails the flash check is listed in `HELD_SCENES` in
+`src/visualizer/scenes.js`, and is not offered until it passes.
 
 ## Adding or changing a source
 

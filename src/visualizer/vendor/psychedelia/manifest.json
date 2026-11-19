@@ -1,0 +1,2024 @@
+{
+  "generatedBy": "scripts/import_psychedelia.mjs",
+  "origin": "Psychedelia Studio",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 aivrar",
+  "hashes": "SHA-256 of UTF-8 text with LF line endings; sha256 = the original file, bodySha256 = the text between the BEGIN and END lines",
+  "upstream": "per file, when imported: the last Psychedelia commit that touched it, and whether it had uncommitted changes on top",
+  "files": [
+    {
+      "target": "engine/shader-manager.js",
+      "source": "src/engine/shader-manager.js",
+      "sha256": "1c1e3a35e369428d3cdacbdbb75cbf2b55f9d67ec9a86ee875743991b3fdb25b",
+      "bodySha256": "1c1e3a35e369428d3cdacbdbb75cbf2b55f9d67ec9a86ee875743991b3fdb25b",
+      "bytes": 23378,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "Renderer"
+      ],
+      "provides": [
+        "ShaderManager"
+      ],
+      "upstream": {
+        "commit": "1a4890070071dc170a547c3cd33497477ce20458",
+        "date": "2026-11-16",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "engine/audio-signal.js",
+      "source": "src/engine/audio-signal.js",
+      "sha256": "a1137c121f06842810b39207ca470cfa790eb69042302c9c62db2e6d6b07f9d2",
+      "bodySha256": "a1137c121f06842810b39207ca470cfa790eb69042302c9c62db2e6d6b07f9d2",
+      "bytes": 3267,
+      "asciiEscapes": 0,
+      "needs": [],
+      "provides": [
+        "AudioSignal"
+      ],
+      "upstream": {
+        "commit": "58896a5c6bd0ad8561f73716d44af3361d17c9f1",
+        "date": "2026-11-16",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "engine/audio-reactor.js",
+      "source": "src/engine/audio-reactor.js",
+      "sha256": "440cf3ea2e28160d3067753631d828f4f95ea1942dc0369bf74547088a98ea92",
+      "bodySha256": "440cf3ea2e28160d3067753631d828f4f95ea1942dc0369bf74547088a98ea92",
+      "bytes": 43754,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioAnalysis",
+        "AudioSignal",
+        "Controls",
+        "EffectRegistry",
+        "Music",
+        "PostProcess",
+        "VideoExport"
+      ],
+      "provides": [
+        "AudioReactor"
+      ],
+      "upstream": {
+        "commit": "30e3c1e6ae4e116c9cdd11e86cd3af62ac7ca296",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "engine/post-fx-library.js",
+      "source": "src/engine/post-fx-library.js",
+      "sha256": "a530e0c89baff2cf58c8262e2fc8178e8daff134852aeff3084d4cce3e931e1a",
+      "bodySha256": "a530e0c89baff2cf58c8262e2fc8178e8daff134852aeff3084d4cce3e931e1a",
+      "bytes": 82226,
+      "asciiEscapes": 0,
+      "needs": [
+        "PostProcess",
+        "PsyPalettes"
+      ],
+      "provides": [
+        "PostFxLibrary"
+      ],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "engine/overlays.js",
+      "source": "src/engine/overlays.js",
+      "sha256": "5eab33caaab251428976bae65e2ac9abbe7226231455aced975a6bcd596f422e",
+      "bodySha256": "429057e5441051a32a334c2f1c4d0e38700a872e25723183c88190a3cb63134e",
+      "bytes": 134119,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor"
+      ],
+      "provides": [
+        "Overlays"
+      ],
+      "patches": [
+        {
+          "find": "    function init() {\n        canvas2d = document.createElement('canvas');",
+          "replace": "    function init(host) {\n        if (host) { canvas2d = host; ctx = canvas2d.getContext('2d'); return; }\n        canvas2d = document.createElement('canvas');",
+          "why": "init(host) draws into the canvas the app gives: no strobe canvas, no #canvasWrap lookup, no window resize listener"
+        },
+        {
+          "find": "    function syncPosition() {\n        if (!canvas2d) return;",
+          "replace": "    function syncPosition() {\n        if (!canvas2d || !strobeCanvas) return;",
+          "why": "hosted (no strobe canvas), syncPosition reads no layout: render() no longer calls getBoundingClientRect every frame"
+        },
+        {
+          "find": "    var mods = {};\n",
+          "replace": "    var mods = {};\n    var beamSprite = null; // hosted: draws a laser beam without a stroke (setBeamSprite)\n",
+          "why": "a beam function the app may set (setBeamSprite), none by default"
+        },
+        {
+          "find": "            ctx.beginPath();\n            ctx.moveTo(x1, y1);\n            if (xm !== null) ctx.quadraticCurveTo(xm, ym, x2, y2);",
+          "replace": "            if (beamSprite && beamSprite(ctx, x1, y1, xm, ym, x2, y2, col, P.laser_thickness)) continue;\n            ctx.beginPath();\n            ctx.moveTo(x1, y1);\n            if (xm !== null) ctx.quadraticCurveTo(xm, ym, x2, y2);",
+          "why": "renderLasers draws each beam with the app's beam function when one is set (it returns true when it drew it), else strokes it as before"
+        },
+        {
+          "find": "        init: init,\n",
+          "replace": "        init: init,\n        setBeamSprite: function(fn) { beamSprite = typeof fn === 'function' ? fn : null; },\n",
+          "why": "setBeamSprite(fn) sets (or with no function clears) the beam function"
+        }
+      ],
+      "upstream": {
+        "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/registry.js",
+      "source": "src/effects/registry.js",
+      "sha256": "84a7bcaa718deb574af09ad54833158b02a753efe559add97dad1e71adac4e92",
+      "bodySha256": "4a6200161250d29c46019cdd96b8bad8ba0c2dab74fdd1666d98e58ca5ea456c",
+      "bytes": 14017,
+      "asciiEscapes": 1,
+      "needs": [
+        "Controls",
+        "EditHistory",
+        "FractalFlight",
+        "FractalLab",
+        "PsyPalettes",
+        "Renderer",
+        "ShaderManager"
+      ],
+      "provides": [
+        "EffectRegistry"
+      ],
+      "upstream": {
+        "commit": "1a4890070071dc170a547c3cd33497477ce20458",
+        "date": "2026-11-16",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fractal-flight-common.js",
+      "source": "src/effects/fractal-flight-common.js",
+      "sha256": "91ec674d42099287450608c2fa2ba754e30de40c707054e1d6edb45a729b8c82",
+      "bodySha256": "91ec674d42099287450608c2fa2ba754e30de40c707054e1d6edb45a729b8c82",
+      "bytes": 4359,
+      "asciiEscapes": 0,
+      "needs": [],
+      "provides": [
+        "FractalFlight"
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/plasma.js",
+      "source": "src/effects/plasma.js",
+      "sha256": "71c624534f61faf0c15ceb5688a7f6946120cadccc19eb6f84b5670c4e5e167d",
+      "bodySha256": "71c624534f61faf0c15ceb5688a7f6946120cadccc19eb6f84b5670c4e5e167d",
+      "bytes": 3603,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/tunnel.js",
+      "source": "src/effects/tunnel.js",
+      "sha256": "f99014ba6c3dbf5df6aef1411eb45c6aa86e7bd76dfb31ff3d19def1d53ec1e4",
+      "bodySha256": "f99014ba6c3dbf5df6aef1411eb45c6aa86e7bd76dfb31ff3d19def1d53ec1e4",
+      "bytes": 2018,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "410e10c860a414c2f68364a31a3ca037b0fa7be0",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/starfield.js",
+      "source": "src/effects/starfield.js",
+      "sha256": "2f814fa9bd9ec1d00ed9b7a9099934087c2bcc20425aceccc479e70444a1c53a",
+      "bodySha256": "2f814fa9bd9ec1d00ed9b7a9099934087c2bcc20425aceccc479e70444a1c53a",
+      "bytes": 2987,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "410e10c860a414c2f68364a31a3ca037b0fa7be0",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/metaballs.js",
+      "source": "src/effects/metaballs.js",
+      "sha256": "f5ab347f4404ad2de744723fad5732d6df5addf382b6a44badc073096123eec8",
+      "bodySha256": "f5ab347f4404ad2de744723fad5732d6df5addf382b6a44badc073096123eec8",
+      "bytes": 2562,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/voronoi.js",
+      "source": "src/effects/voronoi.js",
+      "sha256": "c451e6071d1d64700738672609edf806c9eaaf5e1ec11d921bbfd22d9f0d31a1",
+      "bodySha256": "c451e6071d1d64700738672609edf806c9eaaf5e1ec11d921bbfd22d9f0d31a1",
+      "bytes": 2576,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/synthwave-grid.js",
+      "source": "src/effects/synthwave-grid.js",
+      "sha256": "97331fb87766c84b79c1156b8e65773aa4364deada6d0deb1e976643d0853d94",
+      "bodySha256": "97331fb87766c84b79c1156b8e65773aa4364deada6d0deb1e976643d0853d94",
+      "bytes": 5279,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/truchet-tiles.js",
+      "source": "src/effects/truchet-tiles.js",
+      "sha256": "79e4515dcda6a226d79ea1414b3a4b65b45d26dd2be3c2f9f317ca5d6b01f0ca",
+      "bodySha256": "79e4515dcda6a226d79ea1414b3a4b65b45d26dd2be3c2f9f317ca5d6b01f0ca",
+      "bytes": 7159,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/quasicrystal.js",
+      "source": "src/effects/quasicrystal.js",
+      "sha256": "5024eae19d8322e3e66ee7b1b852d66aa6d8ad7aec6a51dfc7e52f07e958b8d9",
+      "bodySha256": "5024eae19d8322e3e66ee7b1b852d66aa6d8ad7aec6a51dfc7e52f07e958b8d9",
+      "bytes": 3345,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/islamic-stars.js",
+      "source": "src/effects/islamic-stars.js",
+      "sha256": "138d1a06458d9b115e7724ddf5a9a34e298e8d11087198682d7085f9ba70eafa",
+      "bodySha256": "1d31d3b482566359dcd6aefefc1efbd7b01a0e23ce67664b9b3485bbe4553fa5",
+      "bytes": 6108,
+      "asciiEscapes": 1,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/spiral-galaxy.js",
+      "source": "src/effects/spiral-galaxy.js",
+      "sha256": "2e1de7722dbbd3ba8b07b33fee299fc6de3e333c29958a75d3d1d58de3c9abc9",
+      "bodySha256": "2e1de7722dbbd3ba8b07b33fee299fc6de3e333c29958a75d3d1d58de3c9abc9",
+      "bytes": 6254,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/domain-colouring.js",
+      "source": "src/effects/domain-colouring.js",
+      "sha256": "c6f9b38b9890820d9f47c7a0001930620dc83abd43ef4020d17bb423566a5cfe",
+      "bodySha256": "2ac904ae368ccc301ff9c3f0574faabd4d15b74daf188949c40e9e0fbc500e1e",
+      "bytes": 6078,
+      "asciiEscapes": 1,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "410e10c860a414c2f68364a31a3ca037b0fa7be0",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/aurora.js",
+      "source": "src/effects/aurora.js",
+      "sha256": "2ca3fd248ba7a619b98f99e81672de796875f84eadd43583b368a2ebf927ebff",
+      "bodySha256": "2ca3fd248ba7a619b98f99e81672de796875f84eadd43583b368a2ebf927ebff",
+      "bytes": 5701,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/black-hole.js",
+      "source": "src/effects/black-hole.js",
+      "sha256": "6165609c567adef190439af5bfd6f25339c3f0c4a2f4db34a59a832617fc7c58",
+      "bodySha256": "6165609c567adef190439af5bfd6f25339c3f0c4a2f4db34a59a832617fc7c58",
+      "bytes": 6444,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/burning-ship.js",
+      "source": "src/effects/burning-ship.js",
+      "sha256": "b6d909d6ff9ba078274fabf711d4cbc229a9c5dbdbca42f588542715355df71c",
+      "bodySha256": "b6d909d6ff9ba078274fabf711d4cbc229a9c5dbdbca42f588542715355df71c",
+      "bytes": 6110,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/color-cycle.js",
+      "source": "src/effects/color-cycle.js",
+      "sha256": "92dc8b23b08b737b184d3b680b1abde3aaa653184077e5b309a92979b3ca22a7",
+      "bodySha256": "92dc8b23b08b737b184d3b680b1abde3aaa653184077e5b309a92979b3ca22a7",
+      "bytes": 2546,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/domain-warp.js",
+      "source": "src/effects/domain-warp.js",
+      "sha256": "c0a2d3131047ff3db4c906f6b9cfb295fa2fd37e6c896a1ee1bd8ed74c94ed59",
+      "bodySha256": "c0a2d3131047ff3db4c906f6b9cfb295fa2fd37e6c896a1ee1bd8ed74c94ed59",
+      "bytes": 2854,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/droste.js",
+      "source": "src/effects/droste.js",
+      "sha256": "18c094782d97f3fb0e488f086ab2ddf6ba53b56c03c95b6a69d0ae904ba3b1fc",
+      "bodySha256": "18c094782d97f3fb0e488f086ab2ddf6ba53b56c03c95b6a69d0ae904ba3b1fc",
+      "bytes": 2359,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/endless-terrain.js",
+      "source": "src/effects/endless-terrain.js",
+      "sha256": "16360ef4af61c128e8a711105e10697d05c1a6f36ff515b796029b5e5b8c73ab",
+      "bodySha256": "16360ef4af61c128e8a711105e10697d05c1a6f36ff515b796029b5e5b8c73ab",
+      "bytes": 9370,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fire.js",
+      "source": "src/effects/fire.js",
+      "sha256": "b9e5908c5702df1ba26051711e7593d74f2a97ebdae855328f726731476de2a9",
+      "bodySha256": "b9e5908c5702df1ba26051711e7593d74f2a97ebdae855328f726731476de2a9",
+      "bytes": 3003,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/flow-field.js",
+      "source": "src/effects/flow-field.js",
+      "sha256": "b6a8f83d0344232f5f60f34019ea3d4a5ee3d22d523e4d918072871f531adf62",
+      "bodySha256": "b6a8f83d0344232f5f60f34019ea3d4a5ee3d22d523e4d918072871f531adf62",
+      "bytes": 6031,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fractal-brownian.js",
+      "source": "src/effects/fractal-brownian.js",
+      "sha256": "d92ce2185ca4378a514c1cb80d0e4de2f69d46fd79561ebd1fa03c2b82515abe",
+      "bodySha256": "d92ce2185ca4378a514c1cb80d0e4de2f69d46fd79561ebd1fa03c2b82515abe",
+      "bytes": 2934,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fractal-flame.js",
+      "source": "src/effects/fractal-flame.js",
+      "sha256": "40613ce11e18c1c4d5b13f388c16e9f9cceaeaf7cd8a94c7d2e65e50f785420c",
+      "bodySha256": "40613ce11e18c1c4d5b13f388c16e9f9cceaeaf7cd8a94c7d2e65e50f785420c",
+      "bytes": 3503,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/glow-lab.js",
+      "source": "src/effects/glow-lab.js",
+      "sha256": "3e25f22e432a431b7c9de70186173527f9b6e5d7338533bc6f892d0eac3fe55c",
+      "bodySha256": "3e25f22e432a431b7c9de70186173527f9b6e5d7338533bc6f892d0eac3fe55c",
+      "bytes": 6972,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/gyroid-tunnels.js",
+      "source": "src/effects/gyroid-tunnels.js",
+      "sha256": "f5ce59ffe73a338b88998cbcef0f7d6dcb31e2bfe04329abc920411179289552",
+      "bodySha256": "f5ce59ffe73a338b88998cbcef0f7d6dcb31e2bfe04329abc920411179289552",
+      "bytes": 4579,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/hyperbolic-tiling.js",
+      "source": "src/effects/hyperbolic-tiling.js",
+      "sha256": "8c76ff53629566fcae27e008a3c4c58df169b3598d0036dbbc5b80ff3fa4cd5c",
+      "bodySha256": "8c76ff53629566fcae27e008a3c4c58df169b3598d0036dbbc5b80ff3fa4cd5c",
+      "bytes": 5635,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/julia-set.js",
+      "source": "src/effects/julia-set.js",
+      "sha256": "150ddf1c49efca1f71262cf54a7620b29bd5c27eda15cfe3d5ee57a32bde51c3",
+      "bodySha256": "150ddf1c49efca1f71262cf54a7620b29bd5c27eda15cfe3d5ee57a32bde51c3",
+      "bytes": 3161,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/kaleidoscope.js",
+      "source": "src/effects/kaleidoscope.js",
+      "sha256": "1858087a440cd6ce521aa25c50d88e3501abed84b66e3bff21fb3a0133657a70",
+      "bodySha256": "1858087a440cd6ce521aa25c50d88e3501abed84b66e3bff21fb3a0133657a70",
+      "bytes": 13164,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/kleinian.js",
+      "source": "src/effects/kleinian.js",
+      "sha256": "4e2bbf014487f47f93c95781ec51e2ba91a5ddf5451db8d705067645a7d7c63a",
+      "bodySha256": "4e2bbf014487f47f93c95781ec51e2ba91a5ddf5451db8d705067645a7d7c63a",
+      "bytes": 5126,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/liquid-chrome.js",
+      "source": "src/effects/liquid-chrome.js",
+      "sha256": "b8290f3f9f7b6593b266bb37272310a84e5fc58d4542d0247348d1e357dd0acb",
+      "bodySha256": "b8290f3f9f7b6593b266bb37272310a84e5fc58d4542d0247348d1e357dd0acb",
+      "bytes": 5693,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/liquid-light.js",
+      "source": "src/effects/liquid-light.js",
+      "sha256": "9670d6fca67a0826b3aa7e2f7be69c2cc4e6742f6dfb579ab2daf4cb0a95dd0c",
+      "bodySha256": "9670d6fca67a0826b3aa7e2f7be69c2cc4e6742f6dfb579ab2daf4cb0a95dd0c",
+      "bytes": 5347,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/living-sun.js",
+      "source": "src/effects/living-sun.js",
+      "sha256": "bec4200cb3bb20f5551ed8ecc1d23c38fdf7e555430840b6a98e00e626c2a57e",
+      "bodySha256": "bec4200cb3bb20f5551ed8ecc1d23c38fdf7e555430840b6a98e00e626c2a57e",
+      "bytes": 5827,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/lyapunov-fractal.js",
+      "source": "src/effects/lyapunov-fractal.js",
+      "sha256": "162f7c1974b5ce7eb67508dfc117b590dd2a0c8e261c01422f2de5943a661401",
+      "bodySha256": "162f7c1974b5ce7eb67508dfc117b590dd2a0c8e261c01422f2de5943a661401",
+      "bytes": 4366,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/mandelbrot-deep.js",
+      "source": "src/effects/mandelbrot-deep.js",
+      "sha256": "9ae33f8de09795947551ecff12adf0d5d9498626490ce84418336631a2eac184",
+      "bodySha256": "9ae33f8de09795947551ecff12adf0d5d9498626490ce84418336631a2eac184",
+      "bytes": 7842,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/mandelbrot-power.js",
+      "source": "src/effects/mandelbrot-power.js",
+      "sha256": "20f0524b39ba5412955550dab8d89d16eb29b4e025229acc476aa54b49692d68",
+      "bodySha256": "20f0524b39ba5412955550dab8d89d16eb29b4e025229acc476aa54b49692d68",
+      "bytes": 5390,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/mandelbrot.js",
+      "source": "src/effects/mandelbrot.js",
+      "sha256": "a37400b69dd75314be1b10a816b323b5ef08bc709c2bc7f73af12df15b06d595",
+      "bodySha256": "a37400b69dd75314be1b10a816b323b5ef08bc709c2bc7f73af12df15b06d595",
+      "bytes": 4613,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/mandelbulb-slice.js",
+      "source": "src/effects/mandelbulb-slice.js",
+      "sha256": "713bbba5572a4eefe602eef3cad1904c6dd78b2e480cc85367eedeb08bfd3ce4",
+      "bodySha256": "713bbba5572a4eefe602eef3cad1904c6dd78b2e480cc85367eedeb08bfd3ce4",
+      "bytes": 4122,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/moire.js",
+      "source": "src/effects/moire.js",
+      "sha256": "0055f5b8aaf2c2e8fe0f805c83d4434558a124287355043cdf87fd699595a6c9",
+      "bodySha256": "0055f5b8aaf2c2e8fe0f805c83d4434558a124287355043cdf87fd699595a6c9",
+      "bytes": 1971,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/nebula.js",
+      "source": "src/effects/nebula.js",
+      "sha256": "d68c2ae265b652980fb846054625b4151732c4b4c465d924a55b9edc14dc75af",
+      "bodySha256": "d68c2ae265b652980fb846054625b4151732c4b4c465d924a55b9edc14dc75af",
+      "bytes": 5494,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/newton-fractal.js",
+      "source": "src/effects/newton-fractal.js",
+      "sha256": "f3333c0d7650e699c89505fc526da0ffeff608bdac3b7cba8924d3749c99550c",
+      "bodySha256": "f3333c0d7650e699c89505fc526da0ffeff608bdac3b7cba8924d3749c99550c",
+      "bytes": 3143,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/nova-fractal.js",
+      "source": "src/effects/nova-fractal.js",
+      "sha256": "aa2769787f0ce34a6d4305fb8c67cc98acef82a28c369bd849da6ed23f425460",
+      "bodySha256": "aa2769787f0ce34a6d4305fb8c67cc98acef82a28c369bd849da6ed23f425460",
+      "bytes": 3713,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/op-art.js",
+      "source": "src/effects/op-art.js",
+      "sha256": "14cce77ab169f9ab31a546ab29ffddce191a13b163b2f197a48548cdcbd89ace",
+      "bodySha256": "14cce77ab169f9ab31a546ab29ffddce191a13b163b2f197a48548cdcbd89ace",
+      "bytes": 3408,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/orbit-trap.js",
+      "source": "src/effects/orbit-trap.js",
+      "sha256": "57f8dc08c18836861ed4dcfcf3412fd4c60d7a4c3cc67824c00b2fbf62950339",
+      "bodySha256": "57f8dc08c18836861ed4dcfcf3412fd4c60d7a4c3cc67824c00b2fbf62950339",
+      "bytes": 7787,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "adbf3ea9a4f7410a8704202c7df387d6c9ba7eb0",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/perlin-noise.js",
+      "source": "src/effects/perlin-noise.js",
+      "sha256": "3b64e6bd877ed67c7f0e47d68a6a5cbb3f290723196ca842418806a3f55751f2",
+      "bodySha256": "3b64e6bd877ed67c7f0e47d68a6a5cbb3f290723196ca842418806a3f55751f2",
+      "bytes": 2228,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/phoenix-fractal.js",
+      "source": "src/effects/phoenix-fractal.js",
+      "sha256": "cbfc64d01af6aff0acf6a58b245eaecf09204368de2804621837b16cc32dcf6b",
+      "bodySha256": "cbfc64d01af6aff0acf6a58b245eaecf09204368de2804621837b16cc32dcf6b",
+      "bytes": 2811,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f67ac627f06ec3fc33fb3cc3b9d99cdac689a91b",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/phyllotaxis.js",
+      "source": "src/effects/phyllotaxis.js",
+      "sha256": "e0097061a457b374a0d0dc2a86fab236492b0e90ca2f22710c1d2f72cd06a91a",
+      "bodySha256": "e0097061a457b374a0d0dc2a86fab236492b0e90ca2f22710c1d2f72cd06a91a",
+      "bytes": 6183,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/polar-spiral.js",
+      "source": "src/effects/polar-spiral.js",
+      "sha256": "762454774daa1365b56d591b0d9effcd1a10ff2dbd564512e6f08795bfb1b381",
+      "bodySha256": "762454774daa1365b56d591b0d9effcd1a10ff2dbd564512e6f08795bfb1b381",
+      "bytes": 2112,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/rainy-window.js",
+      "source": "src/effects/rainy-window.js",
+      "sha256": "c51db93e745be52100000fbf6c453736f5c4053afccb55dc347b2bc60e0a6fca",
+      "bodySha256": "c51db93e745be52100000fbf6c453736f5c4053afccb55dc347b2bc60e0a6fca",
+      "bytes": 7720,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/rotozoom.js",
+      "source": "src/effects/rotozoom.js",
+      "sha256": "13e83390cec5b285697b46769014fd17b0297344191633d955721ac4060e6176",
+      "bodySha256": "13e83390cec5b285697b46769014fd17b0297344191633d955721ac4060e6176",
+      "bytes": 2019,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/seascape.js",
+      "source": "src/effects/seascape.js",
+      "sha256": "74c4fc7e65a03ca212388c45eb0785d79121d4c80b13e5f8c6c81d584f2d6ae2",
+      "bodySha256": "74c4fc7e65a03ca212388c45eb0785d79121d4c80b13e5f8c6c81d584f2d6ae2",
+      "bytes": 6449,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/sierpinski.js",
+      "source": "src/effects/sierpinski.js",
+      "sha256": "6a82f988ff333738fc44508421266d29cf4e7444602d7526c5df6763f7fc5873",
+      "bodySha256": "6a82f988ff333738fc44508421266d29cf4e7444602d7526c5df6763f7fc5873",
+      "bytes": 11397,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/sine-interference.js",
+      "source": "src/effects/sine-interference.js",
+      "sha256": "5e14c2d353a518d98a354088d5a24ade385f88800de6682e6c8d2b2eff7c8726",
+      "bodySha256": "5e14c2d353a518d98a354088d5a24ade385f88800de6682e6c8d2b2eff7c8726",
+      "bytes": 1708,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/soap-bubbles.js",
+      "source": "src/effects/soap-bubbles.js",
+      "sha256": "b533e33c5a6cd77cfdb8a143cb8faf35c27774a6438264428f5d448a5ff1ec81",
+      "bodySha256": "b533e33c5a6cd77cfdb8a143cb8faf35c27774a6438264428f5d448a5ff1ec81",
+      "bytes": 5253,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "1a4890070071dc170a547c3cd33497477ce20458",
+        "date": "2026-11-16",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/swirl.js",
+      "source": "src/effects/swirl.js",
+      "sha256": "95d7de385c846651c942cf4616d3315da94995d038252835df78fe1e9bdcc051",
+      "bodySha256": "95d7de385c846651c942cf4616d3315da94995d038252835df78fe1e9bdcc051",
+      "bytes": 5884,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/tricorn.js",
+      "source": "src/effects/tricorn.js",
+      "sha256": "6ca1aac86807f2981a41f542445db70980055132d1d88fb080b46062c6c27f73",
+      "bodySha256": "6ca1aac86807f2981a41f542445db70980055132d1d88fb080b46062c6c27f73",
+      "bytes": 5109,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "b4739fa2a2be1d0aff4272dd9dc8566b84bb1a74",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/underwater.js",
+      "source": "src/effects/underwater.js",
+      "sha256": "1ee0079f6a9a6306399a6e3840ae440a8e2d8860583e65d9b628e5d11e01e33a",
+      "bodySha256": "1ee0079f6a9a6306399a6e3840ae440a8e2d8860583e65d9b628e5d11e01e33a",
+      "bytes": 6834,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/water-ripple.js",
+      "source": "src/effects/water-ripple.js",
+      "sha256": "9a7759f7eae2a8374ebd9e1da499b94d0fb283a731657c63fce366972563604f",
+      "bodySha256": "9a7759f7eae2a8374ebd9e1da499b94d0fb283a731657c63fce366972563604f",
+      "bytes": 2793,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/wave-distort.js",
+      "source": "src/effects/wave-distort.js",
+      "sha256": "fe056327f8bb124397a8bf1b3cfb293016da458e9a8ee9af8755ddc40305b7fd",
+      "bodySha256": "fe056327f8bb124397a8bf1b3cfb293016da458e9a8ee9af8755ddc40305b7fd",
+      "bytes": 2331,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/mandelbulb-flight.js",
+      "source": "src/effects/mandelbulb-flight.js",
+      "sha256": "052c64bdf4cf91df5975a7c50ee5d593eefae72b393de9938905ba34b24ba832",
+      "bodySha256": "052c64bdf4cf91df5975a7c50ee5d593eefae72b393de9938905ba34b24ba832",
+      "bytes": 12932,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/triplex-mutation-flight.js",
+      "source": "src/effects/triplex-mutation-flight.js",
+      "sha256": "cd778a2a045ceda378f34f1dec53e1069d3798f5fb4324862ab2de77167aabb8",
+      "bodySha256": "cd778a2a045ceda378f34f1dec53e1069d3798f5fb4324862ab2de77167aabb8",
+      "bytes": 20359,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/kifs-flight.js",
+      "source": "src/effects/kifs-flight.js",
+      "sha256": "045540a38e2992f0474bfb9960b6828f71af1b59fd1046b0f9ee11ab843fcdbe",
+      "bodySha256": "045540a38e2992f0474bfb9960b6828f71af1b59fd1046b0f9ee11ab843fcdbe",
+      "bytes": 15793,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/difs-tunnel-flight.js",
+      "source": "src/effects/difs-tunnel-flight.js",
+      "sha256": "f52781dd3c1c2bc826f25a31836aaf1a06e3e2f74f5326c43d0dd0cd84f6ce92",
+      "bodySha256": "f52781dd3c1c2bc826f25a31836aaf1a06e3e2f74f5326c43d0dd0cd84f6ce92",
+      "bytes": 21914,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/mandelbox-flight.js",
+      "source": "src/effects/mandelbox-flight.js",
+      "sha256": "5d7f0dfbef48fc93436a4090dc5f7915f6ce6b93eee2c8132a885cbf89283fbf",
+      "bodySha256": "5d7f0dfbef48fc93436a4090dc5f7915f6ce6b93eee2c8132a885cbf89283fbf",
+      "bytes": 15863,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/folded-box-variants-flight.js",
+      "source": "src/effects/folded-box-variants-flight.js",
+      "sha256": "7b5960e8e1f21bb7a23a505e9766c7f5c3c37f97d2819872eb60132852b4e40d",
+      "bodySha256": "7b5960e8e1f21bb7a23a505e9766c7f5c3c37f97d2819872eb60132852b4e40d",
+      "bytes": 25397,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/quaternion-julia-flight.js",
+      "source": "src/effects/quaternion-julia-flight.js",
+      "sha256": "22952228c764de60c2c67f710ca61aa3abef3685a6a9d12e8a89f20f0ef9fd44",
+      "bodySha256": "22952228c764de60c2c67f710ca61aa3abef3685a6a9d12e8a89f20f0ef9fd44",
+      "bytes": 15603,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/hypercomplex-slice-flight.js",
+      "source": "src/effects/hypercomplex-slice-flight.js",
+      "sha256": "175b85defd769f43147565aad0665b7b744b1a5253fde27612f83336cee29d8d",
+      "bodySha256": "175b85defd769f43147565aad0665b7b744b1a5253fde27612f83336cee29d8d",
+      "bytes": 22025,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/schottky-inversion-flight.js",
+      "source": "src/effects/schottky-inversion-flight.js",
+      "sha256": "6de9f56a7eb02faf0ea588d7051d9e25f8cc8af9198698fec6337e07f70c4872",
+      "bodySha256": "6de9f56a7eb02faf0ea588d7051d9e25f8cc8af9198698fec6337e07f70c4872",
+      "bytes": 16939,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/apollonian-foam-flight.js",
+      "source": "src/effects/apollonian-foam-flight.js",
+      "sha256": "760b86a8fc434dea1c7f525a1f44c9271edf6384b315fcc8296e74406e39f6d0",
+      "bodySha256": "760b86a8fc434dea1c7f525a1f44c9271edf6384b315fcc8296e74406e39f6d0",
+      "bytes": 22558,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/polyfold-flight.js",
+      "source": "src/effects/polyfold-flight.js",
+      "sha256": "e57e82e22a3bf7b889789b8c7f0005b5af390df19fbb9d4131f92329a68ff0cb",
+      "bodySha256": "e57e82e22a3bf7b889789b8c7f0005b5af390df19fbb9d4131f92329a68ff0cb",
+      "bytes": 20084,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fractal-flame-volume-flight.js",
+      "source": "src/effects/fractal-flame-volume-flight.js",
+      "sha256": "897dc03f2916c06a1312d98be101dd3bddeda43a484717a500c158db109e38b2",
+      "bodySha256": "897dc03f2916c06a1312d98be101dd3bddeda43a484717a500c158db109e38b2",
+      "bytes": 15730,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/strange-attractor-flight.js",
+      "source": "src/effects/strange-attractor-flight.js",
+      "sha256": "3c21f4fd1c5df2c04022ed97334fe5cf371d1fc667a0d628a74e6c550fe5e2d1",
+      "bodySha256": "3c21f4fd1c5df2c04022ed97334fe5cf371d1fc667a0d628a74e6c550fe5e2d1",
+      "bytes": 19796,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [
+        "StrangeAttractorFeed"
+      ],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/lsystem-tube-flight.js",
+      "source": "src/effects/lsystem-tube-flight.js",
+      "sha256": "5661d25e21d1a56eeaca8e843f7c6dcf8ffa65b47d09ccddaacb15d289d37998",
+      "bodySha256": "5661d25e21d1a56eeaca8e843f7c6dcf8ffa65b47d09ccddaacb15d289d37998",
+      "bytes": 18256,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/path-traced-fractal-flight.js",
+      "source": "src/effects/path-traced-fractal-flight.js",
+      "sha256": "dd4df9c18aac4d42093c74829e6575dec26bcd08e36d8fe760321d636885b708",
+      "bodySha256": "dd4df9c18aac4d42093c74829e6575dec26bcd08e36d8fe760321d636885b708",
+      "bytes": 19590,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
+        "date": "2026-11-18",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/endless-scenes.js",
+      "source": "src/effects/endless-scenes.js",
+      "sha256": "9284bdc478bc67ae0a81c1fa0ee493cc0c1f5a1320d1e48b40a25c6a96acaffd",
+      "bodySha256": "9284bdc478bc67ae0a81c1fa0ee493cc0c1f5a1320d1e48b40a25c6a96acaffd",
+      "bytes": 24498,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalFlight"
+      ],
+      "provides": [
+        "EndlessScenes"
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/endless-sky-crystal.js",
+      "source": "src/effects/endless-sky-crystal.js",
+      "sha256": "d519fa4f4497da4901a5c3fffc9425ff0de6e6a0671e0df8f265be2e05991a1e",
+      "bodySha256": "d519fa4f4497da4901a5c3fffc9425ff0de6e6a0671e0df8f265be2e05991a1e",
+      "bytes": 26547,
+      "asciiEscapes": 0,
+      "needs": [
+        "EndlessScenes",
+        "FractalFlight"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    }
+  ],
+  "notices": [
+    {
+      "target": "LICENSE.txt",
+      "source": "LICENSE",
+      "sha256": "bebc57683263658b8786db57b6485f6e1d12343b0ed59a405bc8adc2d2777bc2"
+    },
+    {
+      "target": "webgl-noise-LICENSE.txt",
+      "source": "lib/licenses/webgl-noise-LICENSE.txt",
+      "sha256": "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916"
+    }
+  ],
+  "borrowed": [
+    {
+      "scene": "*",
+      "file": "src/engine/shader-manager.js",
+      "piece": "webgl-noise",
+      "author": "Ian McEwan, Ashima Arts, with Stefan Gustavson",
+      "link": "https://github.com/ashima/webgl-noise/blob/master/src/noise3D.glsl",
+      "licence": "MIT License (\"Copyright (C) 2011 Ashima Arts. All rights reserved. Distributed under the MIT License.\")",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/shader-manager.js",
+      "piece": "hocevar-hsv",
+      "author": "Sam Hocevar",
+      "link": "https://stackoverflow.com/a/17897228",
+      "licence": "WTFPL",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/post-fx-library.js",
+      "piece": "hocevar-hsv",
+      "author": "Sam Hocevar",
+      "link": "https://stackoverflow.com/a/17897228",
+      "licence": "WTFPL",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/shader-manager.js",
+      "piece": "iq-palette",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/palettes/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/shader-manager.js",
+      "piece": "narkowicz-aces",
+      "author": "Krzysztof Narkowicz",
+      "link": "https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/",
+      "licence": "\"free to use under public domain CC0 or MIT license\"",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "endless_terrain",
+      "file": "src/effects/endless-terrain.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "living_sun",
+      "file": "src/effects/living-sun.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "nebula",
+      "file": "src/effects/nebula.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "menger_citadel",
+      "file": "src/effects/endless-scenes.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "recursive_cathedral",
+      "file": "src/effects/endless-scenes.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "fractal_canyon",
+      "file": "src/effects/endless-scenes.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "infinite_lattice",
+      "file": "src/effects/endless-scenes.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "crystal_geode",
+      "file": "src/effects/endless-sky-crystal.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "golden_hour_clouds",
+      "file": "src/effects/endless-sky-crystal.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "planet_sunrise",
+      "file": "src/effects/endless-sky-crystal.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "sierpinski",
+      "file": "src/effects/sierpinski.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "apollonian_foam_flight",
+      "file": "src/effects/apollonian-foam-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "difs_tunnel_flight",
+      "file": "src/effects/difs-tunnel-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "folded_box_variants_flight",
+      "file": "src/effects/folded-box-variants-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "kifs_flight",
+      "file": "src/effects/kifs-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "mandelbox_flight",
+      "file": "src/effects/mandelbox-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "path_traced_fractal_flight",
+      "file": "src/effects/path-traced-fractal-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "polyfold_flight",
+      "file": "src/effects/polyfold-flight.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "liquid_chrome",
+      "file": "src/effects/liquid-chrome.js",
+      "piece": "iq-smin",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/smin/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "gyroid_tunnels",
+      "file": "src/effects/gyroid-tunnels.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "liquid_chrome",
+      "file": "src/effects/liquid-chrome.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "apollonian_foam_flight",
+      "file": "src/effects/apollonian-foam-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "difs_tunnel_flight",
+      "file": "src/effects/difs-tunnel-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "folded_box_variants_flight",
+      "file": "src/effects/folded-box-variants-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "hypercomplex_slice_flight",
+      "file": "src/effects/hypercomplex-slice-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "kifs_flight",
+      "file": "src/effects/kifs-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "lsystem_tube_flight",
+      "file": "src/effects/lsystem-tube-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "mandelbox_flight",
+      "file": "src/effects/mandelbox-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "mandelbulb_flight",
+      "file": "src/effects/mandelbulb-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "path_traced_fractal_flight",
+      "file": "src/effects/path-traced-fractal-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "polyfold_flight",
+      "file": "src/effects/polyfold-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "quaternion_julia_flight",
+      "file": "src/effects/quaternion-julia-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "schottky_inversion_flight",
+      "file": "src/effects/schottky-inversion-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "triplex_mutation_flight",
+      "file": "src/effects/triplex-mutation-flight.js",
+      "piece": "iq-normals",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/normalsSDF/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "apollonian_foam_flight",
+      "file": "src/effects/apollonian-foam-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "difs_tunnel_flight",
+      "file": "src/effects/difs-tunnel-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "folded_box_variants_flight",
+      "file": "src/effects/folded-box-variants-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "hypercomplex_slice_flight",
+      "file": "src/effects/hypercomplex-slice-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "kifs_flight",
+      "file": "src/effects/kifs-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "lsystem_tube_flight",
+      "file": "src/effects/lsystem-tube-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "mandelbox_flight",
+      "file": "src/effects/mandelbox-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "mandelbulb_flight",
+      "file": "src/effects/mandelbulb-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "path_traced_fractal_flight",
+      "file": "src/effects/path-traced-fractal-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "polyfold_flight",
+      "file": "src/effects/polyfold-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "quaternion_julia_flight",
+      "file": "src/effects/quaternion-julia-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "schottky_inversion_flight",
+      "file": "src/effects/schottky-inversion-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "triplex_mutation_flight",
+      "file": "src/effects/triplex-mutation-flight.js",
+      "piece": "iq-soft-shadows",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/rmshadows/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "domainwarp",
+      "file": "src/effects/domain-warp.js",
+      "piece": "iq-domain-warp",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/warp/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "apollonian_foam_flight",
+      "file": "src/effects/apollonian-foam-flight.js",
+      "piece": "iq-apollonian",
+      "author": "Inigo Quilez",
+      "link": null,
+      "linkNote": "the Shadertoy shader \"Apollonian\" (2013); Psychedelia's notices give no link to it",
+      "licence": "CC BY-NC-SA 3.0 (Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported, the Shadertoy default), https://creativecommons.org/licenses/by-nc-sa/3.0/",
+      "nonCommercial": true,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "apollonian_foam_flight",
+      "file": "src/effects/apollonian-foam-flight.js",
+      "piece": "knighty-pseudo-kleinian",
+      "author": "Knighty, after Theli-at",
+      "link": "https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Knighty%20Collection/PseudoKleinian.frag",
+      "licence": "no licence stated at the source (\"Made by Knighty\"; the Fragmentarium application is offered under LGPL 2.1 or GPL 3)",
+      "nonCommercial": false,
+      "noLicenceStated": true
+    }
+  ]
+}

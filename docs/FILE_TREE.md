@@ -28,6 +28,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.8.md
 |   |-- RELEASE_NOTES_0.1.9.md
 |   |-- RELEASE_NOTES_0.1.10.md
+|   |-- RELEASE_NOTES_0.1.11.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -36,6 +37,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.8.md
 |   |-- RELEASE_RECORD_0.1.9.md
 |   |-- RELEASE_RECORD_0.1.10.md
+|   |-- RELEASE_RECORD_0.1.11.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -52,6 +54,7 @@ WorldMediaWindows/
 |   |-- 4.PNG
 |   `-- 5.PNG
 |-- scripts/
+|   |-- import_psychedelia.mjs
 |   `-- prepare_wiki.py
 |-- src/
 |   |-- adapters/
@@ -59,6 +62,7 @@ WorldMediaWindows/
 |   |-- modes/
 |   |-- styles/
 |   |-- vendor/
+|   |-- visualizer/
 |   `-- index.html
 |-- tests/
 |   |-- fixtures/
@@ -105,7 +109,7 @@ WorldMediaWindows/
 
 | Path | Purpose |
 |---|---|
-| `worldmedia_native.py` | Windows desktop entry point. Starts the local server and opens WebView2. |
+| `worldmedia_native.py` | Windows desktop entry point. Chooses the local port (waiting up to 8 seconds for a busy port that answers as World Media), starts the local server and opens WebView2. |
 | `worldmedia_theme.py` | Validated pywebview bridge and Windows DWM caption-color integration. |
 | `worldmedia_server.py` | Local HTTP server, static frontend host, allowlisted CORS proxy, shutdown API. |
 | `worldmedia_security.py` | Local control authentication, bounded JSON, safe filenames, and redaction. |
@@ -118,7 +122,7 @@ WorldMediaWindows/
 | `worldmedia_backup.py` | Settings backup ZIP: copies of the saved state files plus universal `.m3u8` playlists, written to the downloads folder. |
 | `worldmedia_icy.py` | Shoutcast/Icecast song titles: when the relay asks a station for them, removing the metadata blocks from the audio, and cleaning the title. |
 | `worldmedia_songlog.py` | The song log file (`state/song-log.json`): ordered writes, safe handling of an unreadable file, and the CSV export. |
-| `worldmedia_station_images.py` | The user's `station-images` folder: safe listing, station-name matching, and serving verified pictures. |
+| `worldmedia_station_images.py` | The user's `station-images` folder: safe listing (with the files that were not used and why), station-name matching, and serving verified pictures. |
 | `src/lib/capture-client.js` | Authenticated control client and frontend relay lifecycle. |
 | `src/lib/catalog-scheduler.js` | Fair global/provider metadata scheduling, retry cooldowns, visibility pause, cancellation, and deduplication. |
 | `src/lib/catalog-client.js` | Authenticated semantic catalog and opaque artwork control client. |
@@ -152,6 +156,20 @@ WorldMediaWindows/
 | `src/lib/player-meter.js` | The LED-style sound meter in the player bar (14 bars), switched by Settings > Appearance > Sound meter in the player bar. |
 | `src/lib/tuner-card-size.js` | The Tuner card size choice (Small, Medium, Large) and which sizes show pictures. |
 | `src/lib/tuner-card-art.js` | Pictures on Medium and Large Tuner cards: initials first, pictures only for cards in view once the strip has stopped moving. |
+| `src/lib/favorite-migration.js` | After a playlist is imported again, moves the favorites of channels that changed between radio and TV to the new channel, keeping place, category and equalizer. |
+| `src/lib/visualizer-settings.js` | The Visualizer's saved choices (quality, frame rate, brightness, scene, shuffle, effects, overlays, favourites, notice) and their checks. Small on purpose: it is in the main bundle. |
+| `src/modes/visualizer.js` | The Visualizer tab's shell: loads the Visualizer when the tab first opens and tears it down when the tab closes. |
+| `src/visualizer/index.js` | The Visualizer's panel and wiring: scene, look, shuffle, effects, overlays, picture, the photosensitivity notice, and the step-down note. |
+| `src/visualizer/scenes.js` | The table of scenes (name, category, cost badge, sound links), the flash-safety caps, and `HELD_SCENES`, the scenes that are not offered. With `scene-list.js` (the searchable list), `scene-renderer.js` (WebGL drawing), `scene-switcher.js`, `looks.js` and `transition.js`. |
+| `src/visualizer/reactor.js`, `loop.js`, `mood.js` | The sound side: Psychedelia's Beat Reactor fed from the shared signal, when to draw, and the music's mood. |
+| `src/visualizer/flash-limiter.js` | The flash limiter that every sound-derived value passes: at most three large pulses a second, shared by everything. |
+| `src/visualizer/fx-catalog.js`, `fx-chain.js`, `fx-shuffle.js`, `fx-reactions.js` | Post effects: the table of the 38 offered, the graphics chain that draws them, the shuffle, and the limited beat reactions. |
+| `src/visualizer/overlay-catalog.js`, `overlay-layer.js`, `overlay-patterns.js`, `overlay-shuffle.js` | Overlays: the table of the 25 offered and their blend-ins, the canvas that draws them, the seven patterns written for this app, and the shuffle. |
+| `src/visualizer/shuffle.js`, `favourites.js`, `step-down.js`, `hud.js`, `notice.js`, `size.js`, `visualizer.js`, `visualizer.css` | The scene shuffle, favourites, the automatic step-down, the buttons over the picture, the photosensitivity notice, drawing size, the chunk's entry and its styles. |
+| `src/visualizer/vendor/psychedelia/` | Code copied from Psychedelia Studio (same author, MIT): 76 files in `effects/` (the scenes and their helpers), 5 in `engine/`, `manifest.json` (each file's source and SHA-256) and licence files. Generated: do not edit by hand. |
+| `scripts/import_psychedelia.mjs` | Copies the used parts of Psychedelia Studio into the vendor folder and writes the manifest. `--check-drift` lists what changed upstream. |
+| `src/modes/about-credits.js`, `src/modes/about-credits-load.js` | The About page's **Visualizer credits**, built from the manifest's borrowed list and loaded as their own chunk. |
+| `CREDITS.md` | Credits for catalogs and libraries, and for the Visualizer's copied and borrowed code. |
 | `src/` | Vite frontend source. |
 | `src/lib/media-capabilities.js` | Pure download/record capability and manifest-delivery resolver. |
 | `src/lib/eq-store.js` | Versioned global, favorite, and custom-preset EQ persistence contract. |
@@ -177,9 +195,16 @@ WorldMediaWindows/
 | `tests/station-images-fit.test.js`, `tests/issue6-steady-dial.test.js` | Issue #6: station pictures shown whole, and a Tuner dial that keeps its size. |
 | `tests/sound-meter.test.js` | The sound signal and the player-bar sound meter. |
 | `tests/tuner-card-size.test.js`, `tests/tuner-card-art-stop.test.js` | Tuner card sizes, knob text, and the card pictures (when they load and stop). |
+| `tests/issue6-stations-and-pictures.test.js`, `tests_python/test_issue6_stations.py` | Issue #6 and discussion #8 (v0.1.11): favorites on the dial, Add as Auto, favorites following a re-import, station pictures for names with forbidden characters, the list of unused pictures, Move to bottom, Remove all favorites, and the local port a second copy would share. |
+| `tests/visualizer.test.js`, `tests/visualizer-signal.test.js`, `tests/visualizer-slice2.test.js` to `tests/visualizer-slice7.test.js`, `tests/visualizer-tuning.test.js`, `tests/visualizer-flash-lifecycle.test.js`, `tests/visualizer-real-window.test.js` | The Visualizer: the vendored files against their manifest, the sound signal, scenes and looks, shuffle, favourites, step-down, effects, overlays, the flash limiter, and the tab in a window. |
+| `tests/about-credits.test.js` | The About page's Visualizer credits, and that `CREDITS.md` and the notices name every borrowed piece. |
+| `tests/helpers/audio-sim.js`, `scene-luminance.js`, `signal-harness.js`, `visualizer-fakes.js` | Test helpers: simulated music for the analyser, a CPU recompute of two scenes' brightness, a clock and timer simulation, and fake graphics, DOM and window objects. |
+| `tests/helpers/visualizer-flash-check.mjs` and `.py`, `visualizer-fx-check.mjs` and `.py`, `visualizer-fx-check-page.js` | Checks run by hand, not by `npm test`: they draw scenes, effects and overlays in Chromium and report the largest frame-to-frame step of light. |
 | `screenshots/` | Versioned README and documentation screenshots. |
 | `build_windows.py` | Builds the signed-runtime portable folder and release ZIP. |
 | `build_single_exe.py` | Builds the classic unsigned one-file `dist\WorldMediaWindows.exe` with the current frontend, icon, and WebView bridge. |
 | `assets/` | App icon, Windows metadata, and embedded-runtime launcher assets. |
 | `docs/PROVIDERS.md` | All ten public endpoints, cache/refresh rules, limitations, and content/retry behavior. |
 | `docs/RELEASE_NOTES_0.1.10.md` | GitHub release notes for the `v0.1.10` tag and its release assets. |
+| `docs/RELEASE_NOTES_0.1.11.md` | GitHub release notes for the `v0.1.11` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.11.md` | What was checked for v0.1.11, with artifact hashes and limits. |

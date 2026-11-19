@@ -205,6 +205,8 @@ class BackupContentsTests(BackupTestCase):
             "#EXTINF:-1,Login\nhttps://user:pw@tv.example.org/x\n"
             "#EXT-X-SESSION-DATA:not-allowed\n#KODIPROP:inputstream=adaptive\n#PLAYLIST:Name\n"
             "#EXTINF:-1,Absolute again\nhttps://other.example.org/two.m3u8\n"
+            # The same address under the same name is the same channel: dropped.
+            "#EXTINF:-1,Absolute\nhttps://other.example.org/two.m3u8\n"
         ).replace("#EXT-X-SESSION-DATA:not-allowed\n", "")  # HLS tags make the app refuse the list.
         data = {"version": 1, "playlists": [
             {"id": "a" * 64, "name": "Online", "text": stored, "default_type": "tv",
@@ -220,6 +222,9 @@ class BackupContentsTests(BackupTestCase):
             '#EXTINF:-1 tvg-logo="https://lists.example.org/dir/logo.png" group-title="News",Relative\n'
             "https://lists.example.org/dir/live/one.m3u8\n"
             "#EXTINF:-1,Absolute\n"
+            "https://other.example.org/two.m3u8\n"
+            # Same address, another name: kept as its own channel.
+            "#EXTINF:-1,Absolute again\n"
             "https://other.example.org/two.m3u8\n"
         ))
         original = parse_playlist(stored, "tv", "https://lists.example.org/dir/list.m3u")["items"]

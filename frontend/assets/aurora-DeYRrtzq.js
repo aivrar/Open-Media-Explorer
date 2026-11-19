@@ -1,0 +1,101 @@
+function a(e){return e.EffectRegistry.register({name:"aurora",label:"Aurora",category:"Nature",description:"Northern lights over a mirror lake with mountains, stars and reflections",params:[{name:"intensity",label:"Intensity",min:.1,max:3,default:1.2,step:.01},{name:"speed",label:"Drift Speed",min:0,max:3,default:1,step:.01},{name:"scale",label:"Curtain Scale",min:.3,max:3,default:1,step:.01},{name:"height",label:"Curtain Height",min:.3,max:2,default:1,step:.01},{name:"rays",label:"Ray Streaks",min:0,max:1,default:.7,step:.01},{name:"scheme",label:"Colours",type:"select",options:["Classic Green","Magenta Storm","Polar Blue","Rainbow Veil"],default:0},{name:"stars",label:"Stars",min:0,max:2,default:1,step:.01},{name:"reflection",label:"Lake Reflection",min:0,max:1,default:.75,step:.01},{name:"mountains",label:"Mountains",min:0,max:1,default:.8,step:.01},{name:"audio_react",label:"Beat Reaction",min:0,max:2,default:1,step:.01}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_intensity;
+uniform float u_speed;
+uniform float u_scale;
+uniform float u_height;
+uniform float u_rays;
+uniform float u_scheme;
+uniform float u_stars;
+uniform float u_reflection;
+uniform float u_mountains;
+uniform float u_audio_react;
+uniform vec4 u_audio;
+uniform vec4 u_beat;
+
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash2(i), b = hash2(i + vec2(1.0, 0.0)), c = hash2(i + vec2(0.0, 1.0)), d = hash2(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float vfbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 4; i++) {
+        v += a * vnoise(p);
+        p = p * 2.03 + vec2(1.7, 9.2);
+        a *= 0.5;
+    }
+    return v;
+}
+
+vec3 auroraColor(float h) {
+    float s = floor(u_scheme + 0.5);
+    if (s < 0.5) return mix(vec3(0.1, 1.0, 0.45), vec3(0.75, 0.2, 0.9), smoothstep(0.45, 1.0, h));
+    if (s < 1.5) return mix(vec3(1.0, 0.2, 0.7), vec3(0.4, 0.2, 1.0), h);
+    if (s < 2.5) return mix(vec3(0.2, 0.9, 1.0), vec3(0.2, 0.3, 1.0), h);
+    return 0.55 + 0.45 * cos(6.28318 * (h * 0.8 + u_time * 0.03 + vec3(0.0, 0.33, 0.67)));
+}
+
+float mountainLine(float x) {
+    return (0.035 + 0.07 * vfbm(vec2(x * 2.5, 3.0)) + 0.03 * vfbm(vec2(x * 9.0, 7.0))) * u_mountains;
+}
+
+vec3 sky(vec3 rd, float t, float glow, float sway) {
+    float up = max(rd.y, 0.0);
+    vec3 col = mix(vec3(0.03, 0.05, 0.1), vec3(0.0, 0.005, 0.02), pow(up, 0.45));
+    // stars and a faint milky band
+    vec2 sp = vec2(atan(rd.x, rd.z), rd.y) * vec2(160.0, 160.0);
+    vec2 sid = floor(sp);
+    float sh = hash2(sid);
+    float star = step(0.993, sh) * smoothstep(0.45, 0.0, length(fract(sp) - 0.5)) * (0.6 + 0.4 * sin(t * 2.0 + sh * 50.0));
+    col += vec3(0.9, 0.95, 1.0) * star * u_stars * smoothstep(0.0, 0.15, up);
+    col += vec3(0.15, 0.12, 0.2) * pow(vfbm(vec2(atan(rd.x, rd.z) * 3.0 + rd.y * 4.0, rd.y * 2.0)), 3.0) * u_stars * 0.5 * up;
+
+    if (rd.y > 0.01) {
+        vec3 acc = vec3(0.0);
+        for (int i = 0; i < 36; i++) {
+            float fi = float(i) / 36.0;
+            float alt = 1.0 + fi * u_height * 2.2;
+            float dist = alt / rd.y;
+            vec2 pq = rd.xz * dist * 0.11 * u_scale;
+            pq += vec2(t * 0.03 * u_speed, t * 0.012 * u_speed);
+            pq.x += sin(pq.y * 1.5 + t * 0.4) * (0.15 + sway * 0.35);
+            float n = vfbm(pq);
+            float band = smoothstep(0.05, 0.0, abs(n - 0.5)) + 0.35 * smoothstep(0.11, 0.0, abs(n - 0.5));
+            float streak = mix(1.0, pow(vnoise(vec2((pq.x + pq.y) * 34.0, t * 0.6 + fi * 0.3)), 1.5) * 1.6, u_rays);
+            float fade = fi * (1.0 - fi) * 4.0;
+            acc += auroraColor(fi) * band * streak * fade / (1.0 + dist * 0.025);
+        }
+        col += acc * u_intensity * 0.09 * glow;
+    }
+    return col;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    float react = u_audio_react;
+    float glow = 1.0 + u_audio.y * react * 0.9 + u_beat.x * react * 0.5 * (0.5 + 0.5 * sin(uv.x * 6.0 - u_time * 3.0));
+    float sway = u_audio.x * react;
+    float t = u_time;
+    vec3 rd = normalize(vec3(uv.x, uv.y + 0.22, 1.25));
+    float az = atan(rd.x, rd.z);
+    vec3 col;
+    vec3 mountainCol = vec3(0.006, 0.011, 0.022) * (1.0 + 0.4 * glow * u_intensity);
+    if (rd.y >= 0.0) {
+        // Mountains first: their pixels skip the aurora march entirely.
+        col = rd.y < mountainLine(az) ? mountainCol : sky(rd, t, glow, sway);
+    } else {
+        // Lake: mirrored sky with gentle ripples and a darker tint
+        float ripple = sin(az * 120.0 + t * 1.5 + sin(rd.y * 300.0)) * 0.002 + sin(rd.y * 400.0 - t * 2.0) * 0.0015;
+        vec3 rr = normalize(vec3(rd.x + ripple, -rd.y, rd.z));
+        col = rr.y < mountainLine(atan(rr.x, rr.z)) ? mountainCol * 0.6 : sky(rr, t, glow, sway) * u_reflection * 0.65;
+        col *= 0.6 + 0.4 * smoothstep(-0.25, 0.0, rd.y);
+    }
+    col = 1.0 - exp(-col * 1.6);
+    FRAG_OUT = vec4(pow(col, vec3(0.95)), 1.0);
+}
+`}),{}}export{a as default};

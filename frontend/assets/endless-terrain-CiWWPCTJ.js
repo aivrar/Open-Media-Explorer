@@ -1,0 +1,169 @@
+function a(e){return e.EffectRegistry.register({name:"endless_terrain",label:"Endless Terrain",category:"Nature",description:"Fly over endless eroded mountains, lakes and clouds with sun and aerial fog",params:[{name:"speed",label:"Flight Speed",min:0,max:3,default:1,step:.01},{name:"altitude",label:"Altitude",min:.2,max:3,default:1,step:.01},{name:"mountains",label:"Mountain Height",min:.3,max:2.5,default:1,step:.01},{name:"roughness",label:"Roughness",min:.3,max:.65,default:.5,step:.005},{name:"snow",label:"Snow Line",min:0,max:1,default:.55,step:.01},{name:"water",label:"Water Level",min:0,max:.6,default:.18,step:.01},{name:"clouds",label:"Clouds",min:0,max:1,default:.5,step:.01},{name:"fog",label:"Haze",min:0,max:2,default:1,step:.01},{name:"detail",label:"Detail (steps)",type:"int",min:60,max:200,default:120,step:1},{name:"scheme",label:"Light",type:"select",options:["Midday","Golden Hour","Dusk","Alien World"],default:1},{name:"audio_react",label:"Beat Reaction",min:0,max:2,default:1,step:.01}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_speed;
+uniform float u_altitude;
+uniform float u_mountains;
+uniform float u_roughness;
+uniform float u_snow;
+uniform float u_water;
+uniform float u_clouds;
+uniform float u_fog;
+uniform float u_detail;
+uniform float u_scheme;
+uniform float u_audio_react;
+uniform vec4 u_audio;
+uniform vec4 u_beat;
+
+float th(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+
+// Value noise with its derivatives.
+vec3 noised(vec2 x) {
+    vec2 i = floor(x);
+    vec2 f = fract(x);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    vec2 du = 6.0 * f * (1.0 - f);
+    float a = th(i), b = th(i + vec2(1.0, 0.0)), c = th(i + vec2(0.0, 1.0)), d = th(i + vec2(1.0, 1.0));
+    float k = a - b - c + d;
+    return vec3(a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y, du * (vec2(b - a, c - a) + k * u.yx));
+}
+
+const mat2 ROT = mat2(0.8, -0.6, 0.6, 0.8);
+
+// Eroded fBm: each octave is damped where the slopes so far are steep.
+float terrain(vec2 p, int octaves) {
+    p *= 0.0035;
+    float a = 0.0, b = 1.0;
+    vec2 d = vec2(0.0);
+    for (int i = 0; i < 9; i++) {
+        if (i >= octaves) break;
+        vec3 n = noised(p);
+        d += n.yz;
+        a += b * n.x / (1.0 + dot(d, d));
+        b *= u_roughness;
+        p = ROT * p * 2.0;
+    }
+    return a * 120.0 * u_mountains;
+}
+
+void lightColors(out vec3 sunDir, out vec3 sun, out vec3 skyTop, out vec3 skyHor) {
+    float s = floor(u_scheme + 0.5);
+    if (s < 0.5) { sunDir = normalize(vec3(-0.3, 0.75, 0.6)); sun = vec3(1.0, 0.97, 0.9); skyTop = vec3(0.25, 0.48, 0.85); skyHor = vec3(0.7, 0.82, 0.95); }
+    else if (s < 1.5) { sunDir = normalize(vec3(-0.4, 0.18, 0.9)); sun = vec3(1.0, 0.75, 0.45); skyTop = vec3(0.3, 0.4, 0.65); skyHor = vec3(1.0, 0.72, 0.5); }
+    else if (s < 2.5) { sunDir = normalize(vec3(0.3, 0.04, 1.0)); sun = vec3(1.0, 0.45, 0.35); skyTop = vec3(0.12, 0.08, 0.3); skyHor = vec3(0.85, 0.4, 0.45); }
+    else { sunDir = normalize(vec3(0.5, 0.35, 0.8)); sun = vec3(0.6, 1.0, 0.85); skyTop = vec3(0.35, 0.05, 0.4); skyHor = vec3(0.95, 0.5, 0.75); }
+}
+
+vec3 skyColor(vec3 rd, vec3 sunDir, vec3 sun, vec3 skyTop, vec3 skyHor, float flare) {
+    vec3 col = mix(skyHor, skyTop, pow(max(rd.y, 0.0), 0.5));
+    float sd = max(dot(rd, sunDir), 0.0);
+    col += sun * (pow(sd, 400.0) * 3.0 + pow(sd, 12.0) * 0.25 * (1.0 + flare));
+    return col;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    float react = u_audio_react;
+    float kick = u_beat.x * react;
+    float bass = u_audio.x * react;
+    vec3 sunDir, sun, skyTop, skyHor;
+    lightColors(sunDir, sun, skyTop, skyHor);
+
+    // Camera path: forward along z, winding in x, a steady height above the ground.
+    float z = u_time * u_speed * 60.0 + seedPhase() * 300.0;
+    vec2 camXZ = vec2(sin(z * 0.0015) * 300.0, z);
+    float waterH = u_water * 120.0 * u_mountains;
+    // Height from the ground averaged along the path (a little behind to
+    // further ahead), so the camera glides over ridges instead of jerking up
+    // and down with every bump below it. A soft maximum with the ground
+    // right underneath (as drawn) keeps it at least 25 + 40 x altitude - 8
+    // above the surface, clear of peaks the average undercuts.
+    float hAvg = 0.0, wSum = 0.0;
+    for (int k = -2; k <= 5; k++) {
+        float zk = z + float(k) * 40.0;
+        float w = 1.0 - abs(float(k) - 1.5) / 5.0;
+        hAvg += max(terrain(vec2(sin(zk * 0.0015) * 300.0, zk), 2), waterH) * w;
+        wSum += w;
+    }
+    hAvg /= wSum;
+    float hHere = max(terrain(camXZ, 6), waterH) - 8.0; // same octaves as the raymarch
+    float hBase = 0.5 * (hAvg + hHere + sqrt((hAvg - hHere) * (hAvg - hHere) + 400.0));
+    // Clearance grows with taller mountains, whose steeper walls otherwise
+    // pass right by the camera.
+    float camY = hBase + (25.0 + 40.0 * u_altitude) * max(1.0, u_mountains);
+    vec3 ro = vec3(camXZ.x, camY, camXZ.y);
+    vec2 aheadXZ = vec2(sin((z + 120.0) * 0.0015) * 300.0, z + 120.0);
+    vec3 target = vec3(aheadXZ.x, camY - 18.0 - 10.0 * u_altitude, aheadXZ.y);
+    float bank = sin(u_beat.w * 0.785398) * 0.04 * react + cos(z * 0.0015) * 0.12;
+    vec3 rd = psyLookAt(ro, target, bank) * normalize(vec3(uv, 1.5));
+
+    vec3 sky = skyColor(rd, sunDir, sun, skyTop, skyHor, kick);
+    vec3 col = sky;
+
+    // Raymarch the heightfield.
+    float t = 1.0;
+    float hit = 0.0;
+    float tMax = 3200.0;
+    for (int i = 0; i < 200; i++) {
+        if (float(i) >= u_detail) break;
+        vec3 p = ro + rd * t;
+        float h = p.y - max(terrain(p.xz, 6), waterH);
+        if (h < 0.002 * t) { hit = 1.0; break; }
+        t += h * 0.45;
+        if (t > tMax) break;
+    }
+
+    if (hit > 0.5) {
+        vec3 p = ro + rd * t;
+        float hgt = terrain(p.xz, 8);
+        if (hgt < waterH) {
+            // Water: sky reflection with a little ripple, darker in deep parts.
+            vec3 n = normalize(vec3(sin(p.x * 0.3 + u_time) * 0.02, 1.0, cos(p.z * 0.25 + u_time * 1.3) * 0.02));
+            vec3 refl = skyColor(reflect(rd, n), sunDir, sun, skyTop, skyHor, kick);
+            float fres = 0.2 + 0.8 * pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+            col = mix(vec3(0.02, 0.06, 0.08), refl, fres);
+        } else {
+            float e = 0.6 + t * 0.002;
+            vec3 n = normalize(vec3(hgt - terrain(p.xz + vec2(e, 0.0), 8), e, hgt - terrain(p.xz + vec2(0.0, e), 8)));
+            float relH = hgt / (120.0 * u_mountains);
+            vec3 rock = mix(vec3(0.28, 0.24, 0.2), vec3(0.45, 0.4, 0.34), th(floor(p.xz * 0.3)) * 0.5);
+            vec3 grass = vec3(0.16, 0.24, 0.08);
+            vec3 albedo = mix(rock, grass, smoothstep(0.7, 0.9, n.y) * (1.0 - smoothstep(0.35, 0.6, relH)));
+            float snowAmt = smoothstep(u_snow * 0.9, u_snow * 0.9 + 0.08, relH + n.y * 0.15 - 0.1) * smoothstep(0.55, 0.8, n.y);
+            albedo = mix(albedo, vec3(0.92, 0.94, 0.98), snowAmt);
+            float dif = max(dot(n, sunDir), 0.0);
+            // Cheap soft shadow: march a few steps toward the sun.
+            float sh = 1.0;
+            float st = 4.0;
+            for (int k = 0; k < 12; k++) {
+                vec3 q = p + sunDir * st;
+                float d = q.y - terrain(q.xz, 4);
+                sh = min(sh, 8.0 * d / st);
+                st += max(d * 0.6, 6.0);
+                if (sh < 0.01 || st > 600.0) break;
+            }
+            sh = clamp(sh, 0.0, 1.0);
+            vec3 amb = mix(skyHor, skyTop, n.y * 0.5 + 0.5) * 0.35;
+            col = albedo * (sun * dif * sh * 1.4 + amb);
+        }
+        // Aerial fog towards the horizon colour.
+        float fog = 1.0 - exp(-t * 0.0009 * u_fog);
+        col = mix(col, mix(skyHor, sun, pow(max(dot(rd, sunDir), 0.0), 8.0) * 0.4), fog);
+    }
+
+    // Cloud layer above, seen through gaps and from below.
+    float cloudH = camY + 260.0;
+    if (rd.y > 0.0 && u_clouds > 0.0) {
+        float ct = (cloudH - ro.y) / rd.y;
+        if (ct > 0.0 && (hit < 0.5 || ct < t)) {
+            vec2 cp = (ro.xz + rd.xz * ct) * 0.0018 + vec2(u_time * 0.02, 0.0);
+            float c = noised(cp).x * 0.6 + noised(cp * 2.3 + 4.0).x * 0.3 + noised(cp * 5.1).x * 0.1;
+            float cov = smoothstep(1.0 - u_clouds, 1.25 - u_clouds * 0.6, c);
+            vec3 cloudCol = mix(skyHor * 0.9, sun * (1.1 + bass * 0.5), 0.5 + 0.5 * c);
+            col = mix(col, cloudCol, cov * exp(-ct * 0.00035) * 0.9);
+        }
+    }
+    col = 1.0 - exp(-col * 1.25);
+    FRAG_OUT = vec4(pow(col, vec3(0.92)), 1.0);
+}
+`}),{}}export{a as default};

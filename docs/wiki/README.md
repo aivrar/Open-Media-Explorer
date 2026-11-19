@@ -1,10 +1,10 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.10` behavior in this repository: how to
+It describes the shipped `0.1.11` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
-equalizer, download finite files, record live streams, preserve portable data,
-and diagnose provider or runtime problems.
+equalizer, watch the Visualizer, download finite files, record live streams,
+preserve portable data, and diagnose provider or runtime problems.
 
 The app is a local desktop shell around public catalogs. It does not host the
 catalogs or stream files itself, and it does not have a fixed channel list.
@@ -18,6 +18,29 @@ providers at run time and can change without an app update.
 | ![World Media Tuner](<../../screenshots/updated screenshots/tuner.PNG>) | ![World Media Discovery](<../../screenshots/updated screenshots/discovery.PNG>) |
 
 ![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
+
+## New in 0.1.11
+
+- A new **Visualizer** tab shows pictures that move with the sound of whatever
+  is playing: 71 scenes, post effects, overlays, a shuffle, favourites, and an
+  automatic step-down for weak computers. It shows moving, flashing pictures, so
+  a notice about photosensitivity comes first. Work on it continues. See
+  [Visualizer](09-visualizer.md).
+- Importing a playlist now starts on **Add as: Auto**, which works out radio or
+  TV by itself, and the import result says what it chose when some channels
+  needed a type from **Add as**. Importing the same playlist again as Radio
+  moves its TV favorites over (and the other way round). The Tuner's status
+  line says when some of your favorites are saved as the other type. See [Using
+  the
+  application](02-using-the-application.md) and
+  [Troubleshooting](06-troubleshooting.md).
+- A station picture now matches a station whose name has a character a file name
+  cannot have (such as "/"), and Settings lists the pictures that were not used.
+  Favorite cards have a **Move to bottom** button, and **Remove all favorites**
+  asks first. See [Using the application](02-using-the-application.md).
+- Fixes: the player bar no longer jumps sideways on every station change, own
+  playlist channels no longer show "See provider terms", four-letter initials
+  fit on Tuner cards, and the Light theme's slider tracks are visible.
 
 ## New in 0.1.10
 
@@ -55,7 +78,8 @@ providers at run time and can change without an app update.
 | If you want to… | Read |
 |---|---|
 | Install the EXE or move it to another drive | [Installation and portable data](01-installation-and-portable-data.md) |
-| Learn the five tabs, sidebar, filters, and settings | [Using the application](02-using-the-application.md) |
+| Learn the six tabs, sidebar, filters, and settings | [Using the application](02-using-the-application.md) |
+| Use the Visualizer, keep it light on a weak computer, or read about its flashing notice | [Visualizer](09-visualizer.md) |
 | Understand every source and its channel/catalog behavior | [Sources and channels](03-sources-and-channels.md) |
 | Play a stream, fix a broken stream, use EQ, download, or record | [Playback, EQ, downloads, and recording](04-playback-eq-downloads-recording.md) |
 | Understand favorites, cache, profile migration, and backups | [Data, cache, and portability](05-data-cache-and-portability.md) |
@@ -101,8 +125,11 @@ providers at run time and can change without an app update.
   text filter.
 - **Discovery** asks enabled sources for bounded random candidates and returns
   one result at a time. It does not try to download every catalog first.
+- **Visualizer** shows pictures that move with the sound of whatever is
+  playing. It loads only when you open it and costs nothing while its tab is
+  closed.
 - **About** explains the public sources, privacy model, licenses, and bundled
-  runtime notices.
+  runtime notices, and credits the code the Visualizer borrows.
 
 ## Screenshots in this repository
 

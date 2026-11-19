@@ -185,6 +185,10 @@ test('player owns lifecycle state across pause, errors, rejection, stop, and rap
   const lazyPlay = player.playItem(lazyItem);
   await lazyResolutionStarted;
   assert.equal(lazyResolutionSignal?.aborted, false);
+  // While the next item connects, Play keeps its place (disabled, not hidden),
+  // so the player bar does not shift on each station change (issue 6).
+  assert.equal(elements['player-play'].hidden, false);
+  assert.equal(elements['player-play'].disabled, true);
   const afterLazy = item('after-lazy', 'video', 'video');
   await player.playItem(afterLazy);
   assert.equal(lazyResolutionSignal?.aborted, true);

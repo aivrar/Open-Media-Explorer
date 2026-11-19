@@ -54,8 +54,8 @@ The browser profile stores:
 
 - favorites (`worldmedia.favorites.v1`);
 - favorites categories (`worldmedia.favgroups.v1`);
-- settings, enabled sources, and the Favorites sort choice
-  (`worldmedia.settings.v1`);
+- settings, enabled sources, the Favorites sort choice, and the Visualizer's
+  choices and favourites (`worldmedia.settings.v1`);
 - volume (`worldmedia.volume.v1`);
 - recent capture job history (`worldmedia.jobs.v1`);
 - global/favorite/custom EQ (`worldmedia.eq.v1`).
@@ -138,7 +138,10 @@ folder and opens it. A picture named like a station, for example
 **Refresh**. PNG, JPG, WebP or GIF, up to 2 MB each. World Media only reads
 this folder. Because it is part of the data folder, it moves with the portable
 folder, and the backup ZIP includes it. **Clear local cache** leaves it alone.
-[Using the application](02-using-the-application.md) has the matching rules.
+[Using the application](02-using-the-application.md) has the matching rules,
+including how a station whose name has a character a file name cannot have
+(such as "/") finds its picture, and the **Pictures to check** list in Settings
+that says why a file was not used.
 
 ## Going back to an older version
 
@@ -172,8 +175,10 @@ discard unseen collected items.
 ## Clearing cache safely
 
 Settings → Storage → **Clear local cache** removes local favorites, favorites
-categories, preferences, EQ, volume, and job history, empties the song log, and
-clears catalog/artwork cache records. It keeps:
+categories, preferences (including the Visualizer's choices and favourites, so
+its notice about flashing pictures is shown again), EQ, volume, and job
+history, empties the song log, and clears catalog/artwork cache records. It
+keeps:
 
 - files already in `downloads`, including backup ZIPs;
 - imported playlists (`state/playlists.json`);

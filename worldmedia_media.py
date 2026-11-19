@@ -33,7 +33,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.10"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.11"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096

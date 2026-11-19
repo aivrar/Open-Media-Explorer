@@ -75,7 +75,9 @@ test('Import playlist accepts an .xspf file and sends its text unchanged to the 
 test('the file picker, button and link help name all four formats', async () => {
   const controls = await read('src/modes/library/personal-controls.js');
   assert.match(controls, /accept: '\.m3u,\.m3u8,\.pls,\.xspf'/);
-  assert.match(controls, /title: 'Import a local \.m3u, \.m3u8, \.pls or \.xspf channel list\. A matching filename replaces that playlist; favorites are kept\.'/);
+  assert.match(controls, /title: 'Import a local \.m3u, \.m3u8, \.pls or \.xspf channel list\. A matching filename replaces that playlist; favorites are kept\. '/);
+  // How to change the stations (issue 6): edit your own file and import it again.
+  assert.match(controls, /'To change the stations, edit your own playlist file and import it again under the same file name; the copy the app keeps is not meant to be edited by hand\.'/);
   assert.match(controls, /select Online playlist for an M3U, PLS or XSPF channel list\./);
   const drop = await read('src/lib/playlist-drop.js');
   assert.match(drop, /const PLAYLIST_NAME = \/\\\.\(m3u8\?\|pls\|xspf\)\$\/i;/);

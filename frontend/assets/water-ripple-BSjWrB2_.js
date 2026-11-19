@@ -1,0 +1,70 @@
+function t(e){return e.EffectRegistry.register({name:"water_ripple",label:"Water Ripple",category:"Demoscene",description:"Expanding water ripples with refraction and caustic effects",params:[{name:"speed",label:"Speed",min:.5,max:5,default:2,step:.1},{name:"drop_rate",label:"Drop Rate",min:.5,max:5,default:1.5,step:.1},{name:"damping",label:"Damping",min:.5,max:5,default:2,step:.1},{name:"refraction",label:"Refraction",min:0,max:.2,default:.05,step:.01},{name:"color_mode",label:"Color",type:"select",options:["Water","Mercury","Rainbow","Dark Pool"],default:0}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform vec2 u_mouse;
+uniform float u_speed;
+uniform float u_drop_rate;
+uniform float u_damping;
+uniform float u_refraction;
+uniform float u_color_mode;
+
+float ripple(vec2 uv, vec2 center, float birthTime, float t) {
+    float age = t - birthTime;
+    if (age < 0.0) return 0.0;
+    float d = length(uv - center);
+    float wave = sin(d * 30.0 - age * u_speed * 8.0);
+    float envelope = exp(-age * u_damping) * exp(-d * 3.0);
+    return wave * envelope;
+}
+
+void main() {
+    vec2 uv = v_uv;
+    float t = u_time + seedPhase();
+
+    float height = 0.0;
+
+    // Multiple procedural ripples
+    float interval = 1.0 / max(u_drop_rate, 0.1);
+    for (float i = 0.0; i < 12.0; i++) {
+        float rseed = i * 7.37;
+        vec2 center = vec2(
+            hash(rseed) * 0.8 + 0.1,
+            hash(rseed + 100.0) * 0.8 + 0.1
+        );
+        // Each ripple repeats on its own cycle
+        float birth = mod(t - i * interval, 12.0 * interval);
+        height += ripple(uv, center, t - birth, t);
+    }
+
+    // Mouse ripple
+    height += ripple(uv, u_mouse, t - 0.1, t) * 2.0;
+
+    // Fake refraction
+    vec2 refracted = uv + vec2(
+        height * u_refraction,
+        height * u_refraction * 0.7
+    );
+
+    // Base pattern
+    float pattern = sin(refracted.x * 20.0) * sin(refracted.y * 20.0) * 0.5 + 0.5;
+
+    int mode = int(u_color_mode);
+    vec3 col;
+
+    if (mode == 0) {
+        col = mix(vec3(0.0, 0.15, 0.3), vec3(0.2, 0.5, 0.8), 0.5 + height * 0.5);
+        col += vec3(0.3, 0.6, 0.9) * max(0.0, height) * 2.0;
+        col += vec3(1.0) * pow(max(0.0, height), 4.0);
+    } else if (mode == 1) {
+        col = vec3(0.7, 0.7, 0.75) + vec3(0.3) * height;
+        col += vec3(1.0) * pow(max(0.0, height), 3.0);
+    } else if (mode == 2) {
+        col = rainbow(height * 0.5 + 0.5 + t * 0.05);
+    } else {
+        col = vec3(0.02) + vec3(0.0, 0.1, 0.15) * (0.5 + height * 0.5);
+        col += vec3(0.1, 0.3, 0.4) * pow(max(0.0, height), 2.0);
+    }
+
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{t as default};

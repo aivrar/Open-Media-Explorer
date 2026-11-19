@@ -130,6 +130,16 @@ export function validateItem(item) {
   return errs;
 }
 
+/** The license or terms note a card or the detail panel shows, or ''. None
+ *  for 'Unknown', and none for channels from the user's own playlists: their
+ *  stored "See provider terms" is the same on every card and tells the user
+ *  nothing about a stream they added themselves. Catalog sources keep theirs. */
+export function shownLicense(item) {
+  const license = typeof item?.license === 'string' ? item.license.trim() : '';
+  if (!license || license === 'Unknown' || item?.source === 'playlist') return '';
+  return license;
+}
+
 /** Build an adapter-prefixed ID. */
 export function prefixId(adapterId, raw) {
   return `${adapterId}:${raw}`;

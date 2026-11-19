@@ -1,0 +1,312 @@
+function l(e){var a=e.EffectRegistry,t=e.FractalFlight;return a.register({name:"kifs_flight",label:"KIFS Fold Flight",category:"Fractals",description:"Raymarched kaleidoscopic IFS folds with Menger, tetra, octa, and lattice flight paths",fractalFlight:t.metadata({family:"KIFS Fold",familyKey:"kifs",modeParam:"family",modes:["Menger Vault","Tetra Crystal","Octa Fold","Box Lattice"],depthParams:["tunnel_depth"],requiredParams:["family","iterations","fold_scale","fold_offset","fold_bias","fold_rotation","bailout","thickness","tunnel_depth","structure_pulse"],animationParams:["flight_speed","tunnel_depth","orbit_radius","orbit_spin","motion_mode","motion_phase","fold_rotation","structure_pulse","roll","roll_speed","fov","color_speed"]}),params:[{name:"family",label:"Fold Family",group:"Formula",type:"select",options:["Menger Vault","Tetra Crystal","Octa Fold","Box Lattice"],default:1},{name:"iterations",label:"Fold Iterations",group:"Formula",min:3,max:12,default:7,step:1,type:"int"},{name:"fold_scale",label:"Fold Scale",group:"Formula",min:1.6,max:4,default:2.72,step:.05},{name:"fold_offset",label:"Fold Offset",group:"Formula",min:.25,max:1.6,default:.82,step:.02},{name:"fold_bias",label:"Fold Bias",group:"Formula",min:-.6,max:.6,default:.12,step:.02},{name:"fold_rotation",label:"Fold Rotation",group:"Formula",min:-1.5,max:1.5,default:.55,step:.02},{name:"bailout",label:"Bailout",group:"Formula",min:1.2,max:6,default:3.2,step:.1},{name:"thickness",label:"Core Thickness",group:"Formula",min:.25,max:2,default:.9,step:.02},{name:"flight_speed",label:"Flight Speed",group:"Flight",min:0,max:6,default:.55,step:.05},{name:"tunnel_depth",label:"Tunnel Depth",group:"Flight",min:0,max:3.2,default:.45,step:.05},{name:"orbit_radius",label:"Orbit Radius",group:"Flight",min:.2,max:4.5,default:.82,step:.05},{name:"orbit_spin",label:"Orbit Spin Speed",group:"Flight",min:-4,max:4,default:.4,step:.05},{name:"motion_mode",label:"Motion Path",group:"Animation",type:"select",options:["Vault Orbit","Figure Eight","Fold Tunnel","Surface Graze"],default:0},{name:"motion_phase",label:"Motion Phase",group:"Animation",min:0,max:1,default:0,step:.01},{name:"structure_pulse",label:"Structure Pulse",group:"Animation",min:0,max:1.5,default:.32,step:.05},{name:"roll",label:"Roll Drift",group:"Animation",min:-1.5,max:1.5,default:.2,step:.05},{name:"roll_speed",label:"Roll Speed",group:"Animation",min:0,max:5,default:.5,step:.05},{name:"fov",label:"Field of View",group:"Animation",min:.55,max:1.8,default:1,step:.05},{name:"color_speed",label:"Color Speed",group:"Visual",min:0,max:8,default:.4,step:.05},{name:"palette",label:"Palette",group:"Visual",type:"select",palette:!0,options:["Cathedral Gold","Crystal Violet","Aurora Glass","Circuit Lava"],default:1},{name:"shade_mode",label:"Shade Mode",group:"Visual",type:"select",options:["Trap Glow","Normal Glass","Iteration Bands","Cell Pulse"],default:0},{name:"fog",label:"Depth Fog",group:"Visual",min:0,max:1.5,default:.28,step:.05},{name:"glow",label:"Edge Glow",group:"Visual",min:0,max:2.5,default:1.65,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_family;
+uniform float u_iterations;
+uniform float u_fold_scale;
+uniform float u_fold_offset;
+uniform float u_fold_bias;
+uniform float u_fold_rotation;
+uniform float u_bailout;
+uniform float u_thickness;
+uniform float u_flight_speed;
+uniform float u_tunnel_depth;
+uniform float u_orbit_radius;
+uniform float u_orbit_spin;
+uniform float u_motion_mode;
+uniform float u_motion_phase;
+uniform float u_structure_pulse;
+uniform float u_roll;
+uniform float u_roll_speed;
+uniform float u_fov;
+uniform float u_color_speed;
+uniform float u_palette;
+uniform float u_shade_mode;
+uniform float u_fog;
+uniform float u_glow;
+
+struct KifsHit {
+    float dist;
+    float iter;
+    float trap;
+    float cell;
+};
+
+float phaseOffset() {
+    return u_motion_phase * 6.28318530718;
+}
+
+mat3 rotX3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c);
+}
+
+mat3 rotY3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
+}
+
+mat3 rotZ3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0);
+}
+
+float sdBox(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sdOctahedron(vec3 p, float s) {
+    p = abs(p);
+    return (p.x + p.y + p.z - s) * 0.57735027;
+}
+
+vec3 sortFold(vec3 p) {
+    p = abs(p);
+    if (p.x < p.y) p.xy = p.yx;
+    if (p.x < p.z) p.xz = p.zx;
+    if (p.y < p.z) p.yz = p.zy;
+    return p;
+}
+
+vec3 tetraFold(vec3 p) {
+    if (p.x + p.y < 0.0) p.xy = -p.yx;
+    if (p.x + p.z < 0.0) p.xz = -p.zx;
+    if (p.y + p.z < 0.0) p.yz = -p.zy;
+    return p;
+}
+
+vec3 latticeFold(vec3 p, float offsetValue) {
+    p = abs(p + vec3(u_fold_bias, -u_fold_bias * 0.4, u_fold_bias * 0.7)) - offsetValue;
+    p.xy = abs(p.xy);
+    if (p.x < p.y) p.xy = p.yx;
+    return p;
+}
+
+vec3 paletteKifs(float t, float paletteMode) {
+    t = fract(t);
+    if (paletteMode > 3.5) return psyLutLinear(t);
+    if (paletteMode < 0.5) {
+        return palette(t, vec3(0.36, 0.25, 0.12), vec3(0.55, 0.44, 0.25), vec3(0.95, 0.70, 0.35), vec3(0.04, 0.22, 0.46));
+    } else if (paletteMode < 1.5) {
+        return palette(t, vec3(0.24, 0.18, 0.46), vec3(0.40, 0.30, 0.62), vec3(0.72, 0.48, 1.00), vec3(0.46, 0.07, 0.18));
+    } else if (paletteMode < 2.5) {
+        return palette(t, vec3(0.12, 0.34, 0.40), vec3(0.22, 0.55, 0.54), vec3(0.48, 0.92, 0.90), vec3(0.10, 0.28, 0.52));
+    }
+    return palette(t, vec3(0.38, 0.12, 0.07), vec3(0.56, 0.24, 0.12), vec3(1.00, 0.48, 0.18), vec3(0.00, 0.16, 0.33));
+}
+
+KifsHit kifsDE(vec3 p) {
+    vec3 z = p;
+    float morphPhase = u_time * 0.18 + phaseOffset() + u_family * 0.61 + seedPhase();
+    float morph = sin(morphPhase) * u_structure_pulse;
+    float scaleValue = max(u_fold_scale + morph * 0.18, 1.05);
+    float offsetValue = max(u_fold_offset + morph * 0.08, 0.001);
+    float scaleAccum = 1.0;
+    float trap = 1000.0;
+    float iter = 0.0;
+    float cell = 0.0;
+    float familyMode = u_family;
+    float spin = u_fold_rotation + sin(morphPhase * 0.75) * (0.08 + u_structure_pulse * 0.10);
+
+    for (int i = 0; i < 14; i++) {
+        if (float(i) >= u_iterations) break;
+        float fi = float(i);
+        z = rotY3(spin * 0.45 + fi * 0.035) * rotZ3(spin * 0.25) * z;
+
+        if (familyMode < 0.5) {
+            z = sortFold(z);
+            z = rotY3(spin + fi * 0.08) * z;
+            vec3 c = vec3(1.0 + u_fold_bias, 1.0 - u_fold_bias * 0.35, 0.32 + offsetValue * 0.25);
+            z = vec3(
+                scaleValue * (z.x - c.x) + c.x,
+                scaleValue * (z.y - c.y) + c.y,
+                scaleValue * z.z
+            );
+            float zCut = c.z * (scaleValue - 1.0) * 0.5;
+            if (z.z < zCut) z.z -= c.z * (scaleValue - 1.0);
+            cell += length(z.xy) * 0.03;
+        } else if (familyMode < 1.5) {
+            z = tetraFold(z);
+            z = abs(z);
+            z = rotX3(spin * 0.75 + fi * 0.11) * z;
+            z = z * scaleValue - vec3(offsetValue + u_fold_bias, offsetValue, offsetValue - u_fold_bias) * (scaleValue - 1.0);
+            cell += abs(z.x + z.y + z.z) * 0.015;
+        } else if (familyMode < 2.5) {
+            z = sortFold(z);
+            z = rotZ3(spin + fi * 0.13) * z;
+            z = z * scaleValue - vec3(offsetValue, offsetValue * 0.72 + u_fold_bias, offsetValue * 1.18) * (scaleValue - 1.0);
+            cell += length(z.yz) * 0.02;
+        } else {
+            z = latticeFold(z, offsetValue);
+            z = rotX3(spin * 0.4 + fi * 0.09) * rotY3(spin * 0.65) * z;
+            z = z * scaleValue - vec3(offsetValue * 0.78, offsetValue * 1.12, offsetValue + u_fold_bias) * (scaleValue - 1.0);
+            cell += max(abs(z.x), abs(z.y)) * 0.018;
+        }
+
+        scaleAccum *= scaleValue;
+        trap = min(trap, length(z));
+        iter = fi + 1.0;
+        if (dot(z, z) > u_bailout * u_bailout) break;
+    }
+
+    float shell = 1.18 + u_thickness * 0.42 + morph * 0.08;
+    float boxDist = sdBox(z, vec3(shell));
+    float sphereDist = length(z) - shell;
+    float crossCore = min(max(abs(z.x), abs(z.y)), min(max(abs(z.x), abs(z.z)), max(abs(z.y), abs(z.z))));
+    float crossDist = max(crossCore - shell * 0.52, sphereDist * 0.42);
+    float octaDist = sdOctahedron(z, shell * 2.15);
+    float octaBoxDist = sdBox(z, vec3(shell * 0.88));
+    float localDist = boxDist;
+    if (familyMode >= 0.5 && familyMode < 1.5) localDist = min(sphereDist, boxDist * 0.82);
+    else if (familyMode >= 1.5 && familyMode < 2.5) localDist = min(octaDist, min(octaBoxDist * 0.74, crossDist * 0.82));
+    else if (familyMode >= 2.5) localDist = max(min(boxDist, sphereDist * 0.72), -shell * 0.38);
+
+    float dist = localDist / max(scaleAccum, 1.0);
+    return KifsHit(dist, iter, trap, cell);
+}
+
+float mapScene(vec3 p) {
+    return kifsDE(p).dist;
+}
+
+// Tetrahedral normal from a single mapScene() call site inside a loop.
+// Six separate calls inlined six copies of the whole distance estimator,
+// which made shader compiles take tens of seconds on Windows (D3D).
+vec3 estimateNormal(vec3 p, float eps) {
+    vec3 n = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        vec3 e = i == 0 ? vec3(1.0, -1.0, -1.0) :
+            (i == 1 ? vec3(-1.0, -1.0, 1.0) :
+            (i == 2 ? vec3(-1.0, 1.0, -1.0) : vec3(1.0)));
+        n += e * mapScene(p + e * eps);
+    }
+    return normalize(n);
+}
+
+float softShadow(vec3 ro, vec3 rd, float minT, float maxT) {
+    float result = 1.0;
+    float t = minT;
+    for (int i = 0; i < 32; i++) {
+        if (t >= maxT) break;
+        float h = max(mapScene(ro + rd * t), 0.001);
+        result = min(result, 10.0 * h / t);
+        t += clamp(h, 0.025, 0.24);
+    }
+    return clamp(result, 0.12, 1.0);
+}
+
+vec3 background(vec3 rd, float t) {
+    float arch = pow(max(0.0, 1.0 - abs(rd.x * 0.55 + rd.y * 0.18)), 7.0);
+    vec3 base = mix(vec3(0.010, 0.012, 0.020), vec3(0.030, 0.042, 0.060), smoothstep(-0.55, 0.6, rd.y));
+    return base + paletteKifs(t * 0.025 + rd.z * 0.08, u_palette) * arch * 0.05;
+}
+
+void main() {
+    float t = u_time * u_flight_speed + phaseOffset() + seedPhase() * 0.13;
+    float familyPhase = u_family * 1.27;
+    float motionMode = u_motion_mode;
+    float spinT = u_time * u_orbit_spin + phaseOffset() + familyPhase + seedPhase() * 0.09;
+    float rollT = u_time * u_roll_speed + phaseOffset() + familyPhase;
+    float crawl = sin(t * 0.27 + familyPhase) * u_tunnel_depth;
+    vec3 target = vec3(
+        0.18 * sin(spinT * 0.33 + familyPhase),
+        0.14 * cos(t * 0.29 + familyPhase),
+        0.08 * sin(spinT * 0.21)
+    );
+    float radius = u_orbit_radius * (1.0 + 0.10 * sin(spinT * 0.18 + u_family));
+    target += vec3(
+        sin(spinT * 0.19 + familyPhase * 0.7),
+        cos(t * 0.23 + 1.1),
+        sin(spinT * 0.31 + u_family)
+    ) * (0.07 * u_structure_pulse);
+
+    vec3 orbitPath = vec3(
+        sin(spinT * 0.34 + familyPhase) * radius,
+        0.28 + cos(t * 0.24 + familyPhase) * 0.30,
+        2.62 - crawl + cos(spinT * 0.34 + familyPhase) * radius * 0.30
+    );
+    vec3 figurePath = vec3(
+        sin(spinT * 0.38 + familyPhase) * radius * 0.92,
+        0.24 + sin(t * 0.76 + familyPhase) * 0.28,
+        2.42 - crawl * 0.55 + sin(spinT * 0.38 + familyPhase) * cos(spinT * 0.38 + familyPhase) * radius * 0.70
+    );
+    vec3 tunnelPath = vec3(
+        sin(spinT * 0.22 + familyPhase) * radius * 0.45,
+        0.18 + cos(t * 0.31 + familyPhase) * 0.22,
+        2.25 - crawl * 1.35 + cos(spinT * 0.22 + familyPhase) * radius * 0.18
+    );
+    vec3 grazePath = vec3(
+        sin(spinT * 0.27 + familyPhase) * radius * 0.62,
+        0.08 + cos(t * 0.43 + familyPhase) * 0.18,
+        1.96 - crawl * 0.62 + cos(spinT * 0.27 + familyPhase) * radius * 0.24
+    );
+
+    vec3 ro = orbitPath;
+    if (motionMode >= 0.5 && motionMode < 1.5) ro = figurePath;
+    else if (motionMode >= 1.5 && motionMode < 2.5) ro = tunnelPath;
+    else if (motionMode >= 2.5) ro = grazePath;
+
+    float rollValue = u_roll * sin(rollT * (0.45 + motionMode * 0.05) + familyPhase) + u_global_rotation * 0.2;
+    float fovBreath = u_fov;
+    vec3 rd = psyRayDirection(gl_FragCoord.xy, u_resolution, ro, target, fovBreath, rollValue);
+
+    float total = 0.0;
+    float hitT = -1.0;
+    KifsHit hitInfo = KifsHit(0.0, 0.0, 0.0, 0.0);
+    float glowAccum = 0.0;
+    float epsBase = 0.0019;
+
+    for (int i = 0; i < 142; i++) {
+        if (float(i) >= 96.0 + u_iterations * 3.0) break;
+        vec3 p = ro + rd * total;
+        KifsHit h = kifsDE(p);
+        float dist = h.dist;
+        glowAccum += exp(-abs(dist) * 34.0) * 0.015;
+        if (dist < epsBase * max(1.0, total * 0.55)) {
+            hitT = total;
+            hitInfo = h;
+            break;
+        }
+        total += max(dist, epsBase * 1.5) * 0.84;
+        if (total > 9.5) break;
+    }
+
+    vec3 col = background(rd, t);
+    if (hitT >= 0.0) {
+        vec3 p = ro + rd * hitT;
+        vec3 n = estimateNormal(p, epsBase * 2.2);
+        vec3 lightDir = normalize(vec3(0.35, 0.78, 0.54));
+        vec3 fillDir = normalize(vec3(-0.65, 0.28, -0.20));
+        float diff = max(dot(n, lightDir), 0.0);
+        float fill = max(dot(n, fillDir), 0.0) * 0.36;
+        float rim = pow(max(0.0, 1.0 + dot(rd, n)), 2.0);
+        float shadow = softShadow(p + n * epsBase * 3.0, lightDir, 0.04, 3.5);
+        float iterTone = hitInfo.iter / max(u_iterations, 1.0);
+        float trapTone = -log(max(hitInfo.trap, 0.0001)) * 0.16;
+        float hue = trapTone + iterTone * 0.45 + hitInfo.cell * 0.22 + t * u_color_speed * 0.045 + u_family * 0.11;
+        vec3 base = paletteKifs(hue, u_palette);
+        if (u_shade_mode >= 0.5 && u_shade_mode < 1.5) {
+            vec3 normalCol = n * 0.5 + 0.5;
+            base = mix(base, normalCol, 0.36 + 0.20 * rim);
+        } else if (u_shade_mode >= 1.5 && u_shade_mode < 2.5) {
+            float bands = 0.5 + 0.5 * sin(iterTone * 38.0 + hitInfo.cell * 1.7 + t * (0.55 + u_color_speed));
+            base *= 0.70 + bands * 0.62;
+        } else if (u_shade_mode >= 2.5) {
+            float cellPulse = 0.5 + 0.5 * sin(hitInfo.cell * 2.4 + t * (0.45 + u_color_speed));
+            base = mix(base, paletteKifs(cellPulse + trapTone, u_palette), 0.52);
+        }
+        float ao = 0.42 + 0.58 * smoothstep(0.0, 1.0, iterTone + clamp(hitInfo.trap * 0.28, 0.0, 0.7));
+        vec3 light = base * (0.24 + diff * shadow * 1.55 + fill) * ao;
+        light += paletteKifs(hue + 0.20, u_palette) * rim * (0.38 + u_glow * 0.52);
+        light += vec3(0.72, 0.88, 1.0) * clamp(1.25 - hitInfo.trap * 1.05, 0.0, 1.0) * 0.24;
+        col = light;
+    }
+
+    col += paletteKifs(t * 0.035 + total * 0.035, u_palette) * glowAccum * u_glow;
+    float fogAmount = 1.0 - exp(-total * (0.052 + u_fog * 0.080));
+    col = mix(col, background(rd, t) + paletteKifs(t * 0.02, u_palette) * 0.045, fogAmount);
+    col = psyGamma(psyTonemap(col));
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{l as default};

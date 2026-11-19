@@ -36,8 +36,10 @@ import {
 } from './detail.js';
 import { filterItems } from './filter.js';
 import { libraryPool } from './personal.js';
-import { getPlaylistItems, loadPlaylists } from '../../lib/playlists.js';
-import { syncFavoritesSort, syncPersonalControls } from './personal-controls.js';
+import { getPlaylistItems } from '../../lib/playlists.js';
+import {
+  ensurePlaylistsLoaded, syncFavoritesActions, syncFavoritesSort, syncPersonalControls,
+} from './personal-controls.js';
 import { ui } from './shell-refs.js';
 import { selectSource } from './sidebar.js';
 import { syncFavoriteCategories } from './favorite-categories.js';
@@ -168,6 +170,7 @@ export function renderLibrary(host) {
   }));
   subs.push(subscribe('favorites-change', () => {
     updateSidebarCounts();
+    syncFavoritesActions();
     // Category counts follow the favorites (and Clear cache removes the categories).
     syncFavoriteCategories();
     if (view.activeSource === 'favorites') { renderResults(); renderStatus(); }
@@ -186,10 +189,8 @@ export function renderLibrary(host) {
     syncPersonalControls(); updateSidebarCounts();
     if (view.activeSource === 'playlists') { renderResults(); renderStatus(); updateSentinelStatus(); }
   }));
-  const mountedRoot = ui.root;
-  void loadPlaylists().catch((error) => {
-    if (ui.root === mountedRoot && ui.playlistMessage) ui.playlistMessage.textContent = error.message || 'Could not load playlists.';
-  });
+  // A failed read is tried again when My Playlists is opened (sidebar.js).
+  void ensurePlaylistsLoaded();
   subs.push(subscribe('settings-change', (settings) => {
     const nextPreference = settings.showExplicitContent === true;
     const contentChanged = view.contentPreference !== nextPreference;

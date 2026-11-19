@@ -8,7 +8,7 @@
 
 import { SOURCES, getSourceColor } from '../lib/sources.js';
 
-const VERSION = '0.1.10';
+const VERSION = '0.1.11';
 const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {
@@ -149,6 +149,8 @@ export function renderAbout(host) {
           </p>
         </section>
 
+        <div data-about-credits-slot></div>
+
         <section class="about-section">
           <h2>Version</h2>
           <p class="about-version">
@@ -162,6 +164,47 @@ export function renderAbout(host) {
       </div>
     </div>
   `;
+  showVisualizerCredits(host);
+}
+
+/** Said in the slot when the credits could not be loaded (opening About
+ *  again tries again). The notices are named as the Licenses section does. */
+export const CREDITS_FAILED_TEXT = 'The Visualizer credits could not be loaded. They are also in the ';
+export const NOTICES_LINK_TEXT = 'packaged third-party notices';
+
+/** The Visualizer credits (about-credits.js), built from the vendored
+ *  manifest when the page is shown: their own chunk, nothing at start-up.
+ *  If they cannot be loaded, one plain line says so in their place. */
+export function showVisualizerCredits(host, {
+  load = () => import('./about-credits-load.js'),
+  doc = typeof document === 'undefined' ? null : document,
+} = {}) {
+  const slot = host.querySelector('[data-about-credits-slot]');
+  if (!slot || !doc) return Promise.resolve();
+  return Promise.resolve()
+    .then(load)
+    .then(({ visualizerCredits }) => {
+      if (slot.isConnected) slot.replaceWith(visualizerCredits(doc));
+    })
+    .catch((error) => {
+      console.error('about: visualizer credits:', error);
+      const section = doc.createElement('section');
+      section.className = 'about-section';
+      section.setAttribute('data-about-credits-failed', '');
+      const line = doc.createElement('p');
+      const lead = doc.createElement('span');
+      lead.textContent = CREDITS_FAILED_TEXT;
+      const link = doc.createElement('a');
+      link.setAttribute('href', '/THIRD_PARTY_NOTICES.txt');
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noreferrer');
+      link.textContent = NOTICES_LINK_TEXT;
+      const end = doc.createElement('span');
+      end.textContent = '.';
+      line.append(lead, link, end);
+      section.append(line);
+      slot.replaceChildren(section);
+    });
 }
 
 function escape(s) {

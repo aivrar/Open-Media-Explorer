@@ -306,6 +306,11 @@
   letter-spacing: 0.5px;
   white-space: nowrap;
 }
+/* Three or four letters (BBC, SWR3) take a smaller size, from the box, so
+   even the widest (WWW, WWWW: about 1 em a letter in bold) fit with room on
+   both sides. One or two letters keep --card-initials. The box never changes. */
+.pill-initials[data-length='3'] { font-size: calc(var(--card-art) * 0.3); letter-spacing: 0; }
+.pill-initials[data-length='4'] { font-size: calc(var(--card-art) * 0.23); letter-spacing: 0; }
 /* The station's own logo: whole, on a plain surface over the initials. */
 .pill-art-img {
   position: absolute;

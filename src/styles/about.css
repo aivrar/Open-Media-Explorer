@@ -200,3 +200,30 @@
   color: var(--text-mute);
   font-size: 12px;
 }
+
+/* Visualizer credits (about-credits.js): the source cards, collapsed. */
+.about-credits-details > summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+.about-credits-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.about-credit .about-source-head { flex-wrap: wrap; }
+.about-credit .about-source-head h3 { overflow-wrap: anywhere; }
+.about-credit-meta { grid-template-columns: 64px 1fr; }
+.about-credit-flag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+}
+.about-credit-note { display: block; margin-top: 4px; color: var(--text-mute); }

@@ -7,13 +7,17 @@ Favorites sorting and categories, the media type buttons, **Star all**, `.pls`
 and `.xspf` import, the song title and Song log, station images, stream
 quality, and **Back up my data** require v0.1.9 or newer. The sound meter in
 the player bar and the **Tuner card size** setting require v0.1.10 or newer.
+The **Visualizer** tab, **Add as: Auto**, **Move to bottom**, **Remove all
+favorites** and the list of pictures that were not used require v0.1.11 or
+newer.
 
 ## Window layout
 
 The top bar is shared by every mode:
 
 - **World Media** opens the current view.
-- **Library**, **Tuner**, **Grid**, **Discovery**, and **About** switch modes.
+- **Library**, **Tuner**, **Grid**, **Discovery**, **Visualizer**, and **About**
+  switch modes.
 - The **Sleep** control starts or cancels the sleep timer.
 - The musical note opens the **Song log**.
 - The gear opens **Settings**.
@@ -114,7 +118,9 @@ all enabled sources, so rapidly switching tabs cannot wipe the catalog.
 ![My Playlists and Add link with public sample channels](<../../screenshots/v0.1.3/my-playlists.png>)
 
 1. Open **Library → My Playlists**.
-2. Set **Add as** to **TV** or **Radio**.
+2. Leave **Add as** on **Auto**, or set it to **TV** or **Radio**. It decides
+   the type of the channels that do not say whether they are radio or TV (see
+   below).
 3. Click **Add link**, paste the URL, optionally enter a name, and click **Add**.
    Leave **Single channel** selected for a direct stream (including HLS `.m3u8`
    or DASH `.mpd`). Choose **Online playlist** to fetch a list of channels
@@ -134,6 +140,23 @@ undo for all of them at once. It stops when Favorites holds 1,000 items. A
 short message beside the buttons says how many were added, how many were
 already in Favorites, and how many were left out.
 
+**Add as** matters only for channels that do not say what they are. A mark in
+the file decides: `radio="true"` makes a channel radio, and `radio="false"`
+makes it TV, even when its address ends in an audio file extension. Only a
+channel with no mark is radio because its address ends in an audio file
+extension. For the other channels:
+
+- **Auto** (the default) uses the type that most channels in the same file say.
+  If the file does not decide (no channel says, or it is a tie), it uses TV, as
+  every import did before Auto existed.
+- **TV** and **Radio** give those channels that type.
+
+When some channels had to be given a type, the import result says how many, and
+with Auto it says what it chose and why, so a wrong guess is easy to fix:
+choose the other type in **Add as** and import the file again. When every
+channel says its own type, there is nothing to report. Auto is saved as
+the type it chose, so older versions of World Media can still read the list.
+
 Import supports UTF-8 and legacy Windows-1252 text, `#EXTINF` names, `tvg-name`,
 `tvg-logo`, `tvg-country`, `tvg-language`, `group-title`, `#EXTGRP`, and `radio`
 metadata. Audio filename extensions are recognized when no explicit `radio`
@@ -144,12 +167,30 @@ redirects. PLS and XSPF lists are converted to M3U when imported: XSPF track
 `title` (or `creator` when there is no title), the first public web `location`,
 and `image` as the logo are kept; XSPF files with a DTD or entity declarations
 are refused. Unsupported entries and
-duplicates are counted in the import result; a wholly invalid list is rejected.
-Channel IDs stay stable when only their display names change.
+duplicates are counted in the import result. It also says how many entries were
+skipped because they point at this computer or a private network address, and
+why. A wholly invalid list is rejected. Two entries with the same address and type are one channel when
+their names are the same too. With different names both are kept. Channel IDs
+stay stable when only their display names change.
 
 Importing the same filename replaces that saved playlist after confirmation.
+A channel's ID is made from its type and address. So when you import a
+playlist again and a channel has changed between radio and TV (for example
+after you chose **Add as Radio** this time), its old favorite would point at a
+channel that no longer exists. World Media therefore moves each such favorite
+to the new channel (same address and same name, the other type). It keeps the
+favorite's place in My order, its category and its own equalizer curve, and the
+import result says how many were moved. A favorite is left alone when the
+channel's name changed or the new channel is already a favorite. If the change
+cannot be saved, nothing changes and the result says so.
+
 **Remove playlist** removes only the selected imported list; it preserves the
-original file, saved favorites, and current playback. Imports are snapshots:
+original file, saved favorites, and current playback. It asks first, with the
+playlist's name and its number of channels. If you have several playlists, first
+choose the one to remove in the list that says **All playlists**; with only one
+playlist, that one is meant. To change the stations of a playlist, edit your own
+playlist file and import it again under the same file name. The copy that World
+Media keeps is not meant to be edited by hand. Imports are snapshots:
 reimport the file or add the same online link to update its entries. Links are
 identified by URL, so two different links with the same display name do not
 overwrite each other. A direct channel is saved without opening a connection;
@@ -188,7 +229,9 @@ Artwork is lazy: the first visible/nearby cards are prioritized and off-screen
 cards wait for the viewport. An item without artwork shows its initials on a
 coloured square (the same colour every time); a logo that fails can be retried
 without affecting the catalog item. Source badges and license notes are shown
-when technical source details are switched on.
+when technical source details are switched on. Channels from your own
+playlists show no license note: the same "See provider terms" on every card
+told you nothing about a stream you added yourself.
 
 Click the card body to open its detail panel and start playback. The panel can
 show:
@@ -219,10 +262,12 @@ resolved again on a later launch.
 In **Favorites**, the **Sort** buttons choose how the list is shown.
 
 - **My order** is your own order. New favorites go to the top. Each card has
-  three small buttons: move to the top, move up, and move down. A button that
-  cannot move the card, such as move up on the first card, does nothing. When
-  a type button, a category or the search box is hiding some favorites, up and
-  down swap the card with the next favorite you can see.
+  four small buttons: move to the top, move up, move down, and **Move to
+  bottom**. A button that cannot move the card, such as move up on the first
+  card, does nothing. When a type button, a category or the search box is
+  hiding some favorites, up and down swap the card with the next favorite you
+  can see, and the top and bottom buttons put the card before or after all the
+  others.
 - **A-Z** sorts by name, and numbers count as numbers, so "Radio 2" comes
   before "Radio 10". It only changes how the list is shown. Your own order is
   kept, and **My order** brings it back exactly.
@@ -247,6 +292,18 @@ group in the favorites `.m3u8` files. Categories are kept in
 `profile-preferences-extra.json` beside `profile-preferences.json`, so an older
 version of World Media still reads your favorites (without their categories).
 **Clear local cache** removes them with the rest of your favorites.
+
+### Remove all favorites
+
+**Remove all favorites** is at the end of the sort row in **Favorites**. You can
+press it only while you have favorites. It asks first and says how many it will
+remove, for example "Remove all 12 favorites? This cannot be undone. To keep a
+copy, first use Back up my data in Settings > Storage." Nothing is removed
+without a yes. It removes the favorites and their own equalizer curves. Your
+category names and your other settings stay. If the list cannot be saved,
+nothing is removed and a message says so. In the one case where the curves
+could not be put back, the favorites stay but now use the main equalizer, and
+the message says that too. To remove just one favorite, press its star.
 
 ## Grid
 
@@ -278,6 +335,16 @@ Tuner provides a radio-style way to step through live media:
 3. Drag the dial, scroll the mouse wheel over it (one station per notch), use
    Left/Up or Right/Down, or focus the dial and use arrow keys.
 4. Press Enter or Space to play the selected item.
+
+With **My favorites** (or one of your categories) as the source, the status
+line says how many favorite stations are on the dial. The dial shows the
+favorites saved as the type you are on: radio stations on the Radio dial and
+TV channels on the TV dial. When some of your favorites are saved as the other
+type, the status line adds a note, for example "3 more saved as TV (switch to
+TV to see them)". A playlist channel whose address does not
+say radio or TV is saved as the type of its playlist's **Add as** choice, so a
+radio station imported as TV is only on the TV dial. Import the playlist again
+with the right **Add as** to move it.
 
 The dial shows the selected station's place in the current list ("12 of 80"),
 not a broadcast frequency. Starred stations are marked with ★ in the station
@@ -321,11 +388,20 @@ attempts. A provider that is slow or unavailable does not block the other
 providers indefinitely. Discovery is not a guarantee of uniqueness across all
 time; it is a fresh candidate selection from current provider data.
 
+## Visualizer
+
+The Visualizer shows pictures that move with the sound of whatever is playing:
+71 scenes, post effects, overlays, a shuffle, and favourites of its own. It
+shows moving, flashing pictures, so a notice about photosensitivity comes first.
+It loads only when you open the tab and costs nothing while the tab is closed.
+It has its own page: [Visualizer](09-visualizer.md).
+
 ## About
 
 About is a static reference page. It lists the ten sources, their media types,
 capabilities, home links, rights notes, privacy guarantees, app version, hls.js
-and dash.js notices, and optional FFmpeg licensing information. The counts on
+and dash.js notices, the **Visualizer credits** for the shader code the
+Visualizer borrows, and optional FFmpeg licensing information. The counts on
 About are descriptive; live counts belong to Library.
 
 ## Settings
@@ -440,11 +516,24 @@ station, for example `Radio Paradise.png`, then press **Refresh**. The status
 line says how many pictures were found and why any were ignored, for example
 `12 pictures found. 1 ignored: too large.`
 
-- The name is compared without caring about capital letters, extra spaces, or
-  characters Windows does not allow in file names (`\ / : * ? " < > |`), so
-  `radio paradise.png` also works for a station called `Radio Paradise`, and
-  `ACDC Radio.png` for `AC/DC Radio`. A dot at the end of a station's name is
-  ignored too.
+- The name is compared without caring about capital letters or extra spaces, so
+  `radio paradise.png` also works for a station called `Radio Paradise`. A dot
+  at the end of a station's name is ignored too.
+- Windows does not allow `\ / : * ? " < > |` in file names, so a station whose
+  name has one of them cannot have a file named exactly like it. Write each of
+  those characters as `-`, `_` or a space, or leave it out. The station
+  `Nu-Metal/Alternative` can use `Nu-Metal-Alternative.png`,
+  `Nu-Metal_Alternative.png`, `Nu-Metal Alternative.png` or
+  `Nu-MetalAlternative.png`, and `AC/DC Radio` can use `AC-DC Radio.png`. A name
+  that Windows keeps for itself, such as `CON`, `AUX`, `NUL`, `COM1` or `LPT1`,
+  takes a `_` or `-` at the end: `AUX_.png`. The rule is also written in
+  **Settings > Station images**.
+- If several pictures fit one station, the first of these is used, comparing
+  the names from left to right: `-`, then `_`, then a space, then a left-out
+  character. So `Rock-Pop.png` wins over `Rock_Pop.png`, then `Rock Pop.png`,
+  then `RockPop.png`. A picture named exactly like a station always belongs to
+  that station. If one picture fits two stations, it goes to one of them, the
+  same one every time, and the other uses its next choice.
 - PNG, JPG, WebP or GIF, up to 2 MB each, at most 2,000 pictures. Each one is
   checked to be a real image of that kind; anything else (an SVG, a renamed
   text file) is ignored.
@@ -460,15 +549,35 @@ line says how many pictures were found and why any were ignored, for example
 - Only plain files directly in the folder are used. Subfolders, shortcuts and
   links are ignored.
 
+Under the status line, **Pictures to check** lists the files in the folder that
+need a look, each as the file name and the reason. It shows up to ten lines and
+then "and N more". It lists:
+
+- files that were not used at the last scan, with the reason in plain words:
+  "too large (the limit is 2 MB)", "not a valid picture", "SVG is not allowed",
+  "not a supported picture type", "another picture has the same name", "a link,
+  not a file", "file name not allowed", "over the 2,000 picture limit" or
+  "could not be read";
+- a picture that fits more than one station, for example "used for Rock/Pop;
+  also fits Rock:Pop", and a picture that lost to a better fit, for example
+  "not used: Rock/Pop uses Rock-Pop.png";
+- a picture that no favorite or playlist station is named like ("no favorite or
+  playlist station has this name"). This is only judged once your playlists
+  have been read.
+
+The list follows the last scan. It is made again when you press **Refresh**, and
+it is hidden when there is nothing to report.
+
 World Media lists the folder when it starts and again whenever you press
 **Refresh**. Nothing about the pictures is stored in your settings.
 
 #### Clear local cache
 
 **Clear local cache** is a reset, not a thumbnail-only cleanup. It removes
-favorites, favorites categories, preferences, volume, EQ, and job history from
-the browser profile, empties the song log, and clears catalog/artwork cache
-records. It keeps downloaded media, imported playlists, your station pictures,
+favorites, favorites categories, preferences (the Visualizer's choices and
+favourites are part of them), volume, EQ, and job history from the browser
+profile, empties the song log, and clears catalog/artwork cache records. It
+keeps downloaded media, imported playlists, your station pictures,
 and managed FFmpeg tools. Back up the data directory before using it. If the
 saved copy in your data folder cannot be cleared, Settings stays open and says
 so; press **Clear cache** again before closing World Media.

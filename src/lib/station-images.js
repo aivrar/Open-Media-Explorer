@@ -15,15 +15,33 @@
  * kind of whitespace becomes a space, the characters Windows forbids in file
  * names and control characters are removed, lower case, runs of spaces become
  * one, and leading or trailing spaces and trailing dots are removed.
+ *
+ * A station's name may hold characters no file name can (\ / : * ? " < > |),
+ * or be a name Windows reserves (CON, AUX, COM1...). So such a station also
+ * matches a file in which each such character is written as "-", "_" or a
+ * space, or left out, and a reserved name followed by "_" or "-" (the loose
+ * rule below; STATION_IMAGES_NAME_RULE says it in Settings). The backend
+ * checks file names exactly as before; only the station side gets the extra
+ * spellings.
  */
 
 import { controlRequest, getControlSession, resetControlSession } from './capture-client.js';
+import { getState } from './state.js';
+import { getPlaylistItems } from './playlists.js';
 
 export const STATION_IMAGES_ROUTE = '/api/v1/station-images';
 export const STATION_IMAGES_OPEN_ROUTE = '/api/v1/station-images/open-folder';
 export const STATION_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 export const STATION_IMAGES_HINT = 'Put a picture in this folder named exactly like the station, '
   + 'for example Radio Paradise.png. PNG, JPG, WebP or GIF, up to 2 MB each.';
+// Shown with textContent (it names characters that are not plain text in HTML).
+export const STATION_IMAGES_NAME_RULE = 'Capital letters do not matter. Windows does not allow '
+  + '\\ / : * ? " < > | in file names: write each of them as - or _ or a space, or leave it out. '
+  + 'For example Nu-Metal-Alternative.png for the station Nu-Metal/Alternative. '
+  + 'A name Windows keeps for itself, such as CON or AUX, takes a _ at the end: AUX_.png.';
+export const STATION_IMAGE_NO_MATCH_TEXT = 'no favorite or playlist station has this name';
+// The most lines the Settings list shows; the rest are counted.
+export const STATION_IMAGE_PROBLEMS_SHOWN = 10;
 
 const SOURCE_PREFIX = 'station-image:';
 const SOURCE_PATTERN = /^station-image:([0-9a-f]{32}):([0-9a-f]{1,32})$/;
@@ -50,13 +68,218 @@ export function normalizeStationName(value) {
     .replace(/[. ]+$/, '');
 }
 
-let index = { version: '', folder: '', loaded: false, byKey: new Map() };
+/*
+ * Names a file cannot hold (the "loose" rule).
+ *
+ * A station whose name has a character Windows forbids in file names
+ * (\ / : * ? " < > |), or whose name Windows keeps for itself (CON, AUX,
+ * COM1...), cannot have a file named exactly like it. Such a station matches
+ * a picture whose normalized name is the station's name with each forbidden
+ * character written as "-", "_" or a space, or left out (any number of them,
+ * each on its own), and a reserved name with "_" or "-" after it.
+ *
+ * It is a lookup, not a search: every picture is filed under its name with
+ * "-", "_", spaces and dots taken out (canonicalName); a station looks in one
+ * place and checks the few pictures there exactly (fitsStation).
+ *
+ * Which picture goes to which station:
+ *  1. A station whose name has no forbidden character and is not reserved
+ *     uses only the picture named exactly like it (the old rule). Such a
+ *     picture belongs to it: no other favorite or playlist station gets it
+ *     through the loose rule.
+ *  2. Among the other pictures that fit a station, it takes the first in
+ *     this order: read the two names left to right; at the first place they
+ *     differ, "-" comes first, then "_", then a space, then anything else
+ *     (so a left-out character comes last). Rock-Pop.png before Rock_Pop.png
+ *     before Rock Pop.png before RockPop.png.
+ *  3. When one picture fits several stations, the stations are served in the
+ *     order of their normalized names (then their names as written); a
+ *     station whose first choice is taken uses its next one.
+ * Settings lists what was decided for pictures that fit more than one
+ * station, or a station that fits more than one picture (stationImageProblems).
+ */
+const FILE_NAME_FORBIDDEN = /[\\/:*?"<>|]/;
+const RESERVED_NAME = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[0-9]|lpt[0-9])$/;
+const SHOWN_TITLE_LENGTH = 80;
+
+function canonicalName(text) {
+  return text.replace(/[-_ .]/g, '');
+}
+
+function reservedHead(key) {
+  const dot = key.indexOf('.');
+  return RESERVED_NAME.test((dot < 0 ? key : key.slice(0, dot)).replace(/ +$/, ''));
+}
+
+/** How a station's name is matched, or null when it can never match. */
+function stationName(title) {
+  const exact = normalizeStationName(title);
+  if (!exact) return null;
+  const parts = title.normalize('NFKC').replace(SPACES, ' ').split(FILE_NAME_FORBIDDEN)
+    .map((part) => part.replace(DROPPED, '').toLowerCase());
+  const reserved = reservedHead(exact);
+  return { exact, parts, reserved, loose: parts.length > 1 || reserved, canon: canonicalName(parts.join('')) };
+}
+
+/** True when writing each forbidden character of the station's name (its
+ *  `parts`) as "", "-", "_" or " " can give exactly `target` once
+ *  normalized. Walks the name once, keeping the few places in `target` it
+ *  can have reached (at most two per character of target), so the cost does
+ *  not grow with the number of forbidden characters' combinations. */
+function spells(parts, target) {
+  // state: `${position in target}|${last character written was a space}`
+  let states = new Set(['0|1']);
+  const step = (from, char) => {
+    const next = new Set();
+    for (const state of from) {
+      const bar = state.indexOf('|');
+      const at = Number(state.slice(0, bar));
+      const spaced = state.slice(bar + 1) === '1';
+      if (char === ' ' && spaced) { next.add(state); continue; }
+      if (at < target.length) {
+        if (target[at] === char) next.add(`${at + 1}|${char === ' ' ? 1 : 0}`);
+      } else if (char === ' ' || char === '.') {
+        // Past the end of the target: only what normalizing trims may follow.
+        next.add(`${at}|${char === ' ' ? 1 : 0}`);
+      }
+    }
+    return next;
+  };
+  parts.forEach((part, place) => {
+    if (place > 0) {
+      const joined = new Set(states);
+      for (const mark of ['-', '_', ' ']) for (const state of step(states, mark)) joined.add(state);
+      states = joined;
+    }
+    for (const char of part) {
+      states = step(states, char);
+      if (states.size === 0) return;
+    }
+  });
+  for (const state of states) if (Number(state.slice(0, state.indexOf('|'))) === target.length) return true;
+  return false;
+}
+
+/** True when the picture named `key` fits a station by the loose rule. */
+function fitsStation(info, key) {
+  if (spells(info.parts, key)) return true;
+  // A reserved name with "_" or "-" after it: AUX_.png for AUX.
+  const dot = key.indexOf('.');
+  const head = dot < 0 ? key : key.slice(0, dot);
+  const mark = head.at(-1);
+  if (mark !== '_' && mark !== '-') return false;
+  const plain = head.slice(0, -1) + key.slice(head.length);
+  return reservedHead(plain) && spells(info.parts, plain);
+}
+
+const MARK_ORDER = new Map([['-', 1], ['_', 2], [' ', 3]]);
+const markRank = (char) => (char === undefined ? Number.MAX_SAFE_INTEGER : MARK_ORDER.get(char) || 4 + char.codePointAt(0));
+
+/** Rule 2 above, as a sort order for picture names. */
+function pictureOrder(a, b) {
+  for (let at = 0; at < Math.max(a.length, b.length); at += 1) {
+    if (a[at] !== b[at]) return markRank(a[at]) - markRank(b[at]);
+  }
+  return 0;
+}
+
+function looseFits(info, owners) {
+  const fits = [];
+  const owned = [];
+  for (const key of index.canon.get(info.canon) || []) {
+    if (!fitsStation(info, key)) continue;
+    (owners.has(key) ? owned : fits).push(key);
+  }
+  return { fits: fits.sort(pictureOrder), owned };
+}
+
+/** Which picture each station uses, for a set of station names (favorites
+ *  and playlist stations). Also what Settings reports about it. */
+function assignPictures(titles) {
+  const stations = new Map();
+  for (const title of titles) {
+    if (typeof title !== 'string' || !title || stations.has(title)) continue;
+    const info = stationName(title);
+    if (info) stations.set(title, info);
+  }
+  const picks = new Map();
+  const owners = new Map();
+  for (const [title, info] of stations) {
+    if (info.loose || !index.byKey.has(info.exact)) continue;
+    picks.set(title, info.exact);
+    if (!owners.has(info.exact)) owners.set(info.exact, title);
+  }
+  const takenBy = new Map();
+  const alsoFits = new Map();
+  const note = (key, title) => {
+    if (!alsoFits.has(key)) alsoFits.set(key, new Set());
+    alsoFits.get(key).add(title);
+  };
+  const loose = [...stations].filter(([, info]) => info.loose)
+    .sort(([a, x], [b, y]) => (x.exact < y.exact ? -1 : x.exact > y.exact ? 1 : a < b ? -1 : a > b ? 1 : 0));
+  for (const [title, info] of loose) {
+    const { fits, owned } = looseFits(info, owners);
+    for (const key of owned) note(key, title);
+    const chosen = fits.find((key) => !takenBy.has(key));
+    for (const key of fits) if (key !== chosen) note(key, title);
+    if (chosen) {
+      picks.set(title, chosen);
+      takenBy.set(chosen, title);
+    }
+  }
+  return { stations, picks, owners, takenBy, alsoFits };
+}
+
+let index = {
+  version: '', folder: '', loaded: false, byKey: new Map(), canon: new Map(), files: new Map(),
+  rejected: [], rejectedMore: 0,
+};
 const failed = new Set();
 const listeners = new Set();
 // source -> { promise, url }, oldest first.
 const objectUrls = new Map();
-const titleKeys = new Map();
 let loading = null;
+
+// The station names pictures are shared out between: favorites and playlist
+// stations. Read again only when one of those lists or the picture list is
+// replaced (each change makes a new array), so asking is cheap.
+let titleSource = () => [getState().favorites, getPlaylistItems()];
+let plan = null;
+// Pictures for names that are on neither list (catalog stations), oldest first.
+const otherTitles = new Map();
+
+/** Tests: where the favorite and playlist station names come from. */
+export function setStationImageTitleSource(source) {
+  titleSource = typeof source === 'function' ? source : () => [];
+  plan = null;
+}
+
+function currentPlan() {
+  let lists;
+  try { lists = Array.from(titleSource() || []); } catch (_) { lists = []; }
+  if (plan && plan.index === index && plan.lists.length === lists.length
+      && plan.lists.every((list, at) => list === lists[at])) return plan;
+  const titles = [];
+  for (const list of lists) for (const item of Array.isArray(list) ? list : []) titles.push(item?.title);
+  plan = { index, lists, ...assignPictures(titles) };
+  otherTitles.clear();
+  return plan;
+}
+
+function pictureKeyFor(title) {
+  const current = currentPlan();
+  if (current.stations.has(title)) return current.picks.get(title) || '';
+  let key = otherTitles.get(title);
+  if (key !== undefined) return key;
+  key = '';
+  const info = stationName(title);
+  if (info && !info.loose) key = index.byKey.has(info.exact) ? info.exact : '';
+  else if (info) key = looseFits(info, current.owners).fits.find((fit) => !current.takenBy.has(fit)) || '';
+  // Forget the oldest one name, not all of them, when full.
+  if (otherTitles.size >= MAX_REMEMBERED_TITLES) otherTitles.delete(otherTitles.keys().next().value);
+  otherTitles.set(title, key);
+  return key;
+}
 
 /** Called whenever the pictures that apply to items change. */
 export function onStationImagesChange(listener) {
@@ -86,12 +309,22 @@ function releaseObjectUrl(source, revoke = globalThis.URL?.revokeObjectURL?.bind
  *  tried again even when the list names it unchanged. */
 export function applyStationImageList(data, { retryFailed = false } = {}) {
   const byKey = new Map();
+  const canon = new Map();
+  const files = new Map();
   for (const entry of Array.isArray(data?.images) ? data.images : []) {
     const key = entry?.key;
     if (typeof key !== 'string' || !key || key.length > MAX_NAME_INPUT || byKey.has(key)) continue;
     if (!ID_PATTERN.test(String(entry.id)) || !STAMP_PATTERN.test(String(entry.v))) continue;
     byKey.set(key, `${SOURCE_PREFIX}${entry.id}:${entry.v}`);
+    const filed = canonicalName(key);
+    if (!canon.has(filed)) canon.set(filed, []);
+    canon.get(filed).push(key);
+    if (typeof entry.file === 'string' && entry.file) files.set(key, entry.file.slice(0, 160));
   }
+  const rejected = (Array.isArray(data?.rejected) ? data.rejected : [])
+    .filter((entry) => typeof entry?.file === 'string' && entry.file && typeof entry.text === 'string' && entry.text)
+    .slice(0, 50)
+    .map((entry) => ({ file: entry.file.slice(0, 160), text: entry.text.slice(0, 120) }));
   let changed = byKey.size !== index.byKey.size
     || [...byKey].some(([key, source]) => index.byKey.get(key) !== source);
   index = {
@@ -99,6 +332,10 @@ export function applyStationImageList(data, { retryFailed = false } = {}) {
     folder: typeof data?.folder === 'string' ? data.folder : '',
     loaded: true,
     byKey,
+    canon,
+    files,
+    rejected,
+    rejectedMore: count(data?.rejected_more),
   };
   const current = new Set(byKey.values());
   for (const source of [...objectUrls.keys()]) if (!current.has(source)) releaseObjectUrl(source);
@@ -117,24 +354,60 @@ export function stationImagesSnapshot() {
   return { loaded: index.loaded, folder: index.folder, version: index.version, count: index.byKey.size };
 }
 
-function keyForTitle(title) {
-  if (typeof title !== 'string' || !title) return '';
-  let key = titleKeys.get(title);
-  if (key === undefined) {
-    if (titleKeys.size >= MAX_REMEMBERED_TITLES) titleKeys.clear();
-    key = normalizeStationName(title);
-    titleKeys.set(title, key);
-  }
-  return key;
-}
-
 /** The user's picture for an item ('station-image:<id>:<stamp>'), or ''.
  *  Costs nothing when there are no pictures. */
 export function stationImageSourceFor(item) {
   if (index.byKey.size === 0 || !item || typeof item !== 'object' || item.__contentHidden === true) return '';
-  const key = keyForTitle(item.title);
-  const source = key ? index.byKey.get(key) || '' : '';
+  const title = item.title;
+  if (typeof title !== 'string' || !title) return '';
+  const key = pictureKeyFor(title);
+  const source = key ? index.byKey.get(key) : '';
   return source && !failed.has(source) ? source : '';
+}
+
+function shownTitle(title) {
+  const text = title.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim();
+  return text.length > SHOWN_TITLE_LENGTH ? `${text.slice(0, SHOWN_TITLE_LENGTH - 3)}...` : text;
+}
+
+function listOfNames(titles) {
+  const names = [...titles].map(shownTitle);
+  return names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+}
+
+/** What the Settings list shows, from the last list the backend sent (no new
+ *  scan): files that are not used and why; pictures that fit more than one
+ *  station ("used for A; also fits B") or that lost to a better fitting one
+ *  ("not used: A uses B.png"); then, when `titles` is given (the names of the
+ *  favorites and playlist stations), pictures none of them is named like.
+ *  Without `titles` the favorites and playlist stations known now are used
+ *  for the first two kinds. At most `limit` lines; `more` counts the rest. */
+export function stationImageProblems({ titles = null, limit = STATION_IMAGE_PROBLEMS_SHOWN } = {}) {
+  const lines = index.rejected.map((entry) => ({ ...entry }));
+  const more = index.rejectedMore;
+  if (index.byKey.size > 0) {
+    const current = titles ? assignPictures(titles) : currentPlan();
+    const fileOf = (key) => index.files.get(key) || key;
+    for (const [key, others] of [...current.alsoFits].sort(([a], [b]) => pictureOrder(a, b))) {
+      const user = current.owners.get(key) || current.takenBy.get(key);
+      if (user) {
+        lines.push({ file: fileOf(key), text: `used for ${shownTitle(user)}; also fits ${listOfNames(others)}` });
+        continue;
+      }
+      for (const title of others) {
+        const used = current.picks.get(title);
+        if (used) lines.push({ file: fileOf(key), text: `not used: ${shownTitle(title)} uses ${fileOf(used)}` });
+      }
+    }
+    if (titles) {
+      const used = new Set([...current.picks.values()]);
+      for (const [key, file] of index.files) {
+        if (!used.has(key) && !current.alsoFits.has(key)) lines.push({ file, text: STATION_IMAGE_NO_MATCH_TEXT });
+      }
+    }
+  }
+  const shown = lines.slice(0, Math.max(0, limit));
+  return { lines: shown, more: more + lines.length - shown.length };
 }
 
 export function isStationImageSource(value) {
@@ -330,7 +603,8 @@ function failureReason(error, fallback) {
 
 /** Wire the Station images block in Settings. All text is plain text. */
 export function bindStationImageControls({
-  path, status, openButton, refreshButton,
+  path, status, openButton, refreshButton, rule = null, problems = null, knownTitles = null,
+  createElement = (tag) => globalThis.document.createElement(tag),
   load = loadStationImages, openFolder = openStationImagesFolder, isDisposed = () => false,
 }) {
   function show(text, state) {
@@ -340,14 +614,47 @@ export function bindStationImageControls({
   function showFolder(folder) {
     if (typeof folder === 'string' && folder) path.textContent = folder;
   }
+  // The short list of pictures that are not used, from what the last scan
+  // found. Plain text only.
+  function showProblems() {
+    if (!problems) return;
+    let titles = null;
+    try { titles = knownTitles?.() || null; } catch (_) { titles = null; }
+    const { lines, more } = stationImageProblems({ titles });
+    const rows = lines.map(({ file, text }) => {
+      const row = createElement('li');
+      row.textContent = `${file}: ${text}`;
+      return row;
+    });
+    if (more > 0) {
+      const row = createElement('li');
+      row.textContent = `and ${more} more`;
+      rows.push(row);
+    }
+    if (rows.length === 0) {
+      problems.replaceChildren();
+      problems.hidden = true;
+      return;
+    }
+    const heading = createElement('span');
+    heading.textContent = 'Pictures to check:';
+    const list = createElement('ul');
+    list.replaceChildren(...rows);
+    problems.replaceChildren(heading, list);
+    problems.hidden = false;
+  }
 
+  if (rule) rule.textContent = STATION_IMAGES_NAME_RULE;
   const known = stationImagesSnapshot();
   if (known.folder) {
     showFolder(known.folder);
+    showProblems();
   } else {
     path.textContent = 'Checking\u2026';
     void Promise.resolve().then(() => load()).then((data) => {
-      if (!isDisposed()) showFolder(data?.folder);
+      if (isDisposed()) return;
+      showFolder(data?.folder);
+      showProblems();
     }).catch(() => {
       if (!isDisposed() && !stationImagesSnapshot().folder) path.textContent = 'Unavailable';
     });
@@ -364,6 +671,7 @@ export function bindStationImageControls({
       if (isDisposed()) return;
       showFolder(data?.folder);
       show(stationImagesStatusText(data), data?.problem ? 'error' : 'ready');
+      showProblems();
     } catch (error) {
       if (isDisposed()) return;
       show(`The folder could not be checked: ${failureReason(error, 'it is not available.')}`, 'error');

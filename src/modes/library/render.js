@@ -22,6 +22,7 @@ import { SOURCES, getSourceLabel } from '../../lib/sources.js';
 import { el } from './utils.js';
 import { artworkInitials, initialsHue } from '../../lib/initials.js';
 import { streamQualityLabel } from '../../lib/stream-quality.js';
+import { shownLicense } from '../../lib/item-model.js';
 import {
   view, renderedIds,
   RENDER_LIMIT_INITIAL, RENDER_LIMIT_STEP, RENDER_WINDOW_MAX,
@@ -424,6 +425,8 @@ const MOVE_ACTIONS = [
     icon: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>' },
   { direction: 'down', label: (title) => `Move ${title} down`, tip: 'Move down',
     icon: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' },
+  { direction: 'bottom', label: (title) => `Move ${title} to bottom`, tip: 'Move to bottom',
+    icon: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 19h12M7 10l5 5 5-5M12 15V4"/></svg>' },
 ];
 
 /** True when Favorites cards offer the move buttons ("My order" only). */
@@ -494,6 +497,7 @@ function syncFavoriteOrderControls(filtered) {
     setMoveEnabled(controls.__buttons.top, index > 0);
     setMoveEnabled(controls.__buttons.up, index > 0);
     setMoveEnabled(controls.__buttons.down, index >= 0 && index < filtered.length - 1);
+    setMoveEnabled(controls.__buttons.bottom, index >= 0 && index < filtered.length - 1);
   }
 }
 
@@ -528,9 +532,10 @@ export function onMoveFavorite(itemId, direction, button = null) {
   if (!mountedCard(itemId)) revealFilteredItem(itemId);
   const target = mountedCard(itemId)?.__orderControls?.__buttons?.[direction];
   if (target && globalThis.document?.activeElement !== target) target.focus?.({ preventScroll: true });
-  // Up and down stay next to where they were. "Move to top" can leave the
-  // list behind, so bring the card (and the focused button) just into view.
-  if (direction === 'top') target?.scrollIntoView?.({ block: 'nearest' });
+  // Up and down stay next to where they were. "Move to top" and "Move to
+  // bottom" can leave the list behind, so bring the card (and the focused
+  // button) just into view.
+  if (direction === 'top' || direction === 'bottom') target?.scrollIntoView?.({ block: 'nearest' });
   return true;
 }
 
@@ -647,7 +652,7 @@ function renderCard(item, opts = {}) {
     text: item.country,
   }));
   if (facts.childElementCount > 0) meta.appendChild(facts);
-  const license = item.license && item.license !== 'Unknown' ? item.license : '';
+  const license = shownLicense(item);
   // Stream format and bitrate share the technical column with the license,
   // so like it they show only with "Show technical source details" on.
   const quality = streamQualityLabel(item);

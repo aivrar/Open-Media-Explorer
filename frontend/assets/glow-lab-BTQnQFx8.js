@@ -1,0 +1,132 @@
+function t(e){return e.EffectRegistry.register({name:"glow_lab",label:"Glow Lab",category:"Psychedelic",description:"Neon light accumulated through tiny raymarch loops: vortex, cosmic surf, wormhole, lattice, plasma orb and accretion ring",specialize:["mode"],params:[{name:"mode",label:"Mode",type:"select",options:["Vortex","Cosmic Surf","Wormhole","Neon Lattice","Plasma Orb","Accretion Ring"],default:0},{name:"speed",label:"Speed",min:0,max:3,default:1,step:.01},{name:"zoom",label:"Field of View",min:.4,max:2.5,default:1,step:.01},{name:"twist",label:"Twist",min:0,max:3,default:1,step:.01},{name:"turbulence",label:"Turbulence",min:0,max:1.5,default:.4,step:.01},{name:"glow",label:"Glow",min:.2,max:4,default:1,step:.01},{name:"hue",label:"Hue Shift",min:0,max:1,default:0,step:.01},{name:"spread",label:"Colour Spread",min:0,max:3,default:1,step:.01},{name:"detail",label:"Detail (steps)",type:"int",min:30,max:90,default:64,step:1},{name:"palette",label:"Palette",type:"select",palette:!0,options:["Spectrum"],default:0},{name:"audio_react",label:"Beat Reaction",min:0,max:2,default:1,step:.01}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_mode;
+uniform float u_speed;
+uniform float u_zoom;
+uniform float u_twist;
+uniform float u_turbulence;
+uniform float u_glow;
+uniform float u_hue;
+uniform float u_spread;
+uniform float u_detail;
+uniform float u_palette;
+uniform float u_audio_react;
+uniform vec4 u_audio;
+uniform vec4 u_beat;
+
+vec3 glowColor(float t) {
+    if (u_palette > 0.5) return psyLut(t);
+    return 0.5 + 0.5 * cos(6.28318 * (t + vec3(0.0, 0.33, 0.67)));
+}
+
+// Hue turns from the angle around the axis. Kept out of hueKey because
+// hueKey is scaled by Colour Spread; a non-whole number of turns per
+// revolution would show a seam where atan wraps.
+float g_hueTurn = 0.0;
+
+// Distance-like field for the active mode; hueKey picks the colour.
+float glowField(vec3 p, float t, float turb, float twist, out float hueKey) {
+    float m = floor(u_mode + 0.5);
+    g_hueTurn = 0.0;
+    if (m < 0.5) {
+        // Vortex: a twisting spiral tube
+        p.xy *= rot2(p.z * 0.35 * twist + t * 0.5);
+        float ang = atan(p.y, p.x);
+        float arms = sin(ang * 3.0 + p.z * 1.2 - t * 2.0) * (0.35 + 0.3 * turb);
+        hueKey = p.z * 0.06; g_hueTurn = ang * 0.159155;
+        return abs(length(p.xy) - 1.3 - arms) * 0.45 + 0.01;
+    } else if (m < 1.5) {
+        // Cosmic Surf: a sheet folded by stacked sine turbulence
+        vec3 q = p;
+        float f = 1.0;
+        for (int i = 0; i < 5; i++) {
+            q += sin(q.yzx * f + t * 0.4) * (0.5 + turb) / f;
+            f *= 1.7;
+        }
+        hueKey = q.x * 0.05 + q.z * 0.03;
+        return abs(q.y + 0.6) * 0.25 + 0.015;
+    } else if (m < 2.5) {
+        // Wormhole: a tube whose walls are a drifting gyroid
+        float g = dot(sin(p * 1.4 + vec3(0.0, 0.0, t * 0.6)), cos(p.yzx * 1.4));
+        hueKey = p.z * 0.04 + g * 0.1;
+        return abs(2.2 - length(p.xy) + g * (0.45 + 0.4 * turb)) * 0.4 + 0.012;
+    } else if (m < 3.5) {
+        // Neon Lattice: an endless gyroid shell
+        vec3 q = p * 1.2;
+        q.xy *= rot2(t * 0.1 * twist);
+        float g = dot(sin(q), cos(q.yzx + t * 0.3));
+        hueKey = (q.x + q.y + q.z) * 0.03;
+        return abs(g) * 0.2 + 0.012 + turb * 0.02 * (0.5 + 0.5 * sin(q.z * 4.0 + t));
+    } else if (m < 4.5) {
+        // Plasma Orb: a sphere boiling with turbulence
+        vec3 q = p;
+        float f = 1.0;
+        for (int i = 0; i < 4; i++) {
+            q += sin(q.zxy * f * 1.3 + t * 0.7) * (0.25 + 0.3 * turb) / f;
+            f *= 1.9;
+        }
+        // One hue turn per revolution (g_hueTurn), so no seam where atan wraps.
+        hueKey = length(q) * 0.12; g_hueTurn = atan(q.y, q.x) * 0.159155;
+        return abs(length(q) - 1.6) * 0.35 + 0.01;
+    }
+    // Accretion Ring: a swirling disk of light
+    float r = length(p.xz);
+    float a = atan(p.z, p.x);
+    float swirl = sin(a * 2.0 - r * 1.5 + t * 1.5) * (0.15 + 0.25 * turb);
+    float swirl2 = sin(a * 3.0 + r * 2.0 - t * 2.1) * (0.2 + 0.3 * turb);
+    hueKey = r * 0.12; g_hueTurn = -a * 0.159155;
+    float d1 = length(vec2(r - 2.0 - swirl, p.y * 2.5));
+    float d2 = length(vec2(r - 3.2 - swirl2, p.y * 3.5 + sin(a * 4.0 + t) * 0.2));
+    float d3 = length(vec2(r - 1.15, p.y * 1.4));
+    return min(d1, min(d2, d3)) * 0.35 + 0.012;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    float react = u_audio_react;
+    float kick = u_beat.x * react;
+    float bass = u_audio.x * react;
+    float hat = u_beat.z * react;
+    float t = u_time * u_speed;
+    float turb = u_turbulence + bass * 0.6;
+    // Twist steps forward a little on each beat of the tempo clock.
+    float beatPhase = fract(u_beat.w);
+    float twist = u_twist * (1.0 + react * 0.15 * smoothstep(0.0, 0.25, beatPhase) * (1.0 - smoothstep(0.25, 1.0, beatPhase)));
+    float m = floor(u_mode + 0.5);
+
+    vec3 ro;
+    vec3 rd;
+    if (m > 3.5) {
+        float a = t * 0.25;
+        ro = vec3(sin(a) * 5.5, 1.4 + sin(t * 0.13) * 0.8, cos(a) * 5.5);
+        rd = psyLookAt(ro, vec3(0.0), 0.0) * normalize(vec3(uv * u_zoom, 1.6));
+    } else if (m > 0.5 && m < 1.5) {
+        ro = vec3(0.0, 0.4, t * 1.5);
+        rd = normalize(vec3(uv * u_zoom, 1.0));
+        rd.yz *= rot2(-0.25);
+    } else {
+        ro = vec3(0.0, 0.0, t * 2.0);
+        rd = normalize(vec3(uv * u_zoom, 1.0));
+        rd.xy *= rot2(t * 0.1);
+    }
+
+    vec3 col = vec3(0.0);
+    float z = 0.0;
+    for (int i = 0; i < 90; i++) {
+        if (float(i) >= u_detail) break;
+        vec3 p = ro + rd * z;
+        float hk;
+        float d = glowField(p, t, turb, twist, hk);
+        z += d;
+        col += glowColor(hk * u_spread + g_hueTurn + u_hue + t * 0.05) / d;
+        if (z > 40.0) break;
+    }
+    // Per-mode exposure so every mode lands at a similar brightness.
+    float gain = m < 0.5 ? 1.0 : (m < 1.5 ? 2.4 : (m < 2.5 ? 1.0 : (m < 3.5 ? 0.6 : (m < 4.5 ? 1.2 : 6.0))));
+    col *= u_glow * gain * 0.00045 * (64.0 / max(u_detail, 1.0)) * (1.0 + kick * 0.9);
+    col = 1.0 - exp(-col);
+    col += hat * 0.06 * step(0.985, hash2(floor(gl_FragCoord.xy * 0.5) + floor(u_time * 24.0)));
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{t as default};

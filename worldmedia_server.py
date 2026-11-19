@@ -94,7 +94,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.10 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.11 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -566,9 +566,17 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 validate_authenticated_get(self.headers, self.server.server_port, SESSION_TOKEN)
                 if path == "/api/v1/playlists":
                     try:
-                        return self._send_api_success({"playlists": PLAYLIST_STORE.list()})
+                        playlists = PLAYLIST_STORE.list()
                     except ValueError as error:
+                        self.log_message("playlists could not be read type=%s", type(error.__cause__ or error).__name__)
                         raise ApiError(HTTPStatus.CONFLICT, "PLAYLIST_STORE_ERROR", str(error)) from error
+                    # Counts only (no names or addresses): enough to tell a
+                    # short list from a failed or partial load in native.log.
+                    self.log_message(
+                        "playlists listed playlists=%d channels=%d",
+                        len(playlists), sum(len(entry.get("items") or ()) for entry in playlists),
+                    )
+                    return self._send_api_success({"playlists": playlists})
                 if path == "/api/v1/runtime":
                     return self._send_api_success(
                         runtime_status(RUNTIME_PATHS, active_port=self.server.server_port)
@@ -633,10 +641,19 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 )
                 if path in {"/api/v1/playlists/import", "/api/v1/playlists/link", "/api/v1/playlists/remove"}:
                     try:
-                        if path.endswith("/link"):
-                            return self._send_api_success(PLAYLIST_STORE.import_link(body))
-                        if path.endswith("/import"):
-                            return self._send_api_success(PLAYLIST_STORE.import_file(body))
+                        if path.endswith("/link") or path.endswith("/import"):
+                            result = (PLAYLIST_STORE.import_link(body) if path.endswith("/link")
+                                      else PLAYLIST_STORE.import_file(body))
+                            imported = result.get("playlist") or {}
+                            self.log_message(
+                                "playlist saved channels=%d skipped=%d private=%d duplicates=%d defaulted=%d as=%s auto=%s replaced=%s",
+                                len(imported.get("items") or ()), int(imported.get("skipped") or 0),
+                                int(imported.get("private") or 0),
+                                int(imported.get("duplicates") or 0), int(imported.get("defaulted") or 0),
+                                str(imported.get("default_type") or "-")[:8], str(imported.get("auto") or "-")[:8],
+                                result.get("replaced") is True,
+                            )
+                            return self._send_api_success(result)
                         if set(body) != {"id"}:
                             raise ValueError("Playlist removal requires only its ID.")
                         PLAYLIST_STORE.remove(body["id"])
@@ -1384,9 +1401,20 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """The local server. On Windows SO_REUSEADDR lets a second program listen
+    on a port that is already in use, and connections then go to either one
+    (two World Media copies, or one still closing, would split the page's
+    requests between them). There the port is taken exclusively instead; a
+    port left in TIME_WAIT by a closed copy can still be taken again."""
+
     daemon_threads = True
-    allow_reuse_address = True
+    allow_reuse_address = os.name != "nt"
     request_queue_size = 128
+
+    def server_bind(self) -> None:
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 WorldMediaHandler.protocol_version = "HTTP/1.1"

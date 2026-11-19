@@ -70,6 +70,36 @@ test('every color theme defines a complete CSS palette and System has a light ov
 });
 
 
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a, b) {
+  const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
+test('the seek and volume tracks stand out from the player bar in the light palettes (3:1)', async () => {
+  const css = await readFile(new URL('../src/styles/base.css', import.meta.url), 'utf8');
+  const token = (block, name) => block.match(new RegExp(`${name}: (#[0-9a-f]{6});`))?.[1];
+  const light = css.match(/:root\[data-theme='light'\]\s*\{([^}]*)\}/s)[1];
+  const system = css.match(/@media \(prefers-color-scheme: light\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{([^}]*)\}/s)[1];
+  for (const block of [light, system]) {
+    const track = token(block, '--slider-track');
+    assert.ok(track, 'the light palette sets --slider-track');
+    assert.ok(contrast(track, token(block, '--chrome')) >= 3, `track ${track} on the player bar`);
+  }
+  // The dark palettes keep their track: only the light ones set the token.
+  assert.equal(css.match(/--slider-track:/g).length, 2);
+  for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
+    const rule = css.match(new RegExp(`\\.player-seek${pseudo},\\s*#player-volume${pseudo} \\{([^}]*)\\}`))[1];
+    assert.match(rule, /background: var\(--slider-track, var\(--bg-elev-3\)\);/);
+    assert.match(rule, /height: 4px;/);
+  }
+});
+
+
 test('native theme bridge receives only the normalized persisted theme', async () => {
   const previousWindow = globalThis.window;
   const calls = [];

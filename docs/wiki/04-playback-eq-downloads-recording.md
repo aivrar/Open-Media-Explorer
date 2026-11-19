@@ -136,6 +136,9 @@ that a quiet station still moves the bars.
   relay and audio engine: when a stream has to be played directly because the
   relay could not be used (the EQ is unavailable then too), or while Windows
   has suspended the app's audio. A stream normally plays through the relay.
+- The **Visualizer** tab reads the sound in the same way, so when the meter is
+  flat, the Visualizer has no sound to follow either. See
+  [Visualizer](09-visualizer.md).
 - A recording reads the station separately, so the meter shows what you hear,
   not what is being saved.
 

@@ -1,0 +1,324 @@
+function i(o){var t=o.EndlessScenes,s=o.FractalFlight;return(function(){"use strict";var e=t.range,a=s.select,r=t.paletteShader,l=`
+float jHash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+float jNoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(jHash(i), jHash(i + vec3(1.0,0.0,0.0)), f.x),
+                   mix(jHash(i + vec3(0.0,1.0,0.0)), jHash(i + vec3(1.0,1.0,0.0)), f.x), f.y),
+               mix(mix(jHash(i + vec3(0.0,0.0,1.0)), jHash(i + vec3(1.0,0.0,1.0)), f.x),
+                   mix(jHash(i + vec3(0.0,1.0,1.0)), jHash(i + vec3(1.0,1.0,1.0)), f.x), f.y), f.z);
+}
+float jFbm(vec3 p) {
+    float v = 0.0, a = 0.57;
+    for (int i = 0; i < 4; i++) {
+        v += jNoise(p) * a;
+        p = p * 2.03 + vec3(3.1, 7.7, 1.9);
+        a *= 0.48;
+    }
+    return v;
+}
+vec2 jSphere(vec3 ro, vec3 rd, float radius) {
+    float b = dot(ro, rd), c = dot(ro, ro) - radius * radius;
+    float h = b * b - c;
+    if (h < 0.0) return vec2(-1.0);
+    h = sqrt(max(h, 0.0));
+    return vec2(-b - h, -b + h);
+}
+`;t.register({name:"crystal_geode",label:"Crystal Geode",description:"An endless winding cavern of luminous faceted crystals: quartz spires, amethyst clusters, monumental columns and prismatic needles",constants:"const float ES_INTERIOR = 1.0; const float ES_SPEED = 3.2; const float ES_LOOK_DROP = 0.0;",specialize:["formation"],palettes:["Amethyst","Emerald","Sapphire","Rose Quartz","Citrine","Ice Opal","Lava Crystal","Spectral Prism"],paletteShader:r([[[.015,.008,.055],[.28,.055,.55],[.85,.42,1]],[[.005,.035,.03],[.03,.38,.22],[.45,1,.62]],[[.006,.018,.07],[.035,.2,.64],[.35,.78,1]],[[.06,.015,.04],[.55,.2,.37],[1,.75,.81]],[[.05,.02,.005],[.64,.26,.025],[1,.88,.32]],[[.015,.05,.1],[.26,.61,.73],[.87,1,.98]],[[.055,.005,.015],[.55,.05,.015],[1,.56,.12]],[[.025,.015,.13],[.55,.06,.65],[.13,1,.84]]]),defaults:{glow:.9,fog:.38,detail:160},params:[a("formation","Crystal Formation","Structure",["Quartz Spires","Amethyst Clusters","Crystal Columns","Prismatic Needles"],0),e("cave_radius","Cavern Size","Structure",4,12,7.5,.1),e("crystal_length","Crystal Length","Structure",1,7,3.3,.1),e("crystal_width","Crystal Width","Structure",.25,2,.8,.01),e("density","Crystals Around Wall","Structure",8,20,12,1,"int"),e("spacing","Cluster Spacing","Structure",4,12,7,.1),e("iridescence","Facet Iridescence","Structure",0,1,.5,.01),e("inner_glow","Crystal Inner Light","Structure",0,2,.85,.01)],presets:[{name:"Amethyst Infinity",values:{formation:1,palette:0,crystal_length:3.5,cave_radius:8,fog:.4,speed:.8}},{name:"Emerald Sanctuary",values:{formation:2,palette:1,crystal_length:5.5,crystal_width:1.15,cave_radius:10,glow:.65,speed:.65}},{name:"Sapphire Needles",values:{formation:3,palette:2,density:16,crystal_width:.45,crystal_length:4.8,iridescence:.85}},{name:"Rose Quartz Dawn",values:{formation:0,palette:3,cave_radius:9,crystal_length:3.8,fog:.25,saturation:.8}},{name:"Citrine Cathedral",values:{formation:2,palette:4,cave_radius:12,crystal_length:7,crystal_width:1.5,spacing:10,fov:1.6,inner_glow:.65}},{name:"Opal Prism Voyage",values:{formation:1,palette:5,iridescence:1,color_spread:1.4,glow:1.15,density:14}}],shader:`
+vec2 geodeCenter(float z) { return vec2(sin(z * 0.037) * 3.5, sin(z * 0.022) * 1.8); }
+vec3 esPath(float z) {
+    return vec3(geodeCenter(z) + vec2(sin(z * 0.061) * u_sway * 0.65, (u_altitude - 1.0) * u_cave_radius * 0.28), z);
+}
+float geodeSpire(vec3 p, float radius, float height) {
+    float tip = u_formation > 1.5 && u_formation < 2.5 ? 0.12 : 0.32;
+    float taper = clamp((height - p.y) / max(height * tip, 0.1), 0.0, 1.0);
+    vec2 q = abs(p.xz);
+    float hex = max(q.x, q.x * 0.5 + q.y * 0.8660254) - radius * taper;
+    float cap = max(-p.y, p.y - height);
+    float slope = radius / max(height * tip, 0.1);
+    return max(hex, cap) / sqrt(1.0 + slope * slope);
+}
+vec2 esMap(vec3 p) {
+    vec3 q = vec3(p.xy - geodeCenter(p.z), p.z);
+    float ang = atan(q.y, q.x);
+    float count = floor(u_density + 0.5);
+    float sector = floor((ang + 3.14159265) / 6.2831853 * count);
+    float bay = floor((q.z + u_spacing * 0.5) / u_spacing);
+    float facets = max(abs(q.x) * 0.9238795 + abs(q.y) * 0.3826834,
+                       abs(q.y) * 0.9238795 + abs(q.x) * 0.3826834);
+    float wall = (u_cave_radius + 0.45 * esNoise(q.yz * 0.12) - facets) * 0.65;
+    float crystals = 100.0;
+    // Include neighboring cells: crystal widths/heights vary between cells.
+    for (int i = 0; i < 9; i++) {
+        float ai = mod(sector + mod(float(i), 3.0) - 1.0 + count, count);
+        float zi = bay + floor(float(i) / 3.0) - 1.0;
+        float h = esHash(vec2(ai, zi) + u_seed_vec.xy * 7.0);
+        float a = (ai + 0.5) / count * 6.2831853 - 3.14159265;
+        vec2 radial = vec2(cos(a), sin(a));
+        float root = u_cave_radius - 0.25;
+        vec3 local = vec3(dot(q.xy, vec2(-radial.y, radial.x)), root - dot(q.xy, radial), q.z - zi * u_spacing);
+        float height = u_crystal_length * (0.65 + h * 0.6);
+        float radius = u_crystal_width * (0.7 + h * 0.5);
+        if (u_formation > 2.5) { radius *= 0.55; height *= 1.25; }
+        for (int j = 0; j < 3; j++) {
+            if (j > 0 && (u_formation < 0.5 || u_formation > 1.5)) break;
+            float part = float(j);
+            vec3 v = local - vec3((part - 1.0) * radius * 0.55, 0.0, (part - 1.0) * radius * 0.65);
+            v.xy = rot2((h - 0.5) * 0.22 + (part - 1.0) * 0.10) * v.xy;
+            crystals = min(crystals, geodeSpire(v, radius * (1.0 - part * 0.16), height * (1.0 - part * 0.12)) * 0.65);
+        }
+    }
+    float d = min(wall, crystals);
+    // A smooth camera corridor remains clear even at the longest-crystal setting.
+    d = max(d, (1.35 - length(p.xy - esPath(p.z).xy)) * 0.7);
+    return vec2(d, crystals < wall ? 3.0 : 2.0);
+}
+float esTone(vec3 p, vec3 n, float material) {
+    float mineral = esNoise(vec2(floor(p.z / u_spacing), floor(atan(n.y, n.x) * 3.0)));
+    return 0.04 + mineral * 0.20 + u_iridescence * dot(n, vec3(0.18, 0.28, 0.12));
+}
+vec3 esEmission(vec3 p, vec3 n, float material) {
+    float glow = material > 2.5 ? 0.17 + 0.33 * pow(max(1.0 - abs(n.y), 0.0), 3.0) : 0.025;
+    return esPalette(esTone(p, n, material) + 0.08) * u_inner_glow * glow;
+}
+`}),t.register({name:"golden_hour_clouds",label:"Golden-Hour Clouds",description:"Continuous flight between immense volumetric cloud towers, over cloud oceans and through sunlit weather with silver linings",constants:"const float ES_INTERIOR = 0.0; const float ES_SPEED = 5.0; const float ES_LOOK_DROP = 0.5;",specialize:["weather"],cameraProbe:!1,renderKind:"volume",palettes:["Honey Sunrise","Peach Horizon","Lavender Dusk","Arctic Daylight","Storm Gold","Rose Nebula","Emerald Sky","Blue Hour"],paletteShader:r([[[.045,.06,.14],[.58,.24,.07],[1,.83,.48]],[[.055,.065,.18],[.78,.3,.2],[1,.8,.66]],[[.035,.025,.12],[.36,.16,.48],[.88,.64,.95]],[[.015,.05,.14],[.22,.49,.72],[.93,.98,1]],[[.009,.016,.055],[.19,.22,.3],[1,.72,.23]],[[.045,.005,.08],[.52,.06,.29],[1,.59,.78]],[[.008,.04,.055],[.06,.39,.29],[.75,1,.69]],[[.005,.012,.05],[.055,.18,.4],[.35,.65,.98]]]),defaults:{fog:.3,glow:.7,detail:150,view_distance:150,fov:1.35},params:[a("weather","Cloud Landscape","Structure",["Cumulus Towers","Cloud Ocean","Storm Cathedral","Wispy Highlands"],0),e("coverage","Cloud Coverage","Structure",.2,.85,.52,.01),e("cloud_scale","Cloud Scale","Structure",.5,2.5,1,.01),e("cloud_height","Cloud Height","Structure",16,60,36,.1),e("density","Cloud Density","Structure",.35,2,1.1,.01),e("billow","Billow Detail","Structure",0,1,.6,.01),e("open_sky","Clear Space Near Camera","Structure",0,24,12,.1),e("look_down","Look Toward Cloud Sea","Structure",-2,4,1.4,.1),e("wind","Wind Flow","Structure",0,2,.35,.01),e("sun_height","Sun Height","Structure",.03,.8,.18,.01),e("sun_angle","Sun Direction","Structure",-.8,.8,-.25,.01),e("silver_lining","Silver Lining","Structure",0,2,.8,.01)],presets:[{name:"Golden Cloud Kingdom",values:{weather:0,palette:0,cloud_height:46,cloud_scale:1.2,sun_height:.13,open_sky:14,altitude:1.2,look_down:1,fov:1.5,speed:.8}},{name:"Peach Cloud Ocean",values:{weather:1,palette:1,altitude:1.5,coverage:.65,density:1.2,open_sky:6,speed:.65}},{name:"Lavender Highlands",values:{weather:3,palette:2,coverage:.45,billow:.85,cloud_height:42,sun_height:.25}},{name:"Stormlight Cathedral",values:{weather:2,palette:4,coverage:.6,density:1.2,cloud_height:58,altitude:1.7,look_down:.8,sun_height:.16,sun_angle:-.65,open_sky:20,silver_lining:1.4}},{name:"Arctic Pillars",values:{weather:0,palette:3,cloud_height:50,cloud_scale:.8,coverage:.48,altitude:1.35,sun_height:.4,saturation:.7}},{name:"Rose Sky Voyage",values:{weather:3,palette:5,cloud_scale:1.6,coverage:.5,altitude:1.25,glow:1.1,color_spread:1.3}}],shader:l+`
+vec3 esPath(float z) {
+    float height = u_cloud_height * 0.88 + (u_altitude - 1.0) * u_cloud_height * 0.35;
+    if (u_weather > 0.5 && u_weather < 1.5) height = u_cloud_height * 0.53 + u_altitude * 6.0;
+    return vec3(sin(z * 0.018) * 8.0 + sin(z * 0.055) * u_sway * 2.0,
+                height + sin(z * 0.017) * u_sway * 1.5, z);
+}
+float cloudDensity(vec3 p, float travel) {
+    vec3 q = (p + vec3(travel * u_wind * 0.05, 0.0, travel * u_wind * 0.02)) * (0.030 / u_cloud_scale) + u_seed_vec.xyz * 6.0;
+    float macro = jNoise(vec3(q.x, 0.37, q.z));
+    float detail = jFbm(q * 3.1 + 7.0);
+    float top = u_cloud_height * (0.25 + 0.95 * macro);
+    float threshold = 0.64 - u_coverage * 0.44;
+    float sides = (macro - threshold) * u_cloud_height * 2.0;
+    if (u_weather > 0.5 && u_weather < 1.5) {
+        top = u_cloud_height * (0.38 + macro * 0.3);
+        sides += u_cloud_height * 0.45;
+    } else if (u_weather > 1.5 && u_weather < 2.5) {
+        top = u_cloud_height * (0.32 + macro * 1.1);
+        sides += sin(p.y * 0.065 + macro * 3.0) * 2.0;
+    } else if (u_weather > 2.5) {
+        top = u_cloud_height * (0.36 + macro * 0.65);
+        sides += sin(q.x * 4.0 + q.z * 2.0 + detail * 4.0) * 3.0;
+    }
+    // A height envelope opens the skyline; four octaves of 3D erosion add
+    // billowing edges. Clear the space near the camera without cutting a
+    // tunnel through clouds all the way to the horizon.
+    float cap = top - p.y, rounding = u_cloud_height * 0.18;
+    float h = clamp(0.5 + 0.5 * (sides - cap) / rounding, 0.0, 1.0);
+    float shape = mix(sides, cap, h) - rounding * h * (1.0 - h);
+    shape += (detail - 0.5) * u_cloud_height * (0.18 + u_billow * 0.35);
+    float lane = smoothstep(u_open_sky * 0.45, max(u_open_sky, 0.1), length(p - esPath(travel)));
+    float base = smoothstep(-3.0, 3.0, p.y);
+    return smoothstep(-1.2, 1.6, shape) * lane * base;
+}
+vec3 cloudSky(vec3 rd, vec3 sunDir) {
+    float sun = max(dot(rd, sunDir), 0.0);
+    float horizon = exp(-abs(rd.y) * 7.0);
+    vec3 sky = mix(esPalette(0.46) * 0.7, esPalette(0.14) * 0.85, horizon);
+    sky += esPalette(0.015) * (pow(sun, 700.0) * 5.0 + pow(sun, 15.0) * 0.7);
+    return sky;
+}
+`,renderShader:`
+void main() {
+    float z = u_time * u_speed * ES_SPEED + seedPhase() * 4.0;
+    vec3 ro = esPath(z), target = esPath(z + 8.0) - vec3(0.0, u_look_down, 0.0);
+    vec3 rd = psyRayDirection(gl_FragCoord.xy, u_resolution, ro, target, u_fov, sin(z * 0.035) * u_bank * 0.12);
+    vec3 sunDir = normalize(vec3(u_sun_angle, u_sun_height, 1.0));
+    vec3 sky = cloudSky(rd, sunDir);
+    float mu = dot(rd, sunDir);
+    float forwardScatter = 0.35 / pow(max(1.0 + 0.58 * 0.58 - 2.0 * 0.58 * mu, 0.06), 1.5);
+    float steps = floor(u_detail * 0.6) + 24.0;
+    float stride = u_view_distance / steps;
+    float t = stride * (0.44 + esHash(floor(gl_FragCoord.xy)) * 0.12);
+    float trans = 1.0;
+    vec3 light = vec3(0.0);
+    for (int i = 0; i < 156; i++) {
+        if (float(i) >= steps || trans < 0.012 || t > u_view_distance) break;
+        vec3 p = ro + rd * t;
+        float rho = cloudDensity(p, z);
+        if (rho > 0.002) {
+            float depth = 0.0;
+            for (int j = 0; j < 2; j++) {
+                float off = 4.0 + float(j) * 7.0;
+                depth += cloudDensity(p + sunDir * off, z) * (1.1 + float(j) * 1.7);
+            }
+            float sun = exp(-depth * 1.1 * u_density);
+            float a = 1.0 - exp(-rho * stride * u_density * 0.22);
+            vec3 shadow = esPalette(0.46) * 0.8 + esPalette(0.21 + p.y * 0.0003) * 0.11;
+            vec3 bright = esPalette(0.025 + p.y / max(u_cloud_height, 1.0) * 0.045);
+            vec3 scatter = shadow + bright * sun * (0.75 + forwardScatter * u_silver_lining * 0.26);
+            scatter *= 1.0 + u_audio_react * u_beat.x * u_glow * 0.22;
+            light += trans * a * scatter;
+            trans *= 1.0 - a;
+        }
+        t += stride;
+    }
+    vec3 col = light + sky * trans;
+    float haze = (1.0 - exp(-u_view_distance * u_fog * 0.002)) * trans;
+    col = mix(col, sky + esPalette(0.03) * pow(max(mu, 0.0), 12.0) * u_glow * 0.35, haze);
+    vec2 uv = gl_FragCoord.xy / u_resolution - 0.5;
+    col *= 1.0 - dot(uv, uv) * 0.15;
+    FRAG_OUT = vec4(psyGamma(psyTonemap(col * u_exposure)), 1.0);
+}
+`}),t.register({name:"planet_sunrise",label:"Planet Sunrise",description:"A continuous low-orbit journey over curved planetary horizons, glowing atmosphere, cloud continents and enormous tilted rings",constants:"const float ES_INTERIOR = 0.0; const float ES_SPEED = 3.0; const float ES_LOOK_DROP = 0.0;",specialize:["world"],renderKind:"planet",palettes:["Earth Dawn","Titan Amber","Azure Ice","Rose Horizon","Aurora World","Lava Planet","Pearl Eclipse","Neon Odyssey"],paletteShader:r([[[.008,.035,.12],[.09,.32,.24],[1,.71,.37]],[[.04,.014,.025],[.46,.19,.025],[1,.77,.27]],[[.004,.025,.095],[.065,.33,.58],[.7,.97,1]],[[.035,.006,.08],[.43,.13,.38],[1,.62,.74]],[[.002,.025,.055],[.035,.36,.32],[.67,1,.64]],[[.025,.002,.015],[.45,.04,.012],[1,.56,.055]],[[.01,.02,.065],[.22,.35,.5],[.99,.91,.7]],[[.014,.006,.1],[.42,.04,.7],[.055,.91,1]]]),defaults:{fog:.7,glow:.8,detail:140,fov:1.35,view_distance:150},params:[a("world","Planet Surface","Structure",["Ocean Continents","Banded Giant","Cratered Moon","Lava World","Frozen World"],0),e("planet_radius","Planet Scale","Structure",35,120,65,.1),e("terrain_scale","Surface Pattern Scale","Structure",.7,3,1.3,.01),e("surface_detail","Surface Detail","Structure",0,1,.65,.01),e("water_level","Ocean / Ice Coverage","Structure",.25,.7,.49,.01),e("cloud_cover","Planet Cloud Cover","Structure",0,1,.45,.01),e("atmosphere","Atmosphere Depth","Structure",.5,8,3.5,.1),e("sun_height","Sunrise Height","Structure",-.08,.5,.06,.01),e("latitude","Orbit Latitude","Structure",-.55,.55,.12,.01),e("look_down","Look Toward Surface","Structure",0,.6,.2,.01),e("rings","Ring Opacity","Structure",0,1,.65,.01),e("ring_tilt","Ring Tilt","Structure",0,1.2,.28,.01),e("ring_heading","Ring Direction","Structure",0,6.28,.7,.01),e("ring_width","Ring Width","Structure",.2,1.4,.8,.01),e("ring_gap","Ring Inner Gap","Structure",.05,.6,.25,.01),e("ring_bands","Ring Band Detail","Structure",0,1,.65,.01),e("stars","Stars","Structure",0,2,.8,.01)],presets:[{name:"Earth at First Light",values:{world:0,palette:0,rings:.35,atmosphere:4,sun_height:.065,speed:.7}},{name:"Titan Ring Passage",values:{world:1,palette:1,rings:.9,ring_width:1.3,ring_tilt:.45,cloud_cover:.2,atmosphere:6,latitude:.06}},{name:"Rose Moonrise",values:{world:2,palette:3,cloud_cover:0,atmosphere:1.3,sun_height:.04,rings:.7,look_down:.35}},{name:"Lava Terminator",values:{world:3,palette:5,cloud_cover:.15,sun_height:-.02,glow:1.3,rings:.5,atmosphere:4.5}},{name:"Frozen Azure Horizon",values:{world:4,palette:2,water_level:.62,cloud_cover:.25,atmosphere:2.5,rings:.85,ring_tilt:.15}},{name:"Neon Ring Odyssey",values:{world:1,palette:7,saturation:1.35,ring_bands:1,ring_width:1.4,atmosphere:5,glow:1.2}}],shader:l+`
+vec3 esPath(float z) {
+    float a = z * 0.014;
+    float lat = u_latitude + sin(z * 0.009) * u_sway * 0.025;
+    // Keep height in world units so Planet Scale also changes the visible
+    // curvature, instead of scaling the camera and planet together.
+    float radius = u_planet_radius + 4.0 + u_altitude * 6.4;
+    return radius * vec3(sin(a) * cos(lat), sin(lat), cos(a) * cos(lat));
+}
+vec2 esMap(vec3 p) { return vec2(length(p) - u_planet_radius, 2.0); }
+vec3 planetSky(vec3 rd, vec3 sunDir) {
+    vec3 sky = esPalette(0.46) * 0.055;
+    vec3 p = rd * 220.0;
+    vec3 id = floor(p);
+    float star = jHash(id + u_seed_vec.xyz * 10.0);
+    float point = 1.0 - smoothstep(0.02, 0.24, length(fract(p) - 0.5));
+    sky += vec3(point * step(0.994, star) * u_stars * (0.45 + star * 0.8));
+    float sun = max(dot(rd, sunDir), 0.0);
+    sky += esPalette(0.01) * (pow(sun, 900.0) * 6.0 + pow(sun, 25.0) * u_glow * 0.28);
+    return sky;
+}
+vec3 planetSurface(vec3 p, vec3 rd, vec3 sunDir, float travel) {
+    vec3 n = normalize(p), q = n * (u_terrain_scale * 4.0) + u_seed_vec.xyz * 4.0;
+    float small = jNoise(q * 8.0) * 0.6 + jNoise(q * 21.0) * 0.4;
+    float terrain = jFbm(q) + (small - 0.5) * u_surface_detail * 0.05;
+    float daylight = max(dot(n, sunDir), 0.0);
+    float land = smoothstep(u_water_level - 0.025, u_water_level + 0.025, terrain);
+    vec3 water = esPalette(0.49) * 0.85;
+    vec3 ground = esPalette(0.30 + terrain * 0.10) * (1.0 + (small - 0.5) * u_surface_detail * 0.65);
+    if (u_world > 0.5 && u_world < 1.5) {
+        float band = sin(n.y * 48.0 * u_terrain_scale + jNoise(q * 1.7) * 6.0);
+        ground = esPalette(0.10 + band * 0.08 + terrain * 0.12);
+        land = 1.0;
+    } else if (u_world > 1.5 && u_world < 2.5) {
+        vec3 cells = q * 3.5, id = floor(cells), nearest = vec3(0.0);
+        float dist = 100.0, craterSize = 0.5;
+        for (int i = 0; i < 27; i++) {
+            vec3 cell = id + vec3(mod(float(i),3.0),mod(floor(float(i)/3.0),3.0),floor(float(i)/9.0)) - 1.0;
+            vec3 center = cell + vec3(jHash(cell),jHash(cell+17.0),jHash(cell+31.0));
+            vec3 v = cells - center;
+            if (dot(v,v) < dist) { dist = dot(v,v); nearest = v; craterSize = 0.42 + jHash(cell+53.0)*0.23; }
+        }
+        float d = sqrt(dist) / craterSize;
+        float ring = (d - 0.95) * 6.0;
+        float rim = exp(-ring * ring);
+        float bowl = 1.0 - smoothstep(0.3,0.9,d);
+        float relief = 0.9 - bowl * 0.35 + rim * 0.32;
+        relief += dot(nearest - n * dot(n,nearest),sunDir) * rim * u_surface_detail * 0.65;
+        ground = esPalette(0.30 + small * 0.04) * max(relief,0.2);
+        land = 1.0;
+    } else if (u_world > 2.5 && u_world < 3.5) {
+        ground = esPalette(0.46) * 0.24;
+        land = 1.0;
+    } else if (u_world > 3.5) {
+        water = esPalette(0.02) * 0.9;
+        ground = esPalette(0.31) * 0.6;
+    }
+    vec3 base = mix(water, ground, land);
+    float clouds = smoothstep(0.84 - u_cloud_cover * 0.55, 1.0 - u_cloud_cover * 0.32,
+                             jFbm(q * 1.65 + vec3(travel * 0.0008, 7.0, 0.0)));
+    base = mix(base, esPalette(0.025) * 1.1, clouds * u_cloud_cover);
+    vec3 col = base * (0.10 + daylight * 1.4);
+    float spec = pow(max(dot(reflect(-sunDir, n), -rd), 0.0), 100.0);
+    col += esPalette(0.015) * spec * (1.0 - land) * 1.5;
+    if (u_world > 2.5 && u_world < 3.5) {
+        float lava = pow(max(1.0 - abs(terrain - 0.5) * 2.0, 0.0), 18.0);
+        col += esPalette(0.015) * lava * u_glow * 2.5;
+    }
+    return col;
+}
+vec3 planetAtmosphere(vec3 ro, vec3 rd, vec3 sunDir, float end, out vec3 trans) {
+    float outer = u_planet_radius + u_atmosphere;
+    vec2 shell = jSphere(ro, rd, outer);
+    trans = vec3(1.0);
+    if (shell.y < 0.0) return vec3(0.0);
+    float begin = max(shell.x, 0.0), finish = min(shell.y, end);
+    if (finish <= begin) return vec3(0.0);
+    float count = floor(u_detail * 0.13) + 10.0;
+    float stride = (finish - begin) / count;
+    float scaleHeight = max(u_atmosphere * 0.27, 0.15);
+    vec3 beta = mix(vec3(0.055,0.10,0.22), esPalette(0.21) * 0.15 + 0.045, 0.55) * u_fog;
+    float mu = dot(rd, sunDir);
+    float rayleigh = 0.6 * (1.0 + mu * mu);
+    float mie = 0.09 / pow(max(1.0 + 0.76 * 0.76 - 2.0 * 0.76 * mu, 0.04), 1.5);
+    vec3 scatter = vec3(0.0);
+    for (int i = 0; i < 40; i++) {
+        if (float(i) >= count) break;
+        vec3 p = ro + rd * (begin + (float(i) + 0.5) * stride);
+        float height = max(length(p) - u_planet_radius, 0.0);
+        float rho = exp(-height / scaleHeight);
+        vec2 shade = jSphere(p + normalize(p) * 0.02, sunDir, u_planet_radius);
+        float sunDepth = 0.0;
+        vec2 sunShell = jSphere(p, sunDir, outer);
+        float lightStep = max(sunShell.y, 0.0) / 4.0;
+        for (int j = 0; j < 4; j++) {
+            float h = max(length(p + sunDir * ((float(j) + 0.5) * lightStep)) - u_planet_radius, 0.0);
+            sunDepth += exp(-h / scaleHeight) * lightStep;
+        }
+        vec3 sunTrans = exp(-beta * sunDepth);
+        if (shade.x > 0.0) sunTrans *= 0.06;
+        vec3 attenuation = exp(-beta * rho * stride);
+        vec3 source = esPalette(0.03) * sunTrans * (rayleigh + mie) * (1.0 - attenuation);
+        scatter += trans * source;
+        trans *= attenuation;
+    }
+    return scatter;
+}
+`,renderShader:`
+void main() {
+    float z = u_time * u_speed * ES_SPEED + seedPhase() * 4.0;
+    vec3 ro = esPath(z), radial = normalize(ro);
+    vec3 tangent = normalize(esPath(z + 0.5) - ro);
+    vec3 forward = normalize(tangent - radial * u_look_down);
+    vec3 right = normalize(cross(forward, radial));
+    vec3 up = normalize(cross(right, forward));
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+    uv = rot2(sin(z * 0.023) * u_bank * 0.10) * uv;
+    vec3 rd = normalize(forward + (right * uv.x + up * uv.y) * u_fov);
+    // A perpetual dawn travels with the orbit; sunrise height remains adjustable.
+    vec3 sunDir = normalize(tangent + radial * u_sun_height + right * 0.25);
+    vec3 col = planetSky(rd, sunDir);
+    vec2 planet = jSphere(ro, rd, u_planet_radius);
+    float limit = u_view_distance * 4.0;
+    float bodyT = planet.x > 0.0 && planet.x < limit ? planet.x : -1.0;
+    if (bodyT > 0.0) col = planetSurface(ro + rd * bodyT, rd, sunDir, z);
+
+    vec3 ringNormal = vec3(sin(u_ring_heading)*sin(u_ring_tilt),cos(u_ring_tilt),cos(u_ring_heading)*sin(u_ring_tilt));
+    float denom = dot(rd, ringNormal);
+    float ringT = abs(denom) > 0.0001 ? -dot(ro, ringNormal) / denom : -1.0;
+    float end = bodyT > 0.0 ? bodyT : limit;
+    if (u_rings > 0.001 && ringT > 0.0 && ringT < end) {
+        vec3 p = ro + rd * ringT;
+        float radius = length(p);
+        float inner = u_planet_radius * (1.12 + u_ring_gap);
+        float outer = inner + u_planet_radius * u_ring_width;
+        float position = (radius - inner) / max(outer - inner, 1.0);
+        float edge = smoothstep(0.0,0.045,position) * (1.0 - smoothstep(0.955,1.0,position));
+        float bands = 0.55 + 0.45 * sin(position * 170.0 + esNoise(vec2(position * 40.0,3.0)) * 6.0);
+        float gaps = mix(1.0, 0.35 + 0.65 * bands, u_ring_bands);
+        vec2 shadow = jSphere(p + sunDir * 0.05, sunDir, u_planet_radius);
+        float sun = shadow.x > 0.0 ? 0.12 : 0.65 + 0.35 * abs(dot(ringNormal,sunDir));
+        vec3 ring = esPalette(0.05 + position * 0.28) * sun * (0.7 + bands * 0.5);
+        float alpha = clamp(edge * gaps * u_rings, 0.0, 0.97);
+        col = mix(col, ring, alpha);
+        if (alpha > 0.85) end = ringT;
+    }
+    vec3 trans;
+    vec3 atmosphere = planetAtmosphere(ro, rd, sunDir, end, trans);
+    col = col * trans + atmosphere * (1.0 + u_audio_react * u_beat.x * u_glow * 0.25);
+    col *= 1.0 - dot(uv,uv) * 0.12;
+    FRAG_OUT = vec4(psyGamma(psyTonemap(col * u_exposure)), 1.0);
+}
+`})})(),{}}export{i as default};

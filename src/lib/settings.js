@@ -11,6 +11,7 @@ import { THEME_OPTIONS } from './themes.js';
 import { saveProfileHandoff } from './profile-transfer.js';
 import { bindBackupControls } from './backup.js';
 import { STATION_IMAGES_HINT, bindStationImageControls } from './station-images.js';
+import { getPlaylistItems, playlistsLoaded } from './playlists.js';
 import { TUNER_CARD_SIZES, TUNER_CARD_SIZE_LABELS, normalizeTunerCardSize } from './tuner-card-size.js';
 import {
   FFMPEG_APPROX_SIZE,
@@ -25,7 +26,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.10';
+const VERSION = '0.1.11';
 
 function buildModal() {
   const state = getState();
@@ -214,8 +215,10 @@ function buildModal() {
             <div>
               <label>Station images</label>
               <span id="settings-station-images-note" class="description">${STATION_IMAGES_HINT}</span>
+              <span id="settings-station-images-rule" class="description" data-station-images-rule></span>
               <code class="station-images-path" data-station-images-path></code>
               <span id="settings-station-images-status" class="description backup-status" data-station-images-status role="status" aria-live="polite"></span>
+              <div class="station-images-problems" data-station-images-problems hidden></div>
             </div>
             <div class="backup-actions">
               <button class="btn" type="button" data-act="station-images-open" aria-describedby="settings-station-images-note">Open folder</button>
@@ -491,6 +494,12 @@ function buildModal() {
     status: root.querySelector('[data-station-images-status]'),
     openButton: root.querySelector('[data-act="station-images-open"]'),
     refreshButton: root.querySelector('[data-act="station-images-refresh"]'),
+    rule: root.querySelector('[data-station-images-rule]'),
+    problems: root.querySelector('[data-station-images-problems]'),
+    // "Matches no station" is only judged once the playlists are known.
+    knownTitles: () => (playlistsLoaded()
+      ? [...getState().favorites, ...getPlaylistItems()].map((item) => item?.title)
+      : null),
     isDisposed: () => disposed,
   });
   refreshToolStatus();

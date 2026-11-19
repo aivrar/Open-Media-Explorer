@@ -67,7 +67,12 @@ export function createTunerCardArt({
     node.style.setProperty('--ph-hue', String(initialsHue(item?.title)));
     const initials = doc.createElement('span');
     initials.className = 'pill-initials';
-    initials.textContent = artworkInitials(item?.title);
+    // Upper-casing can lengthen a title (a sharp s or a ligature becomes two or
+    // three letters), and four letters is the most the box fits.
+    const letters = [...artworkInitials(item?.title)].slice(0, 4);
+    initials.textContent = letters.join('');
+    // tuner.css sizes three and four letters down so they fit the box.
+    initials.setAttribute('data-length', String(letters.length));
     node.appendChild(initials);
     return node;
   }

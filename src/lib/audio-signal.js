@@ -26,11 +26,28 @@
  * frame throttling (a minimised or occluded window gets about 1 frame a
  * second) still applies, without timers piling up behind it.
  *
+ * Pacing is per subscriber: the analyser is read once per tick (shared), and
+ * each subscriber is handed that frame only when its own interval has come
+ * round, so a 60 fps visual never makes the 15 fps meter run at 60. The
+ * frame's `dt` is set to that subscriber's own time since its previous frame
+ * just before it is called. Frames that announce a state change (the resting
+ * frame on stop, the one "no readable sound" frame) go to every subscriber.
+ *
  * Frame object (one object, rewritten in place every frame; copy what you
  * need to keep):
  *   time        seconds (the animation-frame clock)
- *   dt          seconds since the previous frame; 0 on the first frame after
- *               a (re)start, never more than MAX_DT
+ *   dt          seconds since the previous frame this subscriber got; 0 on
+ *               its first frame after a (re)start, never more than MAX_DT
+ *   version     a number that changes only when the sound comes from another
+ *               item or media element (source.getSourceKey()); 0 before the
+ *               first read, 1 from it. A pause, mute, hidden window or
+ *               suspended context does not change it, so a beat detector
+ *               resets its adaptive state (tempo) on a new item, not on a
+ *               pause. Without getSourceKey() it stays 1.
+ *   tapVersion  a number that changes whenever the analyser tap is a new node
+ *               (the engine makes it again after a pause, mute, hidden window
+ *               or suspended context), so there is a gap in the data before
+ *               it; 0 before the first read.
  *   active      true when the arrays hold real data from the playing media
  *   running     false only on the last frame sent when the loop stops
  *   sampleRate  Hz of the audio context (0 until known)
@@ -39,7 +56,22 @@
  *   minDecibels, maxDecibels   the dB span the byte spectrum covers
  *   spectrum    Uint8Array(fftSize / 2): byte frequency data, 0..255 maps
  *               linearly onto minDecibels..maxDecibels; all 0 when inactive
+ *   spectrumDb  Float32Array(fftSize / 2) of absolute dB (getFloatFrequencyData,
+ *               not clipped to minDecibels..maxDecibels), or null. Read only
+ *               on ticks where a subscriber that asked for it
+ *               (subscribe(fn, { floatSpectrum: true })) is due; null while no
+ *               current subscriber asked; -Infinity everywhere when inactive
+ *               (also on the first frames, before any read).
+ *               Only those subscribers should rely on it being fresh.
  *   waveform    Uint8Array(fftSize): byte time-domain data, 128 = silence
+ *   waveformFloat  Float32Array(fftSize): the float samples (-1..1) the
+ *               byte waveform is made from (the same read, not another one);
+ *               0 everywhere when inactive
+ *   volume      0..1, the media element's volume when this frame was read
+ *               (source.getVolume(); 1 without it). The tap is after the
+ *               volume, so every value above is scaled by it; a consumer that
+ *               wants the sound as recorded (a beat detector with fixed
+ *               thresholds) can make up for it. The meter ignores it.
  *   rms         0..1 linear RMS of the waveform (a full-scale sine is ~0.707)
  *   level       0..1, that RMS in dBFS mapped from -60 dB (0) to 0 dB (1)
  *   bass        0..1 energy-mean level of 30..300 Hz on the spectrum's scale
@@ -48,11 +80,9 @@
  *   bars(count, out, options)  N log-spaced bars 0..1 into `out` (see
  *               barsFromSpectrum); returns `out`
  *
- * Room left for later, deliberately not built now: a float spectrum
- * (getFloatFrequencyData into a Float32Array kept beside `spectrum`, read only
- * when a subscriber asks for it) and beat detection (kick / snare / hat onsets,
- * tempo, beat phase), which belongs in readFrame() below so every consumer
- * shares one detector.
+ * Room left for later, deliberately not built now: beat detection (kick /
+ * snare / hat onsets, tempo, beat phase). A consumer that needs it can run its
+ * own detector on the float spectrum and reset it when `version` changes.
  *
  * Pure helpers (bin maths, band levels, auto-gain) are exported for tests.
  */
@@ -236,13 +266,36 @@ export function autoGainDbStep(levelsDb, trackedDb, dt, outDb, {
 
 /* ---------------- The shared loop ---------------- */
 
+/** Is a subscriber whose next frame is due at `dueMs` due at `nowMs`? A frame
+ *  up to `toleranceMs` early counts (frames land on display refreshes, not on
+ *  the exact millisecond). A subscriber that has had no frame yet is due. */
+export function subscriberDue(dueMs, nowMs, toleranceMs) {
+  return !Number.isFinite(dueMs) || nowMs >= dueMs - toleranceMs;
+}
+
+/** When a subscriber that was just given a frame at `nowMs` is due next.
+ *  Kept on its own schedule (no drift) while it is less than one interval
+ *  behind; further behind (throttled frames, a long task) it starts afresh
+ *  instead of catching up with a burst. */
+export function nextSubscriberDue(dueMs, nowMs, intervalMs) {
+  return Number.isFinite(dueMs) && nowMs - dueMs < intervalMs ? dueMs + intervalMs : nowMs + intervalMs;
+}
+
+// Stands for "no source key read yet", so the first read moves version to 1
+// even when the source has no getSourceKey() (key undefined).
+const NOT_READ = Symbol('not read');
+
 /**
  * @param {object} options
- * @param {{ isPlaying(): boolean, isAudible?(): boolean, getAnalyser(): AnalyserNode|null, release?(): void }} options.source
+ * @param {{ isPlaying(): boolean, isAudible?(): boolean, getAnalyser(): AnalyserNode|null, release?(): void, getSourceKey?(): any, getVolume?(): number }} options.source
+ *        getVolume() is read once per frame read (a property read, no
+ *        listener) and copied to frame.volume.
  *        getAnalyser() must return null unless a running graph already has the
  *        current element attached; it must never create or resume a context.
  *        isAudible() false (muted, volume 0) rests the loop like a pause; call
- *        refresh() when it may have changed.
+ *        refresh() when it may have changed. getSourceKey() returns a
+ *        primitive that changes when the item or media element changes (it
+ *        moves frame.version on).
  */
 export function createAudioSignal({
   source,
@@ -253,7 +306,12 @@ export function createAudioSignal({
   clearTimer = (handle) => clearTimeout(handle),
   clock = () => globalThis.performance?.now?.() ?? Date.now(),
 } = {}) {
-  const subscribers = new Map(); // listener -> { fps }
+  // listener -> { fps, interval, due, lastMs, dt, floatSpectrum, isDue }
+  //   due      clock ms its next frame is due (NaN: due at once)
+  //   lastMs   clock ms of the last frame it was given (NaN: none since a restart)
+  //   dt       its own dt for the frame being dispatched
+  //   isDue    set for the tick being read and dispatched now
+  const subscribers = new Map();
   const dispatchLists = []; // listener snapshots, one per dispatch nesting depth
   let dispatchDepth = 0;
   const threw = new WeakSet(); // listeners whose error was already logged
@@ -279,10 +337,15 @@ export function createAudioSignal({
   const bandRanges = { bass: [1, 1], mid: [1, 1], high: [1, 1] };
   const barCache = []; // { count, minHz, maxHz, rate, fft, ranges }
   let idleAnnounced = false; // the inactive state was already sent once
+  let lastNode = null; // the tap node of the last read (tapVersion)
+  let lastKey = NOT_READ; // the source key of the last read (version)
+  let floatWanted = 0; // subscribers that asked for spectrumDb
   const barOptions = {
     powerTable: null, minDb: -100, maxDb: -30, binHz: 0, tiltDbPerOctave: 0, tiltPivotHz: 1000,
   };
-  const stats = { frames: 0, reads: 0, starts: 0, stops: 0 };
+  // frames: dispatches (one per tick read, plus state changes); deliveries:
+  // callbacks made (a tick reaches only the subscribers that are due).
+  const stats = { frames: 0, reads: 0, floatReads: 0, deliveries: 0, starts: 0, stops: 0 };
 
   function barRanges(count, minHz, maxHz) {
     const rate = frame.sampleRate;
@@ -300,6 +363,8 @@ export function createAudioSignal({
   const frame = {
     time: 0,
     dt: 0,
+    version: 0,
+    tapVersion: 0,
     active: false,
     running: false,
     sampleRate: 0,
@@ -308,7 +373,10 @@ export function createAudioSignal({
     minDecibels: -100,
     maxDecibels: -30,
     spectrum: new Uint8Array(DEFAULT_FFT / 2),
+    spectrumDb: null,
     waveform: new Uint8Array(DEFAULT_FFT).fill(128),
+    waveformFloat: floatWave,
+    volume: 1,
     rms: 0,
     level: 0,
     bass: 0,
@@ -342,17 +410,59 @@ export function createAudioSignal({
     else doc.removeEventListener('visibilitychange', refresh);
   }
 
-  /** Returns the interval it replaced. */
+  /** Returns the interval it replaced. Also recounts who wants spectrumDb. */
   function recomputeInterval() {
     const before = interval;
     let fps = 0;
-    for (const { fps: wantedFps } of subscribers.values()) fps = Math.max(fps, wantedFps);
+    let floats = 0;
+    for (const entry of subscribers.values()) {
+      fps = Math.max(fps, entry.fps);
+      if (entry.floatSpectrum) floats += 1;
+    }
     interval = 1000 / (fps || DEFAULT_FPS);
+    floatWanted = floats;
+    if (!floatWanted) {
+      frame.spectrumDb = null;
+    } else if (!frame.spectrumDb) {
+      // Someone asked: an array from now on, -Infinity until the first read
+      // (so the inactive frame, even before any read, matches the docs).
+      frame.spectrumDb = new Float32Array(frame.spectrum.length).fill(Number.NEGATIVE_INFINITY);
+    }
     return before;
   }
 
-  /** Hand the frame to every subscriber, from a snapshot of the listeners
+  /** Every subscriber starts its own schedule afresh (dt 0 on its next frame). */
+  function resetPacing() {
+    for (const entry of subscribers.values()) {
+      entry.due = Number.NaN;
+      entry.lastMs = Number.NaN;
+      entry.isDue = false;
+    }
+  }
+
+  /** Mark which subscribers get the frame read at `now`, move their schedules
+   *  on, and work out their own dt. Returns true when one of them asked for
+   *  the float spectrum. */
+  function markDue(now) {
+    const tolerance = interval / 2 + 1; // +1 ms: clock rounding, never a whole frame
+    let wantFloat = false;
+    for (const entry of subscribers.values()) {
+      entry.isDue = subscriberDue(entry.due, now, tolerance);
+      if (!entry.isDue) continue;
+      entry.dt = frameDt(entry.lastMs, now);
+      entry.lastMs = now;
+      entry.due = nextSubscriberDue(entry.due, now, entry.interval);
+      if (entry.floatSpectrum) wantFloat = true;
+    }
+    return wantFloat;
+  }
+
+  /** Hand the frame to the subscribers, from a snapshot of the listeners
    *  (one reused array per nesting depth, so no allocation per frame).
+   *  - `paced` (a frame read for the tick): only subscribers marked due by
+   *    markDue() get it, each with its own dt in frame.dt. Otherwise (a
+   *    state change: the resting frame, the one inactive frame) everyone
+   *    gets it with frame.dt as set by the caller.
    *  - A listener removed during the pass is skipped; one added waits for the
    *    next frame.
    *  - If a callback stops or restarts the loop (pauses, unsubscribes the
@@ -362,7 +472,7 @@ export function createAudioSignal({
    *    the resting frame twice.
    *  - A listener that throws is logged once and skipped this frame; the
    *    others and the loop carry on. */
-  function dispatch() {
+  function dispatch(paced = false) {
     stats.frames += 1;
     const loop = generation;
     const depth = dispatchDepth;
@@ -375,7 +485,14 @@ export function createAudioSignal({
         const listener = list[index];
         list[index] = null;
         if (loop !== generation) continue; // clears the rest of the snapshot
-        if (!subscribers.has(listener)) continue;
+        const entry = subscribers.get(listener);
+        if (!entry) continue;
+        if (paced) {
+          if (!entry.isDue) continue;
+          entry.isDue = false;
+          frame.dt = entry.dt;
+        }
+        stats.deliveries += 1;
         try {
           listener(frame);
         } catch (error) {
@@ -393,12 +510,21 @@ export function createAudioSignal({
   function clearFrame() {
     frame.active = false;
     frame.spectrum.fill(0);
+    if (frame.spectrumDb) frame.spectrumDb.fill(Number.NEGATIVE_INFINITY);
     frame.waveform.fill(128);
+    floatWave.fill(0);
     frame.rms = 0;
     frame.level = 0;
     frame.bass = 0;
     frame.mid = 0;
     frame.high = 0;
+  }
+
+  /** The element's volume for this read: 0..1, 1 when the source cannot say. */
+  function readVolume() {
+    let value = 1;
+    try { value = typeof source?.getVolume === 'function' ? Number(source.getVolume()) : 1; } catch (_) { value = 1; }
+    return Number.isFinite(value) && value >= 0 ? Math.min(1, value) : 1;
   }
 
   function cancelScheduled() {
@@ -422,6 +548,8 @@ export function createAudioSignal({
       frame.spectrum = new Uint8Array(fftSize / 2);
       frame.waveform = new Uint8Array(fftSize).fill(128);
       floatWave = new Float32Array(fftSize);
+      frame.waveformFloat = floatWave;
+      if (frame.spectrumDb) frame.spectrumDb = new Float32Array(fftSize / 2).fill(Number.NEGATIVE_INFINITY);
     }
     const minDb = Number(node.minDecibels);
     const maxDb = Number(node.maxDecibels);
@@ -444,12 +572,23 @@ export function createAudioSignal({
     }
   }
 
-  /** One read of the analyser into the shared frame. Beat detection, when it
-   *  comes, goes here so every consumer shares it. */
-  function readFrame(node) {
+  /** One read of the analyser into the shared frame; the float spectrum only
+   *  when a subscriber due on this tick asked for it. */
+  function readFrame(node, wantFloat) {
     stats.reads += 1;
     prepareFor(node);
     node.getByteFrequencyData(frame.spectrum);
+    if (wantFloat && floatWanted) {
+      if (!frame.spectrumDb || frame.spectrumDb.length !== frame.spectrum.length) {
+        frame.spectrumDb = new Float32Array(frame.spectrum.length);
+      }
+      if (typeof node.getFloatFrequencyData === 'function') {
+        node.getFloatFrequencyData(frame.spectrumDb);
+        stats.floatReads += 1;
+      } else {
+        frame.spectrumDb.fill(Number.NEGATIVE_INFINITY);
+      }
+    }
     node.getFloatTimeDomainData(floatWave);
     frame.rms = waveformStats(floatWave, frame.waveform);
     frame.level = levelFromRms(frame.rms);
@@ -508,6 +647,7 @@ export function createAudioSignal({
       frame.time = now / 1000;
       frame.running = true;
       lastFrameMs = Number.NaN;
+      resetPacing();
       if (!idleAnnounced) {
         idleAnnounced = true;
         dispatch();
@@ -520,16 +660,31 @@ export function createAudioSignal({
     }
     analyser = node;
     idleAnnounced = false;
+    let key;
+    try { key = source.getSourceKey?.(); } catch (_) { key = undefined; }
+    if (key !== lastKey) {
+      // Another item or element: consumers with memory (a beat detector) reset.
+      frame.version += 1;
+      lastKey = key;
+    }
+    if (node !== lastNode) {
+      // The tap was made again (after a pause, mute, hidden window...): a gap
+      // in the data, but the same sound, so version stays.
+      frame.tapVersion += 1;
+      lastNode = node;
+    }
     frame.dt = frameDt(lastFrameMs, now);
     frame.time = now / 1000;
     frame.running = true;
     lastFrameMs = now;
+    const wantFloat = markDue(now);
+    frame.volume = readVolume();
     try {
-      readFrame(node);
+      readFrame(node, wantFloat);
     } catch (_) {
       clearFrame();
     }
-    dispatch();
+    dispatch(true);
     // A listener may have stopped (or stopped and restarted) the loop, or a
     // subscriber change may already have scheduled the next tick.
     if (!running || loop !== generation || timerHandle || frameHandle) return;
@@ -547,6 +702,7 @@ export function createAudioSignal({
     try { node = source.getAnalyser(); } catch (_) { node = null; }
     if (node) {
       lastFrameMs = Number.NaN;
+      resetPacing();
       dueMs = clock();
       if (!frameHandle) frameHandle = requestFrame(onFrame);
     } else {
@@ -564,6 +720,7 @@ export function createAudioSignal({
     stats.starts += 1;
     idleAnnounced = false;
     lastFrameMs = Number.NaN;
+    resetPacing();
     // The first frame comes at once; ticks follow at the subscribers' rate.
     dueMs = clock();
     frameHandle = requestFrame(onFrame);
@@ -601,17 +758,36 @@ export function createAudioSignal({
     else stop();
   }
 
-  /** Receive every frame while the loop runs. `fps` caps how often (the loop
-   *  runs at the highest rate any subscriber asks for). Returns unsubscribe. */
-  function subscribe(listener, { fps = DEFAULT_FPS } = {}) {
+  /** Receive frames while the loop runs, `fps` a second (the loop runs at the
+   *  highest rate any subscriber asks for; each subscriber is called at its
+   *  own rate). `floatSpectrum: true` asks for frame.spectrumDb. Subscribing
+   *  a listener that is already subscribed replaces its options (a new rate
+   *  starts on its next frame); the earlier unsubscribe function then does
+   *  nothing. Returns unsubscribe. */
+  function subscribe(listener, { fps = DEFAULT_FPS, floatSpectrum = false } = {}) {
     if (typeof listener !== 'function') return () => {};
     const rate = Math.max(1, Math.min(240, Number(fps) || DEFAULT_FPS));
-    subscribers.set(listener, { fps: rate });
+    const previous = subscribers.get(listener);
+    // A replacement keeps the schedule and pending state of the entry it
+    // replaces: if it is made during a dispatch, after markDue() but before
+    // this listener's turn, the listener still gets this tick's frame with
+    // its own dt (never skipped, never a dt that misses a frame).
+    const entry = {
+      fps: rate,
+      interval: 1000 / rate,
+      due: previous ? previous.due : Number.NaN,
+      lastMs: previous ? previous.lastMs : Number.NaN,
+      dt: previous ? previous.dt : 0,
+      floatSpectrum: floatSpectrum === true,
+      isDue: previous ? previous.isDue : false,
+    };
+    subscribers.set(listener, entry);
     retime(recomputeInterval());
     bindVisibility(true);
     refresh();
     return () => {
-      if (!subscribers.delete(listener)) return;
+      if (subscribers.get(listener) !== entry) return;
+      subscribers.delete(listener);
       retime(recomputeInterval());
       if (!subscribers.size) {
         bindVisibility(false);
@@ -628,6 +804,8 @@ export function createAudioSignal({
     get running() { return running; },
     get scheduled() { return Boolean(frameHandle || timerHandle); },
     get subscriberCount() { return subscribers.size; },
+    get version() { return frame.version; },
+    get tapVersion() { return frame.tapVersion; },
     get hasAnalyser() { return Boolean(analyser); },
     get frame() { return frame; },
     stats,

@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.1.11 - 2026-11-18
+
+A new Visualizer tab, fixes for issue #6, and more requests from
+discussion #8.
+
+- Visualizer: a new tab between **Discovery** and **About** shows pictures that
+  move with the sound of whatever is playing. It is ported from Psychedelia
+  Studio, the author's own project
+  (https://github.com/aivrar/psychedelia-studio). It has 71 scenes, from flat
+  patterns to 3D scenes you fly through. A badge on each scene says how hard it
+  works the graphics card: **Light**, **Medium** or **Heavy** (26, 21 and 24
+  scenes). A scene with ready-made colour schemes has a **Look** choice. Work on
+  the visualizer continues, and more is planned.
+- Visualizer shuffle: changes the scene every 8, 16 or 32 bars of the music.
+  **Scenes** chooses how heavy the scenes may be: **Light only**, **Light and
+  medium** (the default) or **All, heavy too**. The shuffle can use all scenes
+  or only your favourites, and it leans towards calmer scenes for calm music.
+- Visualizer effects: 38 post effects can go over the picture. They are off by
+  default. Pick up to three by hand, or let **Shuffle effects** pick them with
+  each scene or every 4, 8 or 16 bars. **Strength** is Subtle, Normal or
+  Strong.
+- Visualizer overlays: 25 overlays (lasers, stage lights, fireworks, particles,
+  matrix rain and more) can be drawn over the picture. They are off by
+  default, up to three at a time, and can be shuffled. One of them can be
+  blended in: with a blend mode (Add, Screen, Multiply, Soft light or
+  Difference), under the effects, shown only in the bright or the dark areas
+  of the scene, in the scene's colours, or bending the scene.
+- Visualizer favourites: the star over the picture keeps the scene, its look,
+  the effects and the overlays. The scene list has a **Favourites** filter,
+  and the shuffle can use only your favourites. They are separate from your
+  station favorites.
+- Visualizer picture: **Quality** is Low, Medium (the default) or High, **Frame
+  rate** is 15, 30 (the default) or 60, and **Brightness** goes from 30% to
+  100%. **Show measured fps** shows the frame rate it really gets.
+- Visualizer step-down: when the computer cannot keep up with a scene, the
+  Visualizer lowers the load for that scene by itself: effects first, then
+  overlays, then quality, then frame rate. A note says what changed. Your
+  choices stay as they were, and effects and overlays that were held back stay
+  ticked. The next scene starts at the chosen quality again, unless it needed
+  less earlier in the same visit.
+- Visualizer safety: a notice about flashing and photosensitivity comes before
+  the first picture moves, and again from **About flashing and
+  photosensitivity** in the panel. A flash limiter is always on. It keeps light
+  pulses to at most three a second and fades between scenes. It cannot rule
+  out every risk.
+- The Visualizer costs nothing while its tab is closed, and it never changes
+  the sound: it only reads it, as the sound meter does.
+- Credits: the shader code the Visualizer borrows from others is credited under
+  **Visualizer credits** on the About page, in `CREDITS.md` and in the
+  packaged third-party notices.
+- Playlist import: **Add as** starts on **Auto**. Auto gives a channel that does
+  not say radio or TV the type most channels in the same file say, or TV when
+  the file does not decide. When some channels needed a type from **Add as**,
+  the import result says how many and, with Auto, what it chose and why. When
+  every channel says its own type, there is nothing to report. **TV** and
+  **Radio** work as before (issue #6).
+- Playlist import: importing the same playlist again with another type, for
+  example as **Radio**, moves the favorites of the channels whose type changed
+  (here from TV to radio) to the new channel, with their place in My order,
+  their category and their own equalizer curve. Before, they stayed behind as
+  TV favorites that the radio dial never showed (issue #6).
+- Playlist import: the result now says how many entries were skipped because
+  they point at this computer or a private network address, and why. Two
+  entries with the same address but different names are both kept (issue #6).
+- My Playlists: a first read of the saved playlists that failed (for example
+  just after the app started) is tried again each time My Playlists is opened,
+  instead of leaving the list empty until you restart (issue #6).
+- Tuner: when some of your favorites are saved as the other type, the status
+  line says so, for example "3 more saved as TV (switch to TV to see them)",
+  instead of the stations silently missing from the dial (issue #6).
+- Player bar: the bar no longer jumps sideways on every station change. The
+  **Play** button was hidden for a moment, which narrowed the buttons (issue #6).
+- Channels from your own playlists no longer show "See provider terms" on their
+  cards and detail panel. Other sources keep their notes (issue #6).
+- Station images: a station whose name has a character a file name cannot have
+  (`\ / : * ? " < > |`), for example "Nu-Metal/Alternative", now matches a
+  picture in which each such character is written as `-`, `_` or a space, or
+  left out. The rule is shown in **Settings > Station images**
+  (discussion #8).
+- Station images: Settings lists the pictures that were not used at the last
+  scan and why (too large, not a valid picture, an SVG, a second picture with
+  the same name, and so on). It also lists a picture that fits more than one
+  station, and a picture that no favorite or playlist station is named like
+  (discussion #8).
+- Favorites: in My order, each card has a fourth button, **Move to bottom**
+  (discussion #8).
+- Favorites: **Remove all favorites** asks first, with the number of favorites
+  and a hint to use **Back up my data**. It also removes the favorites' own
+  equalizer curves (discussion #8).
+- The playlist and favorites controls now say how to remove and change
+  stations: a note on **Import playlist** and **Remove playlist**, and a clearer
+  message when no playlist is chosen (discussion #8).
+- Windows: a second copy of World Media can no longer share the first copy's
+  local port, which split the page's requests between the two. If the usual
+  port is busy and answers as World Media, the new copy waits up to 8 seconds
+  before it tries another port. This covers a copy that was just closed and one
+  that is still running.
+- Tuner: station initials of four letters, such as "SWR3", are no longer cut
+  off on Medium and Large cards.
+- Light theme: the seek and volume slider tracks in the player bar are now
+  visible. They were almost the colour of the bar.
+- The status line under the player bar no longer cuts the tails of letters such
+  as g, y and p.
+- The "0 dB" label in the EQ graph sits above the line instead of across it.
+- Internal: the Visualizer's choices are stored inside the existing settings.
+- Internal: `native.log` notes how many playlists and channels were listed or
+  saved (counts only, no names or addresses), and tells two copies apart by
+  process id.
+
 ## 0.1.10 - 2026-11-16
 
 Fixes for issue #6 and three more requests from discussion #8.
