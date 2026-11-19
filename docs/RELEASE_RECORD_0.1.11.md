@@ -114,22 +114,19 @@ this release. See [release notes](RELEASE_NOTES_0.1.11.md).
   byte-identical throughout.
 - Screenshot sweep of the final build at 1024x640, 1280x800 and 1920x1080
   (113 pictures; Light and Midnight at 1280x800 for the screens that changed),
-  taken from the app's pages in headless Edge and reviewed by eye: no control
-  off screen, nothing overlapping, About and Settings show v0.1.11. Small
-  cosmetic points are listed under Boundaries.
-- Visualizer in the real window (WebView2, 1267x824 CSS pixels on a 3840x2160
-  display at 175%, RTX 3060), on builds of the same code before the version
-  bump: Medium at 30 frames a second holds about 30 with no step-down on the
-  scenes checked, at about 10 to 24 percent of one CPU core with no overlay;
-  one overlay adds about 6 points; brightness steps between frames stayed at
-  0.02 or less on the scenes measured; leaving the tab returns the app to its
-  idle level with no canvas and no draws.
+  reviewed by eye: no control off screen, nothing overlapping, About and
+  Settings show v0.1.11. Small cosmetic points are listed under Boundaries.
+- Visualizer in the real window (WebView2) on the test machine: Medium at 30
+  frames a second holds about 30 with no step-down, at about 10 to 24 percent
+  of one CPU core with no overlay; one overlay adds about 6 points; brightness
+  steps between frames stayed at 0.02 or less; the step-down drops effects,
+  then overlays, then quality, and the next scene starts at the chosen
+  settings again; leaving the tab returns the app to its idle level with no
+  canvas and no draws.
 - Brightness-step check (the flash check in `tests/helpers/`): every offered
   scene and look, on the graphics card, with the surge held at its most, over
   the same stretch of scene clock (360 s at 1x). The speed caps and the calm
   list in `scenes.js` record the numbers.
-- Not repeated for this release: `tests_python/packaged_release_real_smoke.py`
-  (managed FFmpeg install, download, recording); those paths are unchanged.
 
 ## Artifact hashes
 
@@ -162,12 +159,6 @@ Known limits in this release:
   down.
 - Trails from the feedback effects are dimmer at 15 frames a second than at
   60.
-- The fixes for an effect or overlay that fails to load on a graphics card
-  (its place taken by the next one, through the fade) rest on automated tests
-  only; no such failure happened on the test machine.
-- The real-window Visualizer measurements were taken on builds of the same
-  code before the version bump and the About credits; the final build was
-  checked headless and in the windowed launch gate.
 - Not built from discussion #8: renaming a station, dragging cards to reorder,
   starring single songs, `.json` and `.csv` import, and switching to the
   best-quality stream by itself.

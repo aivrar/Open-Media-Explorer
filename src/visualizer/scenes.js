@@ -195,7 +195,7 @@ export const FX_NONE_SCENES = Object.freeze(new Set());
  *  each frame is drawn (scene-renderer.js setQuality), from the quality
  *  drawn now (the step-down's), so a lower quality also lowers these; the
  *  scene's chosen values are not changed (looks, favourites and links see
- *  them as chosen). Measured on the graphics card (an RTX 3060) at the
+ *  them as chosen). Measured on the test machine's graphics card at the
  *  tab's sizes in a 1920 x 1080 window (Low 1003 x 531, Medium 1504 x 797,
  *  High 2005 x 1063), ms a frame Low / Medium / High as Psychedelia has it,
  *  then with these caps:
@@ -247,8 +247,8 @@ export const SCENE_QUALITY_CAPS = Object.freeze({
  *  picture to the tab as it does at every quality. Strange Attractor Flight
  *  marches its glow volume around the whole 120-point trajectory its
  *  setUniforms hook feeds (u_attr_points: 120 segments at each of its 52
- *  steps; its orbit samples are then not used), about 72 ns a pixel on an
- *  RTX 3060: 87 ms a frame at Medium's 1504 x 797 in a 1920 x 1080 window.
+ *  steps; its orbit samples are then not used), about 72 ns a pixel on the
+ *  test machine: 87 ms a frame at Medium's 1504 x 797 in a 1920 x 1080 window.
  *  Its picture is a soft glow that looks the same at 240 000 pixels
  *  stretched as at 1.2 million (compared 1:1). With these budgets, ms a
  *  frame (90th percentile) over its looks: Low 13 (14.6), Medium 20.7
