@@ -642,7 +642,7 @@ test('the tab fills its area at the right drawing size, follows quality, and tea
   const select = controls.qualitySelect;
   select.value = 'high';
   select.dispatchEvent(new Event('change'));
-  assert.deepEqual(m.saved.at(-1), { visualizerQuality: 'high' });
+  assert.deepEqual(m.saved.at(-1), { visualizerQuality: 'high', visualizerQualityPicked: true });
   assert.equal(session.loop.targetFps, 30);
   assert.deepEqual([canvas.width, canvas.height], [1000, 1200]);
   // The frame rate has its own buttons.
@@ -1076,7 +1076,41 @@ test('the vendored Psychedelia files match their manifest (the live originals ar
   // b4739fa its fractals colour the inside of the set from the orbit point
   // closest to the origin, which holds still as the dive's budget grows (the
   // cause of the flicker the patch held back).
-  assert.deepEqual(PATCHES.map((patch) => patch.source), Array(5).fill('src/engine/overlays.js'));
+  // And (slice 12) the camera fade of three flights, three patches each
+  // (tests/visualizer-slice12.test.js). Cymatics: each visit starts afresh,
+  // three patches (tests/visualizer-slice13.test.js). Curl-Noise Silk: its
+  // warm-up at most two extra steps a frame (slice 14). Palette Map: its
+  // colour index without a jump (two patches). Slice 14's simulations: a
+  // resize carries their state over (GpuSim.carry, two in each); Fluid Ink
+  // steps every other frame with its ink blended between, and fewer
+  // pressure passes (seven more).
+  assert.deepEqual(PATCHES.map((patch) => patch.source), [
+    ...Array(5).fill('src/engine/overlays.js'),
+    ...Array(2).fill('src/engine/post-fx-library.js'),
+    ...['apollonian-foam-flight', 'folded-box-variants-flight', 'mandelbox-flight'].flatMap((name) => Array(3).fill(`src/effects/${name}.js`)),
+    ...Array(3).fill('src/effects/cymatics.js'),
+    'src/effects/curl-silk.js',
+    ...Array(2).fill('src/engine/gpu-sim.js'),
+    ...['curl-silk', 'fluid-ink', 'lenia', 'physarum'].flatMap((name) => Array(2).fill(`src/effects/${name}.js`)),
+    // Its step spread over two frames (three more).
+    ...Array(10).fill('src/effects/fluid-ink.js'),
+    // GlowLines: its persistence target sized by the line host (two, and a
+    // third: on a failed new target it draws on at the old size), no array
+    // made per frame (two), a new target checked and the trails carried
+    // into it (one): tests/visualizer-lines.test.js.
+    ...Array(6).fill('src/engine/glow-lines.js'),
+    // Physarum: at most two steps a frame, its agents resampled to a new
+    // count (two), its deposit scaled with its trail field's area.
+    ...Array(4).fill('src/effects/physarum.js'),
+    // Four line scenes take the host's time step (two each).
+    ...['epicycles', 'hopf', 'knots', 'polytopes'].flatMap((name) => Array(2).fill(`src/effects/${name}.js`)),
+    // The density worker (six) and IFS / L-System Lab (eight):
+    // tests/visualizer-accumulating.test.js; then the worker's white point
+    // eased by the host (four): tests/visualizer-density-steady.test.js.
+    ...Array(6).fill('src/workers/progressive-density-worker.js'),
+    ...Array(8).fill('src/effects/ifs-lsystem-lab.js'),
+    ...Array(4).fill('src/workers/progressive-density-worker.js'),
+  ]);
   const overlaysFile = manifest.files.find((file) => file.target === 'engine/overlays.js');
   assert.equal(overlaysFile.patches.length, 5);
   const vendoredOverlays = readFileSync(join(VENDOR_DIR, 'engine', 'overlays.js'), 'utf8');

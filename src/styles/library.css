@@ -593,6 +593,42 @@
 }
 .detail-quality { font-variant-numeric: tabular-nums; }
 
+/* A favorite's own name: the station's name under the title, and the form. */
+.detail-original-name {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.detail-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.detail-rename[hidden] { display: none; }
+.detail-rename-label { font-size: 12px; font-weight: 600; color: var(--text); }
+.detail-rename-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.detail-rename-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.detail-rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.detail-rename-message { margin: 0; font-size: 12px; color: var(--danger); }
+.detail-rename-hint { margin: 0; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+
 /* "Other streams": other Radio Browser entries for the same station. */
 .other-streams {
   display: flex;
@@ -654,6 +690,21 @@
   font-size: 12px;
 }
 .other-streams-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* Auto (verified): one quiet line under the stream facts, its place kept
+   (room for the small "use own stream" button) so the panel does not jump. */
+.detail-best-stream {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 26px;
+  margin: 6px 0 0;
+}
+.detail-best-stream-line {
   margin: 0;
   font-size: 12px;
   color: var(--text-dim);
@@ -891,6 +942,38 @@
 .library-root.is-personal-view .card-meta { min-height: 0; }
 .library-root.is-personal-view .source-badge { height: auto; }
 .library-root.is-personal-view .card-license { height: auto; }
+/* With technical details on, the compact card gives its source badge the
+   room there is: no column is kept for facts or a license the card does not
+   have, the badge stays on one line (cut short only when it does not fit
+   even alone), and facts or a license with no room beside it go to the next
+   line. A long license is cut short; its full text is on hover. */
+:root[data-tech-details="on"] .library-root.is-personal-view .card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+:root[data-tech-details="on"] .library-root.is-personal-view .source-badge {
+  display: block;
+  flex: 0 1 auto;
+  align-self: center;
+  max-width: 100%;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* In "My order" the move buttons take 56 px more of each card, so the cards
+   start wider there: a badge such as "Internet Archive" then fits whole at
+   every window size. */
+:root[data-tech-details="on"] .library-root.is-personal-view .cards-grid:has(.card.has-order-controls) {
+  grid-template-columns: repeat(auto-fill, minmax(318px, 1fr));
+}
+:root[data-tech-details="on"] .library-root.is-personal-view .card-facts { flex: 0 0 auto; }
+:root[data-tech-details="on"] .library-root.is-personal-view .card-license { flex: 1 1 62px; max-width: 100%; }
+:root[data-tech-details="on"] .library-root.is-personal-view .card-license:not(.has-quality) {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .library-root.is-personal-view .card-star {
   top: 50%;
   right: 10px;
@@ -899,23 +982,29 @@
 }
 .library-root.is-personal-view .card-star:hover { transform: translateY(-50%) scale(1.08); }
 
-/* Favorites in "My order": a narrow column of move buttons (top, up, down,
-   bottom) just left of the star. The star keeps its place; the text makes
-   room. Four 16 px buttons and their gaps (70 px) fit the 76 px card. */
+/* Favorites in "My order": the move buttons (top, up / down, bottom) in a
+   2 x 2 block just left of the star. The star keeps its place; the text makes
+   room. Each is drawn 24 px and answers over 26 x 26 (a transparent layer 1 px
+   past each side; with the 2 px gaps the layers touch but never overlap), so
+   at a fractional display scale (175%) it still answers over at least 24 x
+   24. The block (50 px) fits the 76 px card; the category button sits 5 px
+   left of its layers. */
 .card-order {
   position: absolute;
   top: 50%;
   right: 40px;
   transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 24px);
+  grid-auto-rows: 24px;
   gap: 2px;
   z-index: 2;
 }
 .card-order-btn {
   appearance: none;
-  width: 22px;
-  height: 16px;
+  position: relative;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -926,10 +1015,22 @@
   align-items: center;
   justify-content: center;
 }
+.card-order-btn::before { content: ''; position: absolute; inset: -1px; }
 .card-order-btn:hover:not([aria-disabled="true"]) { color: var(--text); border-color: var(--border-strong); }
 .card-order-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card-order-btn[aria-disabled="true"] { opacity: 0.35; cursor: default; }
-.library-root.is-personal-view .card.has-order-controls .card-body { padding-right: 72px; }
+/* Dragging a favorite in "My order": the card being moved fades, and an
+   accent edge on the card under the pointer shows the side it goes to
+   (top-left edge: before it; bottom-right edge: after it). */
+.card.is-draggable img { -webkit-user-drag: none; }
+.card.is-dragging { opacity: 0.45; }
+.card.drop-before { box-shadow: inset 4px 4px 0 var(--accent); border-color: var(--accent); }
+.card.drop-after { box-shadow: inset -4px -4px 0 var(--accent); border-color: var(--accent); }
+@media (forced-colors: active) {
+  .card.drop-before { border-top: 4px solid Highlight; border-left: 4px solid Highlight; }
+  .card.drop-after { border-bottom: 4px solid Highlight; border-right: 4px solid Highlight; }
+}
+.library-root.is-personal-view .card.has-order-controls .card-body { padding-right: 100px; }
 
 /* ============ Favorites categories ============
    A second row of chips under the type and sort buttons. With many
@@ -975,9 +1076,9 @@
 .card-category:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card-category.is-set { color: var(--accent); }
 .card-category[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
-.card.has-order-controls .card-category { right: 66px; }
+.card.has-order-controls .card-category { right: 96px; }
 .library-root.is-personal-view .card.has-category-control .card-body { padding-right: 70px; }
-.library-root.is-personal-view .card.has-category-control.has-order-controls .card-body { padding-right: 96px; }
+.library-root.is-personal-view .card.has-category-control.has-order-controls .card-body { padding-right: 126px; }
 
 /* The menu the card button opens. It sits on the page, not in the card, so
    nothing clips it; card-category.js keeps it inside the window. */

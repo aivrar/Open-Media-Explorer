@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  connectMediaRelay, probeMediaRelay, streamCandidatesForItem,
+  connectMediaRelay, playedStream, probeMediaRelay, streamCandidatesForItem,
 } from '../src/lib/media-failover.js';
 
 function tvItem() {
@@ -52,8 +52,11 @@ test('two endpoint attempts race and the reachable winner becomes the recording 
     expireImpl: async (mediaId) => { expired.push(mediaId); },
   });
   assert.equal(relay.media_id, 'good_media_1234567890');
-  assert.equal(item.stream_url, 'https://good.example/live.m3u8');
-  assert.equal(item.capture_headers.userAgent, 'Fixture/1');
+  // The item keeps its own address; the stream that plays is kept apart.
+  assert.equal(item.stream_url, 'https://dead.example/live.m3u8');
+  assert.equal(playedStream(item).url, 'https://good.example/live.m3u8');
+  assert.equal(playedStream(item).headers.userAgent, 'Fixture/1');
+  assert.equal(streamCandidatesForItem(item)[0].url, 'https://good.example/live.m3u8', 'a recording takes it');
   assert.deepEqual(expired, ['dead_media_1234567890']);
 });
 

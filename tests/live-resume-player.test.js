@@ -582,6 +582,101 @@ test('the Media Session play action rebuilds a stream whose media is gone, like 
   async function drop() { audio.emit('error'); await settle(); }
 });
 
+for (const delivery of ['live', 'unknown']) {
+  test(`a live station (delivery ${delivery}) whose connection closes is reconnected, also when the element first reports the time played as its length`, { timeout: TEST_TIMEOUT_MS }, async (t) => {
+    const { player, elements, audio, net, tick, progress, drop } = await setup(t);
+    await player.playItem(liveItem(`closing-${delivery}`, { delivery }));
+    await settle();
+    audio.duration = Infinity;
+    audio.emit('durationchange');
+    progress();
+    // The connection closes: the length becomes the time played, the element
+    // pauses and ends.
+    audio.duration = 1560.2;
+    audio.emit('durationchange');
+    audio.paused = true;
+    audio.emit('pause');
+    audio.ended = true;
+    await drop('ended');
+    assert.equal(sourceText(elements), RECONNECTING_TEXT, delivery);
+    const before = net.registrations;
+    audio.ended = false;
+    await tick(2000);
+    assert.equal(net.registrations, before + 1, `${delivery}: a new connection`);
+    audio.duration = Number.NaN;
+    player.stop();
+  });
+}
+
+test('a file with a length that plays to its end is not started again, even from a playlist entry (always "live")', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, elements, audio, net, tick, progress, drop } = await setup(t);
+  await player.playItem(liveItem('song-file', { delivery: 'live' }));
+  await settle();
+  audio.duration = 200;
+  audio.emit('durationchange');
+  progress();
+  audio.paused = true;
+  audio.emit('pause');
+  audio.ended = true;
+  const before = net.registrations;
+  await drop('ended');
+  assert.notEqual(sourceText(elements), RECONNECTING_TEXT);
+  await tick(60_000);
+  assert.equal(net.registrations, before, 'no reconnect, no loop');
+  audio.ended = false;
+  audio.duration = Number.NaN;
+  player.stop();
+});
+
+test('Play after a stream ended on its own starts a fresh connection', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, audio, net, progress } = await setup(t);
+  // A stream that reports a length (so its end is not taken for a dropped
+  // live connection) plays and then ends.
+  await player.playItem(liveItem('ended', { delivery: 'unknown' }));
+  await settle();
+  progress();
+  audio.duration = 3;
+  audio.paused = true;
+  audio.ended = true;
+  audio.emit('ended');
+  await settle();
+  const before = net.registrations;
+  await player.togglePlay();
+  await settle();
+  assert.equal(net.registrations, before + 1, 'a new connection, not play() on the ended element');
+  assert.equal(getState().isPlaying, true);
+
+  // The same when the element is left in an error state or without media.
+  audio.paused = true;
+  audio.error = { code: 2 };
+  const beforeError = net.registrations;
+  await player.togglePlay();
+  await settle();
+  assert.equal(net.registrations, beforeError + 1);
+  audio.error = null;
+  player.stop();
+});
+
+test('Play pressed twice quickly while a start is on its way gives one registration', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, net } = await setup(t);
+  net.mode = 'hold';
+  const starting = player.playItem(liveItem('double-press'));
+  await settle();
+  assert.equal(net.held.length, 1, 'the registration is on its way');
+  const before = net.registrations;
+  await player.togglePlay();
+  await player.togglePlay();
+  await settle();
+  assert.equal(net.registrations, before, 'no second start while the first is pending');
+  assert.equal(net.held.length, 1);
+  net.mode = 'ok';
+  net.held.shift()();
+  await starting;
+  await settle();
+  assert.equal(getState().isPlaying, true);
+  player.stop();
+});
+
 /** An item whose details must be looked up first; the lookup throws `error`. */
 function unresolvedItem(id, error) {
   const extra = { needsResolve: true };
@@ -937,7 +1032,7 @@ test('player wiring: failures, cancellation and lifecycle hooks go through the r
   assert.match(source, /failPlayback\('Playback error'\);/);
   assert.match(source, /Events\.LEVEL_LOADED/);
   assert.match(source, /export function stop\(\) \{\s+cancelReconnect\(\);/);
-  assert.match(source, /export async function playItem\(item\) \{[\s\S]*?cancelReconnect\(\);\s+await startPlayback\(item\);/);
+  assert.match(source, /export async function playItem\(item\) \{[\s\S]*?cancelReconnect\(\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item\);/);
   assert.match(source, /subscribe\('sleep-fired', \(\) => \{ stopReconnecting\(\); \}\)/);
   assert.match(source, /addEventListener\('online', \(\) => \{ liveResume\.networkBack\(\); \}\)/);
   assert.match(source, /addEventListener\('pagehide'/);

@@ -618,6 +618,44 @@ html, body {
   text-overflow: ellipsis;
 }
 
+/* The song line and, while a song is announced, its star right after it. */
+.player-source-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.player-source-row > .player-source {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.player-song-star {
+  appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  position: relative;
+}
+/* The star is drawn 18 x 18 so that it takes no more of the song line, but
+   it answers a click or a tap over 24 x 24: a transparent layer reaches 3 px
+   past each side without changing the layout. */
+.player-song-star::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+.player-song-star[hidden] { display: none; }
+.player-song-star:hover { color: var(--text); background: var(--bg-elev-3); }
+.player-song-star.is-starred { color: var(--accent); }
+.player-song-star.is-starred svg { fill: var(--accent); }
+
 .player-controls {
   grid-area: controls;
   display: flex;
@@ -1193,8 +1231,22 @@ html, body {
   padding: 8px 0;
 }
 .row + .row { border-top: 1px solid var(--border); }
+/* A switch or a choice beside a long description keeps its own size; the
+   text beside it wraps instead (a long description used to squeeze a switch
+   to a dot). */
+.row > div:first-child { flex: 1 1 auto; min-width: 0; }
+.row > input[type="checkbox"].switch,
+.row > select { flex: 0 0 auto; }
+.row > select { max-width: 45%; }
 .row label { color: var(--text); }
 .row .description { font-size: 12px; color: var(--text-dim); display: block; margin-top: 2px; }
+/* The Processor use limit's hint and, in its place for a moment, the range
+   (settings.js bindProcessorUse): one grid cell, so the row keeps the
+   height of the longer one and nothing jumps. */
+.processor-limit-hints { display: grid; }
+.processor-limit-hints > * { grid-area: 1 / 1; }
+.processor-limit-hints.is-noting [data-processor-limit-hint] { visibility: hidden; }
+.processor-limit-note:empty { visibility: hidden; }
 .backup-row > div:first-child { min-width: 0; }
 .row .backup-status { margin-top: 6px; color: var(--text); overflow-wrap: anywhere; }
 .row .backup-status:empty { display: none; }
@@ -1238,7 +1290,9 @@ html, body {
 
 input[type="checkbox"].switch {
   appearance: none;
+  flex: 0 0 auto;
   width: 36px;
+  min-width: 36px;
   height: 20px;
   background: var(--bg-elev-3);
   border-radius: 999px;
@@ -1272,6 +1326,13 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 .btn:hover { border-color: var(--border-strong); }
 .btn.btn-primary { background: var(--accent); color: var(--accent-contrast); border-color: transparent; }
 .btn.btn-danger { background: var(--danger); color: white; border-color: transparent; }
+/* Settings: a button keeps its size and stays on one line; the text beside
+   it wraps instead (a long description used to squeeze "Clear cache"). */
+.modal[aria-labelledby="settings-title"] .btn { white-space: nowrap; flex-shrink: 0; }
+/* Settings: what cannot be changed now (the limit at Low, the recording
+   quality while recording is off, FFmpeg buttons while busy) is grayed, as
+   elsewhere in the app. */
+.modal[aria-labelledby="settings-title"] :is(input, select, .btn):disabled { opacity: .52; cursor: not-allowed; }
 
 .tool-card {
   padding: 10px 12px;
@@ -1520,7 +1581,6 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .is-fav,
   .card,
   .channel-tile,
-  .source-status,
   .content-rating-badge {
     border-color: CanvasText !important;
   }

@@ -2,6 +2,7 @@
 
 import { expireMedia, registerMedia } from './capture-client.js';
 import { detectStreamKind, safeExternalUrl, sanitizeCaptureHeaders } from './item-model.js';
+import { rankStreams } from './best-stream.js';
 
 export const MAX_MEDIA_CANDIDATES = 8;
 // HLS registration can require a master manifest, a child manifest, and a
@@ -9,6 +10,11 @@ export const MAX_MEDIA_CANDIDATES = 8;
 // before that chain completed, so leave enough room for the initial probe.
 export const MEDIA_PROBE_TIMEOUT_MS = 15_000;
 export const MEDIA_PROBE_CONCURRENCY = 2;
+// With "Pick the best stream", the preferred stream of each pair is started
+// alone and has this long to deliver before the next listed stream starts
+// too; from then on whichever delivers first plays. If the preferred one
+// fails outright, the next starts at once. (Proposed value.)
+export const BEST_STREAM_HEAD_START_MS = 6_000;
 
 export const MEDIA_REGISTRY_FULL = 'MEDIA_REGISTRY_FULL';
 export const MEDIA_REGISTRY_FULL_MESSAGE = "The app's stream relay is full. Restart the app to clear it.";
@@ -54,23 +60,58 @@ function normalizedCandidate(value, item) {
     kind = detectStreamKind(url, item?.type === 'radio' || item?.type === 'audio' ? 'audio' : 'video');
   }
   if (kind === 'audio' && (item?.type === 'tv' || item?.type === 'video')) kind = 'video';
-  return {
+  const candidate = {
     url,
     kind,
     headers: sanitizeCaptureHeaders(value?.headers || value?.capture_headers),
   };
+  // What the directory says about the stream, for "Pick the best stream".
+  if (typeof value?.quality === 'string' && value.quality) candidate.quality = value.quality.slice(0, 32);
+  const bitrate = Number(value?.bitrate);
+  if (Number.isFinite(bitrate) && bitrate > 0) candidate.bitrate = Math.round(bitrate);
+  if (typeof value?.codec === 'string' && value.codec) candidate.codec = value.codec.slice(0, 12);
+  // A stream verified by Auto: it must still end on https after redirects.
+  if (value?.requireHttps === true && /^https:/i.test(url)) candidate.requireHttps = true;
+  return candidate;
 }
 
 function candidateKey(candidate) {
   return JSON.stringify([candidate.url, candidate.kind, candidate.headers]);
 }
 
-export function streamCandidatesForItem(item) {
-  const values = [{
+// The stream each item last played (by item id), kept apart from the item
+// so that playback never changes an item's own address, which is what a
+// favourite saves. A few items at most; the oldest goes first.
+const MAX_PLAYED_STREAMS = 16;
+const playedStreams = new Map();
+
+/** The stream item `itemOrId` last connected to ({ url, kind, headers,
+ *  bitrate?, codec?, quality? }), or null. */
+export function playedStream(itemOrId) {
+  const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
+  return (id && playedStreams.get(id)) || null;
+}
+
+/** The streams to try for an item, in order. By default: the stream it
+ *  plays now first, then its own stream and the source's alternates (a
+ *  recording takes this, so it records what plays). `preferBest: false`
+ *  (the setting is off): its own stream, then the alternates.
+ *  `preferBest: true`: the same streams plus `extraStreams` (other
+ *  directory entries of the same station), best first (best-stream.js);
+ *  the item's own stream always keeps a place within the limit. */
+export function streamCandidatesForItem(item, { preferBest, extraStreams = [] } = {}) {
+  const extra = item?._extra || {};
+  const played = preferBest === undefined ? playedStream(item) : null;
+  const values = [...(played ? [played] : []), {
     url: item?.stream_url,
     kind: item?.stream_kind,
     headers: item?.capture_headers,
-  }, ...(Array.isArray(item?._extra?.streamCandidates) ? item._extra.streamCandidates : [])];
+    quality: extra.quality,
+    bitrate: extra.bitrate,
+    codec: extra.codec,
+  }, ...(Array.isArray(extra.streamCandidates) ? extra.streamCandidates : []),
+  ...(preferBest === true && Array.isArray(extraStreams) ? extraStreams : [])];
+  const own = normalizedCandidate(values[played ? 1 : 0], item);
   const seen = new Set();
   const candidates = [];
   for (const value of values) {
@@ -80,19 +121,22 @@ export function streamCandidatesForItem(item) {
     if (seen.has(key)) continue;
     seen.add(key);
     candidates.push(candidate);
-    if (candidates.length >= MAX_MEDIA_CANDIDATES) break;
   }
-  return candidates;
+  if (preferBest !== true) return candidates.slice(0, MAX_MEDIA_CANDIDATES);
+  const ranked = rankStreams(candidates);
+  const ownKey = own ? candidateKey(own) : '';
+  const ownAt = ranked.findIndex((candidate) => candidateKey(candidate) === ownKey);
+  if (ownAt < MAX_MEDIA_CANDIDATES) return ranked.slice(0, MAX_MEDIA_CANDIDATES);
+  return [...ranked.slice(0, MAX_MEDIA_CANDIDATES - 1), ranked[ownAt]];
 }
 
+/** Remember the stream `item` connected to (playedStream). The item itself
+ *  is left as it is. */
 export function applyStreamCandidate(item, candidate) {
-  item.stream_url = candidate.url;
-  item.stream_kind = candidate.kind;
-  item.capture_headers = { ...candidate.headers };
-  item._extra = {
-    ...(item._extra || {}),
-    activeStreamUrl: candidate.url,
-  };
+  if (!item?.id || !candidate?.url) return item;
+  playedStreams.delete(item.id);
+  playedStreams.set(item.id, Object.freeze({ ...candidate, headers: Object.freeze({ ...candidate.headers }) }));
+  while (playedStreams.size > MAX_PLAYED_STREAMS) playedStreams.delete(playedStreams.keys().next().value);
   return item;
 }
 
@@ -214,6 +258,7 @@ async function connectCandidate(item, candidate, index, options, shouldProbe) {
       stream_url: candidate.url,
       stream_kind: candidate.kind,
       capture_headers: { ...candidate.headers },
+      require_https: candidate.requireHttps === true,
     };
     relay = await options.registerImpl(candidateItem, {
       fetchImpl: options.fetchImpl,
@@ -263,9 +308,19 @@ function firstSuccessful(entries) {
   });
 }
 
-/** Register and verify the first reachable candidate, racing only two at once. */
+/** Register and verify the first reachable candidate, racing only two at once.
+ *  With `preferBest` the streams go best first and the better of each pair
+ *  gets a head start (BEST_STREAM_HEAD_START_MS); without it, as before. */
 export async function connectMediaRelay(item, options = {}) {
-  const candidates = streamCandidatesForItem(item);
+  const preferBest = options.preferBest === true;
+  const headStartMs = preferBest
+    ? Math.max(0, Number(options.headStartMs ?? BEST_STREAM_HEAD_START_MS) || 0) : 0;
+  // `skipUrls`: streams that already connected for this start and did not
+  // play (start-failover.js); the rest keep their order.
+  const skip = new Set(Array.isArray(options.skipUrls) ? options.skipUrls : []);
+  const candidates = streamCandidatesForItem(item, {
+    preferBest: options.preferBest, extraStreams: options.extraStreams,
+  }).filter((candidate) => !skip.has(candidate.url));
   if (!candidates.length) {
     throw new MediaConnectionError('This item has no valid media stream.', { attempts: 0 });
   }
@@ -287,14 +342,33 @@ export async function connectMediaRelay(item, options = {}) {
   for (let offset = 0; offset < candidates.length; offset += concurrency) {
     if (settings.signal?.aborted) throw abortError(settings.signal.reason);
     const batch = candidates.slice(offset, offset + concurrency);
+    // The head start: the later streams of the batch wait for the timer, an
+    // outright failure of the first, or the caller giving up.
+    let releaseLater = () => {};
+    const later = new Promise((resolve) => { releaseLater = resolve; });
+    const setTimer = settings.setTimer || setTimeout;
+    const clearTimer = settings.clearTimer || clearTimeout;
+    const headTimer = headStartMs > 0 && batch.length > 1 ? setTimer(() => releaseLater(), headStartMs) : null;
+    const onCallerAbort = () => releaseLater();
+    if (headTimer !== null) settings.signal?.addEventListener?.('abort', onCallerAbort, { once: true });
     const entries = batch.map((candidate, batchIndex) => {
       const controller = new AbortController();
       const index = offset + batchIndex;
       const shouldProbe = candidate.kind === 'hls' || candidate.kind === 'dash' || candidates.length > 1;
       const entry = { controller };
-      entry.promise = connectCandidate(item, candidate, index, {
+      const begin = () => connectCandidate(item, candidate, index, {
         ...settings, controller,
       }, shouldProbe);
+      if (headTimer === null || batchIndex === 0) {
+        entry.promise = begin();
+        if (headTimer !== null) entry.promise.catch(() => releaseLater());
+      } else {
+        // Never started when the preferred stream already won.
+        entry.promise = later.then(() => {
+          if (controller.signal.aborted) throw abortError(controller.signal.reason);
+          return begin();
+        });
+      }
       entry.expire = (result) => {
         if (result?.relay?.media_id) {
           settings.expireImpl(result.relay.media_id, 0, { fetchImpl: settings.fetchImpl }).catch(() => {});
@@ -308,6 +382,13 @@ export async function connectMediaRelay(item, options = {}) {
       return winner.relay;
     } catch (batchErrors) {
       errors.push(...batchErrors);
+    } finally {
+      if (headTimer !== null) {
+        clearTimer(headTimer);
+        settings.signal?.removeEventListener?.('abort', onCallerAbort);
+        // A stream still waiting for its turn settles (as aborted) now.
+        releaseLater();
+      }
     }
   }
   if (underlyingErrorCodes(errors).includes(MEDIA_REGISTRY_FULL)) {

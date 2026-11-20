@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addFavorite, removeFavorite, getState, STORAGE_KEYS, subscribe, persistFavoriteMetadata } from '../src/lib/state.js';
 import { getPersistenceWarnings, clearPersistenceFailure } from '../src/lib/persistence-notice.js';
-import { scheduleProfileHandoff, cancelScheduledProfileHandoff } from '../src/lib/profile-transfer.js';
+import { AUTO_SYNC_RETRY_MS, scheduleProfileHandoff, cancelScheduledProfileHandoff } from '../src/lib/profile-transfer.js';
 
 test('failed favorites writes preserve saved/in-memory list, EQ and UI events; retry succeeds', () => {
   const previousStorage = globalThis.localStorage;
@@ -54,6 +54,10 @@ test('background native-backup failures stay visible until a successful retry', 
   try {
     scheduleProfileHandoff({ delayMs: 0, storage, requestImpl: async () => { throw new Error('Disk full'); } });
     await new Promise((resolve) => setTimeout(resolve, 20));
+    // The first failure is retried once, quietly (AUTO_SYNC_RETRY_MS later);
+    // the notice comes when that fails too.
+    assert.equal(getPersistenceWarnings().length, 0);
+    await new Promise((resolve) => setTimeout(resolve, AUTO_SYNC_RETRY_MS + 50));
     assert.match(getPersistenceWarnings().join(' '), /portable profile backup could not be updated/);
     scheduleProfileHandoff({ delayMs: 0, storage, requestImpl: async () => ({}) });
     await new Promise((resolve) => setTimeout(resolve, 20));

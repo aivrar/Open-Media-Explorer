@@ -316,8 +316,13 @@ test('favourites: short strings, starred and unstarred, capped with the unknown 
 test('the slice 4 settings: defaults, checked values, kept by normalizeSettings', () => {
   const {
     visualizerFx, visualizerFxShuffle, visualizerFxIntensity, visualizerFxTiming, visualizerFxFlash, visualizerFxSet,
-    visualizerOverlays, visualizerOverlayShuffle, visualizerOverlaySet, ...slice4
+    visualizerOverlays, visualizerOverlayShuffle, visualizerOverlaySet, visualizerOverlayGlow, visualizerDrift,
+    visualizerOverlayStyles, visualizerFolded, ...slice4
   } = normalizeVisualizerExtras({});
+  assert.deepEqual(visualizerFolded, [], 'every section of the side panel open');
+  assert.deepEqual(visualizerOverlayStyles, {}, 'no Style picked: Any');
+  assert.equal(visualizerDrift, true, 'slow drift: on');
+  assert.equal(visualizerOverlayGlow, false, 'extra glow: off');
   assert.deepEqual([visualizerOverlays, visualizerOverlayShuffle, visualizerOverlaySet], [false, true, []], 'the overlays (slice 6): off');
   assert.deepEqual([visualizerFx, visualizerFxShuffle, visualizerFxIntensity, visualizerFxTiming, visualizerFxFlash, visualizerFxSet], [false, true, 'normal', 'scene', false, []], 'the effects (slice 5): off');
   assert.deepEqual(slice4, {
@@ -611,12 +616,12 @@ test('favourites in the tab: the star saves the scene and look shown, marks it i
   const { session, controls } = m;
   const star = controls.star;
   assert.equal(star.getAttribute('aria-pressed'), 'false');
-  assert.equal(star.getAttribute('aria-label'), 'Add to favourites');
+  assert.equal(star.getAttribute('aria-label'), 'Add to favorites');
   star.dispatchEvent(new Event('click'));
   const saved = m.saved.at(-1).visualizerFavourites;
   assert.deepEqual(saved, ['aurora:0'], 'the scene and the look shown');
   assert.equal(star.getAttribute('aria-pressed'), 'true');
-  assert.equal(star.getAttribute('aria-label'), 'Remove from favourites');
+  assert.equal(star.getAttribute('aria-label'), 'Remove from favorites');
   // Another look of the same scene is not starred.
   controls.lookNext.dispatchEvent(new Event('click'));
   assert.equal(star.getAttribute('aria-pressed'), 'false');
@@ -626,7 +631,7 @@ test('favourites in the tab: the star saves the scene and look shown, marks it i
   const list = session.sceneList;
   const aurora = list.options.get('aurora');
   assert.equal(aurora.children.find((child) => child.className === 'viz-scene-star').hidden, false);
-  assert.match(aurora.getAttribute('aria-label'), /favourite/);
+  assert.match(aurora.getAttribute('aria-label'), /favorite/);
   assert.equal(list.options.get('plasma').children.find((child) => child.className === 'viz-scene-star').hidden, true);
   controls.sceneButton.dispatchEvent(new Event('click'));
   controls.favouritesOnly.dispatchEvent(new Event('click'));
@@ -638,7 +643,7 @@ test('favourites in the tab: the star saves the scene and look shown, marks it i
   assert.deepEqual(m.settings.visualizerFavourites, []);
   controls.sceneButton.dispatchEvent(new Event('click'));
   assert.deepEqual(list.shown, []);
-  assert.match(list.panel.children[2].textContent, /No favourites yet/);
+  assert.match(list.panel.children[2].textContent, /No favorites yet/);
   session.destroy();
 });
 
@@ -773,7 +778,7 @@ test('shuffle settings: favourites only, the cost filter, change every N bars, a
   // The cost filter and bars, saved.
   controls.shuffleCost.value = 'light';
   controls.shuffleCost.dispatchEvent(new Event('change'));
-  assert.deepEqual(m.saved.at(-1), { visualizerShuffleCost: 'light' });
+  assert.deepEqual(m.saved.at(-1), { visualizerShuffleCost: 'light', visualizerShuffleCostPicked: true });
   controls.shuffleBars.value = '32';
   controls.shuffleBars.dispatchEvent(new Event('change'));
   assert.deepEqual(m.saved.at(-1), { visualizerShuffleBars: 32 });
@@ -806,7 +811,7 @@ test('shuffle settings: favourites only, the cost filter, change every N bars, a
   session.destroy();
 });
 
-/* ---------------- Review fixes (Codex, slice 4) ---------------- */
+/* ---------------- Review fixes (slice 4) ---------------- */
 
 test('a look change goes through the guarded transition: a cross-fade charged to the flash budget, one at a time, the latest wins, slower when the budget is full', async () => {
   const m = await mount({ settings: { visualizerScene: 'aurora' }, animate: true });

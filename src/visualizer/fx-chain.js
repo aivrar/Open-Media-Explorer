@@ -40,6 +40,10 @@
  *     starts spent (TRIGGER_IDLE_AGE) whenever it first draws.
  *   - Param links (fx-shuffle.js) push params from the limiter's output
  *     (state.sources), as the scenes' links do (reactor.js applyLinks).
+ *   - Slow drift (drift.js): up to two params of each pass marked linkable
+ *     wander inside the range the shuffle draws them from, on the drift
+ *     clock (state.drift: { bars, scale }); a link pushes on top. A pass that
+ *     stays on keeps its waves.
  *   - The global reactions pass (fx-reactions.js; Psychedelia's audio pass,
  *     below) is the last pass when it has anything to do.
  *   - A lost context: every object went with it; nothing is deleted, all is
@@ -47,7 +51,10 @@
  */
 
 import { applyLinks } from './reactor.js';
+import { applyDrift } from './drift.js';
+import { fxDriftFor } from './fx-shuffle.js';
 import { FX_SYNC } from './fx-catalog.js';
+import { OVERLAY_EXTRA_BLENDS_RELEASED } from './overlay-catalog.js';
 import { FLASH_LIMITS } from './flash-limiter.js';
 
 /** Psychedelia's post-process.js audio pass (its AUDIO_PASS_SRC), as there. */
@@ -92,14 +99,14 @@ const BLIT_SRC = 'uniform sampler2D u_tex;\nvoid main() { gl_FragColor = texture
 
 /** The blend modes' numbers in OVERLAY_BLEND_SRC (overlay-catalog.js OVERLAY_BLENDS). */
 export const OVERLAY_MODE_INDEX = Object.freeze({
-  add: 0, screen: 1, multiply: 2, soft: 3, difference: 4,
+  add: 0, screen: 1, multiply: 2, soft: 3, difference: 4, lighten: 5, colour: 6,
 });
 /** How far each blend mode may go (its share of the overlay's own alpha):
  *  Difference and Multiply can turn a bright overlay over a bright scene into
  *  a large step of light, so they are held lower (measured, the overlay
  *  flash check). */
 export const OVERLAY_MODE_STRENGTH = Object.freeze({
-  add: 1, screen: 1, multiply: 0.8, soft: 1, difference: 0.6,
+  add: 1, screen: 1, multiply: 0.8, soft: 1, difference: 0.6, lighten: 1, colour: 1,
 });
 /** The most the overlay bends the scene: uv offset per unit of the overlay's
  *  luminance slope (a share of the picture). */
@@ -107,9 +114,60 @@ export const OVERLAY_BEND_MAX = 0.012;
 /** Mask from the scene's luminance: shown where it is between these. */
 export const OVERLAY_MASK_EDGES = Object.freeze([0.12, 0.55]);
 
+/** The held blend-ins' lines (overlay-catalog.js OVERLAY_EXTRA_BLENDS), in
+ *  the shader only once released: held, it is the shader as measured.
+ *  Colour keeps the scene's luma exactly: the overlay's chroma (its colour
+ *  less its own luma, which has luma 0) is laid on the scene's luma and,
+ *  where that leaves the 0..1 cube, shrunk toward grey just enough to fit
+ *  (also luma 0); so mix(s, b, a) has the scene's luma at any a. */
+const EXTRA_BLEND_FUNCTIONS = [
+  'vec3 colourBlend(vec3 s, vec3 c) {',
+  '    float y = luma(s);',
+  '    vec3 d = c - vec3(luma(c));',
+  '    float k = 1.0;',
+  '    if (d.r > 1e-5) k = min(k, (1.0 - y) / d.r); else if (d.r < -1e-5) k = min(k, y / -d.r);',
+  '    if (d.g > 1e-5) k = min(k, (1.0 - y) / d.g); else if (d.g < -1e-5) k = min(k, y / -d.g);',
+  '    if (d.b > 1e-5) k = min(k, (1.0 - y) / d.b); else if (d.b < -1e-5) k = min(k, y / -d.b);',
+  '    return vec3(y) + d * max(k, 0.0);',
+  '}',
+];
+const EXTRA_BLEND_MODES = [
+  '    if (u_mode > 5.5) b = colourBlend(s, c);',
+  '    else if (u_mode > 4.5) b = max(s, c);',
+];
+
+/** The Colour blend-in for one pixel, as its shader computes it (for the
+ *  tests): scene `s`, overlay `c` (straight, 0..1). Returns [r, g, b]. */
+export function overlayColourBlend(s, c) {
+  const luma = (v) => 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  const y = luma(s);
+  const yc = luma(c);
+  const d = c.map((v) => v - yc);
+  let k = 1;
+  for (const v of d) {
+    if (v > 1e-5) k = Math.min(k, (1 - y) / v);
+    else if (v < -1e-5) k = Math.min(k, y / -v);
+  }
+  return d.map((v) => y + v * Math.max(k, 0));
+}
+
 /** One blended overlay (overlay-layer.js blend sheet, uploaded to u_ov,
- *  premultiplied, its top row first) on the picture so far (u_tex). */
-export const OVERLAY_BLEND_SRC = [
+ *  premultiplied, its top row first) on the picture so far (u_tex).
+ *  `extraBlends`: with the held blend-ins (overlayBlendSource). */
+export function overlayBlendSource({ extraBlends = OVERLAY_EXTRA_BLENDS_RELEASED } = {}) {
+  return OVERLAY_BLEND_LINES
+    .flatMap((line) => {
+      if (line === EXTRA_FUNCTIONS_AT) return extraBlends ? EXTRA_BLEND_FUNCTIONS : [];
+      if (line === EXTRA_MODES_AT) return extraBlends ? EXTRA_BLEND_MODES : [];
+      if (extraBlends && line === DIFFERENCE_LINE) return [line.replace('    if (', '    else if (')];
+      return [line];
+    })
+    .join('\n');
+}
+const EXTRA_FUNCTIONS_AT = '<extra blend functions>';
+const EXTRA_MODES_AT = '<extra blend modes>';
+const DIFFERENCE_LINE = '    if (u_mode > 3.5) b = abs(s - c);';
+const OVERLAY_BLEND_LINES = [
   'uniform sampler2D u_tex;',
   'uniform sampler2D u_ov;',
   'uniform vec2 u_ovsize;',
@@ -117,15 +175,27 @@ export const OVERLAY_BLEND_SRC = [
   'uniform float u_strength;',
   'uniform float u_mask;',
   'uniform float u_tint;',
+  // The least saturation the tint may leave (overlay-catalog.js tintFloor).
+  'uniform float u_tintsat;',
   'uniform float u_bend;',
   'uniform float u_gain;',
+  // Its motion (overlay-motion.js motionUv): moving 1, the mapping, the shift.
+  'uniform float u_ovmove;',
+  'uniform vec4 u_ovm;',
+  'uniform vec2 u_ovoff;',
   'float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }',
+  'float sat(vec3 c) { float hi = max(c.r, max(c.g, c.b)); return hi > 0.0001 ? (hi - min(c.r, min(c.g, c.b))) / hi : 0.0; }',
   'vec3 softLight(vec3 b, vec3 s) {',
   '    vec3 d = mix(sqrt(b), ((16.0 * b - 12.0) * b + 4.0) * b, step(b, vec3(0.25)));',
   '    return mix(b - (1.0 - 2.0 * s) * b * (1.0 - b), b + (2.0 * s - 1.0) * (d - b), step(vec3(0.5), s));',
   '}',
+  EXTRA_FUNCTIONS_AT,
   'void main() {',
   '    vec2 ouv = vec2(v_uv.x, 1.0 - v_uv.y);',
+  '    if (u_ovmove > 0.5) {',
+  '        vec2 q = vec2(v_uv.x - 0.5, 0.5 - v_uv.y) - u_ovoff;',
+  '        ouv = vec2(dot(u_ovm.xy, q), dot(u_ovm.zw, q)) + 0.5;',
+  '    }',
   '    vec4 o = texture2D(u_ov, ouv);',
   '    vec2 uv = v_uv;',
   '    if (u_bend > 0.0) {',
@@ -138,8 +208,16 @@ export const OVERLAY_BLEND_SRC = [
   '    float a = o.a;',
   '    vec3 c = a > 0.0001 ? clamp(o.rgb / a, 0.0, 1.0) : vec3(0.0);',
   '    if (u_tint > 0.0) {',
+  '        vec3 c0 = c;',
   '        vec3 sc = clamp(s / max(max(s.r, max(s.g, s.b)), 0.08), 0.0, 1.0);',
   '        c = mix(c, sc * max(c.r, max(c.g, c.b)), u_tint);',
+  // Back towards its own colour until saturated enough (twice: the second
+  // step corrects the first where the two colours peak in other channels).
+  '        float so = sat(c0);',
+  '        for (int i = 0; i < 2; i++) {',
+  '            float st = sat(c);',
+  '            if (st < u_tintsat && so > st) c = mix(c, c0, clamp((u_tintsat - st) / (so - st), 0.0, 1.0));',
+  '        }',
   '    }',
   '    if (u_mask > 0.5) {',
   `        float m = smoothstep(${OVERLAY_MASK_EDGES[0].toFixed(2)}, ${OVERLAY_MASK_EDGES[1].toFixed(2)}, luma(s));`,
@@ -147,13 +225,34 @@ export const OVERLAY_BLEND_SRC = [
   '    }',
   '    a *= u_gain * u_strength;',
   '    vec3 b = c;',
-  '    if (u_mode > 3.5) b = abs(s - c);',
+  EXTRA_MODES_AT,
+  DIFFERENCE_LINE,
   '    else if (u_mode > 2.5) b = softLight(s, c);',
   '    else if (u_mode > 1.5) b = s * c;',
   '    else if (u_mode > 0.5) b = 1.0 - (1.0 - s) * (1.0 - c);',
   '    gl_FragColor = vec4(mix(s, b, a), 1.0);',
   '}',
-].join('\n');
+];
+export const OVERLAY_BLEND_SRC = overlayBlendSource();
+
+/** The blend pass's "Scene colours" for one pixel, as its shader computes it
+ *  (for the tests): overlay colour `c` (straight, 0..1) tinted by scene
+ *  colour `s` at `tint` (0 or 1), its saturation kept at `floor` or more
+ *  where the overlay's own colour had that much. Returns [r, g, b]. */
+export function overlayTint(c, s, tint, floor = 0) {
+  if (!(tint > 0)) return c.slice(0, 3);
+  const satOf = (v) => { const hi = Math.max(v[0], v[1], v[2]); return hi > 0.0001 ? (hi - Math.min(v[0], v[1], v[2])) / hi : 0; };
+  const top = Math.max(s[0], s[1], s[2], 0.08);
+  const hi = Math.max(c[0], c[1], c[2]);
+  const mix = (a, b, k) => a.map((x, i) => x + (b[i] - x) * k);
+  let out = mix(c, s.map((x) => Math.max(0, Math.min(1, x / top)) * hi), tint);
+  const so = satOf(c);
+  for (let i = 0; i < 2; i += 1) {
+    const st = satOf(out);
+    if (st < floor && so > st) out = mix(out, c, Math.max(0, Math.min(1, (floor - st) / (so - st))));
+  }
+  return out.slice(0, 3);
+}
 
 /** Vertex shader of every pass (post-process.js getVertexSrc). */
 export function fxVertex(mode) {
@@ -211,6 +310,9 @@ export function fxFrameStep(dt) {
 }
 
 const INTERNAL = new Set(['reactions', 'blit', 'overlay']);
+/** The texture unit a palette pass (Palette Map) reads its look-up texture
+ *  from (u_lut), as Psychedelia's post-process.js binds it. */
+export const FX_LUT_UNIT = 2;
 
 /**
  * `charge`: asks the flash budget for a trigger firing (reactor.js charge:
@@ -229,11 +331,13 @@ export function createFxChain({
   let capture = null; // { fb, tex }
   let ping = null;
   let pong = null;
-  let passes = []; // { id, fx, values, links, drawValues, hist, beat, firedAt }
+  let passes = []; // { id, fx, values, links, drawValues, drift, driftValues, hist, beat, firedAt }
   let reactions = null; // this frame's global reaction values, or null
   // The blended overlay (overlay-layer.js blendSheet getter: () => sheet or
   // null), its texture (one, reused) and the sheet version last uploaded.
   let overlay = null;
+  // Palette look-up textures (256 x 1) of the palette passes, by palette.
+  const luts = new Map();
   let overlayTex = null;
   let overlayVersion = -1;
   let overlayW = 0;
@@ -270,6 +374,7 @@ export function createFxChain({
     redraws: 0, // draws at the time of the last one (no history moved)
     programs: 0, // effect programs held now (in the chain, cached or linking)
     programsDeleted: 0,
+    lutsMade: 0, // palette look-up textures made (Palette Map)
     waitedLink: 0, // frames drawn without a pass whose program was still linking
     triggers: 0, // trigger firings (passes firing on the same frame count once)
     triggersHeld: 0, // firings skipped: less than FX_TRIGGER_GAP_S since the last
@@ -464,9 +569,37 @@ export function createFxChain({
     ping = freeTarget(ping);
     pong = freeTarget(pong);
     freeOverlayTexture();
+    freeLuts();
     for (const pass of passes) freeHistory(pass);
     if (quad && alive()) { try { context.deleteBuffer(quad); } catch (_) {} }
     quad = null;
+  }
+
+  /* ---- Palette look-up textures ---- */
+  function freeLuts() {
+    if (alive()) for (const tex of luts.values()) { try { context.deleteTexture(tex); } catch (_) {} }
+    luts.clear();
+  }
+  /** Pass `pass`'s palette (its `palette` value) bound to FX_LUT_UNIT,
+   *  made once per palette from the catalog row's lut(index). */
+  function bindLut(pass, values) {
+    const g = context;
+    const index = Math.max(0, Math.round(Number(values.palette) || 0));
+    const key = `${pass.id}:${index}`;
+    let tex = luts.get(key);
+    g.activeTexture(g.TEXTURE0 + FX_LUT_UNIT);
+    if (!tex) {
+      tex = g.createTexture();
+      g.bindTexture(g.TEXTURE_2D, tex);
+      g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, 256, 1, 0, g.RGBA, g.UNSIGNED_BYTE, pass.fx.lut(index));
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.REPEAT);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
+      luts.set(key, tex);
+      stats.lutsMade += 1;
+    } else g.bindTexture(g.TEXTURE_2D, tex);
+    g.activeTexture(g.TEXTURE0);
   }
 
   /* ---- The blended overlay ---- */
@@ -525,8 +658,18 @@ export function createFxChain({
     set1f(made, 'u_strength', OVERLAY_MODE_STRENGTH[blend.mode] ?? 1);
     set1f(made, 'u_mask', blend.mask === 'bright' ? 1 : (blend.mask === 'dark' ? 2 : 0));
     set1f(made, 'u_tint', blend.tint ? 1 : 0);
+    set1f(made, 'u_tintsat', Math.max(0, Math.min(1, Number(sheet.tintFloor) || 0)));
     set1f(made, 'u_bend', blend.bend ? OVERLAY_BEND_MAX : 0);
     set1f(made, 'u_gain', Math.max(0, Math.min(1, Number(sheet.gain ?? 1))));
+    // Its motion: the sheet turned, scaled and moved (none: as it is).
+    const move = sheet.move;
+    set1f(made, 'u_ovmove', move ? 1 : 0);
+    if (move) {
+      const m = location(made, 'u_ovm');
+      if (m !== null && m !== undefined) g.uniform4f(m, move.m[0], move.m[1], move.m[2], move.m[3]);
+      const off = location(made, 'u_ovoff');
+      if (off !== null && off !== undefined) g.uniform2f(off, move.off[0], move.off[1]);
+    }
     drawQuad(made);
     g.activeTexture(g.TEXTURE1);
     g.bindTexture(g.TEXTURE_2D, null);
@@ -638,6 +781,8 @@ export function createFxChain({
       return count;
     },
     /** Framebuffers and textures held now. */
+    /** Palette look-up textures held now. */
+    get luts() { return luts.size; },
     get targets() {
       return (capture ? 1 : 0) + (ping ? 1 : 0) + (pong ? 1 : 0)
         + passes.reduce((sum, pass) => sum + (pass.hist ? 2 : 0), 0);
@@ -670,6 +815,9 @@ export function createFxChain({
           values: { ...item.values },
           links: item.links || [],
           drawValues: {},
+          // Its waves (the same ones while it stays on, so nothing jumps).
+          drift: kept && kept.fx === item.fx ? kept.drift : fxDriftFor(item.fx),
+          driftValues: {},
           hist: kept ? kept.hist : null,
           beat: kept ? kept.beat : null,
           firedAt: kept ? kept.firedAt : 0,
@@ -842,9 +990,20 @@ export function createFxChain({
         set1f(made, 'u_time', Number(state?.time) || 0);
         set1f(made, 'u_fstep', fstep);
         if (pass.fx.def.options?.trigger) set1f(made, 'u_age', triggerAge(pass, state || {}));
-        const values = pass.links.length ? applyLinks(pass.values, pass.links, state?.sources, pass.drawValues) : pass.values;
+        const drift = state?.drift;
+        const base = drift && drift.scale > 0 && pass.drift.length
+          ? applyDrift(pass.values, pass.drift, drift.bars, drift.scale, pass.driftValues)
+          : pass.values;
+        const values = pass.links.length ? applyLinks(base, pass.links, state?.sources, pass.drawValues) : base;
         for (const name in values) set1f(made, `u_${name}`, values[name]);
+        const lut = typeof pass.fx.lut === 'function';
+        if (lut) { bindLut(pass, values); set1i(made, 'u_lut', FX_LUT_UNIT); }
         drawQuad(made);
+        if (lut) {
+          g.activeTexture(g.TEXTURE0 + FX_LUT_UNIT);
+          g.bindTexture(g.TEXTURE_2D, null);
+          g.activeTexture(g.TEXTURE0);
+        }
         if (prevTex) {
           g.activeTexture(g.TEXTURE1);
           g.bindTexture(g.TEXTURE_2D, null);
@@ -922,6 +1081,7 @@ export function createFxChain({
       overlayVersion = -1;
       overlayW = 0;
       overlayH = 0;
+      luts.clear();
       for (const pass of passes) { pass.hist = null; pass.beat = null; }
       programs.clear();
       linking.length = 0;

@@ -733,7 +733,7 @@ test('selecting a source while the first pages load does not start the Library o
   const sidebar = await read('src/modes/library/sidebar.js');
   assert.match(sidebar, /const chainIdle = !view\.catalogActive \|\| view\.sourceProgress\.size === 0;/);
   assert.match(sidebar, /if \(headingNonFav && \(\(poolIsEmpty && chainIdle\) \|\| pendingQuery\)\) \{\s*runSearch\(\);/);
-  assert.match(sidebar, /if \(headingNonFav && sourceId !== 'all'\) focusViewSources\(effectiveStatusSources\(\)\);\s*renderResults\(\);/);
+  assert.match(sidebar, /if \(headingNonFav && sourceId !== 'all'\) focusViewSources\(effectiveStatusSources\(\)\);\s*\/\/[^\n]*\n\s*syncSnapshotVisibility\(\);\s*renderResults\(\);/);
   const chain = await read('src/modes/library/chain.js');
   const focus = chain.slice(chain.indexOf('export function focusViewSources('));
   assert.match(focus, /catalogScheduler\.promote\(sourceId, CATALOG_PRIORITY\.USER\)/);

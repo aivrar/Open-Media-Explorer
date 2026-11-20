@@ -367,7 +367,7 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
     that also includes its name, so saved favorites keep pointing at the same
     channel."""
     if not isinstance(text, str) or not text.strip():
-        raise ValueError('Choose a non-empty M3U, M3U8, PLS or XSPF channel playlist.')
+        raise ValueError('Choose a non-empty M3U, M3U8, PLS, XSPF, JSON or CSV channel playlist.')
     if len(text.encode('utf-8')) > MAX_PLAYLIST_BYTES:
         raise ValueError('Playlist file exceeds the 8 MiB import limit; split it into smaller files.')
     auto = ''
@@ -513,8 +513,13 @@ class PlaylistStore:
         name = _label(payload['name'], 160)
         if not name:
             raise ValueError('Playlist name is required.')
-        text = as_m3u(payload['text'])
+        # JSON and CSV lists are stored as M3U too (worldmedia_playlist_tables.py).
+        from worldmedia_playlist_tables import read_table_playlist
+        table = read_table_playlist(payload['text'], name)
+        text = table.text if table else as_m3u(payload['text'])
         parsed = parse_playlist(text, payload['default_type'], count_defaulted=True)
+        if table:
+            parsed['skipped'] += table.dropped
         identity = hashlib.sha256(name.lower().encode('utf-8')).hexdigest()
         # "Auto" is saved as the type it chose, so the store keeps 'tv'/'radio'.
         entry = {'id': identity, 'name': name, 'text': text,
@@ -544,10 +549,11 @@ class PlaylistStore:
             raise ValueError('Choose Single channel or Online playlist, and Auto, TV or Radio.')
         name = _label(payload['name'], 160) or _label(urlsplit(url).hostname or 'My channel', 160)
         base_url = ''
+        table = None
         if kind == 'stream':
             # Do not download a live stream just to save its address. A real
             # connection is validated by the media relay when the user plays it.
-            if urlsplit(url).path.lower().endswith(('.m3u', '.pls', '.xspf')):
+            if urlsplit(url).path.lower().endswith(('.m3u', '.pls', '.xspf', '.json', '.csv')):
                 raise ValueError('This looks like a channel list. Choose Online playlist instead.')
             if default_type == 'auto':
                 # Auto: an audio file ending says radio, anything else is TV.
@@ -562,20 +568,28 @@ class PlaylistStore:
                 fetcher = self._fetcher or BoundedFetcher(SafeConnector(
                     connect_timeout=8, header_timeout=8, idle_timeout=8,
                 ))
-                fetched = fetcher.fetch(url, accept='application/vnd.apple.mpegurl, audio/x-mpegurl, audio/x-scpls, application/xspf+xml, text/plain, */*;q=0.5',
+                fetched = fetcher.fetch(url, accept='application/vnd.apple.mpegurl, audio/x-mpegurl, audio/x-scpls, application/xspf+xml, '
+                                        'application/json, text/csv, text/plain, */*;q=0.5',
                     allowed_types=('application/vnd.apple.mpegurl', 'application/x-mpegurl', 'application/mpegurl',
                                    'audio/x-mpegurl', 'audio/mpegurl', 'text/plain', 'text/x-mpegurl',
                                    'audio/x-scpls', 'audio/scpls',
                                    'application/xspf+xml', 'application/xml', 'text/xml',
+                                   'application/json', 'text/json', 'text/csv', 'text/comma-separated-values',
                                    'application/octet-stream', 'binary/octet-stream'),
                     max_compressed=MAX_PLAYLIST_BYTES, max_decoded=MAX_PLAYLIST_BYTES)
                 try:
                     text = fetched.data.decode('utf-8-sig')
                 except UnicodeDecodeError:
                     text = fetched.data.decode('cp1252', errors='replace')
-                not_a_list = ('That URL did not return an M3U, PLS or XSPF channel list. For a stream, choose Single channel; '
-                              'website pages and login pages cannot be imported.')
-                if is_xml(text):
+                not_a_list = ('That URL did not return an M3U, PLS, XSPF, JSON or CSV channel list. For a stream, choose '
+                              'Single channel; website pages and login pages cannot be imported.')
+                from worldmedia_playlist_tables import read_table_playlist
+                table = read_table_playlist(text)
+                if table:
+                    # With no name typed, a JSON list's own name beats the host name.
+                    name = _label(payload['name'], 160) or table.title or name
+                    text = table.text
+                elif is_xml(text):
                     try:
                         title, text = read_xspf(text)
                     except _NotXspf:
@@ -590,6 +604,8 @@ class PlaylistStore:
             finally:
                 self._import_slots.release()
         parsed = parse_playlist(text, default_type, base_url, count_defaulted=True)
+        if kind == 'playlist' and table:
+            parsed['skipped'] += table.dropped
         identity = hashlib.sha256(('link\n' + url).encode('utf-8')).hexdigest()
         entry = {'id': identity, 'name': name, 'text': text, 'default_type': parsed.get('default_type', default_type)}
         if base_url:

@@ -45,7 +45,11 @@ const RECENT_CACHE_TTL_MS = 5 * 60 * 1000;
 const DETAIL_CACHE_TTL_MS = 60 * 60 * 1000;
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const LIVE_CACHE_TTL_MS = 10 * 1000;
-const LIVE_REFRESH_AFTER_MS = 60 * 1000;
+// The live list is read again at most this often, and only while it is on
+// screen (modes/library/snapshots.js).
+const LIVE_REFRESH_AFTER_MS = 5 * 60 * 1000;
+// A failed or stale refresh waits as long (modes/library/snapshots.js).
+export const snapshotRetryMinMs = LIVE_REFRESH_AFTER_MS;
 const MAX_DESCRIPTION_INPUT = 16_000;
 const MAX_DESCRIPTION_LENGTH = 2_000;
 const MAX_TAG_VALUES_INSPECTED = 128;

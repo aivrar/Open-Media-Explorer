@@ -18,6 +18,9 @@
  *               (scenes.js fxCalm) no lively blend, mask or bending; on one
  *               marked fxNone none at all (overlaysDrawnFor applies the same).
  *   By hand     Lightning is never picked (overlay-catalog.js shuffle: false).
+ *   Mood        an overlay with `moods` is picked only while the mood
+ *               (mood.js) is one of them (Strobe: energetic); one picked
+ *               stays until the next roll when the mood changes.
  */
 
 import {
@@ -31,11 +34,11 @@ export const OVERLAY_RECENT_FACTOR = 0.3;
 /** Chance of a set with nothing in it (never twice running). */
 export const OVERLAY_NONE_CHANCE = 0.1;
 /** Chance that one overlay of a set is blended in, and of each part of it. */
-export const OVERLAY_BLEND_CHANCE = 0.5;
-export const OVERLAY_UNDER_CHANCE = 0.4;
-export const OVERLAY_MASK_CHANCE = 0.3;
-export const OVERLAY_TINT_CHANCE = 0.25;
-export const OVERLAY_BEND_CHANCE = 0.2;
+export const OVERLAY_BLEND_CHANCE = 0.75;
+export const OVERLAY_UNDER_CHANCE = 0.5;
+export const OVERLAY_MASK_CHANCE = 0.5;
+export const OVERLAY_TINT_CHANCE = 0.4;
+export const OVERLAY_BEND_CHANCE = 0.3;
 
 /** Settings drawn for overlay `id` from its ranges. */
 export function overlayValues(id, random) {
@@ -57,7 +60,7 @@ export function overlayValues(id, random) {
 /** The blend modes overlay `id` may take on scene `entry`. */
 export function overlayModesFor(id, entry) {
   const row = overlayRow(id);
-  if (!row || entry?.fxNone) return ['add'];
+  if (!row || entry?.fxNone || (entry?.fxCalm && row.calmPlain)) return ['add'];
   return row.blends.filter((mode) => !(entry?.fxCalm && OVERLAY_LIVELY_BLENDS.has(mode)));
 }
 
@@ -69,6 +72,7 @@ export function createOverlayShuffle({ random = seededRandom(Date.now()) } = {})
   const recentSets = [];
   const recentIds = [];
   let last = null;
+  let lastKeyed = false; // recentSets ends with the key of the set showing
   const stats = { rolls: 0, retries: 0, empty: 0, blended: 0 };
 
   function pickWeighted(pool) {
@@ -86,7 +90,7 @@ export function createOverlayShuffle({ random = seededRandom(Date.now()) } = {})
   function pickBlend(ids, context) {
     const entry = context.entry || null;
     if (!context.blendIns || entry?.fxNone || random() >= OVERLAY_BLEND_CHANCE) return null;
-    const able = ids.filter((id) => overlayModesFor(id, entry).length > 1 || overlayRow(id).under);
+    const able = ids.filter((id) => overlayModesFor(id, entry).length > 1 || (overlayRow(id).under && !(entry?.fxCalm && overlayRow(id).calmPlain)));
     if (!able.length) return null;
     const id = able[Math.floor(random() * able.length)];
     const row = overlayRow(id);
@@ -120,6 +124,7 @@ export function createOverlayShuffle({ random = seededRandom(Date.now()) } = {})
         const row = overlayRow(id);
         if (!row.shuffle || chosen.includes(id)) continue;
         if (context.allowed && !context.allowed.has(id)) continue;
+        if (row.moods && !row.moods.includes(context.mood)) continue;
         if (OVERLAY_COSTS.indexOf(row.cost) > maxRank) continue;
         if (last && last.includes(id)) continue;
         if (cost + OVERLAY_COST_UNITS[row.cost] > budget) continue;
@@ -154,9 +159,16 @@ export function createOverlayShuffle({ random = seededRandom(Date.now()) } = {})
    *   blendIns    a blend-in may be picked
    *   bend        bending may be picked
    *   allowed     Set of ids, or null
+   *   mood        the mood now (mood.js; overlays with `moods`)
    */
   function next(context = {}) {
     stats.rolls += 1;
+    // Nothing may be drawn: the empty set, whatever showed before (no
+    // retries: an empty set twice running cannot be helped here).
+    if (context.maxCount !== undefined && context.maxCount !== null && !(context.maxCount > 0)) {
+      stats.empty += 1;
+      return build([]);
+    }
     let list = pickSet(context);
     for (let tries = 0; tries < 12; tries += 1) {
       const key = overlaysKey(list);
@@ -172,6 +184,7 @@ export function createOverlayShuffle({ random = seededRandom(Date.now()) } = {})
   function shown(combo) {
     const ids = combo?.items ? combo.items.map((item) => item.id) : [];
     last = ids.slice();
+    lastKeyed = ids.length > 0;
     if (ids.length) {
       recentSets.push(overlaysKey(combo.items));
       if (recentSets.length > OVERLAY_RECENT_SETS) recentSets.shift();
@@ -180,11 +193,25 @@ export function createOverlayShuffle({ random = seededRandom(Date.now()) } = {})
     if (recentIds.length > 3) recentIds.shift();
   }
 
+  /** The set showing was cut to `combo` (fewer, or none): the history says
+   *  what is shown, in place of what was rolled (no new entry). */
+  function cut(combo) {
+    const items = combo?.items || [];
+    const ids = items.map((item) => item.id);
+    last = ids.slice();
+    if (recentIds.length) recentIds[recentIds.length - 1] = ids;
+    if (lastKeyed) recentSets.pop();
+    lastKeyed = ids.length > 0;
+    if (lastKeyed) recentSets.push(overlaysKey(items));
+  }
+
   return {
     next,
     build,
     shown,
+    cut,
     get last() { return last ? last.slice() : null; },
+    get recent() { return recentSets.slice(); },
     stats,
   };
 }

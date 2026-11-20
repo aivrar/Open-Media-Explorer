@@ -3,8 +3,17 @@
  * Flash and brightness check for the post effects, run by hand (slow, needs
  * a browser; not part of `npm test`):
  *
- *   node tests/helpers/visualizer-fx-check.mjs [out.json] [combos]
+ *   node tests/helpers/visualizer-fx-check.mjs [out.json] [combos] [--drift] [--combos=... --draws=N [--cycle]]
  *   python tests/helpers/visualizer-fx-check.py out.json [width height] [--gpu]
+ *
+ * --drift: slow drift on (drift.js) at its deepest, the scene's and the
+ * effects' params alike, its clock at its fastest (the page), and the
+ * effects' links may read the swell, as in the tab with drift on. --combos:
+ * only the named combinations (scene:fx+fx:intensity[:flash], separated by
+ * ";"), each with --draws (3) sets of values: to look at the worst runs of
+ * a report again; with --cycle each records one whole drift cycle
+ * (FX_CHECK_CYCLE_FRAMES) in place of a 3-s clip; --scenes=a,b checks those
+ * scenes in place of FX_CHECK_SCENES.
  *
  * This half prepares a sample of scenes (their shaders, values and sound
  * links; recordScene in visualizer-flash-check.mjs) and rolls `combos`
@@ -45,13 +54,30 @@
  *
  * writes only that overlay's runs: plain and with every blend-in it allows,
  * on the same scenes, from three places in the track (focusRuns).
+ *
+ *   node tests/helpers/visualizer-fx-check.mjs out.json --overlays --overlay-focus=bokeh --overlay-together=starfield
+ *
+ * writes that overlay's parts together instead, on that one scene: each mode
+ * it allows with a mask (bright, dark), the tint and bending at once, over
+ * the effects and (where it may) under them; with Add + bending and Screen
+ * alone beside them for comparison, all from the place in the track the
+ * blend runs start on that scene.
+ *
+ *   node tests/helpers/visualizer-fx-check.mjs out.json --overlays --overlay-spec=runs.json
+ *
+ * writes only the runs listed in runs.json (specRuns): long clips, and the
+ * sheets' motion (overlay-motion.js) at its deepest where a run asks for it.
  */
 
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+
+import { DRIFT_BPM_RANGE, DRIFT_WRAP_BARS, sceneDriftPlan } from '../../src/visualizer/drift.js';
+import { sceneCappedParams } from '../../src/visualizer/scenes.js';
 
 import loadPostFx from '../../src/visualizer/vendor/psychedelia/engine/post-fx-library.js';
+import loadPalettes from '../../src/visualizer/vendor/psychedelia/engine/palettes.js';
 import {
-  FX_CALM_MAX, FX_SYNC, fxCalmIds, fxCatalog, fxDrawnFor,
+  FX_CALM_MAX, FX_SYNC, fxCalmIds, fxCatalog, fxDrawnFor, fxShuffleAllowed,
 } from '../../src/visualizer/fx-catalog.js';
 import {
   FX_COST_BUDGET, FX_INTENSITIES, FX_MAX_BY_QUALITY, createFxShuffle,
@@ -73,6 +99,9 @@ export const FX_CHECK_SCENES = Object.freeze([
   'plasma', 'tunnel', 'kaleidoscope', 'mandelbrot', 'aurora', 'liquid_light', 'fire', 'voronoi', 'starfield', 'sierpinski',
 ]);
 export const FX_CHECK_CLIP_FRAMES = 90; // 3 s at 30 a second
+/** --cycle: one whole drift cycle (DRIFT_WRAP_BARS at the top of the drift
+ *  clock's range, 51.2 s at 150 BPM) and its first frame again. */
+export const FX_CHECK_CYCLE_FRAMES = Math.ceil(((DRIFT_WRAP_BARS * 4 * 60) / DRIFT_BPM_RANGE[1]) * 30) + 1;
 /** The overlay runs' scenes: bright (Voronoi), dark (Starfield), one that
  *  shows the beat clock (Islamic Stars), and a calm bright one (Plasma). */
 export const OVERLAY_CHECK_SCENES = Object.freeze(['voronoi', 'starfield', 'islamic_stars', 'plasma']);
@@ -104,14 +133,22 @@ export const OVERLAY_CHECK_BRIGHTEST = Object.freeze({
 /** --overlay-focus=<id>: one overlay alone, plain and with every blend-in it
  *  allows (each mode over and under the effects, the masks, the tint,
  *  bending), on every overlay check scene, from three places in the track. */
-function focusRuns(id, flashScenes, entryOf, item) {
+function focusRuns(id, flashScenes, entryOf, item, together = null) {
   const row = overlayRow(id);
-  const blends = [['plain', {}]];
+  const blends = together ? [['add + bend', { mode: 'add', bend: true }], ['screen', { mode: 'screen' }]] : [['plain', {}]];
   for (const mode of row.blends) {
+    if (together) {
+      for (const mask of ['bright', 'dark']) {
+        for (const under of row.under ? [false, true] : [false]) {
+          blends.push([`${mode} + mask ${mask} + tint + bend${under ? ' under' : ''}`, { mode, mask, tint: true, bend: true, under }]);
+        }
+      }
+      continue;
+    }
     if (mode !== 'add') blends.push([mode, { mode }]);
     if (row.under) blends.push([`${mode} under`, { mode, under: true }]);
   }
-  blends.push(['mask bright', { mode: 'add', mask: 'bright' }], ['mask dark', { mode: 'add', mask: 'dark' }], ['tint', { mode: 'add', tint: true }], ['bend', { mode: 'add', bend: true }]);
+  if (!together) blends.push(['mask bright', { mode: 'add', mask: 'bright' }], ['mask dark', { mode: 'add', mask: 'dark' }], ['tint', { mode: 'add', tint: true }], ['bend', { mode: 'add', bend: true }]);
   const runs = [];
   flashScenes.forEach((scene, which) => {
     const entry = entryOf(scene);
@@ -119,8 +156,10 @@ function focusRuns(id, flashScenes, entryOf, item) {
       for (const [name, blend] of blends) {
         const asked = item(id, blend);
         const drawn = overlaysDrawnFor(entry, [asked])[0];
+        // Together: from where the blend runs start on that scene.
+        const first = together ? OVERLAY_CHECK_SCENES.indexOf(together) * 31 : which * 13;
         runs.push({
-          group: `focus ${name}`, scene, from: (which * 13 + start * 30) % (RECORDED_FRAMES - FX_CHECK_CLIP_FRAMES), fx: [], intensity: 'normal', flash: false,
+          group: `focus ${name}`, scene, from: (first + start * 30) % (RECORDED_FRAMES - FX_CHECK_CLIP_FRAMES), fx: [], intensity: together ? 'strong' : 'normal', flash: false,
           overlays: [asked], blendName: name, allowed: JSON.stringify(drawn.blend) === JSON.stringify(asked.blend),
         });
       }
@@ -129,7 +168,32 @@ function focusRuns(id, flashScenes, entryOf, item) {
   return runs;
 }
 
-async function overlayRuns(out, focus = null) {
+/** --overlay-spec=<file.json>: these runs only, each { scene (an overlay
+ *  check scene's id), items ([{ id, blend, values }]: values over the
+ *  strongest), from, clip (frames), motion (the sheets' motion at its
+ *  deepest, the drift clock at the top of its range), fx (effect ids, at
+ *  Strong), cost (a quality: timed at its size instead), group }. */
+function specRuns(path, at, entryOf) {
+  // The palettes as the tab gives them (the Palette Map pass).
+  const { PsyPalettes } = loadPalettes({});
+  const { PostFxLibrary } = loadPostFx({ PsyPalettes });
+  const effects = createFxShuffle({ catalog: fxCatalog(PostFxLibrary, PsyPalettes), random: seededRandom(1111) });
+  return JSON.parse(readFileSync(path, 'utf8')).map((spec) => {
+    const scene = at(spec.scene);
+    if (scene < 0) throw new Error(`--overlay-spec: ${spec.scene} is not an overlay check scene`);
+    const asked = (spec.items || []).map((one) => ({ id: one.id, blend: { ...PLAIN_BLEND, ...(one.blend || {}) }, values: { ...OVERLAY_CHECK_WORST(one.id), ...(one.values || {}) } }));
+    const drawn = overlaysDrawnFor(entryOf(scene), asked);
+    return {
+      group: spec.group || 'spec', scene, from: spec.from || 0, intensity: 'strong', flash: false, overlays: asked,
+      fx: spec.fx?.length ? effects.build(spec.fx, 'strong').fx.map(({ id, values, links }) => ({ id, values, links })) : [],
+      clip: spec.clip || FX_CHECK_CLIP_FRAMES, motion: Boolean(spec.motion), allowed: JSON.stringify(drawn.map((x) => x.blend)) === JSON.stringify(asked.map((x) => x.blend)),
+      // Cost runs (timing only) at a quality's size.
+      ...(spec.cost ? { cost: true, quality: spec.cost, size: OVERLAY_CHECK_SIZES[spec.cost] } : {}),
+    };
+  });
+}
+
+async function overlayRuns(out, focus = null, together = null, spec = null) {
   const renderer = createSceneRenderer({ canvas: { width: 8, height: 8 }, gl: new FakeGL(), mode: 'webgl2' });
   const scenes = [];
   for (const id of [...OVERLAY_CHECK_SCENES, 'tunnel']) {
@@ -144,14 +208,25 @@ async function overlayRuns(out, focus = null) {
   const at = (id) => scenes.findIndex((scene) => scene.id === id);
   const entryOf = (index) => SCENES.find((row) => row.id === scenes[index].id);
   const runs = [];
-  const { PostFxLibrary } = loadPostFx({});
-  const kaleidoscope = createFxShuffle({ catalog: fxCatalog(PostFxLibrary), random: seededRandom(66) })
+  // The palettes as the tab gives them (the Palette Map pass).
+  const { PsyPalettes } = loadPalettes({});
+  const { PostFxLibrary } = loadPostFx({ PsyPalettes });
+  const kaleidoscope = createFxShuffle({ catalog: fxCatalog(PostFxLibrary, PsyPalettes), random: seededRandom(66) })
     .build(['kaleidoscope'], 'strong').fx.map(({ id, values, links }) => ({ id, values, links }));
   const item = (id, blend = PLAIN_BLEND) => ({ id, blend: { ...PLAIN_BLEND, ...blend }, values: OVERLAY_CHECK_WORST(id) });
   const flashScenes = OVERLAY_CHECK_SCENES.map(at);
+  if (spec) {
+    runs.push(...specRuns(spec, at, entryOf));
+    writeFileSync(out, JSON.stringify({ scenes, runs, clip: FX_CHECK_CLIP_FRAMES }));
+    console.log(`
+${scenes.length} scenes, ${runs.length} runs -> ${out}`);
+    return;
+  }
   if (focus) {
     if (!overlayRow(focus)) throw new Error(`--overlay-focus: no overlay ${focus}`);
-    runs.push(...focusRuns(focus, flashScenes, entryOf, item));
+    if (together && !OVERLAY_CHECK_SCENES.includes(together)) throw new Error(`--overlay-together: ${together} is not an overlay check scene`);
+    const onScenes = together ? [at(together)] : flashScenes;
+    runs.push(...focusRuns(focus, onScenes, entryOf, item, together));
     writeFileSync(out, JSON.stringify({ scenes, runs, clip: FX_CHECK_CLIP_FRAMES }));
     console.log(`\n${scenes.length} scenes, ${runs.length} ${focus} runs -> ${out}`);
     return;
@@ -214,32 +289,47 @@ const RECORDED_FRAMES = 180; // where clips start: 6 s of the track after its wa
 async function main() {
   if (process.argv.includes('--overlays')) {
     const focus = process.argv.find((arg) => arg.startsWith('--overlay-focus='))?.split('=')[1] || null;
-    await overlayRuns(process.argv.slice(2).find((arg) => !arg.startsWith('--')) || 'visualizer-overlay-frames.json', focus);
+    const together = process.argv.find((arg) => arg.startsWith('--overlay-together='))?.split('=')[1] || null;
+    const spec = process.argv.find((arg) => arg.startsWith('--overlay-spec='))?.slice('--overlay-spec='.length) || null;
+    await overlayRuns(process.argv.slice(2).find((arg) => !arg.startsWith('--')) || 'visualizer-overlay-frames.json', focus, together, spec);
     return;
   }
-  const [out = 'visualizer-fx-frames.json', combosArg = '300'] = process.argv.slice(2);
+  const [out = 'visualizer-fx-frames.json', combosArg = '300'] = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
+  const drift = process.argv.includes('--drift');
   const combos = Math.max(1, Number(combosArg) || 300);
   const renderer = createSceneRenderer({ canvas: { width: 8, height: 8 }, gl: new FakeGL(), mode: 'webgl2' });
   const scenes = [];
   const defs = [];
-  for (const id of FX_CHECK_SCENES) {
+  // --scenes=a,b: these scenes in place of FX_CHECK_SCENES (for --combos).
+  const sceneIds = process.argv.find((arg) => arg.startsWith('--scenes='))?.slice('--scenes='.length).split(',').filter(Boolean) || FX_CHECK_SCENES;
+  for (const id of sceneIds) {
     const entry = SCENES.find((scene) => scene.id === id);
     const def = renderer.register(await entry.load(), entry.id);
     defs.push([entry, def]);
     // The scene as prepared (the sound is live in the page): no frames.
     const { frames, ...prepared } = recordScene(renderer, entry, def, { worst: true, recordMs: 0 });
     // Links whole (min, max, span), as applyLinks reads them in the page.
-    scenes.push({ ...prepared, links: sceneLinks(def, entry), maxSpeed: entry.maxSpeed, frameCount: RECORDED_FRAMES });
+    scenes.push({
+      ...prepared,
+      links: sceneLinks(def, entry),
+      maxSpeed: entry.maxSpeed,
+      frameCount: RECORDED_FRAMES,
+      // Its slow drift as the tab plans it.
+      drift: sceneDriftPlan(def, { override: entry.drift, capped: sceneCappedParams(entry.id) }),
+    });
     process.stdout.write(`${id} `);
   }
   const triggerScene = new Map();
   defs.forEach(([entry], index) => { if (!entry.fxNone) triggerScene.set(entry.id, index); });
-  const { PostFxLibrary } = loadPostFx({});
-  const catalog = fxCatalog(PostFxLibrary);
+  // The palettes as the tab gives them (the Palette Map pass).
+  const { PsyPalettes } = loadPalettes({});
+  const { PostFxLibrary } = loadPostFx({ PsyPalettes });
+  const catalog = fxCatalog(PostFxLibrary, PsyPalettes);
   const calmIds = fxCalmIds(catalog);
   const runs = [];
   FX_INTENSITIES.forEach((intensity, which) => {
     const shuffle = createFxShuffle({ catalog, random: seededRandom(2026 + which) });
+    shuffle.setSwellLinks(drift);
     for (let index = 0; index < combos; index += 1) {
       const scene = index % defs.length;
       const entry = SCENES.find((row) => row.id === scenes[scene].id);
@@ -249,7 +339,7 @@ async function main() {
         mood: null,
         maxCount: entry.fxNone ? 0 : (calm ? FX_CALM_MAX : FX_MAX_BY_QUALITY.medium),
         costBudget: FX_COST_BUDGET.medium,
-        allowed: calm ? calmIds : null,
+        allowed: fxShuffleAllowed(entry, catalog, calmIds),
       });
       shuffle.shown(combo || { ids: [] });
       const clipFrom = (index * 37) % (scenes[scene].frameCount - FX_CHECK_CLIP_FRAMES);
@@ -289,8 +379,33 @@ async function main() {
       });
     });
   }
-  writeFileSync(out, JSON.stringify({ scenes, runs, clip: FX_CHECK_CLIP_FRAMES }));
-  console.log(`\n${scenes.length} scenes, ${runs.length} runs -> ${out}`);
+  // --combos=scene:fx+fx:intensity[:flash];...: only these, each with
+  // --draws=N sets of values (seeded), in place of the rolled runs.
+  const combosOpt = process.argv.find((arg) => arg.startsWith('--combos='));
+  if (combosOpt) {
+    const draws = Number(process.argv.find((arg) => arg.startsWith('--draws='))?.split('=')[1]) || 3;
+    runs.length = 0;
+    const cycle = process.argv.includes('--cycle');
+    const named = createFxShuffle({ catalog, random: seededRandom(4242) });
+    named.setSwellLinks(drift);
+    for (const spec of combosOpt.slice('--combos='.length).split(';').filter(Boolean)) {
+      const [sceneId, ids, intensity = 'normal', flash = ''] = spec.split(':');
+      const scene = scenes.findIndex((row) => row.id === sceneId);
+      if (scene < 0) throw new Error(`--combos: ${sceneId} is not a check scene`);
+      for (let draw = 0; draw < draws; draw += 1) {
+        const combo = named.build(ids.split('+'), intensity);
+        runs.push({
+          group: spec, intensity, flash: flash === 'flash', scene,
+          from: (draw * 37) % (scenes[scene].frameCount - FX_CHECK_CLIP_FRAMES),
+          fx: combo.fx.map(({ id, values, links }) => ({ id, values, links })),
+          ...(cycle ? { clip: FX_CHECK_CYCLE_FRAMES } : {}),
+        });
+      }
+    }
+  }
+  const kept = runs.map((run) => ({ ...run, drift }));
+  writeFileSync(out, JSON.stringify({ scenes, runs: kept, clip: FX_CHECK_CLIP_FRAMES }));
+  console.log(`\n${scenes.length} scenes, ${kept.length} runs -> ${out}`);
 }
 
 if (process.argv[1] && /visualizer-fx-check\.mjs$/.test(process.argv[1].replace(/\\/g, '/'))) await main();

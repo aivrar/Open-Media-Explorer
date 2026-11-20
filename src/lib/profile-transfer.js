@@ -15,6 +15,8 @@ export const PROFILE_STORAGE_KEYS = Object.freeze([
   'worldmedia.jobs.v1',
   EQ_STORAGE_KEY,
   'worldmedia.favgroups.v1', // Favorites categories (lib/favorite-groups.js)
+  'worldmedia.favnames.v1', // The user's names for favorites (lib/favorite-names.js)
+  'worldmedia.ownstream.v1', // Stations kept on their own stream (lib/stream-verify.js)
 ]);
 
 /** The keys every release up to 0.1.8 knows. Only these decide whether this
@@ -66,6 +68,18 @@ const AUTO_SYNC_DELAY_MS = 350;
 export const PROFILE_REQUEST_TIMEOUT_MS = 10_000;
 
 let automaticSyncTimer = null;
+
+// An automatic save that fails or times out is tried once more, quietly,
+// after this long; the notice is shown only when that try fails too. (On a
+// first launch the save can wait behind the slow first catalogue load.)
+export const AUTO_SYNC_RETRY_MS = 5_000;
+let quietRetryTimer = null;
+// Cancelling (Clear cache, a backup, a port change) moves the generation on:
+// an automatic save that started before and fails afterwards schedules no
+// retry and shows no notice. While an operation has retries suspended
+// (suspendProfileRetries) none is scheduled either.
+let retryGeneration = 0;
+let retriesSuspended = 0;
 
 /** A profile write that failed or was stopped; `code` tells the cases apart. */
 export class ProfileWriteError extends Error {
@@ -163,13 +177,33 @@ function sendProfileRequest(requestImpl, requestOptions, body) {
   });
 }
 
-async function syncAutomatically(options) {
+async function syncAutomatically(options, { quietRetry = true } = {}) {
+  const generation = retryGeneration;
   try {
     await saveProfileHandoff(options);
+    if (quietRetry && quietRetryTimer !== null) {
+      // A later automatic save worked: the retry waiting is not needed.
+      globalThis.clearTimeout?.(quietRetryTimer);
+      quietRetryTimer = null;
+    }
     clearPersistenceFailure('profile-backup');
   } catch (error) {
     // A save replaced by Clear cache did not fail; there is nothing to report.
     if (error?.code === 'PROFILE_SAVE_SUPERSEDED') return;
+    // Cancelled while it was being sent, or an operation that writes the
+    // profile itself is running: that operation decides, nothing is retried.
+    if (generation !== retryGeneration || retriesSuspended > 0) return;
+    const schedule = globalThis.setTimeout;
+    if (quietRetry && typeof schedule === 'function') {
+      // One more try, without a notice; one retry waiting is enough.
+      if (quietRetryTimer === null) {
+        quietRetryTimer = schedule(() => {
+          quietRetryTimer = null;
+          void syncAutomatically(options, { quietRetry: false });
+        }, AUTO_SYNC_RETRY_MS);
+      }
+      return;
+    }
     reportPersistenceFailure('profile-backup', 'The portable profile backup could not be updated. Keep using the same port and back up your data folder before moving the app. Your existing saved browser data has not been deleted.');
   }
 }
@@ -299,21 +333,45 @@ export function scheduleProfileHandoff(options = {}) {
  * two request timeouts (one save already in flight, then its own).
  */
 export async function flushProfileHandoff(options = {}) {
-  cancelScheduledProfileHandoff();
+  const resume = suspendProfileRetries();
+  let failed = null;
   try {
     const result = await saveProfileHandoff(options);
     if (result.saved) clearPersistenceFailure('profile-backup');
     return result;
   } catch (error) {
-    // Keep the normal background retry (and its notice) after a failed flush;
-    // after Clear cache there is nothing left to retry.
-    if (error?.code !== 'PROFILE_SAVE_SUPERSEDED') scheduleProfileHandoff();
+    failed = error;
     throw error;
+  } finally {
+    resume();
+    // Keep the normal background save (and its notice) after a failed flush;
+    // after Clear cache there is nothing left to retry.
+    if (failed && failed?.code !== 'PROFILE_SAVE_SUPERSEDED' && retriesSuspended === 0) scheduleProfileHandoff();
   }
 }
 
-/** Prevent a queued old-profile save from following a deliberate cache reset. */
+/** For an operation that writes the profile itself (a backup, a port change):
+ *  cancels a waiting retry and schedules none until the returned function is
+ *  called (once, when the operation ends). */
+export function suspendProfileRetries() {
+  cancelScheduledProfileHandoff();
+  retriesSuspended += 1;
+  let resumed = false;
+  return () => {
+    if (resumed) return;
+    resumed = true;
+    retriesSuspended = Math.max(0, retriesSuspended - 1);
+  };
+}
+
+/** Prevent a queued old-profile save from following a deliberate cache reset.
+ *  A save already being sent that fails later schedules nothing. */
 export function cancelScheduledProfileHandoff() {
+  retryGeneration += 1;
+  if (quietRetryTimer !== null) {
+    globalThis.clearTimeout?.(quietRetryTimer);
+    quietRetryTimer = null;
+  }
   if (automaticSyncTimer === null) return;
   globalThis.clearTimeout?.(automaticSyncTimer);
   automaticSyncTimer = null;

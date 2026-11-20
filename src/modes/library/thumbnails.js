@@ -17,11 +17,9 @@ import { isContentAllowed } from '../../lib/content-rating.js';
 import {
   artworkNeedsResolution,
   artworkSourceFor,
-  createTaskQueue,
   isArtworkRelayUrl,
   loadArtworkImage,
   resolveArtworkRelay,
-  retryArtworkLookup,
 } from '../../lib/artwork.js';
 
 export {

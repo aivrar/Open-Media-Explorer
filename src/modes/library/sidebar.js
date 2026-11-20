@@ -18,7 +18,7 @@ import { view } from './state.js';
 import {
   effectiveStatusSources, renderResults, renderStatus, updateSentinelStatus,
 } from './render.js';
-import { focusViewSources, runSearch } from './chain.js';
+import { focusViewSources, runSearch, syncSnapshotVisibility } from './chain.js';
 import { closeDetail } from './detail.js';
 import { isPersonalSource } from './personal.js';
 import { ensurePlaylistsLoaded, syncPersonalControls } from './personal-controls.js';
@@ -137,6 +137,8 @@ export function selectSource(sourceId) {
   }
   // The selected sources' pending work goes ahead of background prefetch.
   if (headingNonFav && sourceId !== 'all') focusViewSources(effectiveStatusSources());
+  // Live lists refresh only while shown (chain.js).
+  syncSnapshotVisibility();
   renderResults();
   renderStatus();
   updateSentinelStatus();

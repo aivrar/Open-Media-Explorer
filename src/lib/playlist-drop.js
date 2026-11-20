@@ -3,14 +3,14 @@
  *
  * Without these handlers the WebView treats a dropped file like a link and
  * hands it to Windows, which opens an .m3u in Notepad. Any file drop is now
- * kept inside the app: a .m3u/.m3u8/.pls/.xspf file is imported through the same path as
+ * kept inside the app: a .m3u/.m3u8/.pls/.xspf/.json/.csv file is imported through the same path as
  * Library > My Playlists > Import playlist, and anything else is ignored with a
  * short message.
  */
 
-const PLAYLIST_NAME = /\.(m3u8?|pls|xspf)$/i;
-const HINT_TEXT = 'Drop a playlist file (.m3u, .m3u8, .pls or .xspf) to import it into My Playlists';
-const REJECT_TEXT = 'Only .m3u, .m3u8, .pls or .xspf playlist files can be dropped here.';
+const PLAYLIST_NAME = /\.(m3u8?|pls|xspf|json|csv)$/i;
+const HINT_TEXT = 'Drop a playlist file (.m3u, .m3u8, .pls, .xspf, .json or .csv) to import it into My Playlists';
+const REJECT_TEXT = 'Only .m3u, .m3u8, .pls, .xspf, .json or .csv playlist files can be dropped here.';
 const REJECT_SHOW_MS = 3500;
 
 /** True when a drag carries files from outside the page (not text or links). */
@@ -20,7 +20,7 @@ export function carriesFiles(dataTransfer) {
   return typeof types.includes === 'function' ? types.includes('Files') : [...types].includes('Files');
 }
 
-/** The first dropped .m3u/.m3u8/.pls/.xspf file, or null. */
+/** The first dropped playlist file (see PLAYLIST_NAME), or null. */
 export function pickPlaylistFile(files) {
   for (const file of Array.from(files || [])) {
     if (file && PLAYLIST_NAME.test(file.name || '')) return file;

@@ -5,7 +5,7 @@
  */
 
 import { controlRequest } from './capture-client.js';
-import { flushProfileHandoff } from './profile-transfer.js';
+import { flushProfileHandoff, suspendProfileRetries } from './profile-transfer.js';
 import { openDownloadsFolder } from './download-client.js';
 
 export const BACKUP_ROUTE = '/api/v1/backup/create';
@@ -51,15 +51,23 @@ export class BackupFlushError extends Error {
 
 /** Mirror the profile, wait for it, then create the backup. A failed or
  *  skipped mirror stops here, so a stale backup is never made silently. */
-export async function runBackup({ flush = flushProfileHandoff, create = createBackup } = {}) {
-  let flushed;
+export async function runBackup({
+  flush = flushProfileHandoff, create = createBackup, suspend = suspendProfileRetries,
+} = {}) {
+  // No automatic retry of the profile save starts while the backup runs.
+  const resume = suspend();
   try {
-    flushed = await flush();
-  } catch (error) {
-    throw new BackupFlushError(error);
+    let flushed;
+    try {
+      flushed = await flush();
+    } catch (error) {
+      throw new BackupFlushError(error);
+    }
+    if (flushed?.saved !== true) throw new BackupFlushError(null);
+    return await create();
+  } finally {
+    resume();
   }
-  if (flushed?.saved !== true) throw new BackupFlushError(null);
-  return create();
 }
 
 export function backupFailureMessage(error) {

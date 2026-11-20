@@ -4,8 +4,10 @@
  *
  * The rule is strict on purpose. One station name can cover many different
  * channels ("Radio Paradise" has a main mix, a mellow mix, a rock mix, ...)
- * and unrelated stations share names, so nothing here is ever chosen or
- * ranked for the user; this only decides which entries are listed.
+ * and unrelated stations share names, so this only decides which entries
+ * are listed. "Also look for a better stream of the same radio station"
+ * (off by default) uses some on its own only under a stricter rule
+ * (radio-browser.js trustedOtherStreams).
  *
  *  - Same name after normalising: case, spacing and punctuation are ignored,
  *    and so is a trailing quality hint such as "128k", "(AAC)", "HD", "[MP3]".
@@ -126,6 +128,65 @@ export function homepageHost(url) {
   }
 }
 
+// Two-part public suffixes under a country code ("co.uk", "com.au", ...):
+// with one of these second labels the registrable domain has three labels.
+const SECOND_LEVEL = new Set(['ac', 'co', 'com', 'edu', 'gob', 'gov', 'gv', 'go', 'ltd', 'ne', 'net', 'nic', 'or', 'org', 'plc', 'sch']);
+
+/**
+ * The registrable domain of a web address's host, conservatively: the last
+ * two labels ("example.com" for "stream.example.com"), or the last three
+ * when the top label is a two-letter country code and the second one is a
+ * usual second level such as "co" or "com" ("example.co.uk"). An IP address
+ * is kept whole, so only the same address matches. '' when there is no host.
+ * Being stricter than the public suffix list only means fewer matches.
+ */
+export function registrableDomain(url) {
+  let host = '';
+  try {
+    host = new URL(String(url ?? '').trim()).hostname.toLowerCase().replace(/\.$/, '');
+  } catch (_) {
+    return '';
+  }
+  if (!host) return '';
+  if (/^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')) return host;
+  const labels = host.split('.');
+  if (labels.length <= 2) return host;
+  const take = labels.at(-1).length === 2 && SECOND_LEVEL.has(labels.at(-2)) ? 3 : 2;
+  return labels.slice(-take).join('.');
+}
+
+/** Hosting and dynamic-DNS suffixes shared by many unrelated owners: under
+ *  them the registrable domain proves nothing, so the full host must match.
+ *  A short built-in list, not the public suffix list. */
+export const SHARED_HOST_SUFFIXES = Object.freeze([
+  'github.io', 'gitlab.io', 'pages.dev', 'netlify.app', 'vercel.app', 'herokuapp.com', 'web.app',
+  'firebaseapp.com', 'azurewebsites.net', 'cloudfront.net', 'amazonaws.com', 'blogspot.com',
+  'duckdns.org', 'no-ip.org', 'no-ip.com', 'ddns.net', 'dyndns.org', 'hopto.org', 'zapto.org',
+  'freeddns.org', 'mooo.com', 'servebeer.com', 'sytes.net', 'myftp.org',
+]);
+
+function hostOf(url) {
+  try {
+    return new URL(String(url ?? '').trim()).hostname.toLowerCase().replace(/\.$/, '');
+  } catch (_) {
+    return '';
+  }
+}
+
+/** True when two stream addresses are on the same site: the same registrable
+ *  domain, or, under a shared hosting suffix, the very same host. This is
+ *  only one layer of the "same station" rule; what proves the programme is
+ *  the content check (stream-verify.js). */
+export function sameStreamSite(a, b) {
+  const hostA = hostOf(a);
+  const hostB = hostOf(b);
+  if (!hostA || !hostB) return false;
+  const shared = (host) => SHARED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+  if (shared(hostA) || shared(hostB)) return hostA === hostB;
+  const domain = registrableDomain(a);
+  return domain !== '' && domain === registrableDomain(b);
+}
+
 /** The Radio Browser station id of an item, or '' for anything else. */
 export function stationId(item) {
   if (!item || item.source !== OTHER_STREAMS_SOURCE || typeof item.id !== 'string') return '';
@@ -134,9 +195,18 @@ export function stationId(item) {
   return item.id.startsWith(ID_PREFIX) ? item.id.slice(ID_PREFIX.length) : '';
 }
 
+/** `item` under the station's own name. A renamed favorite (favorite-names.js
+ *  gives a copy whose title is the user's name and whose originalTitle is the
+ *  station's) is searched for, matched and checked by its original name; the
+ *  user's name is only shown. */
+export function underOwnName(item) {
+  return item?.__favoriteName === true && typeof item.originalTitle === 'string'
+    ? { ...item, title: item.originalTitle } : item;
+}
+
 /** Only items with a Radio Browser station id qualify. */
 export function canFindOtherStreams(item) {
-  return Boolean(stationId(item)) && normalizeStationName(item.title) !== '';
+  return Boolean(stationId(item)) && normalizeStationName(underOwnName(item).title) !== '';
 }
 
 /** One key per stream address: scheme, letter case of the host, a default
@@ -165,7 +235,7 @@ function bitrateOf(item) {
  * in directory order), and how many matched in all.
  */
 export function matchOtherStreams(original, candidates, { limit = OTHER_STREAMS_LIMIT } = {}) {
-  const name = normalizeStationName(original?.title);
+  const name = normalizeStationName(underOwnName(original)?.title);
   const host = homepageHost(original?.source_url);
   const ownId = typeof original?.id === 'string' ? original.id : '';
   const ownStation = stationId(original);

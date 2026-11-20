@@ -33,7 +33,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.11"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.12"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096
@@ -512,6 +512,9 @@ class MediaRegistration:
     released: bool = False
     # Set on a root a capture job (recording) reads; the relay never asks it for icy metadata.
     capture: bool = False
+    # A stream verified by "Pick the best stream: Auto": it must still end on
+    # https after redirects, or it does not play (the server's relay checks).
+    require_https: bool = False
 
     def public_data(self) -> dict:
         return {
@@ -666,6 +669,8 @@ class DashTemplateRegistration:
     title: str
     source: str
     recording_kind: str
+    # Inherited from the root: every segment it expands to must stay on https.
+    require_https: bool = False
 
     def relay_template(self) -> str:
         literals = dict(self.placeholder_literals)
@@ -714,7 +719,7 @@ class MediaRegistry:
             raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_REGISTRATION", "Media registration must be an object.")
         allowed = {
             "item_id", "url", "delivery", "media_type", "capture_headers",
-            "title", "source", "download_name", "recording_kind",
+            "title", "source", "download_name", "recording_kind", "require_https",
         }
         if set(payload) - allowed:
             raise _media_error(HTTPStatus.BAD_REQUEST, "UNEXPECTED_FIELDS", "Media registration contains unsupported fields.")
@@ -726,6 +731,9 @@ class MediaRegistry:
         source = payload.get("source", "")
         download_name = payload.get("download_name", "")
         recording_kind = payload.get("recording_kind", "")
+        require_https = payload.get("require_https", False)
+        if not isinstance(require_https, bool):
+            raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_REGISTRATION", "require_https must be true or false.")
         if not isinstance(item_id, str) or not item_id.strip() or len(item_id) > 512:
             raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_ITEM", "Media item ID is invalid.")
         if delivery not in {"live", "on-demand", "unknown"}:
@@ -760,6 +768,7 @@ class MediaRegistry:
             source=source,
             download_name=download_name.strip(),
             recording_kind=recording_kind,
+            require_https=require_https,
         )
         with self._lock:
             self._prune_locked(now)
@@ -881,6 +890,9 @@ class MediaRegistry:
             download_name=parent.download_name,
             recording_kind=parent.recording_kind,
             evictable=evictable,
+            # A root that must stay on https (a verified stream) passes it to
+            # every playlist and segment under it.
+            require_https=parent.require_https,
         )
 
     def _insert_child_locked(self, parent: MediaRegistration, child: MediaRegistration, *, now: float) -> None:
@@ -1060,11 +1072,6 @@ class MediaRegistry:
             count += 1
         return count
 
-    def trim_live_children(self, parent: MediaRegistration) -> None:
-        """Evict live-playlist history beyond LIVE_CHILD_SOFT_LIMIT (after a full rewrite)."""
-        with self._lock:
-            self._trim_live_locked(parent.root_token, time.time())
-
     def _trim_live_locked(self, root_token: str, now: float) -> None:
         listed = self._live_listed.get(root_token)
         if listed and len(listed) > LIVE_CHILD_SOFT_LIMIT:
@@ -1091,32 +1098,6 @@ class MediaRegistry:
                 (template.expires_at, "template", token) for token, template in self._dash_templates.items()
             )
             heapq.heapify(self._expiry_heap)
-
-    def dash_template(
-        self,
-        parent: MediaRegistration,
-        url_template: str,
-        *,
-        representation_ids: Iterable[str] = (),
-        bandwidths: Iterable[str] = (),
-        representation_templates: Mapping[str, str] | None = None,
-    ) -> DashTemplateRegistration:
-        """Register one constrained DASH URL template without exposing it."""
-
-        plan = self.plan_dash_template(
-            parent, url_template, representation_ids=representation_ids,
-            bandwidths=bandwidths, representation_templates=representation_templates,
-        )
-        with self._lock:
-            now = time.time()
-            self._prune_locked(now)
-            self._check_parent_locked(parent, now)
-            token = self._dash_template_index.get(plan.key)
-            if token is not None and token in self._dash_templates:
-                return self._dash_templates[token]
-            template = self._new_dash_template(parent, plan)
-            self._insert_dash_template_locked(parent, plan.key, template)
-            return template
 
     def plan_dash_template(
         self,
@@ -1269,6 +1250,7 @@ class MediaRegistry:
             title=parent.title,
             source=parent.source,
             recording_kind=parent.recording_kind,
+            require_https=parent.require_https,
         )
 
     def _insert_dash_template_locked(
@@ -1343,6 +1325,7 @@ class MediaRegistry:
             title=entry.title,
             source=entry.source,
             recording_kind=entry.recording_kind,
+            require_https=entry.require_https,
         )
 
     def expire(self, token: str, *, grace_seconds: float = 0) -> None:

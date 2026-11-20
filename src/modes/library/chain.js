@@ -21,10 +21,29 @@ import { removeSourceItems } from './catalog-store.js';
 import { createSnapshotManager } from './snapshots.js';
 import {
   renderResults, renderStatus, updateSidebarCounts,
-  updateSentinelStatus, setSourceStatus, expandRenderWindow,
+  updateSentinelStatus, setSourceStatus, expandRenderWindow, effectiveStatusSources,
 } from './render.js';
 
 let unbindVisibility = null;
+let unbindSnapshotVisibility = null;
+
+/** A live list (media.ccc.de, Owncast) is refreshed only while it is on
+ *  screen: the Library open, the window not hidden, and the view listing
+ *  that source (All, its own entry, or a type it has). */
+function snapshotVisible(sourceId) {
+  return view.catalogActive === true && globalThis.document?.visibilityState !== 'hidden'
+    && effectiveStatusSources().includes(sourceId);
+}
+
+/** Call when what the Library shows changes: hidden live lists stop
+ *  refreshing; shown ones refresh when due, or are looked up the first time. */
+export function syncSnapshotVisibility() {
+  if (!view.catalogActive) return;
+  snapshotManager.syncVisibility();
+  for (const sourceId of effectiveStatusSources()) {
+    if (view.sourceProgress.has(sourceId)) discoverSnapshot(sourceId);
+  }
+}
 
 export function fetchSourcesAllEnabled() {
   return SOURCES
@@ -57,6 +76,7 @@ const snapshotManager = createSnapshotManager({
   store: view,
   getPinnedIds: () => getCatalogPinnedIds(),
   isSourceEnabled: sourceEnabled,
+  isVisible: (sourceId) => snapshotVisible(sourceId),
   getRefreshOptions: () => ({
     showExplicitContent: getState().settings.showExplicitContent === true,
   }),
@@ -134,6 +154,12 @@ function queueChainRender() {
 
 function statusFromProgress(progress) {
   if (progress.inFlight) return { state: 'loading', count: progress.loaded };
+  if (progress.stopped && progress.error) {
+    // Stopped after repeated failures: shown as an error with Retry.
+    return {
+      state: 'error', count: progress.loaded, error: progress.error, notice: progress.notice, retryAt: 0,
+    };
+  }
   if (progress.error) {
     return {
       state: progress.rateLimited ? 'rate-limited' : 'retrying',
@@ -179,7 +205,7 @@ function scheduleNextLoad(minimumDelay = AUTO_CHAIN_MIN_GAP_MS) {
   const now = Date.now();
   const waiting = fetchSourcesAllEnabled()
     .map((id) => ensureProgress(id))
-    .filter((progress) => !progress.exhausted && !progress.inFlight);
+    .filter((progress) => !progress.exhausted && !progress.inFlight && !progress.stopped);
   if (waiting.length === 0) {
     updateSentinelStatus();
     return;
@@ -198,7 +224,7 @@ function cursorKey(cursor) {
 }
 
 function discoverSnapshot(sourceId) {
-  if (!view.catalogActive || !sourceEnabled(sourceId)) return;
+  if (!view.catalogActive || !sourceEnabled(sourceId) || !snapshotVisible(sourceId)) return;
   if (snapshotManager.hasDiscovered(sourceId)) return;
   // Snapshot lifetime belongs to the mode/source manager, not to a finite
   // browse or text-search generation. Mode pause and source disable already
@@ -210,7 +236,8 @@ function discoverSnapshot(sourceId) {
 
 async function fetchBrowsePage(sourceId, generation, options = {}) {
   const progress = ensureProgress(sourceId);
-  if (progress.exhausted || progress.inFlight || progress.retryAt > Date.now() || !sourceEnabled(sourceId)) return;
+  if (progress.exhausted || progress.stopped || progress.inFlight || progress.retryAt > Date.now()
+      || !sourceEnabled(sourceId)) return;
   progress.inFlight = true;
   view.loadingMore = true;
   mergeBrowseStatus(sourceId, { state: 'loading', count: progress.loaded });
@@ -532,6 +559,7 @@ export function retrySources({ restartExhausted = true } = {}) {
       progress.error = '';
       progress.notice = '';
       progress.rateLimited = false;
+      progress.stopped = false;
     }
     if (restartExhausted) {
       progress.exhausted = false;
@@ -585,6 +613,8 @@ export function reconcileEnabledSources() {
   if (changed) {
     clearChainTimer();
     if (view.catalogActive) queueMicrotask(() => maybeLoadMore());
+    // The view may show other sources now (a source off sends it to All).
+    syncSnapshotVisibility();
   }
   return changed;
 }
@@ -689,6 +719,11 @@ export function resumeCatalogWork() {
   currentGenerationSignal();
   if (!unbindVisibility) unbindVisibility = catalogScheduler.bindVisibility();
   snapshotManager.resume();
+  if (!unbindSnapshotVisibility && globalThis.document?.addEventListener) {
+    const onVisibility = () => syncSnapshotVisibility();
+    globalThis.document.addEventListener('visibilitychange', onVisibility);
+    unbindSnapshotVisibility = () => globalThis.document.removeEventListener('visibilitychange', onVisibility);
+  }
   restoreBrowseStatuses();
   scheduleNextLoad(0);
 }
@@ -711,6 +746,8 @@ export function pauseCatalogWork() {
   snapshotManager.pause();
   if (unbindVisibility) unbindVisibility();
   unbindVisibility = null;
+  if (unbindSnapshotVisibility) unbindSnapshotVisibility();
+  unbindSnapshotVisibility = null;
 }
 
 export function onSentinelVisible() {

@@ -29,6 +29,11 @@ export const SEPIASEARCH_URL = 'https://sepiasearch.org/api/v1/search/videos';
 const APP_PAGE_SIZE = 30;
 const MAX_PROVIDER_TOTAL = 1_000_000_000;
 const MAX_PROVIDER_START = MAX_PROVIDER_TOTAL;
+// SepiaSearch serves a listing only so deep: in a long session the page at
+// start=9000 was answered and the next one (start=9030, count 30) was
+// refused with HTTP 400, so start + count may not pass 9030. A listing ends
+// there (the Library also ends a listing on any refusal, progress.js).
+export const SEPIASEARCH_MAX_END = 9_030;
 const MAX_INDEX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_INDEX_CACHE = 64;
 const MAX_DETAIL_CACHE = 256;
@@ -492,8 +497,8 @@ export function normalizeSepiaResponse(payload, options = {}) {
   const nextStart = start + rawCount;
   // `total` is the authoritative offset boundary. A short nonempty index page
   // may reflect concurrent federation/index updates and must not silently drop
-  // the remaining advertised results.
-  const exhausted = rawCount === 0 || nextStart >= payload.total;
+  // the remaining advertised results. The index's depth limit ends it too.
+  const exhausted = rawCount === 0 || nextStart >= payload.total || nextStart + count > SEPIASEARCH_MAX_END;
   return {
     items: [...byId.values()].map(cloneItem),
     total: payload.total,
@@ -977,7 +982,7 @@ export function createPeerTubeAdapter(dependencies = {}) {
     const normalized = cleanString(query, 200);
     if (!normalized) return [];
     const explicit = showExplicit(opts);
-    const offset = Math.max(0, Math.min(MAX_PROVIDER_START, Math.trunc(Number(opts.offset) || 0)));
+    const offset = Math.max(0, Math.min(SEPIASEARCH_MAX_END - APP_PAGE_SIZE, Math.trunc(Number(opts.offset) || 0)));
     const page = await searchPage(normalized, {
       ...opts,
       cursor: { version: 1, query: normalized, explicit, start: offset },

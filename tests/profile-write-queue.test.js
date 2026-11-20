@@ -2,9 +2,10 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  PROFILE_REQUEST_TIMEOUT_MS, cancelScheduledProfileHandoff, clearProfileHandoff, flushProfileHandoff,
-  saveProfileHandoff, scheduleProfileHandoff,
+  AUTO_SYNC_RETRY_MS, PROFILE_REQUEST_TIMEOUT_MS, cancelScheduledProfileHandoff, clearProfileHandoff, flushProfileHandoff,
+  saveProfileHandoff, scheduleProfileHandoff, suspendProfileRetries,
 } from '../src/lib/profile-transfer.js';
+import { runBackup } from '../src/lib/backup.js';
 import { clearPersistenceFailure, getPersistenceWarnings } from '../src/lib/persistence-notice.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import { clearCache } from '../src/lib/state.js';
@@ -146,7 +147,110 @@ test('a flush rejects when its write fails, and the background retry and notice 
   assert.equal(getPersistenceWarnings().length, 0);
   mock.timers.tick(350);
   await drain();
+  assert.equal(getPersistenceWarnings().length, 0, 'the first automatic failure is retried quietly');
+  mock.timers.tick(AUTO_SYNC_RETRY_MS);
+  await drain();
   assert.match(getPersistenceWarnings().join(' '), /portable profile backup could not be updated/);
+});
+
+test('a first automatic save that times out is retried once quietly; the notice comes only if that fails too', async (t) => {
+  assert.equal(AUTO_SYNC_RETRY_MS, 5_000);
+  {
+    const { server, options } = setup(t);
+    scheduleProfileHandoff(options);
+    mock.timers.tick(350);
+    await drain();
+    mock.timers.tick(PROFILE_REQUEST_TIMEOUT_MS);
+    await drain();
+    server.requests[0].done = true;
+    assert.equal(server.requests[0].signal.aborted, true);
+    assert.equal(getPersistenceWarnings().length, 0, 'no notice after the first timeout');
+    mock.timers.tick(AUTO_SYNC_RETRY_MS - 1);
+    await drain();
+    assert.equal(server.requests.length, 1);
+    mock.timers.tick(1);
+    await drain();
+    assert.equal(server.requests.length, 2, 'one quiet retry');
+    await server.finishNext();
+    assert.equal(getPersistenceWarnings().length, 0, 'it worked: no notice at all');
+    mock.timers.tick(AUTO_SYNC_RETRY_MS * 4);
+    await drain();
+    assert.equal(server.requests.length, 2, 'no further retries');
+  }
+});
+
+test('an automatic save that fails after Clear cache cancelled the timers schedules no retry', async (t) => {
+  const { server, options } = setup(t);
+  scheduleProfileHandoff(options);
+  mock.timers.tick(350);
+  await drain();
+  assert.equal(server.requests.length, 1, 'the automatic save is being sent');
+  cancelScheduledProfileHandoff(); // Clear cache (state.js clearCache)
+  server.requests[0].done = true;
+  server.requests[0].fail('Disk full');
+  await drain();
+  mock.timers.tick(AUTO_SYNC_RETRY_MS * 4);
+  await drain();
+  assert.equal(server.requests.length, 1, 'no retry was scheduled');
+  assert.equal(getPersistenceWarnings().length, 0);
+});
+
+test('no retry is scheduled while a port change or a backup writes the profile, nor after it', async (t) => {
+  const { server, options } = setup(t);
+  // A port change: suspended at its start, while an automatic save is out.
+  scheduleProfileHandoff(options);
+  mock.timers.tick(350);
+  await drain();
+  const resume = suspendProfileRetries();
+  server.requests[0].done = true;
+  server.requests[0].fail('Disk full');
+  await drain();
+  mock.timers.tick(AUTO_SYNC_RETRY_MS * 2);
+  await drain();
+  assert.equal(server.requests.length, 1, 'nothing retried during the port change');
+  resume();
+  resume(); // a second call changes nothing
+  mock.timers.tick(AUTO_SYNC_RETRY_MS * 2);
+  await drain();
+  assert.equal(server.requests.length, 1, 'and nothing was left scheduled for after it');
+
+  // A backup: an automatic save out when it starts fails during it.
+  scheduleProfileHandoff(options);
+  mock.timers.tick(350);
+  await drain();
+  assert.equal(server.requests.length, 2);
+  let created = 0;
+  const backup = runBackup({ flush: async () => ({ saved: true }), create: async () => { created += 1; return {}; } });
+  server.requests[1].done = true;
+  server.requests[1].fail('Disk full');
+  await backup;
+  assert.equal(created, 1);
+  mock.timers.tick(AUTO_SYNC_RETRY_MS * 2);
+  await drain();
+  assert.equal(server.requests.length, 2, 'no retry from the save that failed during the backup');
+});
+
+test('when the quiet retry of an automatic save also fails, the notice is shown, and nothing more is tried', async (t) => {
+  {
+    const { server, options } = setup(t);
+    scheduleProfileHandoff(options);
+    mock.timers.tick(350);
+    await drain();
+    server.requests[0].done = true;
+    server.requests[0].fail('Disk full');
+    await drain();
+    assert.equal(getPersistenceWarnings().length, 0);
+    mock.timers.tick(AUTO_SYNC_RETRY_MS);
+    await drain();
+    assert.equal(server.requests.length, 2);
+    server.requests[1].done = true;
+    server.requests[1].fail('Disk full');
+    await drain();
+    assert.match(getPersistenceWarnings().join(' '), /portable profile backup could not be updated/);
+    mock.timers.tick(AUTO_SYNC_RETRY_MS * 4);
+    await drain();
+    assert.equal(server.requests.length, 2, 'retried once only');
+  }
 });
 
 test('no write is lost when many changes arrive quickly', async (t) => {
@@ -243,17 +347,20 @@ test('a stalled request times out, the queue moves on, and a flush always settle
   mock.timers.tick(1);
   await drain();
   assert.equal(server.requests[0].signal.aborted, true, 'the stalled request is aborted');
-  assert.match(getPersistenceWarnings().join(' '), /portable profile backup could not be updated/,
-    'a timed-out automatic save reports the usual notice');
+  assert.equal(getPersistenceWarnings().length, 0, 'the flush started after it: the flush decides');
   assert.equal(server.requests.length, 2, 'the flush write starts once the stalled one gives up');
   assert.equal(flushError, null);
   mock.timers.tick(PROFILE_REQUEST_TIMEOUT_MS);
   await drain();
   assert.equal(flushError?.code, 'PROFILE_WRITE_TIMEOUT');
   assert.equal(server.requests[1].signal.aborted, true);
-  // The failed flush re-armed the ordinary retry; the queue is free again.
+  server.requests[0].done = true; // The two that timed out.
+  server.requests[1].done = true;
+  // The automatic save that timed out while the flush waited schedules no
+  // retry of its own (the flush was asked after it).
+  assert.equal(server.requests.length, 2);
+  // The failed flush re-armed the ordinary save; the queue is free again.
   cancelScheduledProfileHandoff();
-  for (const request of server.requests) request.done = true; // The two that timed out.
   const after = saveProfileHandoff(options);
   await drain();
   assert.equal(server.requests.length, 3);

@@ -69,10 +69,27 @@
       }
     },
     {
+      "target": "engine/palettes.js",
+      "source": "src/engine/palettes.js",
+      "sha256": "43d08f2f98ea9ec0d69a5b7fd07d8f27b5b7016a0e89e55e6e4bc4fb9de37ed8",
+      "bodySha256": "91d3c647f839abca4f4619fa1a0dbab096517a0fbc82e1507c94305d0c3b142e",
+      "bytes": 17906,
+      "asciiEscapes": 1,
+      "needs": [],
+      "provides": [
+        "PsyPalettes"
+      ],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
       "target": "engine/post-fx-library.js",
       "source": "src/engine/post-fx-library.js",
       "sha256": "a530e0c89baff2cf58c8262e2fc8178e8daff134852aeff3084d4cce3e931e1a",
-      "bodySha256": "a530e0c89baff2cf58c8262e2fc8178e8daff134852aeff3084d4cce3e931e1a",
+      "bodySha256": "966c37c462a4c83feaedf12da0e053dcc808e7a7f0039db95437aa6230cfa84a",
       "bytes": 82226,
       "asciiEscapes": 0,
       "needs": [
@@ -81,6 +98,18 @@
       ],
       "provides": [
         "PostFxLibrary"
+      ],
+      "patches": [
+        {
+          "find": "                '    float key = u_source < 0.5 ? lum : (u_source < 1.5 ? toHsv(c).x : lum * 0.5 + toHsv(c).x * 0.5);\\n' +\n",
+          "replace": "                '    float hue = 0.5 - 0.5 * cos(6.28318 * toHsv(c).x);\\n' +\n                '    float key = u_source < 0.5 ? lum : (u_source < 1.5 ? hue : lum * 0.5 + hue * 0.5);\\n' +\n",
+          "why": "Palette Map reads the hue round its circle (no jump at red)"
+        },
+        {
+          "find": "                '    vec3 m = texture2D(u_lut, vec2(fract(key * u_spread + u_time * u_cycle + u_offset), 0.5)).rgb;\\n' +\n",
+          "replace": "                '    float at = key * u_spread + u_time * u_cycle + u_offset;\\n' +\n                '    vec3 m = texture2D(u_lut, vec2(1.0 - abs(1.0 - 2.0 * fract(at * 0.5)), 0.5)).rgb;\\n' +\n",
+          "why": "Palette Map runs its index there and back along the palette (no jump from the last colour to the first)"
+        }
       ],
       "upstream": {
         "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
@@ -135,6 +164,108 @@
       }
     },
     {
+      "target": "engine/gpu-sim.js",
+      "source": "src/engine/gpu-sim.js",
+      "sha256": "7b554b4a9b5e76711454a3bb80010308045a8c6dd3ef4a87684fec90b7c0a25d",
+      "bodySha256": "59c031baa02b10e4c7b239a18598a5fb43131933cd72c8423f3b66e71f06b5a6",
+      "bytes": 9219,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor",
+        "PsyPalettes",
+        "Renderer"
+      ],
+      "provides": [
+        "GpuSim"
+      ],
+      "patches": [
+        {
+          "find": "    // Deletes targets, pairs and programs (any mix, nulls ignored).\n",
+          "replace": "    // The picture in target (or pair) from, stretched into to: linear\n    // filtering, or nearest (32-bit floats cannot be filtered; positions\n    // are not blended).\n    function carry(gl, from, to, nearest) {\n        if (!from || !to) return;\n        if (from.read && to.read) { carry(gl, from.read, to.read, nearest); return; }\n        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, from.fb);\n        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, to.fb);\n        gl.blitFramebuffer(0, 0, from.w, from.h, 0, 0, to.w, to.h, gl.COLOR_BUFFER_BIT, nearest ? gl.NEAREST : gl.LINEAR);\n        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);\n        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);\n    }\n\n    // Deletes targets, pairs and programs (any mix, nulls ignored).\n",
+          "why": "carry(gl, from, to, nearest): a target's picture stretched into a new one (a resize keeps the picture)"
+        },
+        {
+          "find": "        release: release,\n",
+          "replace": "        release: release,\n        carry: carry,\n",
+          "why": "GpuSim.carry"
+        }
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "engine/shadertoy-compiler.js",
+      "source": "src/engine/shadertoy-compiler.js",
+      "sha256": "ffd1d2c677bd342d9dda57735872e8dd2c47b248a7693d72602b0b7c5a39f49e",
+      "bodySha256": "ffd1d2c677bd342d9dda57735872e8dd2c47b248a7693d72602b0b7c5a39f49e",
+      "bytes": 12686,
+      "asciiEscapes": 0,
+      "needs": [],
+      "provides": [
+        "ShadertoyCompiler"
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "engine/glow-lines.js",
+      "source": "src/engine/glow-lines.js",
+      "sha256": "7a6ea329332be3c554497d36bdbf7d630e4ad69dac77c907fd3c69d29f2b7278",
+      "bodySha256": "fddecd6b9bb1bc422b135c0188686639be97baa923b8b901dced1e895a93bda1",
+      "bytes": 14415,
+      "asciiEscapes": 0,
+      "needs": [
+        "PsyPalettes",
+        "Renderer"
+      ],
+      "provides": [
+        "GlowLines"
+      ],
+      "patches": [
+        {
+          "find": "            var W = canvas.width, H = canvas.height;\n            ensureFbo(gl, W, H);\n",
+          "replace": "            var W = canvas.width, H = canvas.height;\n            var TS = Renderer.getTrailScale ? Math.max(0.25, Math.min(1, Number(Renderer.getTrailScale()) || 1)) : 1;\n            var TW = Math.max(1, Math.round(W * TS)), TH = Math.max(1, Math.round(H * TS));\n            ensureFbo(gl, TW, TH);\n",
+          "why": "the persistence target is sized by the host (Renderer.getTrailScale, 0.25 to 1 of each side), the picture's size without it"
+        },
+        {
+          "find": "            ensureFbo(gl, TW, TH);\n",
+          "replace": "            if (!ensureFbo(gl, TW, TH)) { if (!st.fbo) return; TW = st.w; TH = st.h; }\n",
+          "why": "when no new persistence target could be made, it draws on at the old size (nothing at all without one)"
+        },
+        {
+          "find": "            gl.bindFramebuffer(gl.FRAMEBUFFER, st.fbo);\n            gl.viewport(0, 0, W, H);\n",
+          "replace": "            gl.bindFramebuffer(gl.FRAMEBUFFER, st.fbo);\n            gl.viewport(0, 0, TW, TH);\n",
+          "why": "the lines are drawn into the persistence target at its own size"
+        },
+        {
+          "find": "            if (!st.verts || st.verts.length < count * 24) st.verts = new Float32Array(Math.max(count, 1024) * 24);\n",
+          "replace": "            if (!st.verts || st.verts.length < count * 24) st.verts = new Float32Array(Math.max(count + (count >> 1), 1024) * 24);\n",
+          "why": "its vertex array grows by half again at least (a slowly rising count no longer makes a new array each time)"
+        },
+        {
+          "find": "                gl.bufferData(gl.ARRAY_BUFFER, v.subarray(0, count * 24), gl.DYNAMIC_DRAW);\n",
+          "replace": "                gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW, 0, count * 24);\n",
+          "why": "the segments are uploaded from the array itself with an offset and a length (WebGL 2): no new view of it each frame"
+        },
+        {
+          "find": "            if (st.fbo && st.w === w && st.h === h) return;\n            drop(gl, 'Framebuffer', st.fbo);\n            drop(gl, 'Texture', st.tex);\n            st.tex = gl.createTexture();\n            gl.bindTexture(gl.TEXTURE_2D, st.tex);\n            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);\n            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);\n            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);\n            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);\n            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);\n            st.fbo = gl.createFramebuffer();\n            gl.bindFramebuffer(gl.FRAMEBUFFER, st.fbo);\n            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, st.tex, 0);\n            gl.clearColor(0, 0, 0, 1);\n            gl.clear(gl.COLOR_BUFFER_BIT);\n            gl.bindTexture(gl.TEXTURE_2D, null);\n            st.w = w;\n            st.h = h;\n",
+          "replace": "            if (st.fbo && st.w === w && st.h === h) return true;\n            // A size that could not be made is not tried again every frame.\n            if (st.failW === w && st.failH === h) return false;\n            // The new target is made and checked first; the old one (and its\n            // picture) is let go only once the picture is carried into it.\n            var tex = gl.createTexture(), fbo = gl.createFramebuffer();\n            var ok = !!(tex && fbo);\n            if (ok) {\n                gl.bindTexture(gl.TEXTURE_2D, tex);\n                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);\n                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);\n                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);\n                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);\n                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);\n                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);\n                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);\n                ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;\n            }\n            gl.bindTexture(gl.TEXTURE_2D, null);\n            if (!ok) {\n                gl.bindFramebuffer(gl.FRAMEBUFFER, null);\n                drop(gl, 'Framebuffer', fbo);\n                drop(gl, 'Texture', tex);\n                st.failW = w;\n                st.failH = h;\n                return false;\n            }\n            gl.clearColor(0, 0, 0, 1);\n            gl.clear(gl.COLOR_BUFFER_BIT);\n            if (st.fbo && gl.isFramebuffer(st.fbo) && gl.blitFramebuffer) {\n                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, st.fbo);\n                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fbo);\n                gl.blitFramebuffer(0, 0, st.w, st.h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.LINEAR);\n                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);\n                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);\n            }\n            drop(gl, 'Framebuffer', st.fbo);\n            drop(gl, 'Texture', st.tex);\n            st.tex = tex;\n            st.fbo = fbo;\n            st.w = w;\n            st.h = h;\n            return true;\n",
+          "why": "a new persistence target is made and checked before the old one goes, the trails stretched into it; on a failure the old one is kept"
+        }
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
       "target": "effects/registry.js",
       "source": "src/effects/registry.js",
       "sha256": "84a7bcaa718deb574af09ad54833158b02a753efe559add97dad1e71adac4e92",
@@ -169,6 +300,23 @@
       "needs": [],
       "provides": [
         "FractalFlight"
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fractal-lab-common.js",
+      "source": "src/effects/fractal-lab-common.js",
+      "sha256": "216dc67a7ad189c497a9b813027568c7b49d48de8c336ee24b9f59afd76075f2",
+      "bodySha256": "216dc67a7ad189c497a9b813027568c7b49d48de8c336ee24b9f59afd76075f2",
+      "bytes": 5212,
+      "asciiEscapes": 0,
+      "needs": [],
+      "provides": [
+        "FractalLab"
       ],
       "upstream": {
         "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
@@ -1221,7 +1369,7 @@
       "target": "effects/mandelbox-flight.js",
       "source": "src/effects/mandelbox-flight.js",
       "sha256": "5d7f0dfbef48fc93436a4090dc5f7915f6ce6b93eee2c8132a885cbf89283fbf",
-      "bodySha256": "5d7f0dfbef48fc93436a4090dc5f7915f6ce6b93eee2c8132a885cbf89283fbf",
+      "bodySha256": "6701d9c7764eafd74d906d2be18403cf2e7f5f9f3d943f7692087f623e906a4b",
       "bytes": 15863,
       "asciiEscapes": 0,
       "needs": [
@@ -1229,6 +1377,23 @@
         "FractalFlight"
       ],
       "provides": [],
+      "patches": [
+        {
+          "find": "const float CAM_CLEAR = 0.05;\n",
+          "replace": "const float CAM_CLEAR = 0.05;\nconst float CAM_NEAR_IN = 0.050;\nconst float CAM_NEAR_OUT = 0.300;\n",
+          "why": "CAM_NEAR_IN, CAM_NEAR_OUT: where the picture fades as the camera nears the surface"
+        },
+        {
+          "find": "    g_cam = ro;\n",
+          "replace": "    g_cam = ro;\n    float camNear = 1.0 - smoothstep(CAM_NEAR_IN, CAM_NEAR_OUT, mandelboxDE(ro).dist);\n",
+          "why": "camNear: how near the camera is to the surface (1 at CAM_NEAR_IN or inside, 0 from CAM_NEAR_OUT)"
+        },
+        {
+          "find": "    col = psyGamma(psyTonemap(col));\n    FRAG_OUT",
+          "replace": "    col = mix(col, background(rd, t), camNear);\n    col = psyGamma(psyTonemap(col));\n    FRAG_OUT",
+          "why": "the picture fades into the background as the camera nears the fractal (its distance estimate at the camera, FLIGHT_CAMERA_NEAR), so passing through the surface is no pop of light"
+        }
+      ],
       "upstream": {
         "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
         "date": "2026-11-18",
@@ -1239,7 +1404,7 @@
       "target": "effects/folded-box-variants-flight.js",
       "source": "src/effects/folded-box-variants-flight.js",
       "sha256": "7b5960e8e1f21bb7a23a505e9766c7f5c3c37f97d2819872eb60132852b4e40d",
-      "bodySha256": "7b5960e8e1f21bb7a23a505e9766c7f5c3c37f97d2819872eb60132852b4e40d",
+      "bodySha256": "5e4386b0421fa6fa12930d1600c1173cf1fa1ecd428d3264465de4f3134fa3c8",
       "bytes": 25397,
       "asciiEscapes": 0,
       "needs": [
@@ -1247,6 +1412,23 @@
         "FractalFlight"
       ],
       "provides": [],
+      "patches": [
+        {
+          "find": "const float CAM_CLEAR = 0.05;\n",
+          "replace": "const float CAM_CLEAR = 0.05;\nconst float CAM_NEAR_IN = 0.050;\nconst float CAM_NEAR_OUT = 0.300;\n",
+          "why": "CAM_NEAR_IN, CAM_NEAR_OUT: where the picture fades as the camera nears the surface"
+        },
+        {
+          "find": "    g_cam = ro;\n",
+          "replace": "    g_cam = ro;\n    float camNear = 1.0 - smoothstep(CAM_NEAR_IN, CAM_NEAR_OUT, foldedBoxDE(ro).dist);\n",
+          "why": "camNear: how near the camera is to the surface (1 at CAM_NEAR_IN or inside, 0 from CAM_NEAR_OUT)"
+        },
+        {
+          "find": "    col = psyGamma(psyTonemap(col));\n    FRAG_OUT",
+          "replace": "    col = mix(col, background(rd, t), camNear);\n    col = psyGamma(psyTonemap(col));\n    FRAG_OUT",
+          "why": "the picture fades into the background as the camera nears the fractal (its distance estimate at the camera, FLIGHT_CAMERA_NEAR), so passing through the surface is no pop of light"
+        }
+      ],
       "upstream": {
         "commit": "0a4fdc1e1a874aa229c22193c859e5f74777772c",
         "date": "2026-11-18",
@@ -1311,7 +1493,7 @@
       "target": "effects/apollonian-foam-flight.js",
       "source": "src/effects/apollonian-foam-flight.js",
       "sha256": "760b86a8fc434dea1c7f525a1f44c9271edf6384b315fcc8296e74406e39f6d0",
-      "bodySha256": "760b86a8fc434dea1c7f525a1f44c9271edf6384b315fcc8296e74406e39f6d0",
+      "bodySha256": "aef61816e4bf2eed6ca548cad109992bad61ad18acc978e56ea90424b371404b",
       "bytes": 22558,
       "asciiEscapes": 0,
       "needs": [
@@ -1319,6 +1501,23 @@
         "FractalFlight"
       ],
       "provides": [],
+      "patches": [
+        {
+          "find": "const float CAM_CLEAR = 0.05;\n",
+          "replace": "const float CAM_CLEAR = 0.05;\nconst float CAM_NEAR_IN = 0.050;\nconst float CAM_NEAR_OUT = 0.300;\n",
+          "why": "CAM_NEAR_IN, CAM_NEAR_OUT: where the picture fades as the camera nears the surface"
+        },
+        {
+          "find": "    g_cam = ro;\n",
+          "replace": "    g_cam = ro;\n    float camNear = 1.0 - smoothstep(CAM_NEAR_IN, CAM_NEAR_OUT, foamDE(ro).dist);\n",
+          "why": "camNear: how near the camera is to the surface (1 at CAM_NEAR_IN or inside, 0 from CAM_NEAR_OUT)"
+        },
+        {
+          "find": "    col = psyGamma(psyTonemap(col));\n    FRAG_OUT",
+          "replace": "    col = mix(col, background(rd, t), camNear);\n    col = psyGamma(psyTonemap(col));\n    FRAG_OUT",
+          "why": "the picture fades into the background as the camera nears the fractal (its distance estimate at the camera, FLIGHT_CAMERA_NEAR), so passing through the surface is no pop of light"
+        }
+      ],
       "upstream": {
         "commit": "e2cc5c239b37748e68219394224c2bda78a85624",
         "date": "2026-11-18",
@@ -1454,6 +1653,766 @@
         "date": "2026-10-07",
         "uncommitted": false
       }
+    },
+    {
+      "target": "effects/escape-time-lab.js",
+      "source": "src/effects/escape-time-lab.js",
+      "sha256": "05ec6c952d7652210b1687e1cc8a6b0143ab683f83d420f22278f949339f1877",
+      "bodySha256": "05ec6c952d7652210b1687e1cc8a6b0143ab683f83d420f22278f949339f1877",
+      "bytes": 28303,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalLab"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/analytic-field-lab.js",
+      "source": "src/effects/analytic-field-lab.js",
+      "sha256": "3efeb22f251805bbee84302dc08bbbd160ddf55936e933c7e8a44842278783c7",
+      "bodySha256": "3efeb22f251805bbee84302dc08bbbd160ddf55936e933c7e8a44842278783c7",
+      "bytes": 20979,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalLab"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/procedural-field-lab.js",
+      "source": "src/effects/procedural-field-lab.js",
+      "sha256": "1d6db72713d3c28942f508dc44fabf9da1f9d9d4c8da3df394b390c57e371abd",
+      "bodySha256": "1d6db72713d3c28942f508dc44fabf9da1f9d9d4c8da3df394b390c57e371abd",
+      "bytes": 22336,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalLab"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fractal-flame-lab.js",
+      "source": "src/effects/fractal-flame-lab.js",
+      "sha256": "ebf437cd318ee78c552665cf91d32fec257fc6aa05777f0a0216f117633cd1bf",
+      "bodySha256": "ebf437cd318ee78c552665cf91d32fec257fc6aa05777f0a0216f117633cd1bf",
+      "bytes": 21920,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "FractalLab"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/robot-foundry.js",
+      "source": "src/effects/robot-foundry.js",
+      "sha256": "67fe77ff07f907b453b326044ba54414ab0c631fc8b180d2f72e0ab406a673c2",
+      "bodySha256": "484bd7900039296e0ef852837a2dd4ba4159f7b6d134fdc86cc8397d8326f3c7",
+      "bytes": 16601,
+      "asciiEscapes": 1,
+      "needs": [
+        "EndlessScenes",
+        "FractalFlight",
+        "Music"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/cymatics.js",
+      "source": "src/effects/cymatics.js",
+      "sha256": "773a71045790c0cb75f95e4bf19bb1b8efef3bc48134128ca4c22f0a0857de41",
+      "bodySha256": "99ad9bbde1eef0d2ae11837b7cd5a0bfc6068d6de3e8db3e223fbce4a2af1001",
+      "bytes": 8755,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor",
+        "EffectRegistry",
+        "Music",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "    var st = { n1: 2, m1: 5, n2: 2, m2: 5, blend: 1, fadeStart: 0, nextAt: 0, idx: 1, note: -1, noteSince: 0, lastPeak: 0 };\n",
+          "replace": "    var st = { n1: 2, m1: 5, n2: 2, m2: 5, blend: 1, fadeStart: 0, nextAt: 0, idx: 1, note: -1, noteSince: 0, lastPeak: 0 };\n    var ST_START = JSON.stringify(st);\n    function restart() { st = JSON.parse(ST_START); }\n    function setOne(gl, program, getLoc, name, v) { var l = getLoc(program, name); if (l !== null) gl.uniform1f(l, v); }\n",
+          "why": "its pattern and timing go back to their start (restart) on each visit, and the uniform setter is made once (setOne)"
+        },
+        {
+          "find": "        var set = function(name, v) { var l = getLoc(program, name); if (l !== null) gl.uniform1f(l, v); };\n        set('u_n1', st.n1); set('u_m1', st.m1); set('u_n2', st.n2); set('u_m2', st.m2); set('u_blend', e);\n",
+          "replace": "        setOne(gl, program, getLoc, 'u_n1', st.n1); setOne(gl, program, getLoc, 'u_m1', st.m1); setOne(gl, program, getLoc, 'u_n2', st.n2);\n        setOne(gl, program, getLoc, 'u_m2', st.m2); setOne(gl, program, getLoc, 'u_blend', e);\n",
+          "why": "the hook sets its uniforms through setOne: no function made per frame"
+        },
+        {
+          "find": "        setUniforms: setUniforms,\n",
+          "replace": "        setUniforms: setUniforms,\n        init: restart,\n        cleanup: restart,\n",
+          "why": "init and cleanup restart it: every visit begins at the first pattern, no fade carried over"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/curl-silk.js",
+      "source": "src/effects/curl-silk.js",
+      "sha256": "afed4928daff10c0a5c27f088e8b19a14161b22008933200374540122215215e",
+      "bodySha256": "5be064664b6ab7aacb426e882ce7138c0072c16c4c73ffb04a79615ad5b3e8e3",
+      "bytes": 12433,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "GpuSim",
+        "Math",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "        var runs = step > 0 ? 1 + Math.min(S.warm, 12) : 0;\n",
+          "replace": "        var runs = step > 0 ? 1 + Math.min(S.warm, 2) : 0;\n",
+          "why": "a fresh start fills its trails with at most 2 extra steps a frame (12 before): no burst of work on the first frames"
+        },
+        {
+          "find": "        destroy(gl);\n        S = { gl: gl, size: size, w: w, h: h, warm: 45 };\n",
+          "replace": "        var old = S && S.gl === gl ? S : null;\n        if (old) S = null; else destroy(gl);\n        S = { gl: gl, size: size, w: w, h: h, warm: 45 };\n",
+          "why": "a new size keeps the old state until it is carried over (old)"
+        },
+        {
+          "find": "        if (!S.pMove || !S.pDot || !S.pFade || !S.pDisplay || !S.state || !S.light) { destroy(gl); return false; }\n        return true;\n",
+          "replace": "        if (!S.pMove || !S.pDot || !S.pFade || !S.pDisplay || !S.state || !S.light) { destroy(gl); S = old; destroy(gl); return false; }\n        if (old) {\n            // The particles (positions, nearest) and their trails carried on.\n            GpuSim.carry(gl, old.state, S.state, true);\n            GpuSim.carry(gl, old.light, S.light);\n            S.warm = 0;\n            var made = S; S = old; destroy(gl); S = made;\n        }\n        return true;\n",
+          "why": "a resize or a change of particle count carries its particles and trails over (no restart)"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/fluid-ink.js",
+      "source": "src/effects/fluid-ink.js",
+      "sha256": "7fc46a469be03405475ccdae8a7d3b420cdcf3008e3b826c2433f983122b506b",
+      "bodySha256": "fd38b46ffc8f19c524afe156cc9c7ad1f2b2eb29a26fed5db039a6377fed4cbf",
+      "bytes": 17387,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "GpuSim",
+        "Math",
+        "PsyPalettes",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "        destroy(gl);\n        S = { gl: gl, sw: sw, sh: sh, dw: sw * 2, dh: sh * 2, p: {}, prevMouse: null, kick: -1 };\n",
+          "replace": "        var old = S && S.gl === gl ? S : null;\n        if (old) S = null; else destroy(gl);\n        S = { gl: gl, sw: sw, sh: sh, dw: sw * 2, dh: sh * 2, p: {}, prevMouse: null, kick: -1 };\n",
+          "why": "a new size keeps the old state until it is carried over (old)"
+        },
+        {
+          "find": "        if (!S.vel || !S.pres || !S.dye || !S.div || !S.curl) { destroy(gl); return false; }\n        return true;\n",
+          "replace": "        if (!S.vel || !S.pres || !S.dye || !S.div || !S.curl) { destroy(gl); S = old; destroy(gl); return false; }\n        if (old) {\n            // The flow, its pressure and the ink carried on (both sides of the\n            // ink: the display blends them).\n            GpuSim.carry(gl, old.vel, S.vel);\n            GpuSim.carry(gl, old.pres, S.pres);\n            GpuSim.carry(gl, old.dye, S.dye);\n            GpuSim.carry(gl, old.dye.write, S.dye.write);\n            S.prevMouse = old.prevMouse; S.kick = old.kick; S.n = old.n; S.held = old.held; S.stepDt = old.stepDt;\n            var made = S; S = old; destroy(gl); S = made;\n        }\n        return true;\n",
+          "why": "a resize or a change of detail carries its flow and ink over (no restart)"
+        },
+        {
+          "find": "            for (var it = 0; it < 20; it++) {\n",
+          "replace": "            for (var it = 0; it < FLUID_PRESSURE_PASSES; it++) {\n",
+          "why": "its pressure solve runs FLUID_PRESSURE_PASSES passes a frame (20 before), for the processor time"
+        },
+        {
+          "find": "    var RES = [128, 192, 288];\n",
+          "replace": "    var RES = [128, 192, 288];\n    var FLUID_PRESSURE_PASSES = 10;\n    var FLUID_PRESSURE_FIRST = 2;\n",
+          "why": "FLUID_PRESSURE_PASSES: 10; FLUID_PRESSURE_FIRST: 2 (the passes on the first half of a step)"
+        },
+        {
+          "find": "        var step = Math.min(1 / 30, Math.max(0, dt));\n",
+          "replace": "        var step = Math.min(1 / 30, Math.max(0, dt));\n        // A step is spread over two frames, with the time of both: its forces and\n        // the first pressure passes on one (half 1), the rest of the pressure solve\n        // and the advection on the next (half 2). A still frame steps nothing.\n        if (step > 0) { S.held = (S.held || 0) + step; S.n = (S.n || 0) + 1; }\n        var half = step > 0 ? 2 - S.n % 2 : 0;\n        if (half === 1) { S.stepDt = Math.min(1 / 15, S.held); S.held = 0; }\n",
+          "why": "a step is spread over two frames (half), with the time of both"
+        },
+        {
+          "find": "            'uniform sampler2D u_dye; uniform vec2 u_texel; uniform float u_shading; uniform float u_brightness; uniform vec3 u_bg;\\n' +\n",
+          "replace": "            'uniform sampler2D u_dye; uniform vec2 u_texel; uniform float u_shading; uniform float u_brightness; uniform vec3 u_bg;\\n' +\n            'uniform sampler2D u_dye_prev; uniform float u_prev;\\n' +\n            'vec3 dye(vec2 p) { return mix(texture(u_dye, p).rgb, texture(u_dye_prev, p).rgb, u_prev); }\\n' +\n",
+          "why": "its display can show the ink between two steps (dye, u_prev)"
+        },
+        {
+          "find": "            '    vec3 c = texture(u_dye, v_uv).rgb;\\n' +\n            '    float dx = lum(texture(u_dye, v_uv + vec2(u_texel.x, 0.0)).rgb) - lum(texture(u_dye, v_uv - vec2(u_texel.x, 0.0)).rgb);\\n' +\n            '    float dy = lum(texture(u_dye, v_uv + vec2(0.0, u_texel.y)).rgb) - lum(texture(u_dye, v_uv - vec2(0.0, u_texel.y)).rgb);\\n' +\n",
+          "replace": "            '    vec3 c = dye(v_uv);\\n' +\n            '    float dx = lum(dye(v_uv + vec2(u_texel.x, 0.0))) - lum(dye(v_uv - vec2(u_texel.x, 0.0)));\\n' +\n            '    float dy = lum(dye(v_uv + vec2(0.0, u_texel.y))) - lum(dye(v_uv - vec2(0.0, u_texel.y)));\\n' +\n",
+          "why": "its display reads the ink through dye()"
+        },
+        {
+          "find": "        GpuSim.bind(gl, 0, S.dye.read.tex, dp.u.u_dye);\n",
+          "replace": "        GpuSim.bind(gl, 0, S.dye.read.tex, dp.u.u_dye);\n        GpuSim.bind(gl, 1, S.dye.write.tex, dp.u.u_dye_prev);\n        gl.uniform1f(dp.u.u_prev, S.mid ? 0.5 : 0);\n",
+          "why": "the frame a step is taken shows the ink halfway through it"
+        },
+        {
+          "find": "        if (half === 1) { S.stepDt = Math.min(1 / 15, S.held); S.held = 0; }\n",
+          "replace": "        if (half === 1) { S.stepDt = Math.min(1 / 15, S.held); S.held = 0; }\n        step = half > 0 ? S.stepDt : 0;\n        S.mid = half === 2;\n",
+          "why": "both halves of a step use its time; S.mid: the ink was carried on this frame"
+        },
+        {
+          "find": "        if (step > 0) {\n            // Emitters circle",
+          "replace": "        if (half === 1) {\n            // Emitters circle",
+          "why": "the forces, the swirl and the divergence on the first half of a step"
+        },
+        {
+          "find": "            S.pres.swap();\n            for (var it = 0; it < FLUID_PRESSURE_PASSES; it++) {\n",
+          "replace": "            S.pres.swap();\n        }\n        if (half > 0) {\n            for (var it = half === 1 ? 0 : FLUID_PRESSURE_FIRST; it < (half === 1 ? FLUID_PRESSURE_FIRST : FLUID_PRESSURE_PASSES); it++) {\n",
+          "why": "the pressure solve shared between the two halves"
+        },
+        {
+          "find": "            }\n            pass(gl, 'gradient', S.vel.write,",
+          "replace": "            }\n        }\n        if (half === 2) {\n            pass(gl, 'gradient', S.vel.write,",
+          "why": "the gradient and the advection on the second half of a step"
+        }
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/lenia.js",
+      "source": "src/effects/lenia.js",
+      "sha256": "48b3db2575167dfd2e06034939afc3e53fef9c0abb16dd43491ce19c9faf6b65",
+      "bodySha256": "97f443eef0674700039b4f0a600ab428df4df488c6bd541a4ca6f49588d5c306",
+      "bytes": 12710,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "GpuSim",
+        "Math",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "        destroy(gl);\n        S = { gl: gl, w: w, h: h, rule: rule, kick: 0, nextRain: 0, reset: true, acc: 0 };\n",
+          "replace": "        var old = S && S.gl === gl ? S : null;\n        if (old) S = null; else destroy(gl);\n        S = { gl: gl, w: w, h: h, rule: rule, kick: 0, nextRain: 0, reset: true, acc: 0 };\n",
+          "why": "a new size keeps the old world until it is carried over (old)"
+        },
+        {
+          "find": "        if (!S.pUpdate || !S.pSeed || !S.pDisplay || !S.world) { destroy(gl); return false; }\n        return true;\n",
+          "replace": "        if (!S.pUpdate || !S.pSeed || !S.pDisplay || !S.world) { destroy(gl); S = old; destroy(gl); return false; }\n        if (old) {\n            // Its creatures carried on: no new seeding.\n            GpuSim.carry(gl, old.world, S.world);\n            S.reset = false; S.kick = old.kick; S.nextRain = old.nextRain; S.acc = old.acc;\n            var made = S; S = old; destroy(gl); S = made;\n        }\n        return true;\n",
+          "why": "a resize or a change of world size carries its creatures over (no restart)"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/physarum.js",
+      "source": "src/effects/physarum.js",
+      "sha256": "b9b0e675023f1d2417c5da33b800dde3f432fc9820db9b8cc825d2c891934adb",
+      "bodySha256": "2ac1a025bb7e8093d16093fdb43cdf3a7c05a4196e0ad4b7d51043d05a5037fd",
+      "bytes": 19898,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor",
+        "Controls",
+        "EffectRegistry",
+        "Math",
+        "PsyPalettes",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "        destroy(gl);\n        failedKey = key; failedGl = gl;\n",
+          "replace": "        var old = S && S.gl === gl ? S : null;\n        if (old) S = null; else destroy(gl);\n        failedKey = key; failedGl = gl;\n",
+          "why": "a new size keeps the old trails until they are carried over (old)"
+        },
+        {
+          "find": "        failedKey = ''; failedGl = null;\n        return true;\n",
+          "replace": "        failedKey = ''; failedGl = null;\n        if (old) {\n            // The trail field stretched into the new size; the agents (positions,\n            // not a picture) kept as they are when their number is the same.\n            var blit = function(from, to, w0, h0, w1, h1, filter) {\n                gl.bindFramebuffer(gl.READ_FRAMEBUFFER, from);\n                gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, to);\n                gl.blitFramebuffer(0, 0, w0, h0, 0, 0, w1, h1, gl.COLOR_BUFFER_BIT, filter);\n            };\n            blit(old.fbT0, S.fbT0, old.tw, old.th, tw, th, gl.LINEAR);\n            blit(old.fbT1, S.fbT1, old.tw, old.th, tw, th, gl.LINEAR);\n            S.tflip = old.tflip;\n            if (old.size === size && old.shape === shape) {\n                blit(old.fbA0, S.fbA0, size, size, size, size, gl.NEAREST);\n                blit(old.fbA1, S.fbA1, size, size, size, size, gl.NEAREST);\n                S.flip = old.flip;\n            }\n            gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);\n            gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);\n            var made = S; S = old; destroy(gl); S = made;\n        }\n        return true;\n",
+          "why": "a resize or a change of agent count carries its trails over, and its agents when their number is the same (no restart)"
+        },
+        {
+          "find": "        var steps = Math.max(0, Math.min(Math.floor(stepDebt + 0.3), perFrame * 4));\n",
+          "replace": "        var steps = Math.max(0, Math.min(Math.floor(stepDebt + 0.3), perFrame * 2));\n",
+          "why": "at most two steps a frame (four before), so a late frame is not also the heaviest"
+        },
+        {
+          "find": "    var FS_DIFFUSE = [\n",
+          "replace": "    // A new agent count from the old agents: every n-th going down, each repeated\n    // with a small fixed offset (position and heading) going up.\n    var FS_RESAMPLE = [\n        '#version 300 es',\n        'precision highp float;',\n        'precision highp int;',\n        'out vec4 o;',\n        'uniform sampler2D u_from;',\n        'uniform int u_fromSize;',\n        'uniform int u_toSize;',\n        'uniform vec2 u_spread;',\n        'float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }',\n        'void main() {',\n        '    ivec2 c = ivec2(gl_FragCoord.xy);',\n        '    float ratio = float(u_fromSize * u_fromSize) / float(u_toSize * u_toSize);',\n        '    int j = int(float(c.y * u_toSize + c.x) * ratio);',\n        '    vec4 a = texelFetch(u_from, ivec2(j % u_fromSize, j / u_fromSize), 0);',\n        '    if (ratio < 1.0) {',\n        '        vec2 p = vec2(c);',\n        '        a.xy = fract(a.xy + (vec2(h(p), h(p + 7.0)) - 0.5) * u_spread);',\n        '        a.z = mod(a.z + (h(p + 3.0) - 0.5) * 0.5, 6.2831853);',\n        '    }',\n        '    o = a;',\n        '}'\n    ].join('\\n');\n\n    var FS_DIFFUSE = [\n",
+          "why": "FS_RESAMPLE: a new number of agents from the old ones"
+        },
+        {
+          "find": "                S.flip = old.flip;\n            }\n",
+          "replace": "                S.flip = old.flip;\n            } else if (old.shape === shape) {\n                var rs = program(gl, VS_QUAD, FS_RESAMPLE);\n                if (rs) {\n                    gl.bindFramebuffer(gl.FRAMEBUFFER, S.fbA0);\n                    gl.viewport(0, 0, size, size);\n                    gl.useProgram(rs.p);\n                    bindTex(gl, 0, old.flip ? old.agents1 : old.agents0, rs.u.u_from);\n                    gl.uniform1i(rs.u.u_fromSize, old.size);\n                    gl.uniform1i(rs.u.u_toSize, size);\n                    gl.uniform2f(rs.u.u_spread, 2 / tw, 2 / th);\n                    quad(gl, rs);\n                    bindTex(gl, 0, null, null);\n                    gl.useProgram(null);\n                    gl.deleteProgram(rs.p);\n                    S.flip = 0;\n                }\n            }\n",
+          "why": "a new number of agents is resampled from the old (the network carries on)"
+        },
+        {
+          "find": "            gl.uniform1f(u.u_amount, (v.deposit || 1) * (1 + kick * 1.5) * (512 * 512) / (S.size * S.size));\n",
+          "replace": "            gl.uniform1f(u.u_amount, (v.deposit || 1) * (1 + kick * 1.5) * (512 * 512) / (S.size * S.size) * (S.tw * S.th) / (752 * 399));\n",
+          "why": "its deposit scales with the trail field area, so a change of size or quality keeps its brightness"
+        }
+      ],
+      "upstream": {
+        "commit": "b9f21de034cae0745e9b47e9af1e16c01d42bc05",
+        "date": "2026-11-17",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/feedback-loop.js",
+      "source": "src/effects/feedback-loop.js",
+      "sha256": "16acf3d3d7a2349fab2f0a68c2fd25bf40c557b8a7aaab7269d5c3bc3ee3ea02",
+      "bodySha256": "16acf3d3d7a2349fab2f0a68c2fd25bf40c557b8a7aaab7269d5c3bc3ee3ea02",
+      "bytes": 18155,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "ShadertoyEffectRunner",
+        "ShadertoyPassGraph"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/reaction-diffusion.js",
+      "source": "src/effects/reaction-diffusion.js",
+      "sha256": "c1ebead66af15b62d8c30d968a3a5e311555224ddad252604a501bf980f0637b",
+      "bodySha256": "c1ebead66af15b62d8c30d968a3a5e311555224ddad252604a501bf980f0637b",
+      "bytes": 7197,
+      "asciiEscapes": 0,
+      "needs": [
+        "EffectRegistry",
+        "ShadertoyEffectRunner",
+        "ShadertoyPassGraph"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/epicycles.js",
+      "source": "src/effects/epicycles.js",
+      "sha256": "e23c30291bacf2be2d6ec0a1f43ccdd3c81a083afcf0972803ef5afa0d8ba259",
+      "bodySha256": "9de0e713a3c2ec2e3e3564c02d018ad374a8e0e521463a49ef0df5e553c5eecf",
+      "bytes": 10616,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor",
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "    function render(gl, program, time) {\n",
+          "replace": "    function render(gl, program, time, hostDt) {\n",
+          "why": "its render takes the host's time step"
+        },
+        {
+          "find": "        var dt = lastTime === null ? 0.016 : Math.max(0, Math.min(0.1, time - lastTime));\n",
+          "replace": "        var dt = Math.max(0, Math.min(0.1, Number(hostDt) || 0));\n",
+          "why": "it moves by the host's time step (none on a still frame, at most the host's limit after a stall), not its own"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/hopf.js",
+      "source": "src/effects/hopf.js",
+      "sha256": "1bea2b6086881f0d6e467b4d01f147124207a4fda57b67f1ab0ded7ffdc07631",
+      "bodySha256": "9ca4ac42e6dafc63589f61b5e442efa4265568a5f35a0f7928e2c702e4a9ec24",
+      "bytes": 8232,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor",
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "    function render(gl, program, time) {\n",
+          "replace": "    function render(gl, program, time, hostDt) {\n",
+          "why": "its render takes the host's time step"
+        },
+        {
+          "find": "        var dt = lastTime === null ? 0.016 : Math.max(0, Math.min(0.1, time - lastTime));\n",
+          "replace": "        var dt = Math.max(0, Math.min(0.1, Number(hostDt) || 0));\n",
+          "why": "it moves by the host's time step (none on a still frame, at most the host's limit after a stall), not its own"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/knots.js",
+      "source": "src/effects/knots.js",
+      "sha256": "d0abe56de375f8b835c0d109bc0e5c9b3ed7d25ac034969d73ff813ab711f9e3",
+      "bodySha256": "05daef30f00ef515d68faaa0494559dc435968d440793651ca7a65046389366b",
+      "bytes": 10037,
+      "asciiEscapes": 3,
+      "needs": [
+        "AudioReactor",
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "    function render(gl, program, time) {\n",
+          "replace": "    function render(gl, program, time, hostDt) {\n",
+          "why": "its render takes the host's time step"
+        },
+        {
+          "find": "        var dt = lastTime === null ? 0.016 : Math.max(0, Math.min(0.1, time - lastTime));\n",
+          "replace": "        var dt = Math.max(0, Math.min(0.1, Number(hostDt) || 0));\n",
+          "why": "it moves by the host's time step (none on a still frame, at most the host's limit after a stall), not its own"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/lissajous.js",
+      "source": "src/effects/lissajous.js",
+      "sha256": "c840090b886d93251bd3627729e79642df67e16ccb07402a1b0e4ffa8ca6323b",
+      "bodySha256": "c840090b886d93251bd3627729e79642df67e16ccb07402a1b0e4ffa8ca6323b",
+      "bytes": 6713,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/lorenz-attractor.js",
+      "source": "src/effects/lorenz-attractor.js",
+      "sha256": "f9dc480c2b433e562f530417fcd50aa6bbc4a1aca40da4e6f0dda75cb65781c2",
+      "bodySha256": "f9dc480c2b433e562f530417fcd50aa6bbc4a1aca40da4e6f0dda75cb65781c2",
+      "bytes": 10615,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/polytopes.js",
+      "source": "src/effects/polytopes.js",
+      "sha256": "549047922c92f4535cdfa02b53e572259e51391612cb4cdd9699beab97e43f88",
+      "bodySha256": "0040c6f6917a6ca2b0395696d147e3905fba449f08389721851aabe5b0d0835c",
+      "bytes": 9980,
+      "asciiEscapes": 0,
+      "needs": [
+        "AudioReactor",
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "    function render(gl, program, time) {\n",
+          "replace": "    function render(gl, program, time, hostDt) {\n",
+          "why": "its render takes the host's time step"
+        },
+        {
+          "find": "        var dt = lastTime === null ? 0.016 : Math.max(0, Math.min(0.1, time - lastTime));\n",
+          "replace": "        var dt = Math.max(0, Math.min(0.1, Number(hostDt) || 0));\n",
+          "why": "it moves by the host's time step (none on a still frame, at most the host's limit after a stall), not its own"
+        }
+      ],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/spirograph.js",
+      "source": "src/effects/spirograph.js",
+      "sha256": "9a5a60fed8d85d8dc065575c9db0d2b171c793e365a609b3fdde522e30be8e9e",
+      "bodySha256": "aa6da5730be2f95c8b335738498ff017c1b3ee87db5dd7f100452d9662d7ae38",
+      "bytes": 6709,
+      "asciiEscapes": 1,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "GlowLines",
+        "Renderer"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "workers/progressive-density-worker.js",
+      "source": "src/workers/progressive-density-worker.js",
+      "sha256": "ccbb677f82a7ec0a943772bd7483e2a0dd7e3e957b3c25176659704ffcbc9475",
+      "bodySha256": "1f995e573ce2cefdf1d0c98bb6d0eae804fffa5a7c97571572b99529e365f8fd",
+      "bytes": 62919,
+      "asciiEscapes": 0,
+      "needs": [],
+      "provides": [],
+      "patches": [
+        {
+          "find": "        state.deadline = started + 80;\n",
+          "replace": "        state.deadline = started + Math.min(80, Math.max(1, finite(message.deadlineMs, 80)));\n",
+          "why": "the host can set a slice's hard time limit lower (message.deadlineMs, at most the 80 ms it was)"
+        },
+        {
+          "find": "            workerStatus: 'ready',\n            image: mapped.image.buffer\n",
+          "replace": "            workerStatus: 'ready',\n            workMs: Date.now() - started,\n            image: mapped.image.buffer\n",
+          "why": "each frame says how long its slice took (workMs, from the request to the reply), for the host's duty cycle"
+        },
+        {
+          "find": "    function tonemap(message) {\n",
+          "replace": "    // The host may send the last frame's pixels back (message.image, an\n    // ArrayBuffer of the right size, transferred): they are filled again in\n    // place instead of a new buffer each frame.\n    function frameImage(message, bytes) {\n        var buffer = message.image;\n        if (buffer && buffer.byteLength === bytes) {\n            var reused = new Uint8ClampedArray(buffer);\n            reused.fill(0);\n            return reused;\n        }\n        return new Uint8ClampedArray(bytes);\n    }\n\n    function tonemap(message) {\n",
+          "why": "frameImage(): the pixels sent back by the host (message.image) are filled again in place"
+        },
+        {
+          "find": "        var image = new Uint8ClampedArray(state.width * state.height * 4);\n",
+          "replace": "        var image = frameImage(message, state.width * state.height * 4);\n",
+          "why": "a frame's pixels go into the buffer sent back by the host when there is one (no new buffer each frame)"
+        },
+        {
+          "find": "    function robustWhitePoint(max) {\n",
+          "replace": "    // The lit pixels sampled for the white point, in one array kept from\n    // frame to frame.\n    var litBuffer = null;\n    function litSamples(count) {\n        if (!litBuffer || litBuffer.length < count) litBuffer = new Float32Array(count);\n        return litBuffer;\n    }\n\n    function robustWhitePoint(max) {\n",
+          "why": "litSamples(): one array for the white point's sample, kept from frame to frame"
+        },
+        {
+          "find": "        var lit = [];\n        var offset = (state.frameCount * 7919) % Math.max(1, Math.floor(stride));\n        for (var i = 0; i < sampleCount; i++) {\n            var idx = Math.min(n - 1, Math.floor(i * stride) + offset);\n            var v = Math.max(state.r[idx], state.g[idx], state.b[idx]);\n            if (v > 0) lit.push(v);\n        }\n        if (lit.length < 32) return max;\n        lit.sort(function(a, b) { return a - b; });\n        var p = lit[Math.floor((lit.length - 1) * 0.992)];\n",
+          "replace": "        var lit = litSamples(sampleCount);\n        var litCount = 0;\n        var offset = 0;\n        for (var i = 0; i < sampleCount; i++) {\n            var idx = Math.min(n - 1, Math.floor(i * stride) + offset);\n            var v = Math.max(state.r[idx], state.g[idx], state.b[idx]);\n            if (v > 0) lit[litCount++] = v;\n        }\n        if (litCount < 32) return max;\n        var sorted = lit.subarray(0, litCount).sort();\n        var p = sorted[Math.floor((litCount - 1) * 0.992)];\n",
+          "why": "the white point is taken from the same pixels every frame (no step in brightness from a different sample), in the kept array"
+        },
+        {
+          "find": "    function maxValue() {\n        var max = 0;\n        for (var i = 0; i < state.r.length; i++) {\n            max = Math.max(max, state.r[i], state.g[i], state.b[i]);\n        }\n        return max;\n    }\n",
+          "replace": "    // The mean of the lit pixels (each by its brightest channel), kept with\n    // the maximum: the white point is eased as a multiple of it.\n    var litMean = 0;\n    function maxValue() {\n        var max = 0;\n        var sum = 0;\n        var count = 0;\n        for (var i = 0; i < state.r.length; i++) {\n            var v = Math.max(state.r[i], state.g[i], state.b[i]);\n            if (v > max) max = v;\n            if (v > 0) { sum += v; count++; }\n        }\n        litMean = count ? sum / count : 0;\n        return max;\n    }\n",
+          "why": "the mean lit pixel is found with the brightest (litMean), for the white point the host eases"
+        },
+        {
+          "find": "        var white = robustWhitePoint(max);\n",
+          "replace": "        var measured = robustWhitePoint(max);\n        // The host eases the white point between replies (message.whiteScale,\n        // a multiple of the mean lit pixel); without one, its own measure.\n        var hostScale = finite(message.whiteScale, 0);\n        var white = hostScale > 0 && litMean > 0 ? Math.min(max, Math.max(max * 0.015, litMean * hostScale, 0.0001)) : measured;\n",
+          "why": "the white point the host sends (message.whiteScale, eased from reply to reply) is used when there is one"
+        },
+        {
+          "find": "        return {\n            image: image,\n            maxValue: max\n        };\n",
+          "replace": "        return {\n            image: image,\n            maxValue: max,\n            whiteScale: litMean > 0 ? measured / litMean : 0\n        };\n",
+          "why": "the white point it measured, as a multiple of the mean lit pixel"
+        },
+        {
+          "find": "            maxValue: mapped.maxValue,\n",
+          "replace": "            maxValue: mapped.maxValue,\n            whiteScale: mapped.whiteScale,\n",
+          "why": "each frame says the white point it measured (whiteScale), for the host to ease"
+        }
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/attractor-density-lab.js",
+      "source": "src/effects/attractor-density-lab.js",
+      "sha256": "7a7d7e436da593a467b9439948d14e54582d8b8ff68bbb02c2855044a9d4f2bf",
+      "bodySha256": "7a7d7e436da593a467b9439948d14e54582d8b8ff68bbb02c2855044a9d4f2bf",
+      "bytes": 18857,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "FractalLab",
+        "ProgressiveDensityRenderer",
+        "Renderer"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/buddhabrot-lab.js",
+      "source": "src/effects/buddhabrot-lab.js",
+      "sha256": "c7bb13937cf3527d29b412a8d67691c874a3cae86c113ce31298b9d496c36e7b",
+      "bodySha256": "c7bb13937cf3527d29b412a8d67691c874a3cae86c113ce31298b9d496c36e7b",
+      "bytes": 13778,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "FractalLab",
+        "ProgressiveDensityRenderer",
+        "Renderer"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/flam3-density-lab.js",
+      "source": "src/effects/flam3-density-lab.js",
+      "sha256": "216e8e3dcf045101df2170f2f48df8e9e530b5b050aa8a3e39298dd03582f6e4",
+      "bodySha256": "216e8e3dcf045101df2170f2f48df8e9e530b5b050aa8a3e39298dd03582f6e4",
+      "bytes": 22585,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "FractalLab",
+        "ProgressiveDensityRenderer",
+        "Renderer"
+      ],
+      "provides": [],
+      "upstream": {
+        "commit": "f10cd5eee4de967d8328996e6166c2a430a2a614",
+        "date": "2026-10-07",
+        "uncommitted": false
+      }
+    },
+    {
+      "target": "effects/ifs-lsystem-lab.js",
+      "source": "src/effects/ifs-lsystem-lab.js",
+      "sha256": "835418ba45362a8d9f01b0f2ccf571ccd832b90dfb5ace08c994b7f76d424140",
+      "bodySha256": "352ba0f2a1e6f1ba8b276ca29671e6a6539f1c893786e6ed99bd85c072b9804d",
+      "bytes": 43893,
+      "asciiEscapes": 0,
+      "needs": [
+        "Controls",
+        "EffectRegistry",
+        "FractalLab",
+        "PsyPalettes",
+        "Renderer"
+      ],
+      "provides": [],
+      "patches": [
+        {
+          "find": "    function render(gl, program, time) {\n",
+          "replace": "    // The geometry is built again only when something it is built from\n    // changed; with no motion (Motion Rate 0) it is the same every frame.\n    // The style and the size are in the list too: after any change the\n    // persistence target is drawn into until it has settled again\n    // (SETTLE_FRAMES), then only composited.\n    var GEOMETRY_INPUTS = ['mode', 'depth', 'growth', 'pointCount', 'thickness', 'angle', 'spread', 'lean', 'curl',\n        'branchScale', 'growthSpeed', 'sway', 'swaySpeed', 'rollSpeed', 'zoomSpeed', 'zoom', 'panX', 'panY',\n        'rotation', 'palette', 'colorSpeed', 'glow', 'fade', 'trails', 'motionTime', 'canvasWidth',\n        'canvasHeight', 'viewRotation', 'viewZoom'];\n    var SETTLE_FRAMES = 240;\n    function geometryChanged(p) {\n        var last = state.builtFrom;\n        var changed = !last;\n        if (!last) last = state.builtFrom = {};\n        for (var i = 0; i < GEOMETRY_INPUTS.length; i++) {\n            var name = GEOMETRY_INPUTS[i];\n            if (last[name] !== p[name]) {\n                last[name] = p[name];\n                changed = true;\n            }\n        }\n        return changed;\n    }\n\n    function render(gl, program, time) {\n",
+          "why": "geometryChanged(): the geometry, its upload and the persistence passes follow only a change of what they are made from (GEOMETRY_INPUTS, SETTLE_FRAMES)"
+        },
+        {
+          "find": "        state.pointCount = 0;\n        state.lineVertCount = 0;\n    }\n\n    function values() {\n",
+          "replace": "        state.pointCount = 0;\n        state.lineVertCount = 0;\n        state.builtFrom = null;\n        state.built = 0;\n        state.linesFor = -1;\n        state.pointsFor = -1;\n        state.settled = 0;\n    }\n\n    function values() {\n",
+          "why": "cleanup() forgets what the geometry was built from, so a new visit builds it again"
+        },
+        {
+          "find": "        p.viewTime = time;\n        buildGeometry(p, motionTime);\n",
+          "replace": "        p.viewTime = time;\n        p.motionTime = motionTime;\n        p.canvasWidth = canvas.width;\n        p.canvasHeight = canvas.height;\n        p.viewRotation = Renderer.getRotation ? Renderer.getRotation() : 0;\n        p.viewZoom = Renderer.getEffectiveViewZoom ? Renderer.getEffectiveViewZoom(time) : 1;\n        if (geometryChanged(p)) {\n            buildGeometry(p, motionTime);\n            state.built++;\n            state.settled = 0;\n        }\n",
+          "why": "the geometry is built only when what it is built from changed"
+        },
+        {
+          "find": "        var cl = state.compLoc;\n        gl.useProgram(state.compositeProgram);\n        gl.enable(gl.BLEND);\n",
+          "replace": "        var cl = state.compLoc;\n        if (state.settled < SETTLE_FRAMES) {\n        state.settled++;\n        gl.useProgram(state.compositeProgram);\n        gl.enable(gl.BLEND);\n",
+          "why": "the persistence target is faded and drawn into only until it has settled after a change"
+        },
+        {
+          "find": "        // 3. Composite over the background.\n",
+          "replace": "        }\n\n        // 3. Composite over the background.\n",
+          "why": "the end of the passes drawn only until the persistence target has settled"
+        },
+        {
+          "find": "            var quadVerts = buildQuads(p.thickness, canvas);\n",
+          "replace": "            var linesFresh = state.linesFor !== state.built;\n            if (linesFresh) {\n                state.quadVerts = buildQuads(p.thickness, canvas);\n                state.linesFor = state.built;\n            }\n            var quadVerts = state.quadVerts;\n",
+          "why": "the line quads are made again only for new geometry"
+        },
+        {
+          "find": "            gl.bufferData(gl.ARRAY_BUFFER, state.quads.subarray(0, quadVerts * FLOATS_PER_QUAD_VERT), gl.DYNAMIC_DRAW);\n",
+          "replace": "            if (linesFresh) gl.bufferData(gl.ARRAY_BUFFER, state.quads.subarray(0, quadVerts * FLOATS_PER_QUAD_VERT), gl.DYNAMIC_DRAW);\n",
+          "why": "the line quads are uploaded only when they were made again"
+        },
+        {
+          "find": "            gl.bufferData(gl.ARRAY_BUFFER, state.points.subarray(0, state.pointCount * 3), gl.DYNAMIC_DRAW);\n",
+          "replace": "            if (state.pointsFor !== state.built) {\n                gl.bufferData(gl.ARRAY_BUFFER, state.points.subarray(0, state.pointCount * 3), gl.DYNAMIC_DRAW);\n                state.pointsFor = state.built;\n            }\n",
+          "why": "the points are uploaded only for new geometry"
+        }
+      ],
+      "upstream": {
+        "commit": "439440082d49401319062596ba385e7367377294",
+        "date": "2026-11-14",
+        "uncommitted": false
+      }
     }
   ],
   "notices": [
@@ -1466,6 +2425,11 @@
       "target": "webgl-noise-LICENSE.txt",
       "source": "lib/licenses/webgl-noise-LICENSE.txt",
       "sha256": "bdafce1bb01517c9ae6c4f3620c01340790b5e9d039ae9e356347d1174250916"
+    },
+    {
+      "target": "WebGL-Fluid-Simulation-LICENSE.txt",
+      "source": "lib/licenses/WebGL-Fluid-Simulation-LICENSE.txt",
+      "sha256": "1be448ae1212de2bee77b4cf851ab0acea0a7f7f32d21cd73095dd94dc173f66"
     }
   ],
   "borrowed": [
@@ -1502,6 +2466,16 @@
     {
       "scene": "*",
       "file": "src/engine/shader-manager.js",
+      "piece": "iq-palette",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/palettes/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/glow-lines.js",
       "piece": "iq-palette",
       "author": "Inigo Quilez",
       "link": "https://iquilezles.org/articles/palettes/",
@@ -1620,6 +2594,26 @@
       "noLicenceStated": false
     },
     {
+      "scene": "robot_foundry",
+      "file": "src/effects/robot-foundry.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "curl_silk",
+      "file": "src/effects/curl-silk.js",
+      "piece": "hoskins-hash",
+      "author": "David Hoskins",
+      "link": "https://www.shadertoy.com/view/4djSRW",
+      "licence": "MIT License, Copyright (c)2014 David Hoskins",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
       "scene": "sierpinski",
       "file": "src/effects/sierpinski.js",
       "piece": "iq-distance-functions",
@@ -1696,6 +2690,26 @@
       "author": "Inigo Quilez",
       "link": "https://iquilezles.org/articles/distfunctions/",
       "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "robot_foundry",
+      "file": "src/effects/robot-foundry.js",
+      "piece": "iq-distance-functions",
+      "author": "Inigo Quilez",
+      "link": "https://iquilezles.org/articles/distfunctions/",
+      "licence": "MIT for code snippets (\"all technical code snippets you'll find are under the MIT license\", https://iquilezles.org/articles/)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "fluid_ink",
+      "file": "src/effects/fluid-ink.js",
+      "piece": "dobryakov-fluid",
+      "author": "Pavel Dobryakov",
+      "link": "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation",
+      "licence": "MIT License, Copyright (c) 2017 Pavel Dobryakov",
       "nonCommercial": false,
       "noLicenceStated": false
     },
@@ -2019,6 +3033,56 @@
       "licence": "no licence stated at the source (\"Made by Knighty\"; the Fragmentarium application is offered under LGPL 2.1 or GPL 3)",
       "nonCommercial": false,
       "noLicenceStated": true
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/palettes.js",
+      "piece": "oklab",
+      "author": "Bjorn Ottosson",
+      "link": "https://bottosson.github.io/posts/oklab/",
+      "licence": "\"available in public domain\"; also available under an MIT licence",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/palettes.js",
+      "piece": "bids-colormaps",
+      "author": "Nathaniel J. Smith and Stefan van der Walt; Eric Firing for Viridis",
+      "link": "https://github.com/BIDS/colormap",
+      "licence": "CC0 (\"released under the CC0 license / public domain dedication. We would appreciate credit if you use or redistribute these colormaps, but do not impose any legal restrictions.\")",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/palettes.js",
+      "piece": "turbo",
+      "author": "Anton Mikhailov, Google",
+      "link": "https://gist.github.com/mikhailov-work/6a308c20e494d9e0ccc29036b28faa7a",
+      "licence": "Apache License 2.0 (\"Copyright 2019 Google LLC. SPDX-License-Identifier: Apache-2.0\")",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/palettes.js",
+      "piece": "twilight",
+      "author": "Bastian Bechtold",
+      "link": "https://github.com/bastibe/twilight",
+      "licence": "none stated at the source, which notes the map \"has been merged into Matplotlib\"; Matplotlib distributes it under the Matplotlib License (BSD-style; Copyright (c) 2012- Matplotlib Development Team)",
+      "nonCommercial": false,
+      "noLicenceStated": false
+    },
+    {
+      "scene": "*",
+      "file": "src/engine/palettes.js",
+      "piece": "cubehelix",
+      "author": "D. A. Green",
+      "link": "https://arxiv.org/abs/1108.5083",
+      "licence": "none stated in the paper, which publishes the map as a formula; Matplotlib's implementation is under the Matplotlib License (BSD-style; Copyright (c) 2012- Matplotlib Development Team)",
+      "nonCommercial": false,
+      "noLicenceStated": false
     }
   ]
 }

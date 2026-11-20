@@ -11,7 +11,7 @@ from worldmedia_playlists import (MAX_PLAYLIST_BYTES, PlaylistStore, as_m3u, is_
                                   read_xspf, xspf_to_m3u)
 
 NOT_A_PLAYLIST = r'^This file is XML or a web page, not an M3U, PLS or XSPF playlist\.$'
-LINK_NOT_A_LIST = r'^That URL did not return an M3U, PLS or XSPF channel list\.'
+LINK_NOT_A_LIST = r'^That URL did not return an M3U, PLS, XSPF, JSON or CSV channel list\.'
 
 SAMPLE = '''<?xml version="1.0" encoding="UTF-8"?>
 <playlist version="1" xmlns="http://xspf.org/ns/0/">

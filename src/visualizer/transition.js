@@ -28,12 +28,22 @@
  *
  * finishNow() ends whatever is running at once (the window hidden, the tab
  * paused or closed).
+ *
+ * Stretched: begin({ ready }) for a scene whose picture builds up slowly (a
+ * density lab: density-host.js). The cross-fade starts at once but runs
+ * over CROSSFADE_STRETCH_MS; ready() is asked every CROSSFADE_STRETCH_POLL_MS
+ * and once it is true the rest of the fade runs at the normal pace (never
+ * faster than CROSSFADE_MS for the whole way, nor shorter than CROSSFADE_MS
+ * in all). A change asked for meanwhile does the same, then waits for the
+ * end as for any fade. Only a cross-fade stretches (not a dip or a cut).
  */
 
 export const CROSSFADE_MS = 600;
 export const CROSSFADE_SLOW_MS = 1500;
-
-export const TRANSITION_KINDS = Object.freeze({ fade: 'fade', dip: 'dip', cut: 'cut' });
+/** The longest a stretched cross-fade runs. */
+export const CROSSFADE_STRETCH_MS = 4000;
+/** How often a stretched cross-fade asks whether the picture is there. */
+export const CROSSFADE_STRETCH_POLL_MS = 100;
 
 /**
  * @param {object} deps
@@ -50,8 +60,11 @@ export function createTransition({
   let endAt = 0;
   let duration = CROSSFADE_MS;
   let animation = null;
+  // A stretched cross-fade: { ready, startedAt, total, pace, poll } until it
+  // runs on at the normal pace.
+  let stretch = null;
   const stats = {
-    fades: 0, dips: 0, cuts: 0, slow: 0, waits: 0,
+    fades: 0, dips: 0, cuts: 0, slow: 0, waits: 0, stretched: 0, readyAfter: [],
   };
 
   const level = () => {
@@ -63,7 +76,12 @@ export function createTransition({
     endAt = clock() + ms;
     timer = setTimer(() => { timer = 0; then(); }, ms);
   }
+  function endStretch() {
+    if (stretch?.poll) clearTimer(stretch.poll);
+    stretch = null;
+  }
   function releaseFade() {
+    endStretch();
     const running = animation;
     animation = null;
     if (running) { try { running.cancel(); } catch (_) {} }
@@ -91,8 +109,38 @@ export function createTransition({
     phase = 'idle';
   }
 
+  /** A stretched cross-fade from here on at the normal pace: what is left of
+   *  it over at most `pace` ms for the whole way, and CROSSFADE_MS in all. */
+  function settleStretch() {
+    if (!stretch || phase !== 'fading') return;
+    const { startedAt, total, pace } = stretch;
+    endStretch();
+    const gone = Math.max(0, clock() - startedAt);
+    const left = Math.max(0, 1 - gone / total);
+    const ms = Math.max(1, Math.round(Math.max(pace - gone, pace * left)));
+    stats.readyAfter.push(Math.round(gone));
+    try {
+      const running = animation;
+      animation = fade.animate([{ opacity: left }, { opacity: 0 }], { duration: ms, easing: 'linear', fill: 'forwards' });
+      if (running) { try { running.cancel(); } catch (_) {} }
+    } catch (_) {
+      releaseFade();
+      phase = 'idle';
+      return;
+    }
+    arm(ms, () => { releaseFade(); phase = 'idle'; });
+  }
+  function pollStretch() {
+    if (!stretch) return;
+    stretch.poll = 0;
+    let ready = false;
+    try { ready = Boolean(stretch.ready()); } catch (_) { ready = true; }
+    if (ready) settleStretch();
+    else stretch.poll = setTimer(pollStretch, CROSSFADE_STRETCH_POLL_MS);
+  }
+
   /** The outgoing frame, dimmed, on top, faded out by the compositor. */
-  function crossFade(ms) {
+  function crossFade(ms, ready = null) {
     if (typeof fade.animate !== 'function') return false;
     const g2 = fade.getContext?.('2d');
     if (!g2) return false;
@@ -108,22 +156,32 @@ export function createTransition({
       g2.drawImage(canvas, 0, 0);
       g2.globalAlpha = 1;
       fade.hidden = false;
-      animation = fade.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'linear', fill: 'forwards' });
+      const total = ready ? Math.max(ms, CROSSFADE_STRETCH_MS) : ms;
+      animation = fade.animate([{ opacity: 1 }, { opacity: 0 }], { duration: total, easing: 'linear', fill: 'forwards' });
+      phase = 'fading';
+      arm(total, () => { releaseFade(); phase = 'idle'; });
+      if (ready) {
+        stats.stretched += 1;
+        stretch = { ready, startedAt: clock(), total, pace: ms, poll: 0 };
+        stretch.poll = setTimer(pollStretch, CROSSFADE_STRETCH_POLL_MS);
+      }
     } catch (_) {
       releaseFade();
+      phase = 'idle';
       return false;
     }
-    phase = 'fading';
-    arm(ms, () => { releaseFade(); phase = 'idle'; });
     return true;
   }
 
   return {
-    /** Ms to wait before the change may be made; 0: make it now. */
-    begin() {
+    /** Ms to wait before the change may be made; 0: make it now.
+     *  `ready` (optional): stretch the cross-fade until it is true. */
+    begin({ ready = null } = {}) {
       if (phase === 'dark') return 0;
       if (phase !== 'idle') {
         stats.waits += 1;
+        // A stretched fade gives way: the rest at the normal pace.
+        settleStretch();
         return Math.max(1, Math.ceil(endAt - clock()));
       }
       if (!enabled()) { stats.cuts += 1; return 0; }
@@ -134,7 +192,7 @@ export function createTransition({
       // can be seen (finishNow keepFade) nor restarted fast: a change asked for
       // during it waits for its end, then charges again.
       if (!charge()) { duration = CROSSFADE_SLOW_MS; stats.slow += 1; }
-      if (crossFade(duration)) { stats.fades += 1; return 0; }
+      if (crossFade(duration, typeof ready === 'function' ? ready : null)) { stats.fades += 1; return 0; }
       // Dip: down to the backing, the change in the dark, back up.
       stats.dips += 1;
       const half = Math.round(duration / 2);
@@ -162,6 +220,8 @@ export function createTransition({
     get phase() { return phase; },
     get duration() { return duration; },
     get pending() { return Boolean(timer); },
+    /** A stretched cross-fade is waiting for its picture. */
+    get stretching() { return Boolean(stretch); },
     stats,
   };
 }

@@ -2,7 +2,8 @@
  * Our own overlay patterns (written for this app; not from Psychedelia or
  * anywhere else). Each draws onto the overlay canvas the same way
  * Psychedelia's overlays do (overlay-layer.js calls them after Psychedelia's,
- * on the same canvas), with two settings the shuffle varies:
+ * on the same canvas), with two settings the shuffle varies (Strobe has its
+ * own: size, style, sync and color):
  *
  *   size   how much of the picture it takes (or how dense it is), 0..1-ish
  *   speed  how fast it moves (1 = as designed)
@@ -19,7 +20,8 @@
  *     (size, spread, swing); light never pulses with it except through the
  *     gate (Triangle Grid's cells).
  *   - Nothing full-screen flashes: no fill covers more than a small share of
- *     the picture at once.
+ *     the picture at once (Strobe's pulse is soft-edged, coloured, capped in
+ *     strength and rises over several frames, through the gate).
  *
  * Each: { params: { size, speed } ({ min, max, default }), create(), draw(ctx,
  * state, env) }. env: { w, h (the sheet), ph (the picture's height), time, dt,
@@ -347,6 +349,237 @@ const harmonograph = {
   },
 };
 
+/** Strobe: a soft pulse of coloured light on a hit the flash gate lets
+ *  through, never a white flicker of the whole picture. Each pulse rises
+ *  over STROBE_RISE_S (at least 3 frames at 30 a second) and falls over
+ *  STROBE_FALL_S; a hit during a pulse rises again from where it is (no
+ *  jump). Its peak strength is STROBE_PEAK (an alpha, of a colour from
+ *  STROBE_HUES at STROBE_LIGHT % lightness: no white), on part of the
+ *  picture with soft edges, in one of four styles:
+ *    0  a bloom from the centre
+ *    1  light from the edges inward (the centre left dark)
+ *    2  a soft band sweeping across (the other way on the next hit)
+ *    3  two colour halves answering each other on alternate hits
+ *  Fire on: its `sync` (Psychedelia's numbers: 1 kick, 2 snare, 4 beat, 5
+ *  bar). One gradient fill a frame while a pulse shows, nothing otherwise. */
+export const STROBE_RISE_S = 0.12;
+export const STROBE_FALL_S = 0.36;
+export const STROBE_PEAK = 0.4;
+export const STROBE_LIGHT = 55;
+export const STROBE_SATURATION = 85;
+/** Its colours (hues): pink, cyan, violet, amber, green, blue. */
+export const STROBE_HUES = Object.freeze([330, 188, 272, 34, 140, 222]);
+export const STROBE_SYNCS = Object.freeze({ 1: 'kick', 2: 'snare', 4: 'beat', 5: 'bar' });
+/** Below this level the pulse is dark: nothing drawn, and the next hit
+ *  starts a new pulse (the other side). */
+export const STROBE_DARK = 0.002;
+
+/** The pulse's level (0..1) `age` seconds after a hit, rising from `from`
+ *  (the level when the hit came). */
+export function strobeLevel(age, from = 0) {
+  if (!(age >= 0)) return 0;
+  const start = from > 0 ? (from < 1 ? from : 1) : 0;
+  if (age < STROBE_RISE_S) return start + (1 - start) * (age / STROBE_RISE_S);
+  const u = (age - STROBE_RISE_S) / STROBE_FALL_S;
+  return u >= 1 ? 0 : 0.5 * (1 + Math.cos(Math.PI * u));
+}
+
+/** The colour of strobe colour `index` (the second of a pair: `other`), at
+ *  `alpha`: never white (STROBE_LIGHT, STROBE_SATURATION). */
+export function strobeColor(index, alpha, other = false) {
+  const hues = STROBE_HUES;
+  const at = ((Math.round(Number(index) || 0) % hues.length) + hues.length) % hues.length;
+  const hue = hues[at] + (other ? 150 : 0);
+  return `hsla(${hue % 360},${STROBE_SATURATION}%,${STROBE_LIGHT}%,${Math.max(0, Math.min(STROBE_PEAK, alpha)).toFixed(3)})`;
+}
+
+const strobe = {
+  params: Object.freeze({
+    size: Object.freeze({ min: 0.3, max: 1, default: 0.7 }),
+    style: Object.freeze({ min: 0, max: 3, default: 0 }),
+    sync: Object.freeze({ min: 1, max: 5, default: 1 }),
+    color: Object.freeze({ min: 0, max: STROBE_HUES.length - 1, default: 0 }),
+  }),
+  // side: the half (style 3) or the band's direction (style 2) of the pulse
+  // showing; bandAt: when its band set off. Both change only when a hit
+  // starts a pulse from dark: a hit during a pulse raises the light where it
+  // already is, in its colour (no jump of place or colour).
+  create: () => ({
+    count: -1, at: Number.NEGATIVE_INFINITY, from: 0, hits: 0, level: 0, side: 0, bandAt: Number.NEGATIVE_INFINITY,
+  }),
+  draw(ctx, st, env) {
+    const { w, h, time, values } = env;
+    const tr = env.trigger(STROBE_SYNCS[Math.round(values.sync)] || 'kick');
+    if (time < st.at) { st.at = Number.NEGATIVE_INFINITY; st.bandAt = Number.NEGATIVE_INFINITY; st.level = 0; }
+    if (tr && tr.count !== st.count) {
+      if (st.count >= 0) {
+        const now = strobeLevel(time - st.at, st.from);
+        if (!(now > STROBE_DARK)) {
+          // A new pulse: the other half, the band the other way, from its start.
+          st.side = 1 - st.side;
+          st.bandAt = time;
+        }
+        st.from = now;
+        st.at = time;
+        st.hits += 1;
+      }
+      st.count = tr.count;
+    }
+    const level = strobeLevel(time - st.at, st.from);
+    st.level = level;
+    if (!(level > STROBE_DARK)) return;
+    const alpha = STROBE_PEAK * level;
+    const style = Math.round(values.style);
+    const size = values.size;
+    const color = Math.round(values.color);
+    const cx = w / 2;
+    const cy = h / 2;
+    const reach = Math.hypot(w, h) / 2;
+    let fill;
+    if (style === 1) {
+      // From the edges inward: dark in the middle, the colour at the rim.
+      fill = ctx.createRadialGradient(cx, cy, reach * (0.95 - 0.55 * size), cx, cy, reach);
+      fill.addColorStop(0, strobeColor(color, 0));
+      fill.addColorStop(1, strobeColor(color, alpha));
+    } else if (style === 2) {
+      // A band across, moving with the pulse; the other way each hit.
+      const half = w * (0.12 + 0.16 * size);
+      // Across once per pulse; a pulse kept lit by another hit waits at the end.
+      const along = Math.min(1, Math.max(0, (time - st.bandAt) / (STROBE_RISE_S + STROBE_FALL_S)));
+      const x = st.side ? w * (0.85 - 0.7 * along) : w * (0.15 + 0.7 * along);
+      fill = ctx.createLinearGradient(x - half, 0, x + half, 0);
+      fill.addColorStop(0, strobeColor(color, 0));
+      fill.addColorStop(0.5, strobeColor(color, alpha));
+      fill.addColorStop(1, strobeColor(color, 0));
+    } else if (style === 3) {
+      // Two halves answering: the left on one hit, the right (the other
+      // colour) on the next, fading to nothing at the middle.
+      const right = st.side === 1;
+      const edge = right ? w : 0;
+      const inner = right ? w * (1 - 0.5 * size) : w * 0.5 * size;
+      fill = ctx.createLinearGradient(edge, 0, inner, 0);
+      fill.addColorStop(0, strobeColor(color, alpha, right));
+      fill.addColorStop(1, strobeColor(color, 0, right));
+    } else {
+      // A bloom from the centre.
+      fill = ctx.createRadialGradient(cx, cy, 0, cx, cy, reach * (0.35 + 0.55 * size));
+      fill.addColorStop(0, strobeColor(color, alpha));
+      fill.addColorStop(0.45, strobeColor(color, alpha * 0.45));
+      fill.addColorStop(1, strobeColor(color, 0));
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, w, h);
+  },
+};
+
+/* ---- Held: three more of ours (OVERLAY_NEW_PATTERNS_RELEASED) ----
+   Calm by design: steady (nothing fires on a hit), thin lines up to a pixel
+   and small dots, no fill wider than a dot; the music moves them only
+   (spacing, sway), never their light. Each adds less light on average than
+   the brightest of ours above (tests/visualizer-overlay-additions.test.js
+   measures it the same way for all). Numbers PROPOSED. */
+export const OVERLAY_NEW_PATTERNS_RELEASED = false;
+
+/** Ripples: thin rings rising from the centre and fading as they spread;
+ *  the bass widens their spacing a little. */
+const ripples = {
+  params: PARAMS,
+  create: () => ({ swell: 0 }),
+  draw(ctx, st, env) {
+    const { w, h, time, values } = env;
+    st.swell = ease(st.swell, clamp(env.sources.bass || 0, 0, 1), env.dt, 0.8);
+    const rings = env.detail < 0.6 ? 4 : 6;
+    const R = Math.hypot(w, h) * 0.5 * (0.5 + 0.5 * values.size) * (1 + 0.06 * st.swell);
+    const flow = time * values.speed * 0.05;
+    const cx = w / 2;
+    const cy = h / 2;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = Math.min(1, lineScale(env) * 1.2);
+    for (let k = 0; k < rings; k += 1) {
+      const f = (flow + k / rings) % 1;
+      const alpha = 0.5 * Math.sin(Math.PI * f) * (1 - f);
+      if (alpha < 0.01) continue;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(1, R * f), 0, TAU);
+      ctx.strokeStyle = hsl(env.hue + time * 6 + k * 24, 62, alpha);
+      ctx.stroke();
+    }
+  },
+};
+
+/** Fireflies: small dots wandering on slow paths, each glowing up and down
+ *  on its own slow cycle (8 s or longer), in three batches. */
+const FIREFLY_LEVELS = Object.freeze([0.22, 0.4, 0.58]);
+const fireflies = {
+  params: PARAMS,
+  create: () => ({}),
+  draw(ctx, st, env) {
+    const { w, h, time, values } = env;
+    const count = Math.max(16, Math.round(48 * env.detail));
+    const t = time * values.speed;
+    const r = lineScale(env) * (2 + 3 * values.size);
+    ctx.globalCompositeOperation = 'lighter';
+    for (let level = 0; level < FIREFLY_LEVELS.length; level += 1) {
+      ctx.beginPath();
+      for (let i = 0; i < count; i += 1) {
+        // Fixed per dot (no random): its paths' rates and phases.
+        const a = 0.031 + 0.017 * ((i * 7) % 11) / 11;
+        const b = 0.027 + 0.019 * ((i * 5) % 13) / 13;
+        const glow = 0.5 + 0.5 * Math.sin(t * (0.25 + 0.3 * ((i * 3) % 7) / 7) * 0.5 + i * 2.1);
+        if (Math.min(FIREFLY_LEVELS.length - 1, Math.floor(glow * FIREFLY_LEVELS.length)) !== level) continue;
+        const x = w * (0.5 + 0.45 * Math.sin(t * a * TAU + i * 1.7));
+        const y = h * (0.5 + 0.42 * Math.sin(t * b * TAU + i * 2.9));
+        ctx.moveTo(x + r, y);
+        ctx.arc(x, y, r, 0, TAU);
+      }
+      ctx.fillStyle = hsl(env.hue + level * 25 + time * 4, 66, FIREFLY_LEVELS[level]);
+      ctx.fill();
+    }
+  },
+};
+
+/** Orbits: a few thin tilted ellipses turning slowly, a small dot riding
+ *  each; the mids open them a little. */
+const orbits = {
+  params: PARAMS,
+  create: () => ({ open: 0 }),
+  draw(ctx, st, env) {
+    const { w, h, time, values } = env;
+    st.open = ease(st.open, clamp(env.sources.mid || 0, 0, 1), env.dt, 0.7);
+    const count = env.detail < 0.6 ? 2 : 3;
+    const t = time * values.speed;
+    const R = Math.min(w, h) * 0.44 * values.size;
+    const cx = w / 2;
+    const cy = h / 2;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = Math.min(1, lineScale(env) * 1.2);
+    for (let k = 0; k < count; k += 1) {
+      const rx = R * (0.55 + 0.2 * k);
+      const ry = rx * (0.28 + 0.1 * k) * (1 + 0.15 * st.open);
+      const tilt = t * (k % 2 ? -0.04 : 0.05) + k * 1.1;
+      const hue = env.hue + k * 60 + time * 5;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, tilt, 0, TAU);
+      ctx.strokeStyle = hsl(hue, 60, 0.36);
+      ctx.stroke();
+      const along = t * (0.25 + 0.07 * k) + k * 2;
+      const ca = Math.cos(tilt);
+      const sa = Math.sin(tilt);
+      const ex = Math.cos(along) * rx;
+      const ey = Math.sin(along) * ry;
+      const dot = lineScale(env) * 2.5;
+      ctx.beginPath();
+      ctx.arc(cx + ex * ca - ey * sa, cy + ex * sa + ey * ca, dot, 0, TAU);
+      ctx.fillStyle = hsl(hue + 20, 70, 0.7);
+      ctx.fill();
+    }
+  },
+};
+
+/** The held patterns (in OVERLAY_PATTERNS once released). */
+export const HELD_OVERLAY_PATTERNS = Object.freeze({ ripples, fireflies, orbits });
+
 export const OVERLAY_PATTERNS = Object.freeze({
   petals,
   ribbons,
@@ -355,6 +588,8 @@ export const OVERLAY_PATTERNS = Object.freeze({
   starburst,
   tri_grid: triGrid,
   harmonograph,
+  color_strobe: strobe,
+  ...(OVERLAY_NEW_PATTERNS_RELEASED ? HELD_OVERLAY_PATTERNS : {}),
 });
 
 /** The values a pattern draws with: `values` kept to its params' ranges,

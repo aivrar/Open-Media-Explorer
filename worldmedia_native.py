@@ -138,13 +138,6 @@ def choose_port(preferred: int = DEFAULT_PORT, *, wait_seconds: float = 0.0, exc
     raise RuntimeError("No free localhost port found for World Media")
 
 
-def find_port(preferred: int = DEFAULT_PORT, *, wait_seconds: float = 0.0, sleep=time.sleep,
-              clock=time.monotonic, is_world_media=_answers_as_world_media) -> int:
-    """The port to listen on (choose_port without the note)."""
-    return choose_port(preferred, wait_seconds=wait_seconds, sleep=sleep, clock=clock,
-                       is_world_media=is_world_media)[0]
-
-
 def bind_with_retry(create, port: int, next_port, *, attempts: int = PORT_BIND_ATTEMPTS):
     """Make the listening server, choosing another port when the bind fails.
 

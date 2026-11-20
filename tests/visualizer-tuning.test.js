@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createAudioSignal } from '../src/lib/audio-signal.js';
 import { MIN_REACT_FPS, createVisualizerLoop } from '../src/visualizer/loop.js';
-import { createSceneRenderer, defaultValue, sceneDefaults } from '../src/visualizer/scene-renderer.js';
+import { createSceneRenderer, defaultValue, ownsPasses, sceneDefaults } from '../src/visualizer/scene-renderer.js';
 import { createSceneSwitcher } from '../src/visualizer/scene-switcher.js';
 import { SCENES, stepScene } from '../src/visualizer/scenes.js';
 import { FLASH_LIMITS, createFlashLimiter } from '../src/visualizer/flash-limiter.js';
@@ -89,6 +89,12 @@ test('each param starts where Psychedelia\'s Controls starts it (defaultValueFor
     const def = renderer.register(await scene.load(), scene.id);
     const values = sceneDefaults(def);
     assert.deepEqual(Object.keys(values), def.params.map((param) => param.name), `${scene.id}: every param`);
+    // Scenes that own their passes draw through the host, which hands them
+    // these values (tests/visualizer-slice14.test.js); their defaults here.
+    if (ownsPasses(def)) {
+      for (const param of def.params) assert.deepEqual(values[param.name], defaultValue(param), `${scene.id}.${param.name}`);
+      continue;
+    }
     renderer.useSceneNow(def);
     gl.uniforms.clear();
     renderer.draw({ time: 1, audio: {}, beat: {}, sources: null, zoom: 1 });
@@ -393,7 +399,9 @@ test('the zoom punch: from the limited kick and bass, capped and eased, and back
 test('the zoom punch reaches every scene through u_view_zoom', async () => {
   const gl = new FakeGL();
   const renderer = createSceneRenderer({ canvas: { width: 16, height: 9 }, gl, mode: 'webgl2' });
-  for (const scene of SCENES) {
+  // (Scenes that own their passes get it from the host:
+  // tests/visualizer-slice14.test.js.)
+  for (const scene of SCENES.filter((entry) => !entry.needs)) {
     renderer.useSceneNow(renderer.register(await scene.load(), scene.id));
     renderer.draw({ time: 1, audio: {}, beat: {}, zoom: 1.04 });
     assert.deepEqual(gl.uniforms.get('u_view_zoom'), [1.04], `${scene.id} reads the view zoom`);

@@ -49,6 +49,13 @@
  * prepared ahead. mountVisualizer() returns destroy(), which stops every
  * timer and frame, abandons a scene still loading or compiling, drops the
  * sound subscription, removes every listener and gives the WebGL context back.
+ * A mount that throws part-way runs the same teardown on what it had made
+ * before the error goes on to the caller (nothing is left running).
+ *
+ * The music's readings (mood.js, and the held tone.js and structure.js)
+ * describe one stretch of listening: they start afresh on another station or
+ * item and on a resume after a gap in the sound (a pause, a hidden window,
+ * mute), never on a change of scene.
  *
  * The scenes move with the music through Psychedelia's Beat Reactor
  * (reactor.js), fed from the app's shared sound signal; every value they get
@@ -58,14 +65,19 @@
  */
 
 import { createVisualizerLoop, LOOP_MODES } from './loop.js';
-import { createSceneRenderer, createWebglContext, sceneDefaults } from './scene-renderer.js';
+import { createSceneRenderer, createWebglContext, ownsPasses, sceneDefaults } from './scene-renderer.js';
+import { simSupport } from './sim-host.js';
 import { createSceneSwitcher, SWITCH_STATES } from './scene-switcher.js';
 import { createSceneList } from './scene-list.js';
+import { americanText } from './spelling.js';
 import { createReactorBridge } from './reactor.js';
 import { createFlashLedger } from './flash-limiter.js';
 import {
-  DEFAULT_SCENE, SCENES, orderedScenes, sceneCaps, sceneMaxPixels, stepScene,
+  DEFAULT_SCENE, SCENES, drawableScenes, orderedScenes, sceneCappedParams, sceneCaps, sceneMaxPixels, sceneSimRate, stepScene,
 } from './scenes.js';
+import {
+  DRIFT_FADE_S, createDriftClock, driftScale, sceneDriftPlan,
+} from './drift.js';
 import { createStepDown, STEP_DOWN_NOTE } from './step-down.js';
 import {
   currentLook, lookOverrides, sceneLooks, startLook, withLook,
@@ -75,22 +87,28 @@ import { createHud } from './hud.js';
 import { createNotice, NOTICE } from './notice.js';
 import { createTransition } from './transition.js';
 import {
-  costFilterMax, createShuffle, createShuffleTimer, lighterCost, seededRandom, shuffleCostCap,
+  SHUFFLE_TEMPO_CONFIDENCE, costFilterMax, createShuffle, createShuffleTimer, lighterCost, lookToneWeight, seededRandom, shuffleCostCap,
 } from './shuffle.js';
-import { createMoodTracker } from './mood.js';
+import {
+  MOOD_CALM_BELOW, MOOD_ENERGETIC_ABOVE, MOOD_STRENGTH, createMoodTracker,
+} from './mood.js';
+import { SONG_STRUCTURE_RELEASED, createStructureDetector, structureDriftScale } from './structure.js';
+import { MOOD_TONE_RELEASED, createToneTracker } from './tone.js';
+import { lookDarkness } from './look-darkness.js';
 import {
   favouriteCombos, favouriteEntries, favouriteKey, favouriteLooks, favouriteToRecall, favouritesAsDrawn, isFavourite,
   withFavourite,
 } from './favourites.js';
 import {
-  OVERLAY_BEND_OFFERED, OVERLAY_BLEND_LABELS, OVERLAY_COST_BUDGET, OVERLAY_COST_UNITS, OVERLAY_IDS, OVERLAY_LIVELY_BLENDS,
+  OVERLAY_BEND_OFFERED, OVERLAY_BLEND_LABELS, OVERLAY_COST_BUDGET, OVERLAY_COST_UNITS, OVERLAY_EXTRA_GLOW_RELEASED, OVERLAY_IDS, OVERLAY_LIVELY_BLENDS,
   OVERLAY_MASKS, OVERLAY_MASK_LABELS, OVERLAY_MAX, OVERLAY_MAX_BY_QUALITY, OVERLAY_SHUFFLE_COST_MAX, PLAIN_BLEND, isBlendIn, normalizeBlend,
   overlayOrder, overlayRow, overlayToken, overlaysDrawnFor, overlaysKey, parseOverlayToken,
 } from './overlay-catalog.js';
 import { createFlashGate, createOverlayLayer } from './overlay-layer.js';
+import { OVERLAY_VALUE_DRIFT_RELEASED } from './overlay-drift.js';
 import { createOverlayShuffle } from './overlay-shuffle.js';
 import {
-  FX_CALM_MAX, FX_COST_UNITS, FX_LIVELY, fxCalmIds, fxCatalog, fxDrawnFor, fxOrder,
+  FX_CALM_MAX, FX_COST_UNITS, FX_LIVELY, fxCalmIds, fxCatalog, fxClash, fxClashedFor, fxDrawnFor, fxOrder, fxShuffleAllowed,
 } from './fx-catalog.js';
 import { createFxChain } from './fx-chain.js';
 import {
@@ -98,11 +116,19 @@ import {
 } from './fx-shuffle.js';
 import { createGlobalReactions } from './fx-reactions.js';
 import {
-  VISUALIZER_BRIGHTNESS_MAX, VISUALIZER_BRIGHTNESS_MIN, VISUALIZER_BRIGHTNESS_STEP, VISUALIZER_FRAME_RATES,
-  VISUALIZER_FX_INTENSITIES, VISUALIZER_FX_TIMINGS, VISUALIZER_PRESETS, VISUALIZER_QUALITIES, VISUALIZER_SHUFFLE_BARS,
+  DEFAULT_VISUALIZER_QUALITY, DEFAULT_VISUALIZER_SHUFFLE_COST, VISUALIZER_BRIGHTNESS_MAX, VISUALIZER_BRIGHTNESS_MIN, VISUALIZER_BRIGHTNESS_STEP, VISUALIZER_FRAME_RATES,
+  VISUALIZER_FX_INTENSITIES, VISUALIZER_FX_TIMINGS, VISUALIZER_SHUFFLE_BARS,
   normalizeVisualizerBrightness, normalizeVisualizerExtras, normalizeVisualizerFps, normalizeVisualizerLooks,
-  normalizeVisualizerQuality, normalizeVisualizerScene, visualizerPreset,
+  normalizeVisualizerQuality, normalizeVisualizerScene, tableQuality, visualizerPreset,
+  VISUALIZER_ALL_QUALITIES, VISUALIZER_QUALITY_HIGH, VISUALIZER_QUALITY_VERY_HIGH, VISUALIZER_VERY_HIGH_PRESET,
 } from '../lib/visualizer-settings.js';
+import {
+  createBudgetSteer, createUseReader, densityShareScale, drawsAtVeryHigh, isSoftwareRenderer, processorBudget, processorExtras, rendererName,
+  shuffleCostFor, simCapsWithExtras, simStartWithExtras, PROCESSOR_USE_NAMES, SIM_SIZES_ABOVE_HIGH,
+} from '../lib/processor-budget.js';
+import { densityPictureCount, densityShownMean, setDensityShareScale, suspendDensityWorker } from './density-host.js';
+import { DENSITY_LAB_IDS, DENSITY_READY_MEAN } from './accumulating-scenes.js';
+import { controlRequest } from '../lib/capture-client.js';
 
 export const MESSAGES = Object.freeze({
   noWebgl: 'The visualizer needs WebGL graphics, which are not available on this computer right now.',
@@ -124,6 +150,10 @@ export const NOTES = Object.freeze({
   fewerBoth: 'Fewer effects and overlays to keep this scene smooth',
 });
 export const PREPARING_DELAY_MS = 200;
+/** The line under the quality choice. */
+export const QUALITY_TEXT = Object.freeze({
+  heavyAtHigh: 'This scene draws at High',
+});
 
 /** How long a change of picture cross-fades (ms; transition.js). */
 export { CROSSFADE_MS, CROSSFADE_SLOW_MS } from './transition.js';
@@ -148,14 +178,18 @@ export const DEBUG_INTERVAL_MS = 250;
 
 /** Shuffle choices as the panel names them. */
 export const SHUFFLE_CHOICES = Object.freeze([
-  ['off', 'Off'], ['all', 'All scenes'], ['favourites', 'Favourites only'],
+  ['off', 'Off'], ['all', 'All scenes'], ['favourites', 'Favorites only'],
 ]);
 /** Said under the Shuffle choice when "Favourites only" has nothing to
  *  shuffle (the shuffle is then not running, and the button says so). */
 export const SHUFFLE_TEXT = Object.freeze({
-  noFavourites: 'No favourites yet. Star a scene to use this.',
-  noneFit: 'None of your favourites is in the Scenes choice below.',
+  noFavourites: 'No favorites yet. Star a scene to use this.',
+  noneFit: 'None of your favorites is in the Scenes choice below.',
+  /** Under the Scenes choice when Processor use widens it (shuffleCostFor). */
+  heavyToo: (level) => `Processor use is set to ${level}: heavy scenes are included too.`,
 });
+/** The pause before the mood line is said when the panel opens (ms). */
+export const MOOD_ANNOUNCE_MS = 150;
 export const SHUFFLE_COST_CHOICES = Object.freeze([
   ['light', 'Light only'], ['medium', 'Light and medium'], ['all', 'All, heavy too'],
 ]);
@@ -171,9 +205,12 @@ export const FX_TEXT = Object.freeze({
   failed: 'The effects could not be loaded.',
   none: 'Effects: none now',
   /** A calm scene (scenes.js fxCalm) and one with none (fxNone). */
-  calmHere: 'Greyed effects are not shown with this scene: it would flicker.',
+  calmHere: 'Grayed effects are not shown with this scene: it would flicker.',
   notHere: 'Not shown with this scene: it would flicker',
   noneHere: 'No effects are shown with this scene: it would flicker.',
+  /** One of a pair never drawn together (fx-catalog.js FX_CLASHES). */
+  pairHere: 'Grayed effects are not shown together with another one chosen: they would flicker.',
+  notWith: (name) => `Not shown together with ${name}: they would flicker`,
   /** Effects whose programs did not compile on this computer. */
   failed1: (names) => `Could not be drawn on this computer: ${names}.`,
   failedOne: 'Could not be drawn on this computer',
@@ -187,14 +224,16 @@ export const OVERLAY_TEXT = Object.freeze({
   failedOne: 'Could not be drawn on this computer',
   none: 'Overlays: none now',
   noneHere: 'Overlays are drawn plain on top with this scene: blending them in would flicker.',
-  calmHere: 'Greyed blends are not used with this scene: they would flicker.',
+  calmHere: 'Grayed blends are not used with this scene: they would flicker.',
   oneBlend: 'One overlay at a time can be blended in.',
   cap: (count) => `At most ${count} at once`,
   blend: 'Blend',
   under: 'Under the effects',
   mask: 'Show',
-  tint: 'Scene colours',
+  tint: 'Scene colors',
   bend: 'Bend the scene',
+  style: 'Style',
+  styleAny: 'Any',
 });
 /** How many scenes back previous can go with shuffle on. */
 const TRAIL_MAX = 50;
@@ -258,7 +297,22 @@ export function isDebugKey(event) {
  * @param {object} [deps.flashLedger]  the flash budget's window (the page's; a
  *        test gives its own)
  */
-export function mountVisualizer(root, {
+/** Seconds without a frame of sound after which the music's readings
+ *  (mood, tone, song structure) start afresh. */
+export const MUSIC_GAP_S = 1.5;
+
+export function mountVisualizer(root, options = {}) {
+  // What a mount that throws part-way had made is taken down again here.
+  const unfinished = { teardown: null };
+  try {
+    return buildVisualizer(root, options, unfinished);
+  } catch (error) {
+    try { unfinished.teardown?.(); } catch (_) { /* the first error is the one that counts */ }
+    throw error;
+  }
+}
+
+function buildVisualizer(root, {
   signal,
   getSettings,
   saveSettings,
@@ -271,9 +325,16 @@ export function mountVisualizer(root, {
   loopOptions = {},
   random = null,
   loadFxLibrary = () => import('./vendor/psychedelia/engine/post-fx-library.js'),
+  // The shared palettes, for the library's Palette Map pass only.
+  loadPalettes = () => import('./vendor/psychedelia/engine/palettes.js'),
   loadOverlays = () => import('./vendor/psychedelia/engine/overlays.js'),
   flashLedger = PAGE_FLASH_LEDGER,
-} = {}) {
+  // The app's processor use (processor-budget.js), asked only at Balanced or
+  // High while the Visualizer plays.
+  readProcessorUse = () => controlRequest('/api/v1/system/processor-use'),
+  // Drawn behind the Tuner (modes/tuner-background.js): no keys of its own.
+  background = false,
+} = {}, unfinished = {}) {
   const cleanups = [];
   const listen = (target, name, fn, options) => {
     target.addEventListener(name, fn, options);
@@ -282,9 +343,42 @@ export function mountVisualizer(root, {
   const clock = loopOptions.clock || (() => globalThis.performance?.now?.() ?? Date.now());
   const setTimer = loopOptions.setTimer || ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = loopOptions.clearTimer || ((handle) => clearTimeout(handle));
+  // The mood line's one announcement when the panel opens (announceMood).
+  let moodAnnounce = null;
+  let destroyed = false;
+  // What teardown() takes down besides `cleanups`, filled in as each is made
+  // (so it also works on a mount that stopped part-way).
+  const parts = { switcher: null, loop: null, renderer: null, context: null, canvases: [] };
+  /** The one teardown: destroy(), and a mount that threw part-way. Safe on
+   *  a half-built state and when called twice. */
+  function teardown() {
+    if (destroyed) return;
+    destroyed = true;
+    try { parts.switcher?.destroy(); } catch (_) {}
+    try { parts.loop?.destroy(); } catch (_) {}
+    for (const cleanup of cleanups.splice(0)) {
+      try { cleanup(); } catch (_) {}
+    }
+    // After the listeners are gone, so losing the context on purpose is
+    // not taken for a driver reset. Without a renderer, the bare context.
+    const ending = parts.renderer;
+    parts.renderer = null;
+    if (ending) {
+      try { ending.destroy(); } catch (_) {}
+    } else {
+      try { parts.context?.gl?.getExtension?.('WEBGL_lose_context')?.loseContext(); } catch (_) {}
+    }
+    for (const node of parts.canvases) {
+      node.width = 0;
+      node.height = 0;
+    }
+    root.replaceChildren?.();
+    root.classList?.remove('viz-root');
+    root.classList?.remove('viz-panel-open');
+  }
+  unfinished.teardown = teardown;
   const initial = getSettings?.() || {};
   const extras = normalizeVisualizerExtras(initial);
-  let destroyed = false;
   let quality = normalizeVisualizerQuality(initial.visualizerQuality);
   let fps = normalizeVisualizerFps(initial.visualizerFps);
   let brightness = normalizeVisualizerBrightness(initial.visualizerBrightness);
@@ -296,6 +390,11 @@ export function mountVisualizer(root, {
   let shuffleOn = extras.visualizerShuffle;
   let shufflePool = extras.visualizerShufflePool;
   let shuffleCost = extras.visualizerShuffleCost;
+  // Picked by hand (or anything but the default): used as it is at every
+  // Processor use level (lib/processor-budget.js shuffleCostFor).
+  const shuffleCostPickedIn = (settings, cost) => settings?.visualizerShuffleCostPicked === true
+    || cost !== DEFAULT_VISUALIZER_SHUFFLE_COST;
+  let shuffleCostPicked = shuffleCostPickedIn(initial, shuffleCost);
   let shuffleBars = extras.visualizerShuffleBars;
   let favourites = extras.visualizerFavourites;
   let noticeSeen = extras.visualizerNoticeSeen;
@@ -304,9 +403,13 @@ export function mountVisualizer(root, {
   let fxIntensity = extras.visualizerFxIntensity;
   let fxTiming = extras.visualizerFxTiming;
   let fxFlash = extras.visualizerFxFlash;
+  let driftOn = extras.visualizerDrift;
   let fxSet = extras.visualizerFxSet;
   let overlaysOn = extras.visualizerOverlays;
   let overlayShuffleOn = extras.visualizerOverlayShuffle;
+  // "Extra glow" (held: overlay-catalog.js OVERLAY_EXTRA_GLOW_RELEASED).
+  let overlayGlowOn = extras.visualizerOverlayGlow;
+  const extraGlowNow = () => OVERLAY_EXTRA_GLOW_RELEASED && overlayGlowOn;
   let overlaySet = extras.visualizerOverlaySet; // saved tokens
   let overlayLayer = null; // made the first time an overlay is drawn
   let overlayCombo = null; // the set made now: { key, ids, items: [{ id, blend, values }] }
@@ -314,6 +417,15 @@ export function mountVisualizer(root, {
   // waiting for the picture; the panel's ticks and blend rows show it, and
   // every choice by hand starts from it (as fxChosen for effects).
   let overlayChosen = [];
+  // Styles picked by hand (id -> its `style` value), saved with the settings
+  // (visualizerOverlayStyles): every set of overlays drawn takes them; "Any"
+  // (or a style the overlay does not have) leaves it to the shuffle.
+  const overlayStylePicked = new Map(Object.entries(extras.visualizerOverlayStyles || {})
+    .filter(([id, style]) => style < (overlayRow(id)?.styles?.length || 0)));
+  const saveOverlayStyles = () => {
+    saveSettings?.({ visualizerOverlayStyles: Object.fromEntries(overlayStylePicked) });
+  };
+  let overlayChosenShuffled = false; // as fxChosenShuffled
   let overlayDrawn = []; // as the scene draws them: [{ id, blend, values }]
   // What syncOverlays last gave the layer, values included (overlayStateOf).
   let overlayDrawnState = '';
@@ -358,13 +470,22 @@ export function mountVisualizer(root, {
       saveSettings?.({ visualizerFavourites: favourites });
     }
   }
+  // Every scene of this build (settings keep entries for these).
   const knownIds = scenes.map((scene) => scene.id);
-  // The list's order (by category, then name); previous and next follow it.
-  const ordered = orderedScenes(scenes);
 
   root.classList.add('viz-root');
   const stage = el('div', 'viz-stage');
   const canvas = el('canvas', 'viz-canvas', { role: 'img', 'aria-label': 'Visualizer picture' });
+  // The graphics context, made first: scenes that need render targets it
+  // cannot make (float targets: sim-host.js simSupport, two extension
+  // queries, asked once here) are left out of the list, previous / next and
+  // the shuffle altogether, as if this build had none; no error is shown.
+  const made = createContext(canvas);
+  parts.context = made;
+  parts.canvases.push(canvas);
+  if (made) scenes = drawableScenes(scenes, simSupport(made.gl, made.mode));
+  // The list's order (by category, then name); previous and next follow it.
+  const ordered = orderedScenes(scenes);
   // The outgoing scene's last picture during a cross-fade (empty otherwise).
   const fade = el('canvas', 'viz-fade', { 'aria-hidden': 'true' });
   fade.hidden = true;
@@ -376,6 +497,7 @@ export function mountVisualizer(root, {
   overlayCanvas.hidden = true;
   overlayCanvas.width = 0;
   overlayCanvas.height = 0;
+  parts.canvases.push(overlayCanvas);
   const message = el('p', 'viz-message', { role: 'status' });
   message.hidden = true;
   const readout = el('span', 'viz-fps', { 'aria-hidden': 'true' });
@@ -393,13 +515,45 @@ export function mountVisualizer(root, {
   const panelHead = el('div', 'viz-panel-head');
   const panelClose = el('button', 'viz-btn viz-panel-close', { type: 'button', 'aria-label': 'Close settings', title: 'Close settings' }, CLOSE_MARK);
   panelHead.append(el('h2', 'viz-panel-title', {}, 'Visualizer'), panelClose);
-  const section = (label) => {
-    const node = el('div', 'viz-section', { role: 'group', 'aria-label': label });
-    node.append(el('div', 'viz-section-title', { 'aria-hidden': 'true' }, label));
-    return node;
+  // Every section folds: its title is a button with an arrow, the name and,
+  // at the right, what is set ("Off", "High, 30 fps"), so a folded section
+  // still says what it holds. Which ones are folded is saved
+  // (visualizerFolded).
+  const sections = new Map(); // id -> { node, head, body, summary }
+  const folded = new Set(extras.visualizerFolded || []);
+  const section = (label, id) => {
+    const node = el('div', `viz-section viz-${id}-section`, { role: 'group', 'aria-label': label });
+    const head = el('button', `viz-section-title viz-section-head viz-${id}-head`, {
+      type: 'button', 'aria-expanded': 'true', 'aria-controls': `viz-${id}-body`,
+    });
+    const summary = el('span', 'viz-section-summary');
+    head.append(el('span', 'viz-section-name', {}, label), summary);
+    const body = el('div', `viz-section-body viz-${id}-body`, { id: `viz-${id}-body` });
+    node.append(head, body);
+    const made = { node, head, body, summary };
+    sections.set(id, made);
+    return made;
+  };
+  /** The words at the right of section `id`'s title. */
+  const summarize = (id, text) => {
+    const summary = sections.get(id)?.summary;
+    if (summary && summary.textContent !== text) summary.textContent = text;
+  };
+  const showSections = () => {
+    for (const [id, part] of sections) {
+      part.head.setAttribute('aria-expanded', folded.has(id) ? 'false' : 'true');
+      part.body.hidden = folded.has(id);
+    }
+  };
+  const setFolded = (id, on) => {
+    if (!sections.has(id) || folded.has(id) === on) return;
+    if (on) folded.add(id);
+    else folded.delete(id);
+    showSections();
+    saveSettings?.({ visualizerFolded: [...sections.keys()].filter((key) => folded.has(key)) });
   };
   // Scene: the list (a searchable panel opening in place).
-  const sceneSection = section('Scene');
+  const sceneSection = section('Scene', 'scene');
   const sceneList = createSceneList({
     doc, scenes: ordered, onPick: (id, how) => chooseScene(id, how), listen: (...args) => listen(...args),
   });
@@ -413,9 +567,9 @@ export function mountVisualizer(root, {
   const lookNext = el('button', 'viz-btn viz-look-next', { type: 'button', 'aria-label': 'Next look', title: 'Next look' }, NEXT_MARK);
   lookGroup.append(el('span', 'viz-label', { 'aria-hidden': 'true' }, 'Look'), lookPrev, lookName, lookNext);
   lookGroup.hidden = true;
-  sceneSection.append(sceneGroup, lookGroup);
+  sceneSection.body.append(sceneGroup, lookGroup);
   // Shuffle.
-  const shuffleSection = section('Shuffle');
+  const shuffleSection = section('Shuffle', 'shuffle');
   const selectField = (label, className, choices) => {
     const field = el('label', 'viz-field');
     const select = el('select', `viz-select ${className}`, { 'aria-label': label });
@@ -426,12 +580,17 @@ export function mountVisualizer(root, {
   const shuffleMode = selectField('Shuffle', 'viz-shuffle-mode', SHUFFLE_CHOICES);
   const shuffleCostField = selectField('Scenes', 'viz-shuffle-cost', SHUFFLE_COST_CHOICES);
   const shuffleBarsField = selectField('Change every', 'viz-shuffle-bars', VISUALIZER_SHUFFLE_BARS.map((bars) => [bars, `${bars} bars`]));
-  const moodLine = el('p', 'viz-mood', { 'aria-live': 'polite' });
+  // Not a live region while it changes: said aloud when the panel opens
+  // (announceMood); a screen reader reads it with the rest of the panel.
+  const moodLine = el('p', 'viz-mood', { 'aria-live': 'off' });
   // Why "Favourites only" is not running (SHUFFLE_TEXT); empty otherwise.
   const shuffleNote = el('p', 'viz-mood viz-shuffle-note', { 'aria-live': 'polite' });
-  shuffleSection.append(shuffleMode.field, shuffleNote, shuffleCostField.field, shuffleBarsField.field, moodLine);
+  // Under the Scenes choice: Processor use includes heavy scenes too.
+  const shuffleCostNote = el('p', 'viz-mood viz-shuffle-cost-note', { 'aria-live': 'polite' });
+  shuffleCostNote.hidden = true;
+  shuffleSection.body.append(shuffleMode.field, shuffleNote, shuffleCostField.field, shuffleCostNote, shuffleBarsField.field, moodLine);
   // Post effects.
-  const fxSection = section('Effects');
+  const fxSection = section('Effects', 'fx');
   const checkField = (label, className) => {
     const field = el('label', 'viz-minor');
     const box = el('input', className, { type: 'checkbox' });
@@ -444,6 +603,12 @@ export function mountVisualizer(root, {
   const fxTimingField = selectField('Change effects', 'viz-fx-timing', FX_TIMING_CHOICES);
   const fxIntensityField = selectField('Strength', 'viz-fx-intensity', FX_INTENSITY_CHOICES);
   const fxFlashField = checkField('Beat flash (limited)', 'viz-fx-flash');
+  // Slow drift (drift.js): with the scene, as it moves the scene's settings
+  // (and the effects' when they are on).
+  const driftField = checkField('Slow drift', 'viz-drift');
+  driftField.box.title = 'Scene and effect settings wander slowly with the music';
+  driftField.box.checked = driftOn;
+  sceneSection.body.append(driftField.field);
   const fxLine = el('p', 'viz-fx-line', { 'aria-live': 'polite' });
   fxLine.hidden = true;
   const fxNote = el('p', 'viz-fx-note', { 'aria-live': 'polite' });
@@ -452,15 +617,18 @@ export function mountVisualizer(root, {
   const fxListEl = el('div', 'viz-fx-list', { role: 'group', 'aria-label': 'Effects by hand' });
   const fxBoxes = new Map(); // id -> checkbox
   const fxFields = new Map(); // id -> its label
-  fxSection.append(fxMaster.field, fxShuffleField.field, fxNow, fxTimingField.field, fxIntensityField.field, fxFlashField.field, fxLine, fxNote, fxListEl);
-  // Overlays: a section that folds (its title is a button).
-  const ovSection = el('div', 'viz-section viz-ov-section', { role: 'group', 'aria-label': 'Overlays' });
-  const ovHead = el('button', 'viz-section-title viz-ov-head', {
-    type: 'button', 'aria-expanded': 'false', 'aria-controls': 'viz-ov-body',
-  }, 'Overlays');
-  const ovBody = el('div', 'viz-ov-body', { id: 'viz-ov-body' });
+  // The switch is always there; the rest only while effects are on.
+  const fxMore = el('div', 'viz-section-more viz-fx-more');
+  fxMore.append(fxShuffleField.field, fxNow, fxTimingField.field, fxIntensityField.field, fxFlashField.field, fxLine, fxNote, fxListEl);
+  fxSection.body.append(fxMaster.field, fxMore);
+  // Overlays: as the effects (the switch always, the rest while they are on).
+  const ovSection = section('Overlays', 'ov');
+  const ovHead = ovSection.head;
+  const ovBody = ovSection.body;
   const ovMaster = checkField('Overlays on', 'viz-ov-on');
   const ovShuffleField = checkField('Shuffle overlays', 'viz-ov-shuffle');
+  const ovGlowField = checkField('Extra glow (Medium and High quality)', 'viz-ov-glow');
+  ovGlowField.field.hidden = !OVERLAY_EXTRA_GLOW_RELEASED;
   const ovNow = el('button', 'viz-btn viz-ov-now', { type: 'button' }, 'New overlays now');
   const ovLine = el('p', 'viz-fx-line viz-ov-line', { 'aria-live': 'polite' });
   ovLine.hidden = true;
@@ -481,11 +649,15 @@ export function mountVisualizer(root, {
     const tint = checkField(OVERLAY_TEXT.tint, 'viz-ov-tint');
     const bend = checkField(OVERLAY_TEXT.bend, 'viz-ov-bend');
     bend.field.hidden = !OVERLAY_BEND_OFFERED;
-    row.append(name, mode.field, mask.field, under.field, tint.field, bend.field);
+    // Only for an overlay with named styles (overlay-catalog.js `styles`).
+    const style = selectField(OVERLAY_TEXT.style, 'viz-ov-style', []);
+    style.field.hidden = true;
+    row.append(name, mode.field, style.field, mask.field, under.field, tint.field, bend.field);
     row.hidden = true;
     ovBlendEl.append(row);
     ovRows.push({
       row, name, mode: mode.select, under: under.box, mask: mask.select, tint: tint.box, bend: bend.box, id: null, modes: '',
+      style: style.select, styleField: style.field,
     });
   }
   const ovListEl = el('div', 'viz-fx-list viz-ov-list', { role: 'group', 'aria-label': 'Overlays by hand' });
@@ -500,15 +672,20 @@ export function mountVisualizer(root, {
     ovBoxes.set(id, box);
     ovFields.set(id, field);
   }
-  ovBody.append(ovMaster.field, ovShuffleField.field, ovNow, ovLine, ovNote, ovBlendEl, ovListEl);
-  ovSection.append(ovHead, ovBody);
-  let ovOpen = overlaysOn; // folded unless overlays are on (this visit only)
+  const ovMore = el('div', 'viz-section-more viz-ov-more');
+  ovMore.append(ovShuffleField.field, ovGlowField.field, ovNow, ovLine, ovNote, ovBlendEl, ovListEl);
+  ovBody.append(ovMaster.field, ovMore);
   // Picture: quality, frame rate, brightness.
-  const pictureSection = section('Picture');
+  const pictureSection = section('Picture', 'picture');
   const qualityField = el('label', 'viz-field');
   const qualitySelect = el('select', 'viz-select viz-quality', { 'aria-label': 'Picture quality', title: 'Picture sharpness' });
-  for (const id of VISUALIZER_QUALITIES) qualitySelect.append(Object.assign(el('option', '', {}, VISUALIZER_PRESETS[id].label), { value: id }));
+  for (const id of VISUALIZER_ALL_QUALITIES) qualitySelect.append(Object.assign(el('option', '', {}, visualizerPreset(id).label), { value: id }));
+  // Very high is offered at Balanced and High only (showQuality).
+  const veryHighOption = [...qualitySelect.children].find((option) => option.value === VISUALIZER_QUALITY_VERY_HIGH);
   qualityField.append(el('span', 'viz-label', {}, 'Quality'), qualitySelect);
+  // Under the quality: a heavy scene shown at Very high draws at High.
+  const qualityNote = el('p', 'viz-mood viz-quality-note', { 'aria-live': 'polite' });
+  qualityNote.hidden = true;
   const rateField = el('div', 'viz-field', { role: 'group', 'aria-label': 'Frame rate' });
   const rateButtons = el('div', 'viz-segments');
   const fpsButtons = VISUALIZER_FRAME_RATES.map((rate) => el('button', 'viz-seg', {
@@ -530,9 +707,10 @@ export function mountVisualizer(root, {
   const fpsField = el('label', 'viz-minor');
   const fpsToggle = el('input', 'viz-fps-toggle', { type: 'checkbox', 'aria-label': 'Show measured frames a second' });
   fpsField.append(fpsToggle, el('span', '', {}, 'Show measured fps'));
-  pictureSection.append(qualityField, rateField, brightField, fpsField);
+  pictureSection.body.append(qualityField, qualityNote, rateField, brightField, fpsField);
   const noticeLine = el('button', 'viz-link viz-notice-again', { type: 'button' }, NOTICE.again);
-  panel.append(panelHead, sceneSection, shuffleSection, fxSection, ovSection, pictureSection, noticeLine);
+  panel.append(panelHead, sceneSection.node, shuffleSection.node, fxSection.node, ovSection.node, pictureSection.node, noticeLine);
+  showSections();
   panel.hidden = true;
 
   // The note: "Preparing scene..." or the step-down's note.
@@ -564,8 +742,24 @@ export function mountVisualizer(root, {
   // The scene the picture is sized for (its own pixel budget, scenes.js
   // SCENE_MAX_PIXELS): set as each scene is installed.
   let sizedScene = null;
+  /* ---- Processor use (lib/processor-budget.js) ---- */
+  let budget = processorBudget(initial);
+  // The density labs' worker: its share of a core by the level.
+  setDensityShareScale(densityShareScale(budget.level));
+  // WebGL drawn by the processor (SwiftShader, llvmpipe, Basic Render):
+  // at Light it starts at Low unless a quality was ever picked by hand (a
+  // stored quality other than the default counts as picked).
+  const softwareRendering = Boolean(made && isSoftwareRenderer(rendererName(made.gl)));
+  const pickedIn = (settings) => settings?.visualizerQualityPicked === true
+    || normalizeVisualizerQuality(settings?.visualizerQuality) !== DEFAULT_VISUALIZER_QUALITY;
+  let qualityPicked = pickedIn(initial);
+  /** The quality to draw with: the chosen one, or Low for a picture drawn by
+   *  the processor at Light when none was picked. */
+  const drawQuality = () => (softwareRendering && budget.softwareQuality && !qualityPicked ? budget.softwareQuality : offeredQuality());
+  /** The quality whose table rows apply now (High's at Very high). */
+  const tq = () => tableQuality(stepDown.quality);
   const stepDown = createStepDown({
-    quality,
+    quality: drawQuality(),
     fps,
     // Post effects go before quality (fx-chain.js), then overlays. Counted
     // as drawn (one that failed here takes no slot); the choice stays whole:
@@ -584,6 +778,45 @@ export function mountVisualizer(root, {
       applyStepDown();
     },
   });
+  // Balanced and High: steer by the limit while sound plays and the tab
+  // shows (the reader's timer runs only then); Light never starts it.
+  let budgetSteer = createBudgetSteer({ limit: budget.limitShare, stepsUp: budget.stepsUp });
+  const useReader = createUseReader({
+    read: readProcessorUse,
+    setTimer,
+    clearTimer,
+    onReading: (share) => {
+      if (destroyed) return;
+      const now = clock();
+      const action = budgetSteer.feed(share, now);
+      if (action === 'down') stepDown.lower(now);
+      else if (action === 'up' && stepDown.raise(now)) budgetSteer.raised(now);
+    },
+  });
+  cleanups.push(() => useReader.stop());
+  let budgetLive = false;
+  /** Start or stop reading with the loop's state and the level. */
+  function syncBudgetReader(live) {
+    budgetLive = live === true;
+    if (budgetLive && budget.readsUse && !destroyed) useReader.start();
+    else {
+      useReader.stop();
+      budgetSteer.feed(null, clock());
+    }
+  }
+  /** Processor use changed in Settings. */
+  function applyBudget(settings) {
+    const next = processorBudget(settings);
+    if (next.level === budget.level && next.limit === budget.limit) return false;
+    const before = drawQuality();
+    budget = next;
+    setDensityShareScale(densityShareScale(budget.level));
+    budgetSteer = createBudgetSteer({ limit: budget.limitShare, stepsUp: budget.stepsUp });
+    syncBudgetReader(budgetLive);
+    return drawQuality() !== before;
+  }
+  // Set while applying settings: the level changed (the shuffle's pool may).
+  let budgetLevelChanged = false;
   let preparing = false;
   let preparingTimer = 0;
   function showNote() {
@@ -630,11 +863,33 @@ export function mountVisualizer(root, {
   }
   cleanups.push(() => { if (preparingTimer) clearTimer(preparingTimer); preparingTimer = 0; });
 
-  function showQuality() { qualitySelect.value = quality; }
+  /** The quality chosen as it can be drawn now: a saved Very high reads as
+   *  High where it is not offered (the setting is kept). */
+  function offeredQuality() {
+    return quality === VISUALIZER_QUALITY_VERY_HIGH && !processorExtras(budget.level).qualityAboveHigh ? VISUALIZER_QUALITY_HIGH : quality;
+  }
+  function showQuality() {
+    const offered = processorExtras(budget.level).qualityAboveHigh;
+    if (veryHighOption) { veryHighOption.hidden = !offered; veryHighOption.disabled = !offered; }
+    qualitySelect.value = offeredQuality();
+    showQualityNote();
+    showPictureSummary();
+  }
+  function showPictureSummary() {
+    summarize('picture', `${visualizerPreset(offeredQuality()).label}, ${fps} fps`);
+  }
+  /** At Very high: a heavy scene not measured holding 30 fps there draws at High. */
+  function showQualityNote() {
+    const text = stepDown?.quality === VISUALIZER_QUALITY_VERY_HIGH && sizedScene && !drawsAtVeryHigh(entryOf(sizedScene))
+      ? QUALITY_TEXT.heavyAtHigh : '';
+    if (qualityNote.textContent !== text) qualityNote.textContent = text;
+    qualityNote.hidden = !text;
+  }
   function showFpsChoice() {
     for (const button of fpsButtons) {
       button.setAttribute('aria-pressed', button.getAttribute('data-fps') === String(fps) ? 'true' : 'false');
     }
+    showPictureSummary();
   }
   /** Brightness is the canvas's opacity over the black backing: the
    *  compositor applies it, nothing is redrawn, so it reaches a still
@@ -655,10 +910,21 @@ export function mountVisualizer(root, {
   let shuffleBuilt = false;
   function showShuffleChoice() {
     shuffleMode.select.value = shuffleOn ? shufflePool : 'off';
+    summarize('shuffle', SHUFFLE_CHOICES.find(([value]) => value === shuffleMode.select.value)?.[1] || '');
     shuffleCostField.select.value = shuffleCost;
+    showShuffleCostNote();
     shuffleBarsField.select.value = String(shuffleBars);
     if (shuffleBuilt) showShuffleRunning();
     else hud.setShuffle(shuffleOn);
+  }
+  /** The line under the Scenes choice: only while the level widens it. */
+  function showShuffleCostNote() {
+    const filter = shuffleCostFor(shuffleCost, {
+      picked: shuffleCostPicked, level: budget.level, defaultCost: DEFAULT_VISUALIZER_SHUFFLE_COST,
+    });
+    const text = filter !== shuffleCost ? SHUFFLE_TEXT.heavyToo(PROCESSOR_USE_NAMES[budget.level] || budget.level) : '';
+    if (shuffleCostNote.textContent !== text) shuffleCostNote.textContent = text;
+    shuffleCostNote.hidden = !text;
   }
   /** Why the shuffle chosen has nothing to shuffle ('' when it has). */
   function shuffleIdleText() {
@@ -699,6 +965,11 @@ export function mountVisualizer(root, {
       lastMode = status.mode;
       lastThrottled = status.throttled;
       stepDown.restart();
+      syncBudgetReader(status.mode === LOOP_MODES.live && !status.throttled);
+      // Nothing drawn (hidden, minimised, at rest, still, throttled): no
+      // density worker runs; a new picture starts when frames come again.
+      const drawing = (status.mode === LOOP_MODES.live || status.mode === LOOP_MODES.idle) && !status.throttled;
+      if (!drawing) suspendDensityWorker();
     }
     if (status.mode === LOOP_MODES.still) say(MESSAGES.stillMotion);
     else if (!lost && message.textContent === MESSAGES.stillMotion) say('');
@@ -711,13 +982,68 @@ export function mountVisualizer(root, {
 
   // The graphics context. Without one there is nothing else to start.
   let renderer = null;
-  const made = createContext(canvas);
+  /* ---- Slow drift (drift.js): its clock, stepped once a drawn frame ---- */
+  // Its plans come from the ids alone: it draws no random numbers.
+  const driftClock = createDriftClock();
+  // Song structure (structure.js): only while released.
+  const structure = SONG_STRUCTURE_RELEASED ? createStructureDetector() : null;
+  // The deepest drift the flash check measured: a loud swell at the
+  // energetic mood's strength.
+  const driftMost = driftScale(1, Math.max(...Object.values(MOOD_STRENGTH)));
+  // What the renderer and the FX chain read each frame (state.drift): one
+  // object, filled in again.
+  const driftState = { bars: 0, scale: 0 };
+  // 0..1: drift faded in (on) or out (off) over DRIFT_FADE_S, so switching
+  // it never jumps; at 0 the picture is exactly as without it.
+  let driftFade = driftOn ? 1 : 0;
+  let driftAt = Number.NaN; // the frame the clock last moved for
+  /** The scene's drift plan, each time a scene is installed. */
+  function sceneDrift(def) {
+    return sceneDriftPlan(def, { override: entryOf(def.name)?.drift, capped: sceneCappedParams(def.name) });
+  }
+  /** Slow drift on or off (it fades in or out over DRIFT_FADE_S; a held
+   *  picture is drawn again at once with the new setting). Links made from
+   *  now on may read the swell only while it is on. */
+  function setDrift(on) {
+    driftOn = on === true;
+    driftField.box.checked = driftOn;
+    fxShuffle?.setSwellLinks(driftOn);
+    redrawIfHeld();
+  }
+  /** One drawn frame: the clock moves on (once a frame: not again for a
+   *  redraw), the fade follows the setting (at once on a still picture),
+   *  and the depth follows the swell and the mood. Links get the swell only
+   *  as far as drift is faded in: none at all when it is off. */
+  function stepDrift(state) {
+    const moved = state.time !== driftAt;
+    const dt = moved && !state.still && state.dt > 0 ? state.dt : 0;
+    if (moved) {
+      driftAt = state.time;
+      const music = bridge.music();
+      driftClock.step(dt, music.live ? music.bpm : 0);
+    }
+    const target = driftOn ? 1 : 0;
+    if (state.still) driftFade = target;
+    else if (driftFade !== target && dt > 0) {
+      const most = dt / DRIFT_FADE_S;
+      driftFade = target > driftFade ? Math.min(target, driftFade + most) : Math.max(target, driftFade - most);
+    }
+    bridge.setSwellShare(driftFade);
+    driftState.bars = driftClock.bars;
+    const depth = driftScale(bridge.swell.level, bridge.strength);
+    const built = structure?.building ? structureDriftScale(depth, structure.buildAmount, driftMost) : depth;
+    driftState.scale = driftFade > 0 ? driftFade * built : 0;
+    state.drift = driftState;
+  }
+
   if (!made) {
     say(MESSAGES.noWebgl);
     hud.element.hidden = true;
   } else {
     try {
-      renderer = createRenderer({ canvas, gl: made.gl, mode: made.mode, capsFor: sceneCaps });
+      renderer = createRenderer({
+        canvas, gl: made.gl, mode: made.mode, capsFor: (id, q) => simCapsWithExtras(id, q, sceneCaps(id, q), budget.level), driftFor: sceneDrift, rateFor: sceneSimRate,
+      });
     } catch (error) {
       console.error('visualizer scene failed:', error);
       try { made.gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch (_) {}
@@ -725,6 +1051,7 @@ export function mountVisualizer(root, {
       hud.element.hidden = true;
     }
   }
+  parts.renderer = renderer;
 
   /* ---- Post effects (fx-chain.js): nothing made until some are on ---- */
   // Trigger firings are charged to the flash budget's rolling second (the
@@ -752,6 +1079,9 @@ export function mountVisualizer(root, {
   // (applyFx: a scene's own effects), so it never overwrites a newer one.
   // The bar timer waits while a change waits (fxStep).
   let fxChosen = [];
+  // The choice came from the shuffle (rollFx's mark): kept when a lower
+  // quality trims it (trimFx), so the step-down may still cut it.
+  let fxChosenShuffled = false;
   let fxDrawn = []; // its ids drawn now: the scene allows them (fxDrawnFor) and their programs are ready
   let fxFailedIds = []; // its ids whose programs failed
   // What syncFx last gave the chain: the pass ids, how many of them count
@@ -778,6 +1108,7 @@ export function mountVisualizer(root, {
   let reactionsAt = Number.NaN;
   let overlayAt = Number.NaN; // the frame the overlays were last drawn for
   let overlayClock = Number.NaN; // their real time then (s)
+  let overlayDepth = 0; // their sheets' motion depth (drift's scale), held while still
   function drawFrame(state) {
     if (!renderer) return false;
     // The overlays move once a frame (not again for the old scene under a
@@ -788,6 +1119,15 @@ export function mountVisualizer(root, {
       const dt = Number.isFinite(overlayClock) ? now - overlayClock : 0;
       overlayClock = now;
       overlayLayer.render(now, dt, state.sources);
+    }
+    // Their sheets turn, breathe and sway with slow drift (its clock and
+    // depth; a still picture keeps the depth it had, so nothing moves, but
+    // drift switched off takes them back at once).
+    if (overlayLayer?.on) {
+      if (!state.still || !(driftState.scale > 0)) overlayDepth = driftState.scale;
+      overlayLayer.move(driftState.bars, overlayDepth);
+      // Their settings drift too (held: overlay-drift.js).
+      if (OVERLAY_VALUE_DRIFT_RELEASED) overlayLayer.drift(driftState.bars, overlayDepth);
     }
     if (fxChain && !fxChain.active && fxChain.holding) fxChain.release();
     const target = fxChain?.active && !lost ? fxChain.begin(renderer.width, renderer.height) : null;
@@ -804,7 +1144,13 @@ export function mountVisualizer(root, {
 
   /* ---- Developer strip (off unless asked for; never touched while off) ---- */
   const bridge = renderer ? createReactorBridge({ EffectRegistry: renderer.engine?.EffectRegistry || null, ledger: flashLedger }) : null;
+  bridge?.setSwellShare(driftFade);
+  // Scene hooks that follow the music (Cymatics) read this same reactor.
+  if (bridge) renderer.setAudioReactor?.(bridge.reactor);
   const mood = createMoodTracker();
+  // The tone (tone.js): only while released; read from the spectrum the
+  // reactor's adapter already holds for the frame.
+  const tone = MOOD_TONE_RELEASED ? createToneTracker() : null;
   let debugEl = null;
   let debugDue = 0;
   const snapshot = () => ({ ...bridge.snapshot(), mood: mood.mood });
@@ -847,7 +1193,7 @@ export function mountVisualizer(root, {
   // The pool had nothing to pick: not asked again until it changes.
   let poolEmpty = false;
   const poolContext = {
-    current: null, pool: 'all', favourites: [], costMax: 'heavy', mood: 'steady',
+    current: null, pool: 'all', favourites: [], costMax: 'heavy', mood: 'steady', tone: null,
   };
   // Scenes shown, for previous / next while shuffle is on.
   let trail = [];
@@ -867,19 +1213,68 @@ export function mountVisualizer(root, {
       lookToPick.delete(id);
       const numbers = sceneLooks(def).map((look) => look.number);
       const allowed = shufflePool === 'favourites' ? favouriteLooks(favourites, id) : null;
-      const pick = numbers.length > 1 ? shuffle.look(id, numbers, allowed) : null;
-      if (pick === null) shuffleLooks.delete(id);
+      // The tone leans the choice toward looks as dark as the sound (held
+      // with the tone: MOOD_TONE_RELEASED; look-darkness.js).
+      const toneNow = tone ? tone.tone : null;
+      const lookStart = toneNow?.ready ? startLook(sceneLooks(def), sceneDefaults(def, entryOf(id)?.defaults || null)) : 0;
+      const weightOf = toneNow?.ready ? (number) => lookToneWeight(lookDarkness(id, number, lookStart), toneNow) : null;
+      const pick = numbers.length > 1 ? shuffle.look(id, numbers, allowed, weightOf) : null;
+      // Favourites whose looks are none of those offered now (left out since,
+      // or out of range): the start look, never the one picked by hand.
+      if (pick === null && numbers.length > 1 && allowed?.length) {
+        shuffleLooks.set(id, startLook(sceneLooks(def), sceneDefaults(def, entryOf(id)?.defaults || null)));
+      } else if (pick === null) shuffleLooks.delete(id);
       else shuffleLooks.set(id, pick);
     }
     return shuffleLooks.has(id) ? shuffleLooks.get(id) : looks[id];
   }
 
+  // The mood's numbers on the mood line, as data attributes (to read in the
+  // built app; nothing shown, nothing said): written at most once every
+  // MOOD_DATA_MS from the line's own update, and only what changed.
+  const MOOD_DATA_MS = 1000;
+  let moodDataDue = 0;
+  const moodData = new Map();
+  function setMoodData(name, value) {
+    if (moodData.get(name) === value) return;
+    moodData.set(name, value);
+    moodLine.setAttribute(name, value);
+  }
+  setMoodData('data-calm-below', MOOD_CALM_BELOW.toFixed(2));
+  setMoodData('data-energetic-above', MOOD_ENERGETIC_ABOVE.toFixed(2));
+  function showMoodData() {
+    const now = clock();
+    if (now < moodDataDue) return;
+    moodDataDue = now + MOOD_DATA_MS;
+    setMoodData('data-energy', mood.energy.toFixed(2));
+    setMoodData('data-hits-per-second', mood.hitsPerSecond.toFixed(2));
+    setMoodData('data-bpm', String(Math.round(Number(sound.bpm) || 0)));
+    setMoodData('data-tempo-confidence', (Number(sound.confidence) || 0).toFixed(2));
+  }
   function showMood() {
-    const name = started ? mood.mood : '';
+    if (started) showMoodData();
+    // After a fresh start (another station, a resume) the last word stays
+    // until the new reading is ready: no flash to the starting "steady".
+    const held = started && !mood.ready && shownMood;
+    const name = started ? (held ? shownMood : mood.mood) : '';
     if (name === shownMood) return; // nothing built per frame
     shownMood = name;
+    if (moodLine.getAttribute('aria-live') !== 'off') moodLine.setAttribute('aria-live', 'off');
     moodLine.textContent = name ? `Music: ${name}` : '';
   }
+  /** The panel opened: the mood line is said once, a moment later (a live
+   *  region only for that one write of the same text). */
+  function announceMood() {
+    if (moodAnnounce !== null) clearTimer(moodAnnounce);
+    moodAnnounce = null;
+    if (!panelOpen || !moodLine.textContent) return;
+    moodLine.setAttribute('aria-live', 'polite');
+    moodAnnounce = setTimer(() => {
+      moodAnnounce = null;
+      if (panelOpen && moodLine.getAttribute('aria-live') === 'polite') moodLine.textContent = `${moodLine.textContent}`;
+    }, MOOD_ANNOUNCE_MS);
+  }
+  cleanups.push(() => { if (moodAnnounce !== null) clearTimer(moodAnnounce); moodAnnounce = null; });
 
   /* ---- The frame loop ---- */
   let lastState = null;
@@ -892,6 +1287,7 @@ export function mountVisualizer(root, {
       // Every tick of the sound loop, drawn or only heard, also teaches the
       // step-down the display's frame cadence, and steps the mood and shuffle.
       react: (state, source, nowSec, dt) => {
+        if (source) noteSoundSource(source, nowSec);
         stepDown.tick(nowSec * 1000);
         bridge.react(state, source, nowSec, dt);
         if (source && loop?.mode === LOOP_MODES.live) liveStep(nowSec);
@@ -900,17 +1296,53 @@ export function mountVisualizer(root, {
       draw: (state) => {
         if (!sized) return false;
         lastState = state;
+        stepDrift(state);
         const drawn = drawFrame(state);
         if (debug && debugEl) tickDebug();
         // Frame intervals only: nothing is read back from the GPU.
         // Not while another scene is being prepared: the one being drawn is
         // on its way out.
-        if (drawn && state.live && !switcher?.busy) stepDown.frame(clock());
+        if (drawn && state.live && !switcher?.busy && stepDown.frame(clock())) budgetSteer.changed(clock());
         return drawn;
       },
       ...loopOptions,
     })
     : null;
+  parts.loop = loop;
+
+  /* ---- The music's readings: one stretch of listening ---- */
+  // The signal's version changes with another station or item; its
+  // tapVersion after a gap in the sound (a pause, a hidden window, mute).
+  // A return to readable sound after none, or sound again after more than
+  // MUSIC_GAP_S without a frame (a pause, the window hidden), is a gap too.
+  // Any of these starts the mood, the tone and the song structure afresh:
+  // hits, levels and bars from before must not count. A scene change does
+  // not.
+  let heardVersion = null;
+  let heardTap = null;
+  let heardActive = false;
+  let heardAt = Number.NaN;
+  function noteSoundSource(source, nowSec) {
+    const version = source.version;
+    const tap = source.tapVersion;
+    const active = source.active === true;
+    const gap = Number.isFinite(heardAt) && nowSec - heardAt > MUSIC_GAP_S;
+    if (heardVersion !== null
+      && (version !== heardVersion || tap !== heardTap || (active && (!heardActive || gap)))) {
+      resetMusicReadings();
+    }
+    heardVersion = version;
+    heardTap = tap;
+    heardActive = active;
+    if (active) heardAt = nowSec;
+  }
+  function resetMusicReadings() {
+    mood.reset();
+    tone?.reset();
+    structure?.reset();
+    musicStats.resets += 1;
+  }
+  const musicStats = { resets: 0 };
 
   /** One frame of sound: the mood, and the shuffle's clock. Called only
    *  while live and drawn (the loop calls nothing while hidden or throttled,
@@ -925,6 +1357,13 @@ export function mountVisualizer(root, {
     sound.confidence = music.confidence;
     sound.bpm = music.bpm;
     mood.step(nowSec, sound);
+    tone?.step(nowSec, bridge.adapter.analysis);
+    // A drop brings the shuffle's next change forward (only once the scene
+    // has shown its minimum time; never an extra change).
+    const structureEvent = structure
+      ? structure.step(music.confidence >= SHUFFLE_TEMPO_CONFIDENCE ? music.beats : Number.NaN, bridge.adapter.levelDb)
+      : null;
+    if (structureEvent === 'drop' && shuffleOn && started && !lost) shuffleTimer.bringForward();
     bridge.setStrength(mood.strength);
     showMood();
     fxStep(nowSec, music);
@@ -971,6 +1410,7 @@ export function mountVisualizer(root, {
     poolContext.favourites = favouriteEntries(favourites);
     poolContext.costMax = shuffleCostMax();
     poolContext.mood = mood.mood;
+    poolContext.tone = tone ? tone.tone : null;
     return poolContext;
   }
 
@@ -993,7 +1433,10 @@ export function mountVisualizer(root, {
 
   /** The heaviest cost class the shuffle may pick now. */
   function shuffleCostMax() {
-    const chosen = costFilterMax(shuffleCost);
+    const filter = shuffleCostFor(shuffleCost, {
+      picked: shuffleCostPicked, level: budget.level, defaultCost: DEFAULT_VISUALIZER_SHUFFLE_COST,
+    });
+    const chosen = costFilterMax(filter);
     return costCap ? lighterCost(chosen, costCap) : chosen;
   }
 
@@ -1073,9 +1516,13 @@ export function mountVisualizer(root, {
       // Only the scene's own link table, through the link rule (reactor.js).
       linksFor: (def) => bridge.linksFor(def, entryOf(def?.name)),
       // Its `defaults`, with the look chosen for it on top.
-      overridesFor: (entry, def) => lookOverrides(entry, def, lookFor(entry.id, def)),
+      // (A simulation starts at its larger size where the level gives one.)
+      overridesFor: (entry, def) => simStartWithExtras(entry.id, tq(), lookOverrides(entry, def, lookFor(entry.id, def)),
+        (def?.params || []).map((param) => param.name), budget.level),
       // The change of picture: now (0), or in that many ms (one in progress).
-      beforeInstall: () => transition.begin(),
+      // Into a density lab: the cross-fade waits for its picture (up to
+      // CROSSFADE_STRETCH_MS), judged by its mean brightness as shown.
+      beforeInstall: (id) => transition.begin(densityFadeFor(id)),
       timers: { setTimer: loopOptions.setTimer, clearTimer: loopOptions.clearTimer, clock: loopOptions.clock },
       onChange: ({ state, id, current }) => {
         if (destroyed) return;
@@ -1086,10 +1533,14 @@ export function mountVisualizer(root, {
           // frame rate, or what this scene needed earlier this visit; measured
           // afresh after its warm-up. Under the change's fade.
           // Its own pixel budget too, if it has one (or the last scene had).
-          const wasPixels = sceneMaxPixels(sizedScene, stepDown.quality);
+          const wasPixels = sceneMaxPixels(sizedScene, tq());
+          const wasVeryHigh = drawsAtVeryHigh(entryOf(sizedScene));
           const levelChanged = stepDown.newScene(id);
+          budgetSteer.reset();
           sizedScene = id;
-          if (levelChanged || wasPixels !== sceneMaxPixels(id, stepDown.quality)) applySize();
+          if (levelChanged || wasPixels !== sceneMaxPixels(id, tq())
+            || (stepDown.quality === VISUALIZER_QUALITY_VERY_HIGH && wasVeryHigh !== drawsAtVeryHigh(entryOf(id)))) applySize(true);
+          showQualityNote();
           if (levelChanged) loop?.setFps(stepDown.fps);
           transition.applied();
           // The chosen effects and overlays, as this scene allows them, from
@@ -1136,6 +1587,7 @@ export function mountVisualizer(root, {
       },
     })
     : null;
+  parts.switcher = switcher;
   shuffleBuilt = true;
   showShuffleRunning();
 
@@ -1182,6 +1634,13 @@ export function mountVisualizer(root, {
       charge: () => !bridge || bridge.limiter.transition(clock() / 1000),
     });
     cleanups.push(() => transition.finishNow());
+  }
+  /** The stretch for a change to scene `id`: { ready } into a density lab
+   *  (the pictures made after now), else none. */
+  function densityFadeFor(id) {
+    if (!DENSITY_LAB_IDS.includes(id)) return {};
+    const after = densityPictureCount();
+    return { ready: () => densityShownMean(after) >= DENSITY_READY_MEAN };
   }
   // Changes of look or effects waiting for the picture (per kind, the latest
   // one wins; all that wait are made under one fade).
@@ -1231,7 +1690,8 @@ export function mountVisualizer(root, {
     const current = lookState();
     lookGroup.hidden = !current;
     if (!current) return;
-    const name = current.list[current.at].name;
+    // A look's name as shown (Psychedelia's colour-scheme names: spelling.js).
+    const name = americanText(current.list[current.at].name);
     lookName.textContent = name;
     lookGroup.setAttribute('aria-label', `Look: ${name}`);
   }
@@ -1341,9 +1801,9 @@ export function mountVisualizer(root, {
   /** Most effects drawn now: the quality drawn (the step-down's), under the
    *  step-down's cap. Only what is drawn is shortened (syncFx). */
   function fxDrawMax() {
-    return Math.min(FX_MAX_ACTIVE, FX_MAX_BY_QUALITY[stepDown.quality] ?? FX_MAX_ACTIVE, stepDown.fx);
+    return Math.min(FX_MAX_ACTIVE, FX_MAX_BY_QUALITY[tq()] ?? FX_MAX_ACTIVE, stepDown.fx);
   }
-  const fxCostBudget = () => FX_COST_BUDGET[stepDown.quality] ?? FX_COST_BUDGET.medium;
+  const fxCostBudget = () => FX_COST_BUDGET[tq()] ?? FX_COST_BUDGET.medium;
   const fxReady = () => Boolean(fxShuffle && fxChain);
 
   /** The effects' settings as the panel shows them. */
@@ -1355,6 +1815,8 @@ export function mountVisualizer(root, {
     fxFlashField.box.checked = fxFlash;
     for (const node of [fxShuffleField.box, fxTimingField.select, fxIntensityField.select, fxFlashField.box]) node.disabled = !fxOn;
     fxNow.disabled = !fxOn;
+    fxMore.hidden = !fxOn;
+    summarize('fx', fxOn ? 'On' : 'Off');
   }
   /** What is on now: the line and the list's switches. */
   function showFx() {
@@ -1372,9 +1834,12 @@ export function mountVisualizer(root, {
     // stay chosen, look unavailable, and come back on a scene that allows them.
     const entry = entryOf(switcher?.current);
     const failed = fxOn ? fxFailedIds : [];
-    const sceneNote = fxOn && fxItems ? (entry?.fxNone ? FX_TEXT.noneHere : (entry?.fxCalm ? FX_TEXT.calmHere : '')) : '';
+    const sceneNote = fxOn && fxItems ? (entry?.fxNone ? FX_TEXT.noneHere : (entry?.fxCalm || entry?.fxLeftOut?.length ? FX_TEXT.calmHere : '')) : '';
     const failedNote = failed.length ? FX_TEXT.failed1(failed.map((id) => fxById?.get(id)?.label || id).join(', ')) : '';
-    const note = [sceneNote, failedNote].filter(Boolean).join(' ');
+    // Chosen with one it is never drawn with (FX_CLASHES): the later in the
+    // chain stays chosen and is not drawn (fxDrawnFor), on any scene.
+    const paired = fxOn && fxItems ? fxClashedFor(entry, ids.filter((id) => !failed.includes(id))) : [];
+    const note = [sceneNote, paired.length ? FX_TEXT.pairHere : '', failedNote].filter(Boolean).join(' ');
     if (fxNote.textContent !== note) fxNote.textContent = note;
     fxNote.hidden = !note;
     const most = fxMaxNow();
@@ -1386,14 +1851,18 @@ export function mountVisualizer(root, {
       box.checked = on;
       box.disabled = !fxOn || !fxItems || broken || (!on && usable >= most);
       // Left out by the step-down's cap: still chosen, not drawn here now.
-      const unavailable = broken || (fxOn && on && fxCapped.includes(id))
-        || (Boolean(sceneNote) && (Boolean(entry?.fxNone) || FX_LIVELY.has(id) || (on && !fxDrawnFor(entry, ids).includes(id))));
+      const pairedOut = paired.includes(id);
+      const unavailable = broken || (fxOn && on && fxCapped.includes(id)) || pairedOut
+        || (Boolean(sceneNote) && (Boolean(entry?.fxNone) || (entry?.fxCalm && FX_LIVELY.has(id)) || Boolean(entry?.fxLeftOut?.includes(id)) || (on && !fxDrawnFor(entry, ids).includes(id))));
       box.setAttribute('aria-disabled', unavailable ? 'true' : 'false');
       const field = fxFields.get(id);
       if (field) {
         if (unavailable) field.classList.add('viz-fx-unavailable'); else field.classList.remove('viz-fx-unavailable');
         const fx = fxById.get(id);
-        field.title = broken ? FX_TEXT.failedOne : (unavailable ? FX_TEXT.notHere : `${fx.category}, ${fx.cost}`);
+        const partner = pairedOut ? ids.find((other) => other !== id && fxClash(other, id) && !paired.includes(other)) : null;
+        field.title = broken ? FX_TEXT.failedOne
+          : (partner ? FX_TEXT.notWith(fxById.get(partner)?.label || partner)
+            : (unavailable ? FX_TEXT.notHere : `${fx.category}, ${fx.cost}`));
       }
     }
     fxListEl.title = FX_TEXT.cap(most);
@@ -1403,15 +1872,19 @@ export function mountVisualizer(root, {
   function ensureFx() {
     if (fxShuffle || fxLoading || !fxChain || fxFailed) return fxLoading;
     fxLoading = Promise.resolve()
-      .then(() => loadFxLibrary())
-      .then((module) => {
+      .then(() => Promise.all([loadFxLibrary(), loadPalettes()]))
+      .then(([module, palettesModule]) => {
         fxLoading = null;
         if (destroyed) return;
-        const { PostFxLibrary } = module.default({});
-        fxItems = fxCatalog(PostFxLibrary);
+        // The palettes go to the library (its Palette Map pass) and to the
+        // catalog (the pass's look-up textures), not to the scenes.
+        const PsyPalettes = palettesModule?.default?.({})?.PsyPalettes || null;
+        const { PostFxLibrary } = module.default(PsyPalettes ? { PsyPalettes } : {});
+        fxItems = fxCatalog(PostFxLibrary, PsyPalettes);
         fxById = new Map(fxItems.map((fx) => [fx.id, fx]));
         fxCalmSet = fxCalmIds(fxItems);
         fxShuffle = createFxShuffle({ catalog: fxItems, random: random || seededRandom(Math.floor(clock() * 1000) ^ 0xf00d) });
+        fxShuffle.setSwellLinks(driftOn);
         for (const fx of fxItems) {
           const field = el('label', 'viz-fx-item', { title: `${fx.category}, ${fx.cost}` });
           const box = el('input', 'viz-fx-box', { type: 'checkbox', 'data-fx': fx.id });
@@ -1462,14 +1935,21 @@ export function mountVisualizer(root, {
    *  syncFx whatever chose them). The shuffle chooses within that. */
   function rollFx() {
     const entry = entryOf(fxScene || switcher?.current);
-    return fxShuffle.next({
-      intensity: fxIntensity,
-      mood: mood.mood,
-      maxCount: entry?.fxNone ? 0 : (entry?.fxCalm ? Math.min(FX_CALM_MAX, fxMaxNow()) : fxMaxNow()),
-      costBudget: fxCostBudget(),
-      costMax: shuffleCostMax(),
-      allowed: entry?.fxCalm ? fxCalmSet : null,
-    });
+    // Never more than is drawn now: the calm rule and the step-down's cap
+    // (fxDrawMax). Marked as the shuffle's: it may be cut to what is drawn
+    // (syncFx), a set chosen by hand or a favourite never is.
+    const most = Math.min(fxMaxNow(), fxDrawMax());
+    return {
+      ...fxShuffle.next({
+        intensity: fxIntensity,
+        mood: mood.mood,
+        maxCount: entry?.fxNone ? 0 : (entry?.fxCalm ? Math.min(FX_CALM_MAX, most) : most),
+        costBudget: fxCostBudget(),
+        costMax: shuffleCostMax(),
+        allowed: fxShuffleAllowed(entry, fxItems, fxCalmSet),
+      }),
+      shuffled: true,
+    };
   }
   /** Shuffled effects that scene `id` would not all draw. */
   // (A fresh calm set suits it better than what is left; on a scene that
@@ -1511,9 +1991,15 @@ export function mountVisualizer(root, {
    *  ones too (the chain knows them so), `failed` those known when planned. */
   function fxPlan() {
     const chosen = fxOn && fxCombo ? fxCombo : null;
-    const allowed = chosen ? fxDrawnFor(entryOf(switcher?.current), chosen.ids) : [];
-    const items = chosen ? chosen.fx.filter((item) => allowed.includes(item.id) && fxById?.has(item.id)) : [];
     const failed = fxChain ? fxChain.failedIds : [];
+    // Failed ones are taken out before the pair rule, so one that failed here
+    // never keeps its partner from being drawn; they stay in `passes` (the
+    // chain knows them) as the scene would allow them.
+    const entry = entryOf(switcher?.current);
+    const allowed = chosen ? fxDrawnFor(entry, chosen.ids.filter((id) => !failed.includes(id))) : [];
+    const allowedFailed = chosen ? fxDrawnFor(entry, chosen.ids) : [];
+    const items = chosen ? chosen.fx.filter((item) => fxById?.has(item.id)
+      && (failed.includes(item.id) ? allowedFailed.includes(item.id) : allowed.includes(item.id))) : [];
     const usable = items.filter((item) => !failed.includes(item.id));
     const most = Math.max(0, fxDrawMax());
     const keep = usable.length > most
@@ -1551,7 +2037,24 @@ export function mountVisualizer(root, {
     fxPassIds = plan.ids;
     fxDrawnCount = fxCountOf(fxPassIds);
     fxCapped = plan.capped;
+    if (fxCombo?.shuffled && fxCapped.length) cutShuffledFx();
     readDrawn();
+  }
+  /** A set the shuffle made (rollFx) that the step-down's cap shortens is
+   *  cut to what is drawn, so the panel ticks what is on the screen: the
+   *  ones left out go from it (the drawn passes stay as they are). A set
+   *  chosen by hand or a favourite is never cut (it comes back whole where
+   *  the cap goes). A change still waiting stays the latest choice. */
+  function cutShuffledFx() {
+    const keep = fxCombo.fx.filter((item) => !fxCapped.includes(item.id));
+    fxCombo = keep.length
+      ? { ...fxCombo, ids: keep.map((item) => item.id), fx: keep, links: keep.flatMap((item) => item.links || []) }
+      : null;
+    fxCapped = [];
+    fxStats.trimmed += 1;
+    // What is shown is the cut set: the shuffle's history says so.
+    fxShuffle?.cut(fxCombo || { ids: [] });
+    if (!pendingChanges.has('fx')) fxChosen = fxCombo ? fxCombo.ids.slice() : [];
   }
   /** The ids of `combo` this build has (none when effects are off). */
   function knownFx(combo) { return combo && fxOn ? combo.fx.filter((item) => fxById.has(item.id)) : []; }
@@ -1563,6 +2066,7 @@ export function mountVisualizer(root, {
     const known = knownFx(combo);
     fxCombo = known.length ? { ...combo, ids: known.map((item) => item.id), fx: known } : null;
     fxChosen = fxCombo ? fxCombo.ids.slice() : [];
+    fxChosenShuffled = Boolean(fxCombo?.shuffled);
     if (combo) fxShuffle?.shown(fxCombo || { ids: [] });
     syncFx();
     fxStats.changes += 1;
@@ -1575,6 +2079,7 @@ export function mountVisualizer(root, {
    *  choice from now on (fxChosen, the panel's ticks), made or not yet. */
   function changeFx(combo) {
     fxChosen = knownFx(combo).map((item) => item.id);
+    fxChosenShuffled = Boolean(combo?.shuffled);
     showFx();
     guardedChange(() => { if (fxReady()) applyFx(fxOn ? combo : null); }, 'fx');
   }
@@ -1639,7 +2144,10 @@ export function mountVisualizer(root, {
       .sort((a, b) => FX_COST_UNITS[fxById.get(a).cost] - FX_COST_UNITS[fxById.get(b).cost])
       .slice(0, most);
     fxStats.trimmed += 1;
-    changeFx(comboFor(keep));
+    // A shuffled set stays the shuffle's (the step-down may cut it); one
+    // chosen by hand or a favourite stays unmarked.
+    const combo = comboFor(keep);
+    changeFx(fxChosenShuffled ? { ...combo, shuffled: true } : combo);
   }
   /** One effect switched on or off by hand (remembered as the hand set). */
   function toggleFx(id, on) {
@@ -1689,7 +2197,7 @@ export function mountVisualizer(root, {
   /** Most overlays drawn now: the quality drawn (the step-down's), under the
    *  step-down's cap. Only what is drawn is shortened (syncOverlays). */
   function overlayDrawMax() {
-    return Math.min(OVERLAY_MAX, OVERLAY_MAX_BY_QUALITY[stepDown.quality] ?? OVERLAY_MAX, stepDown.overlays);
+    return Math.min(OVERLAY_MAX, OVERLAY_MAX_BY_QUALITY[tq()] ?? OVERLAY_MAX, stepDown.overlays);
   }
   const chosenOf = (list) => overlayOrder(list).map((item) => ({ id: item.id, blend: normalizeBlend(item.blend) }));
   /** Overlays that cannot be drawn on this computer (overlay-layer.js failedIds). */
@@ -1722,8 +2230,9 @@ export function mountVisualizer(root, {
       },
       onReady: () => { if (!destroyed) { showOverlays(); redrawIfHeld(); } },
     });
-    if (renderer) overlayLayer.resize(renderer.width, renderer.height, stepDown.quality);
+    if (renderer) overlayLayer.resize(renderer.width, renderer.height, tq());
     overlayLayer.setBrightness(brightness >= VISUALIZER_BRIGHTNESS_MAX ? 1 : brightness / 100);
+    overlayLayer.setExtraGlow(extraGlowNow());
     return overlayLayer;
   }
 
@@ -1758,6 +2267,20 @@ export function mountVisualizer(root, {
     // coming in waits for the transition.
     const drawn = noNew ? plan.drawn.filter((item) => overlayDrawn.some((other) => other.id === item.id)) : plan.drawn;
     overlayUncapped = allowed;
+    // A set the shuffle made that the cap shortens: cut to what is drawn, as
+    // cutShuffledFx does for effects (never a set chosen by hand or a
+    // favourite).
+    if (overlayCombo?.shuffled && plan.drawn.length < allowed.length) {
+      // Only those the cap left out go; one that failed here stays (its
+      // note still shows).
+      const left = allowed.filter((item) => !plan.drawn.some((other) => other.id === item.id)).map((item) => item.id);
+      const kept = overlayCombo.items.filter((item) => !left.includes(item.id));
+      overlayCombo = kept.length ? { ...overlayCombo, items: kept, ids: kept.map((item) => item.id), key: overlaysKey(kept) } : null;
+      overlayUncapped = plan.drawn;
+      overlayStats.trimmed += 1;
+      overlayShuffle.cut(overlayCombo || { items: [] });
+      if (!pendingChanges.has('overlay')) overlayChosen = overlayCombo ? chosenOf(overlayCombo.items) : [];
+    }
     // The blend-in on the picture now, if the scene drawn now does not allow
     // it as it is (a calm or fxNone scene came in), goes at once: it is not
     // blended over this scene even for the fade out.
@@ -1795,9 +2318,11 @@ export function mountVisualizer(root, {
     ovMaster.box.checked = overlaysOn;
     ovShuffleField.box.checked = overlayShuffleOn;
     ovShuffleField.box.disabled = !overlaysOn;
+    ovGlowField.box.checked = overlayGlowOn;
+    ovGlowField.box.disabled = !overlaysOn;
     ovNow.disabled = !overlaysOn;
-    ovHead.setAttribute('aria-expanded', ovOpen ? 'true' : 'false');
-    ovBody.hidden = !ovOpen;
+    ovMore.hidden = !overlaysOn;
+    summarize('ov', overlaysOn ? 'On' : 'Off');
   }
   /** What is on now: the line, the note, the blend rows and the switches. */
   function showOverlays() {
@@ -1854,22 +2379,30 @@ export function mountVisualizer(root, {
         row.under.setAttribute('aria-label', `${OVERLAY_TEXT.under}: ${def.label}`);
         row.tint.setAttribute('aria-label', `${OVERLAY_TEXT.tint}: ${def.label}`);
         row.bend.setAttribute('aria-label', `${OVERLAY_TEXT.bend}: ${def.label}`);
+        row.style.setAttribute('aria-label', `${OVERLAY_TEXT.style}: ${def.label}`);
+        const styles = def.styles || [];
+        row.styleField.hidden = !styles.length;
+        row.style.replaceChildren(
+          Object.assign(el('option', '', {}, OVERLAY_TEXT.styleAny), { value: 'any' }),
+          ...styles.map((text, index) => Object.assign(el('option', '', {}, text), { value: String(index) })),
+        );
         row.mode.replaceChildren(...def.blends.map((mode) => Object.assign(el('option', '', {}, OVERLAY_BLEND_LABELS[mode]), { value: mode })));
       }
-      const plainOnly = Boolean(entry?.fxNone) || def.blends.length < 2;
+      const plainOnly = Boolean(entry?.fxNone) || Boolean(entry?.fxCalm && def.calmPlain) || def.blends.length < 2;
       row.mode.value = item.blend.mode;
       row.mode.disabled = plainOnly;
       for (const option of row.mode.children || []) {
         option.disabled = Boolean(entry?.fxCalm) && OVERLAY_LIVELY_BLENDS.has(option.value);
       }
       row.under.checked = item.blend.under;
-      row.under.disabled = !def.under || Boolean(entry?.fxNone) || !fxChain;
+      row.under.disabled = !def.under || Boolean(entry?.fxNone) || Boolean(entry?.fxCalm && def.calmPlain) || !fxChain;
       row.mask.value = item.blend.mask;
       row.mask.disabled = plainOnly || Boolean(entry?.fxCalm);
       row.tint.checked = item.blend.tint;
       row.tint.disabled = plainOnly;
       row.bend.checked = item.blend.bend;
       row.bend.disabled = plainOnly || Boolean(entry?.fxCalm);
+      row.style.value = overlayStylePicked.has(item.id) ? String(overlayStylePicked.get(item.id)) : 'any';
     }
   }
 
@@ -1888,23 +2421,40 @@ export function mountVisualizer(root, {
   }
   function rollOverlays() {
     const entry = entryOf(overlayScene || switcher?.current);
-    return overlayShuffle.next({
-      maxCount: overlayMaxNow(),
-      costBudget: OVERLAY_COST_BUDGET[stepDown.quality] ?? OVERLAY_COST_BUDGET.medium,
+    // Never more than is drawn now (overlayDrawMax: the step-down's cap); the
+    // calm rule is the shuffle's own (entry). Marked as the shuffle's, as
+    // rollFx's.
+    return {
+      ...overlayShuffle.next({
+        maxCount: Math.max(0, Math.min(overlayMaxNow(), overlayDrawMax())),
+      costBudget: OVERLAY_COST_BUDGET[tq()] ?? OVERLAY_COST_BUDGET.medium,
       // The scene shuffle's cost filter, and no heavy overlay on Low.
-      costMax: lighterCost(shuffleCostMax(), OVERLAY_SHUFFLE_COST_MAX[stepDown.quality] ?? 'heavy'),
+      costMax: lighterCost(shuffleCostMax(), OVERLAY_SHUFFLE_COST_MAX[tq()] ?? 'heavy'),
       entry,
       blendIns: Boolean(fxChain),
       bend: OVERLAY_BEND_OFFERED,
-      allowed: overlayFailedIds().length ? new Set(OVERLAY_IDS.filter((id) => !overlayFailedIds().includes(id))) : null,
-    });
+      mood: mood.mood,
+        allowed: overlayFailedIds().length ? new Set(OVERLAY_IDS.filter((id) => !overlayFailedIds().includes(id))) : null,
+      }),
+      shuffled: true,
+    };
   }
   /** Make `combo` (null: none) now; drawn from the next frame, as the scene
    *  allows. A change still waiting is dropped: this one is the latest. */
-  function applyOverlays(combo) {
+  /** `combo` with the styles picked by hand (overlayStylePicked). */
+  function withPickedStyles(combo) {
+    if (!combo?.items || !overlayStylePicked.size) return combo;
+    const items = combo.items.map((item) => (overlayStylePicked.has(item.id)
+      ? { ...item, values: { ...item.values, style: overlayStylePicked.get(item.id) } }
+      : item));
+    return { ...combo, items };
+  }
+  function applyOverlays(given) {
+    const combo = withPickedStyles(given);
     pendingChanges.delete('overlay');
     overlayCombo = overlaysOn && combo?.items?.length ? combo : null;
     overlayChosen = overlayCombo ? chosenOf(overlayCombo.items) : [];
+    overlayChosenShuffled = Boolean(overlayCombo?.shuffled);
     if (combo) overlayShuffle.shown(overlayCombo || { items: [] });
     syncOverlays();
     overlayStats.changes += 1;
@@ -1917,6 +2467,7 @@ export function mountVisualizer(root, {
    *  choice from now on (overlayChosen), made or not yet. */
   function changeOverlays(combo) {
     overlayChosen = overlaysOn && combo ? chosenOf(combo.items) : [];
+    overlayChosenShuffled = Boolean(overlaysOn && combo?.shuffled);
     showOverlays();
     guardedChange(() => applyOverlays(overlaysOn ? combo : null), 'overlay');
   }
@@ -1960,7 +2511,9 @@ export function mountVisualizer(root, {
       .sort((a, b) => OVERLAY_COST_UNITS[overlayRow(a.id).cost] - OVERLAY_COST_UNITS[overlayRow(b.id).cost])
       .slice(0, most);
     overlayStats.trimmed += 1;
-    changeOverlays(overlayComboFor(keep));
+    // As trimFx: a shuffled set stays the shuffle's.
+    const combo = overlayComboFor(keep);
+    changeOverlays(overlayChosenShuffled ? { ...combo, shuffled: true } : combo);
   }
   /** The hand set saved (tokens), and made. */
   function chooseOverlays(list) {
@@ -1995,10 +2548,27 @@ export function mountVisualizer(root, {
     });
     chooseOverlays(list);
   }
+  /** A Style choice changed: overlay `id` drawn in style `value` ('any':
+   *  the shuffle's choice again, from its next set). */
+  function setOverlayStyle(id, value) {
+    if (!overlaysOn) return;
+    const count = overlayRow(id)?.styles?.length || 0;
+    const style = value === 'any' ? -1 : Number(value);
+    if (!(Number.isInteger(style) && style >= 0 && style < count)) {
+      if (overlayStylePicked.delete(id)) saveOverlayStyles();
+      showOverlays();
+      return;
+    }
+    const changed = overlayStylePicked.get(id) !== style;
+    overlayStylePicked.set(id, style);
+    if (changed) saveOverlayStyles();
+    overlayStats.byHand += 1;
+    const combo = overlayComboFor(overlayChosen);
+    changeOverlays(overlayChosenShuffled ? { ...combo, shuffled: true } : combo);
+  }
   function setOverlaysOn(on, { save = true } = {}) {
     if (on === overlaysOn) return;
     overlaysOn = on;
-    if (on) ovOpen = true;
     showOverlayChoice();
     if (on) {
       if (started) startOverlays();
@@ -2178,6 +2748,7 @@ export function mountVisualizer(root, {
     }
     panelOpen = open;
     showPanel();
+    if (open) announceMood();
     if (focus) focusPanel(open);
     if (save) saveSettings?.({ visualizerPanelOpen: panelOpen });
   }
@@ -2241,29 +2812,85 @@ export function mountVisualizer(root, {
   /** The window hidden: nothing scheduled for it, whatever is running ends. */
   function onVisibility() {
     if (!isHidden()) {
+      // Shown again: what was heard before the window was hidden is old.
+      resetMusicReadings();
       if (started) hud.wake();
       if (started && switcher?.busy) startPreparing();
       return;
     }
     hud.sleep();
+    suspendDensityWorker();
     transition?.finishNow();
     flushChange();
     if (preparingTimer) clearTimer(preparingTimer);
     preparingTimer = 0;
   }
 
-  function applySize() {
-    if (!renderer || lost) return;
-    const preset = visualizerPreset(stepDown.quality);
+  /** The drawing size for the quality drawn now (or none yet). */
+  function sizeNow() {
+    // At Very high, a heavy scene not measured holding 30 fps there draws
+    // at High's budget (processor-budget.js drawsAtVeryHigh).
+    const veryHigh = stepDown.quality === VISUALIZER_QUALITY_VERY_HIGH && drawsAtVeryHigh(entryOf(sizedScene));
+    const preset = veryHigh ? VISUALIZER_VERY_HIGH_PRESET : visualizerPreset(tq());
     // A scene with its own, smaller pixel budget (scenes.js SCENE_MAX_PIXELS).
-    const most = sceneMaxPixels(sizedScene, stepDown.quality);
+    const most = sceneMaxPixels(sizedScene, tq());
     const budget = most ? { ...preset, maxPixels: Math.min(Number(preset.maxPixels) || most, most) } : preset;
-    const size = drawingSize(deviceWidth, deviceHeight, budget, renderer.limits);
+    return drawingSize(deviceWidth, deviceHeight, budget, renderer.limits);
+  }
+  /** `now`: made at once (under a change of scene already). A scene that
+   *  owns its passes starts its simulation again at a new size or detail, a
+   *  change of picture: made through the transition like a new look. */
+  /** The size values an open simulation should have now (processor-budget.js
+   *  SIM_SIZES_ABOVE_HIGH: one size up at the High level), those that differ
+   *  from what is drawn, or null. A size its look sets stays. */
+  function simSizeValues() {
+    const def = renderer?.definition;
+    const id = def?.name;
+    if (!id || !Object.prototype.hasOwnProperty.call(SIM_SIZES_ABOVE_HIGH, id)) return null;
+    const entry = entryOf(id);
+    const own = lookOverrides(entry, def, lookFor(id, def)) || {};
+    const start = sceneDefaults(def, entry?.defaults || null);
+    const target = simStartWithExtras(id, tq(), own, (def.params || []).map((param) => param.name), budget.level) || {};
+    const now = renderer.values || {};
+    const values = {};
+    for (const name of Object.keys(SIM_SIZES_ABOVE_HIGH[id])) {
+      if (Object.prototype.hasOwnProperty.call(own, name)) continue;
+      const want = Object.prototype.hasOwnProperty.call(target, name) ? target[name] : start[name];
+      if (want !== undefined && now[name] !== want) values[name] = want;
+    }
+    return Object.keys(values).length ? values : null;
+  }
+  /** After a change of level: an open simulation's caps and size as the level
+   *  gives them, through the transition (as a change of quality). */
+  function applySimSize() {
+    const def = renderer?.definition;
+    if (!def || !started || !Object.prototype.hasOwnProperty.call(SIM_SIZES_ABOVE_HIGH, def.name)) return;
+    const capsNow = JSON.stringify(renderer.caps) !== JSON.stringify(simCapsWithExtras(def.name, tq(), sceneCaps(def.name, tq()), budget.level));
+    if (!capsNow && !simSizeValues()) return;
+    guardedChange(() => {
+      applySize(true);
+      const values = simSizeValues();
+      if (!values) return;
+      if (renderer.setValues(values)) redrawIfHeld();
+      else switcher.request(switcher.current, { reload: true });
+    }, 'size');
+  }
+  function applySize(now = false) {
+    if (!renderer || lost) return;
+    const size = sizeNow();
     if (!size.width) return;
+    const def = renderer.definition;
+    if (!now && started && def && ownsPasses(def)
+      && (size.width !== renderer.width || size.height !== renderer.height
+        || JSON.stringify(renderer.caps) !== JSON.stringify(simCapsWithExtras(def.name, tq(), sceneCaps(def.name, tq()), budget.level)))) {
+      guardedChange(() => applySize(true), 'size');
+      return;
+    }
     const changed = renderer.resize(size.width, size.height);
     // A lower quality also lowers the heaviest scenes' own detail (scenes.js SCENE_QUALITY_CAPS).
-    renderer.setQuality?.(stepDown.quality);
-    overlayLayer?.resize(renderer.width, renderer.height, stepDown.quality);
+    renderer.setQuality?.(tq());
+    overlayLayer?.resize(renderer.width, renderer.height, tq());
+    showQualityNote();
     const first = !sized;
     sized = true;
     if (!started) {
@@ -2290,14 +2917,27 @@ export function mountVisualizer(root, {
   function applySettings(settings) {
     const nextQuality = normalizeVisualizerQuality(settings?.visualizerQuality);
     const nextFps = normalizeVisualizerFps(settings?.visualizerFps);
-    if (nextQuality !== quality || nextFps !== fps) {
+    const drawnBefore = drawQuality();
+    const levelBefore = budget.level;
+    const budgetChanged = applyBudget(settings);
+    budgetLevelChanged = budget.level !== levelBefore;
+    qualityPicked = pickedIn(settings);
+    const drawnChanged = budgetChanged || drawQuality() !== drawnBefore;
+    if (nextQuality !== quality || nextFps !== fps || drawnChanged) {
       quality = nextQuality;
       fps = nextFps;
       showQuality();
       showFpsChoice();
-      stepDown.choose(quality, fps);
+      stepDown.choose(drawQuality(), fps);
+      budgetSteer.reset();
       setCostCap(null);
       applyStepDown();
+    }
+    if (budgetLevelChanged) {
+      // Very high offered or not, and the note under it, follow the level.
+      showQuality();
+      // An open simulation takes the size the new level gives it.
+      applySimSize();
     }
     const nextBrightness = normalizeVisualizerBrightness(settings?.visualizerBrightness);
     if (nextBrightness !== brightness) {
@@ -2315,8 +2955,10 @@ export function mountVisualizer(root, {
     if (more.visualizerShuffle !== shuffleOn || more.visualizerShufflePool !== shufflePool) {
       setShuffle(more.visualizerShuffle, more.visualizerShufflePool, { save: false });
     }
-    if (more.visualizerShuffleCost !== shuffleCost) {
+    const pickedNow = shuffleCostPickedIn(settings, more.visualizerShuffleCost);
+    if (more.visualizerShuffleCost !== shuffleCost || pickedNow !== shuffleCostPicked || budgetLevelChanged) {
       shuffleCost = more.visualizerShuffleCost;
+      shuffleCostPicked = pickedNow;
       poolChanged();
     }
     if (more.visualizerShuffleBars !== shuffleBars) {
@@ -2341,10 +2983,13 @@ export function mountVisualizer(root, {
     }
     if (more.visualizerFxIntensity !== fxIntensity) fxIntensity = more.visualizerFxIntensity;
     fxFlash = more.visualizerFxFlash;
+    if (more.visualizerDrift !== driftOn) setDrift(more.visualizerDrift);
     fxSet = more.visualizerFxSet;
     if (more.visualizerFx !== fxOn) setFxOn(more.visualizerFx, { save: false });
     showFxChoice();
     overlayShuffleOn = more.visualizerOverlayShuffle;
+    overlayGlowOn = more.visualizerOverlayGlow;
+    overlayLayer?.setExtraGlow(extraGlowNow());
     overlaySet = more.visualizerOverlaySet;
     if (more.visualizerOverlays !== overlaysOn) setOverlaysOn(more.visualizerOverlays, { save: false });
     showOverlayChoice();
@@ -2391,6 +3036,9 @@ export function mountVisualizer(root, {
       fxChain?.contextLost(); // and the effects' framebuffers and programs
       if (fxChain) fxDrawnChanged(); // nothing draws until they are back
       loop.setSuspended(true);
+      // The overlay sheets held still (no transform, no will-change) until
+      // drawing resumes; the next drawn frame moves them again.
+      overlayLayer?.move(driftState.bars, 0);
       say(MESSAGES.lost);
     });
     listen(canvas, 'webglcontextrestored', () => {
@@ -2434,8 +3082,10 @@ export function mountVisualizer(root, {
     });
     listen(shuffleCostField.select, 'change', () => {
       shuffleCost = normalizeVisualizerExtras({ visualizerShuffleCost: shuffleCostField.select.value }).visualizerShuffleCost;
+      shuffleCostPicked = true;
+      showShuffleCostNote();
       poolChanged();
-      saveSettings?.({ visualizerShuffleCost: shuffleCost });
+      saveSettings?.({ visualizerShuffleCost: shuffleCost, visualizerShuffleCostPicked: true });
     });
     listen(fxMaster.box, 'change', () => setFxOn(fxMaster.box.checked));
     listen(fxShuffleField.box, 'change', () => {
@@ -2445,12 +3095,18 @@ export function mountVisualizer(root, {
       saveSettings?.({ visualizerFxShuffle: fxShuffleOn });
     });
     listen(fxNow, 'click', () => newFx());
-    listen(ovHead, 'click', () => { ovOpen = !ovOpen; showOverlayChoice(); });
+    for (const [id, part] of sections) listen(part.head, 'click', () => setFolded(id, !folded.has(id)));
     listen(ovMaster.box, 'change', () => setOverlaysOn(ovMaster.box.checked));
     listen(ovShuffleField.box, 'change', () => {
       overlayShuffleOn = ovShuffleField.box.checked;
       if (overlayShuffleOn && overlaysOn && !overlayChosen.length) newOverlays();
       saveSettings?.({ visualizerOverlayShuffle: overlayShuffleOn });
+    });
+    listen(ovGlowField.box, 'change', () => {
+      overlayGlowOn = ovGlowField.box.checked;
+      overlayLayer?.setExtraGlow(extraGlowNow());
+      redrawIfHeld();
+      saveSettings?.({ visualizerOverlayGlow: overlayGlowOn });
     });
     listen(ovNow, 'click', () => newOverlays());
     for (const [id, box] of ovBoxes) listen(box, 'change', () => toggleOverlay(id, box.checked));
@@ -2462,6 +3118,7 @@ export function mountVisualizer(root, {
         });
       };
       for (const node of [row.mode, row.mask]) listen(node, 'change', changed);
+      listen(row.style, 'change', () => { if (row.id) setOverlayStyle(row.id, row.style.value); });
       for (const node of [row.under, row.tint, row.bend]) listen(node, 'change', changed);
     }
     listen(fxTimingField.select, 'change', () => {
@@ -2483,6 +3140,10 @@ export function mountVisualizer(root, {
       fxFlash = fxFlashField.box.checked;
       saveSettings?.({ visualizerFxFlash: fxFlash });
     });
+    listen(driftField.box, 'change', () => {
+      setDrift(driftField.box.checked);
+      saveSettings?.({ visualizerDrift: driftOn });
+    });
     listen(shuffleBarsField.select, 'change', () => {
       shuffleBars = normalizeVisualizerExtras({ visualizerShuffleBars: shuffleBarsField.select.value }).visualizerShuffleBars;
       shuffleTimer.setBars(shuffleBars);
@@ -2492,16 +3153,19 @@ export function mountVisualizer(root, {
     // the step-down, even when it is the one already chosen.
     listen(qualitySelect, 'change', () => {
       quality = normalizeVisualizerQuality(qualitySelect.value);
-      stepDown.choose(quality, fps);
+      qualityPicked = true;
+      stepDown.choose(drawQuality(), fps);
+      budgetSteer.reset();
       setCostCap(null);
       applyStepDown();
-      saveSettings?.({ visualizerQuality: quality });
+      saveSettings?.({ visualizerQuality: quality, visualizerQualityPicked: true });
     });
     for (const button of fpsButtons) {
       listen(button, 'click', () => {
         fps = normalizeVisualizerFps(button.getAttribute('data-fps'));
         showFpsChoice();
-        stepDown.choose(quality, fps);
+        stepDown.choose(drawQuality(), fps);
+        budgetSteer.reset();
         setCostCap(null);
         applyStepDown();
         saveSettings?.({ visualizerFps: fps });
@@ -2518,7 +3182,7 @@ export function mountVisualizer(root, {
     listen(noticeLine, 'click', () => showNoticeAgain());
     if (doc?.addEventListener) {
       listen(doc, 'visibilitychange', onVisibility);
-      listen(doc, 'keydown', (event) => {
+      if (!background) listen(doc, 'keydown', (event) => {
         if (!isDebugKey(event)) return;
         event.preventDefault?.();
         debug = !debug;
@@ -2546,6 +3210,9 @@ export function mountVisualizer(root, {
     hud,
     notice,
     mood,
+    tone,
+    structure,
+    musicStats,
     shuffle,
     shuffleTimer,
     get shuffleStats() { return shuffleStats; },
@@ -2555,9 +3222,17 @@ export function mountVisualizer(root, {
     get looks() { return looks; },
     get favourites() { return favourites; },
     get costCap() { return costCap; },
+    get shuffleCostMax() { return shuffleCostMax(); },
     get fading() { return transition?.phase === 'fading'; },
     get transition() { return transition; },
     /** Post effects: the chain, the shuffle (once loaded), what is on. */
+    /** Slow drift: the clock, what the picture reads now, on or off. */
+    drift: {
+      clock: driftClock,
+      state: driftState,
+      get on() { return driftOn; },
+      get fade() { return driftFade; },
+    },
     fx: {
       get chain() { return fxChain; },
       get shuffle() { return fxShuffle; },
@@ -2620,6 +3295,7 @@ export function mountVisualizer(root, {
       lookName,
       shuffleMode: shuffleMode.select,
       shuffleNote,
+      shuffleCostNote,
       shuffleCost: shuffleCostField.select,
       shuffleBars: shuffleBarsField.select,
       moodLine,
@@ -2629,17 +3305,24 @@ export function mountVisualizer(root, {
       fxTiming: fxTimingField.select,
       fxIntensity: fxIntensityField.select,
       fxFlash: fxFlashField.box,
+      drift: driftField.box,
       fxLine,
       fxList: fxListEl,
+      sectionHeads: [...sections.values()].map((part) => part.head),
+      sectionBodies: [...sections.values()].map((part) => part.body),
+      effectsMore: fxMore,
+      overlaysMore: ovMore,
       overlaysHead: ovHead,
       overlaysBody: ovBody,
       overlaysToggle: ovMaster.box,
       overlaysShuffle: ovShuffleField.box,
+      overlaysGlow: ovGlowField.box,
       overlaysNow: ovNow,
       overlaysLine: ovLine,
       overlaysList: ovListEl,
       noticeLine,
       qualitySelect,
+      qualityNote,
       fpsButtons,
       brightSlider,
       brightValue,
@@ -2647,24 +3330,8 @@ export function mountVisualizer(root, {
       readout,
     },
     destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      switcher?.destroy();
-      loop?.destroy();
-      for (const cleanup of cleanups.splice(0)) {
-        try { cleanup(); } catch (_) {}
-      }
-      // After the listeners are gone, so losing the context on purpose is
-      // not taken for a driver reset.
-      renderer?.destroy();
+      teardown();
       renderer = null;
-      canvas.width = 0;
-      canvas.height = 0;
-      overlayCanvas.width = 0;
-      overlayCanvas.height = 0;
-      root.replaceChildren();
-      root.classList.remove('viz-root');
-      root.classList.remove('viz-panel-open');
     },
   };
 }

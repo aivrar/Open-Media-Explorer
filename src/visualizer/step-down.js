@@ -31,6 +31,11 @@
  * taken while this scene shows (the note is shown for that, not for a scene
  * that starts at a level it needed before).
  *
+ * Processor use (lib/processor-budget.js) at Balanced or High can also ask
+ * for a notch from outside: lower() takes one off as a slow frame window
+ * would, raise() gives the last one back (the quality and frame rate first,
+ * then overlays, then post effects). At Light neither is called.
+ *
  * A gap longer than STEP_DOWN_MAX_GAP_MS (a minimised or covered window, a
  * hitch) starts the measurement afresh instead of counting as a slow frame.
  *
@@ -49,7 +54,7 @@
  */
 
 import {
-  VISUALIZER_FRAME_RATES, VISUALIZER_QUALITIES, normalizeVisualizerFps, normalizeVisualizerQuality,
+  VISUALIZER_ALL_QUALITIES, VISUALIZER_FRAME_RATES, normalizeVisualizerFps, normalizeVisualizerQuality,
 } from '../lib/visualizer-settings.js';
 
 export const STEP_DOWN_NOTE = 'Lowered quality to keep this scene smooth';
@@ -74,8 +79,9 @@ export function stepDownLevels(quality, fps) {
   const chosenQuality = normalizeVisualizerQuality(quality);
   const chosenFps = normalizeVisualizerFps(fps);
   const levels = [];
-  for (let at = VISUALIZER_QUALITIES.indexOf(chosenQuality); at >= 0; at -= 1) {
-    levels.push({ quality: VISUALIZER_QUALITIES[at], fps: chosenFps });
+  // (Very high first when chosen, then High, Medium and Low.)
+  for (let at = VISUALIZER_ALL_QUALITIES.indexOf(chosenQuality); at >= 0; at -= 1) {
+    levels.push({ quality: VISUALIZER_ALL_QUALITIES[at], fps: chosenFps });
   }
   const lowest = levels[levels.length - 1].quality;
   for (let at = VISUALIZER_FRAME_RATES.indexOf(chosenFps) - 1; at >= 0; at -= 1) {
@@ -115,7 +121,7 @@ export function createStepDown({
   let lastTick = Number.NaN;
   let shortestTick = Number.POSITIVE_INFINITY;
   const stats = {
-    steps: 0, windows: 0, fxSteps: 0, overlaySteps: 0, slowWindows: 0, forgiven: 0, graces: 0,
+    steps: 0, windows: 0, fxSteps: 0, overlaySteps: 0, slowWindows: 0, forgiven: 0, graces: 0, raises: 0,
   };
   /** Frames a second the display offers (at least STEP_DOWN_MIN_DISPLAY_FPS;
    *  Infinity before any are seen). */
@@ -249,24 +255,35 @@ export function createStepDown({
       slowWindows += 1;
       if (slowWindows < STEP_DOWN_WINDOWS_NEEDED) return false;
       slowWindows = 0;
-      // Post effects go first: to one, then none; then overlays the same way.
-      let inUse = 0;
-      try { inUse = Math.max(0, Math.min(fxCap, Number(fxInUse()) || 0)); } catch (_) {}
-      let overlaysOn = 0;
-      try { overlaysOn = Math.max(0, Math.min(overlayCap, Number(overlaysInUse()) || 0)); } catch (_) {}
-      if (inUse > 0) {
-        fxCap = inUse > 1 ? 1 : 0;
-        stats.fxSteps += 1;
-      } else if (overlaysOn > 0) {
-        overlayCap = overlaysOn > 1 ? 1 : 0;
-        stats.overlaySteps += 1;
-      } else if (level < levels.length - 1) {
-        level += 1;
-      } else return false;
-      stats.steps += 1;
-      stepped = true;
-      if (sceneId !== null) needed.set(sceneId, { level, fx: fxCap, overlays: overlayCap });
+      return takeNotch(now);
+    },
+
+    /** Take a notch off now (asked by the processor budget), as a slow
+     *  frame window would. Returns true when one was taken. */
+    lower(now) {
+      if (!Number.isFinite(now)) return false;
+      slowWindows = 0;
+      openWindow(Number.NaN);
+      return takeNotch(now);
+    },
+
+    /** Give the last notch back (asked by the processor budget when there is
+     *  clear headroom): the quality and frame rate first, then overlays,
+     *  then post effects. Returns true when one was given back. */
+    raise(now) {
+      if (!Number.isFinite(now)) return false;
+      if (level > 0) level -= 1;
+      else if (overlayCap !== Number.POSITIVE_INFINITY) overlayCap = overlayCap < 1 ? 1 : Number.POSITIVE_INFINITY;
+      else if (fxCap !== Number.POSITIVE_INFINITY) fxCap = fxCap < 1 ? 1 : Number.POSITIVE_INFINITY;
+      else return false;
+      stats.raises += 1;
+      if (sceneId !== null) {
+        if (level === 0 && fxCap === Number.POSITIVE_INFINITY && overlayCap === Number.POSITIVE_INFINITY) {
+          needed.delete(sceneId);
+        } else needed.set(sceneId, { level, fx: fxCap, overlays: overlayCap });
+      }
       settleUntil = now + STEP_DOWN_SETTLE_MS;
+      restart();
       try {
         onStep?.({
           quality: levels[level].quality, fps: levels[level].fps, fx: fxCap, overlays: overlayCap,
@@ -275,4 +292,33 @@ export function createStepDown({
       return true;
     },
   };
+
+  /** Take one notch off (see the header): post effects, overlays, then the
+   *  quality and frame rate. */
+  function takeNotch(now) {
+    // Post effects go first: to one, then none; then overlays the same way.
+    let inUse = 0;
+    try { inUse = Math.max(0, Math.min(fxCap, Number(fxInUse()) || 0)); } catch (_) {}
+    let overlaysOn = 0;
+    try { overlaysOn = Math.max(0, Math.min(overlayCap, Number(overlaysInUse()) || 0)); } catch (_) {}
+    if (inUse > 0) {
+      fxCap = inUse > 1 ? 1 : 0;
+      stats.fxSteps += 1;
+    } else if (overlaysOn > 0) {
+      overlayCap = overlaysOn > 1 ? 1 : 0;
+      stats.overlaySteps += 1;
+    } else if (level < levels.length - 1) {
+      level += 1;
+    } else return false;
+    stats.steps += 1;
+    stepped = true;
+    if (sceneId !== null) needed.set(sceneId, { level, fx: fxCap, overlays: overlayCap });
+    settleUntil = now + STEP_DOWN_SETTLE_MS;
+    try {
+      onStep?.({
+        quality: levels[level].quality, fps: levels[level].fps, fx: fxCap, overlays: overlayCap,
+      });
+    } catch (_) {}
+    return true;
+  }
 }

@@ -7,8 +7,9 @@
  */
 
 import { SOURCES, getSourceColor } from '../lib/sources.js';
+import { PROCESSOR_EXTRAS_RELEASED } from '../lib/processor-budget.js';
 
-const VERSION = '0.1.11';
+const VERSION = '0.1.12';
 const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {
@@ -33,7 +34,7 @@ export function renderAbout(host) {
             cultural archives, audiobooks, conference recordings, and independent streams
             from ten public sources. Search across them, save favorites, browse the live
             Grid, spin the Tuner, or let Discovery choose something unexpected.
-            Import your own M3U, M3U8, PLS or XSPF channel lists or paste a direct
+            Import your own M3U, M3U8, PLS, XSPF, JSON or CSV channel lists or paste a direct
             stream link in Library's My Playlists, and organize Favorites by media
             type, your own order and your own categories.
           </p>
@@ -149,6 +150,43 @@ export function renderAbout(host) {
           </p>
         </section>
 
+        <section class="about-section" id="about-processor-use" tabindex="-1">
+          <h2>Processor use</h2>
+          <p>
+            World Media is designed to stay light: it plays sound with little work and its
+            Visualizer lowers its own picture quality when the computer cannot keep up.
+            That is the <strong>Low</strong> setting, and it is the default.
+            Settings &gt; Processor use lets you allow more.
+          </p>
+          <p>
+            <strong>Low</strong> works as it always has: the Visualizer steps down when frames
+            come late and does not step back up by itself, and the app does not check how busy
+            the processor is. A picture drawn without a graphics card starts at Low quality.
+          </p>
+          <p>
+            <strong>Balanced</strong> and <strong>High</strong> let the Visualizer use more of the
+            processor, up to the limit you set (a share of the whole processor, all cores together;
+            Balanced starts at 40%, High at 60%). While the Visualizer plays, the app checks every
+            few seconds how much of the processor it and its window use. Over the limit for a few
+            seconds, the picture quality steps down; with plenty of room for a while, it steps back
+            up, slowly. The limit is a target the app steers by, not a hard cap: other work, such as
+            playing the sound, is never held back to meet it. Without a graphics card pictures are
+            drawn by the processor; at these levels they start at the quality you chose instead of Low.
+            With a graphics card the Visualizer usually needs only a small share of the processor, so the limit matters most on computers without one or with few cores.
+          </p>
+          <p>
+            At the higher levels the computer may get warmer and its fans louder, a laptop's battery
+            may last less, and other programs may slow down. If the computer is overloaded the sound
+            can stutter, and the picture's quality may drop again by itself when the limit is reached.
+            The flash and brightness safety limits of the Visualizer are the same at every level.
+          </p>
+          ${processorExtrasParagraph()}
+          <p>
+            To go back, choose <strong>Low</strong> in Settings &gt; Processor use. It takes effect
+            at once.
+          </p>
+        </section>
+
         <div data-about-credits-slot></div>
 
         <section class="about-section">
@@ -165,6 +203,23 @@ export function renderAbout(host) {
     </div>
   `;
   showVisualizerCredits(host);
+}
+
+/** What Balanced and High add to the Visualizer, said only once it is on
+ *  (lib/processor-budget.js PROCESSOR_EXTRAS_RELEASED), so the page never
+ *  promises what is off. */
+export const PROCESSOR_EXTRAS_TEXT = Object.freeze([
+  'At Balanced and High the Visualizer can also draw a Very high picture quality on large screens such as '
+    + '2560 x 1440 (the heaviest scenes stay at High). At High, three of the simulations also start at a larger size '
+    + 'at High quality.',
+  'No level shows more effects or overlays at once. It stays at three of each, because only combinations '
+    + 'of up to three have been checked for flashes and brightness, and each one added multiplies the ways they '
+    + 'can brighten together.',
+]);
+
+export function processorExtrasParagraph(released = PROCESSOR_EXTRAS_RELEASED) {
+  if (!released) return '';
+  return PROCESSOR_EXTRAS_TEXT.map((line) => `<p data-about-processor-extras>${escape(line)}</p>`).join('');
 }
 
 /** Said in the slot when the credits could not be loaded (opening About

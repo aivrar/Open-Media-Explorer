@@ -25,22 +25,28 @@ export const PIECE_LABELS = Object.freeze({
   'iq-palette': 'Cosine palette',
   'narkowicz-aces': 'ACES filmic tone-mapping curve fit',
   'hoskins-hash': 'Hash without Sine',
-  'iq-distance-functions': 'Distance functions (box, torus, octahedron, 2D box)',
+  'dobryakov-fluid': 'Fluid solver passes (splat, curl, vorticity, divergence, pressure, gradient)',
+  'iq-distance-functions': 'Distance functions (box, torus, octahedron, 2D box, capsule, capped cylinder)',
   'iq-smin': 'Polynomial smooth minimum',
   'iq-normals': 'Tetrahedron technique for numerical normals',
   'iq-soft-shadows': 'Soft shadows from a distance field',
   'iq-domain-warp': 'Domain warping',
   'iq-apollonian': 'Apollonian sphere-packing distance estimator',
   'knighty-pseudo-kleinian': 'Pseudo-Kleinian fold',
+  oklab: 'Oklab color space matrices',
+  'bids-colormaps': 'Viridis, Magma, Inferno and Plasma palettes',
+  turbo: 'Turbo palette',
+  twilight: 'Twilight palette',
+  cubehelix: 'Cubehelix palette',
 });
 
 /** The marks, in the words of CREDITS.md and THIRD_PARTY_NOTICES.txt. */
 export const CREDIT_TEXT = Object.freeze({
   title: 'Visualizer credits',
   summary: (count) => `Borrowed shader code (${count} pieces)`,
-  noLicence: 'No licence stated',
+  noLicence: 'No license stated',
   noLicenceNote: "Used with credit; it remains under its author's terms.",
-  shareAlikeNote: (label) => `This part stays under ${label}. It is not covered by the MIT licence above.`,
+  shareAlikeNote: (label) => `This part stays under ${label}. It is not covered by the MIT license above.`,
   everyScene: 'Every scene',
   postEffects: 'Post effects',
 });
@@ -67,7 +73,8 @@ export function webLink(link) {
 /** Where a row's piece is used: a scene's name, or the shared files' reach. */
 function placeOf(row, sceneName) {
   if (row.scene !== '*') return sceneName(row.scene) || row.scene;
-  return /post-fx-library\.js$/.test(String(row.file || '')) ? CREDIT_TEXT.postEffects : CREDIT_TEXT.everyScene;
+  // The post FX library and the palettes (its Palette Map pass only).
+  return /(post-fx-library|palettes)\.js$/.test(String(row.file || '')) ? CREDIT_TEXT.postEffects : CREDIT_TEXT.everyScene;
 }
 
 /** The borrowed rows grouped per piece and credit, in the manifest's order:
@@ -136,8 +143,8 @@ export function buildVisualizerCredits(doc, manifest, sceneName = () => null) {
   intro.append(
     el('span', '', 'The Visualizer is ported from '),
     link(PSYCHEDELIA_URL, origin),
-    el('span', '', `, by the same author (${manifest?.copyright || 'Copyright (c) 2026 aivrar'}), under the ${manifest?.license || 'MIT'} licence. `
-      + 'Some of its shader code is borrowed from others and keeps its own licence, as listed below.'),
+    el('span', '', `, by the same author (${manifest?.copyright || 'Copyright (c) 2026 aivrar'}), under the ${manifest?.license || 'MIT'} license. `
+      + 'Some of its shader code is borrowed from others and keeps its own license, as listed below.'),
   );
   section.append(intro);
 
@@ -175,7 +182,7 @@ export function buildVisualizerCredits(doc, manifest, sceneName = () => null) {
     const licence = [el('span', '', entry.licence)];
     if (entry.shareAlike) licence.push(el('span', 'about-credit-note', CREDIT_TEXT.shareAlikeNote(entry.shareAlike)));
     if (entry.noLicenceStated) licence.push(el('span', 'about-credit-note', CREDIT_TEXT.noLicenceNote));
-    row('Licence', ...licence);
+    row('License', ...licence);
     card.append(meta);
     list.append(card);
   }

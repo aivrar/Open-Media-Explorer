@@ -5,6 +5,8 @@
  * The text between the BEGIN and END lines is that file unchanged, except that
  * any non-ASCII character is written as a \u escape. It was a classic script;
  * here the Psychedelia modules it names come in through G.
+ * PATCHED on import (scripts/import_psychedelia.mjs PATCHES): Palette Map reads the hue round its circle (no jump at red).
+ * PATCHED on import (scripts/import_psychedelia.mjs PATCHES): Palette Map runs its index there and back along the palette (no jump from the last colour to the first).
  * BORROWED: RGB to HSV and HSV to RGB conversion (rgb2hsv, hsv2rgb, toHsv).
  *   Author: Sam Hocevar. Source: https://stackoverflow.com/a/17897228.
  *   Licence: WTFPL.
@@ -581,9 +583,11 @@ var PostFxLibrary = (function() {
                 'void main() {\n' +
                 '    vec3 c = texture2D(u_tex, v_uv).rgb;\n' +
                 '    float lum = dot(c, vec3(0.299, 0.587, 0.114));\n' +
-                '    float key = u_source < 0.5 ? lum : (u_source < 1.5 ? toHsv(c).x : lum * 0.5 + toHsv(c).x * 0.5);\n' +
+                '    float hue = 0.5 - 0.5 * cos(6.28318 * toHsv(c).x);\n' +
+                '    float key = u_source < 0.5 ? lum : (u_source < 1.5 ? hue : lum * 0.5 + hue * 0.5);\n' +
                 '    if (u_posterize >= 2.0) key = floor(key * u_posterize) / u_posterize;\n' +
-                '    vec3 m = texture2D(u_lut, vec2(fract(key * u_spread + u_time * u_cycle + u_offset), 0.5)).rgb;\n' +
+                '    float at = key * u_spread + u_time * u_cycle + u_offset;\n' +
+                '    vec3 m = texture2D(u_lut, vec2(1.0 - abs(1.0 - 2.0 * fract(at * 0.5)), 0.5)).rgb;\n' +
                 '    if (u_source > 0.5) m *= smoothstep(0.0, 0.25, lum) * 0.85 + 0.15;\n' +
                 '    gl_FragColor = vec4(mix(c, m, u_mix), 1.0);\n' +
                 '}'

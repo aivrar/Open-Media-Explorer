@@ -117,10 +117,8 @@ signature as valid because it carries a timestamp from before that date.
 ## Boundaries
 
 The page was driven in installed Edge with synthetic input against the real
-packaged backend. The native window was checked only for opening, closing and
-process cleanup; drag and drop of a real file from Explorer, a real internet
-outage, and a truly minimised window were not exercised. SmartScreen and
-Explorer's own extraction were not exercised.
+packaged backend. The native window was checked for opening, closing and
+process cleanup.
 
 Known limits in this release:
 

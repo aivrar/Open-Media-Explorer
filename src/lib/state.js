@@ -19,11 +19,17 @@
  *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
  *     tunerCardSize: 'small' | 'medium' | 'large',   // Tuner strip cards (tuner-card-size.js)
  *     soundMeter: bool,   // LED sound meter in the player bar (player-meter.js), default on
+ *     bestStreamMode: 'off' | 'listed' | 'auto',   // "Pick the best stream" (best-stream.js), default 'listed'
+ *     processorUse: 'light' | 'balanced' | 'high',   // Processor use (processor-budget.js), default 'light'
+ *     processorLimit: number | null,   // its limit, 2-80 (%), null: the level's preset
  *     visualizerQuality: 'low' | 'medium' | 'high',   // Visualizer picture sharpness (visualizer-settings.js)
  *     visualizerFps: 15 | 30 | 60,   // Visualizer frames a second while sound plays, default 30
  *     visualizerBrightness: number,   // Visualizer brightness, 30-100 (%), default 100
  *     visualizerScene: string,   // last Visualizer scene id, default 'plasma'
  *     visualizerShowFps: bool,   // measured frame-rate readout in the Visualizer tab, default off
+ *     visualizerQualityPicked: bool,   // a Visualizer quality was picked by hand, default off
+ *     visualizerShuffleCostPicked: bool,   // the shuffle's cost filter was picked by hand, default off
+ *     tunerVisualizerBackground: bool,   // the dimmed Visualizer behind the Tuner (lib/tuner-background.js), default off
  *     visualizerDebug: bool,   // developer strip with the sound values, default off
  *     visualizerLooks: object,   // Visualizer look chosen per scene, { sceneId: number }, default {}
  *     visualizerPanelOpen, visualizerShuffle, visualizerShufflePool, visualizerShuffleCost,
@@ -35,6 +41,10 @@
 
 import { isRetiredSource, SOURCE_IDS } from './sources.js';
 import { makeItem } from './item-model.js';
+import { clearStreamLookups } from './stream-lookups.js';
+import { DEFAULT_BEST_STREAM_MODE, bestStreamMode } from './best-stream.js';
+import { DEFAULT_PROCESSOR_USE, normalizeProcessorLimit, normalizeProcessorUse } from './processor-budget.js';
+import { clearStreamVerifications } from './stream-verify.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
   addFavoritesEq, saveEqState,
@@ -51,6 +61,8 @@ import {
   normalizeVisualizerQuality, normalizeVisualizerScene, normalizeVisualizerLooks, normalizeVisualizerExtras,
 } from './visualizer-settings.js';
 import { songLog } from './song-log.js';
+import { FAVORITE_NAMES_KEY, withoutFavoriteName } from './favorite-names.js';
+import { starredSongs } from './starred-songs.js';
 import { STREAM_QUALITY_FIELDS } from './stream-quality.js';
 import {
   cancelScheduledProfileHandoff,
@@ -66,6 +78,8 @@ export const STORAGE_KEYS = {
   jobs:      'worldmedia.jobs.v1',
   // Favorites categories (lib/favorite-groups.js), kept apart from the list.
   favoriteGroups: 'worldmedia.favgroups.v1',
+  // The user's own names for favorites (lib/favorite-names.js), the same.
+  favoriteNames: FAVORITE_NAMES_KEY,
 };
 
 export const SETTINGS_VERSION = 1;
@@ -100,11 +114,17 @@ const DEFAULT_SETTINGS = {
   favoritesSort: FAVORITES_SORT_MANUAL,
   tunerCardSize: TUNER_CARD_SMALL,
   soundMeter: true,
+  bestStreamMode: DEFAULT_BEST_STREAM_MODE,
+  processorUse: DEFAULT_PROCESSOR_USE,
+  processorLimit: null,
   visualizerQuality: DEFAULT_VISUALIZER_QUALITY,
   visualizerFps: DEFAULT_VISUALIZER_FPS,
   visualizerBrightness: DEFAULT_VISUALIZER_BRIGHTNESS,
   visualizerScene: DEFAULT_VISUALIZER_SCENE,
   visualizerShowFps: DEFAULT_VISUALIZER_SHOW_FPS,
+  visualizerQualityPicked: false,
+  visualizerShuffleCostPicked: false,
+  tunerVisualizerBackground: false,
   visualizerDebug: DEFAULT_VISUALIZER_DEBUG,
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
@@ -151,6 +171,9 @@ export function normalizeSettings(value) {
     tunerCardSize: normalizeTunerCardSize(source.tunerCardSize),
     // Only an explicit false turns it off; older builds keep the field as is.
     soundMeter: source.soundMeter !== false,
+    bestStreamMode: bestStreamMode(source),
+    processorUse: normalizeProcessorUse(source.processorUse),
+    processorLimit: normalizeProcessorLimit(source.processorLimit),
     visualizerQuality: normalizeVisualizerQuality(source.visualizerQuality),
     visualizerFps: normalizeVisualizerFps(source.visualizerFps),
     visualizerBrightness: normalizeVisualizerBrightness(source.visualizerBrightness),
@@ -158,6 +181,9 @@ export function normalizeSettings(value) {
     visualizerLooks: normalizeVisualizerLooks(source.visualizerLooks),
     // Off unless turned on (an explicit true).
     visualizerShowFps: source.visualizerShowFps === true,
+    visualizerQualityPicked: source.visualizerQualityPicked === true,
+    visualizerShuffleCostPicked: source.visualizerShuffleCostPicked === true,
+    tunerVisualizerBackground: source.tunerVisualizerBackground === true,
     visualizerDebug: source.visualizerDebug === true,
     ...normalizeVisualizerExtras(source),
     enabledSources,
@@ -165,6 +191,8 @@ export function normalizeSettings(value) {
 }
 
 export function normalizeFavoriteItem(value, options = {}) {
+  // A list's renamed copy (favorite-names.js) is saved with its own title.
+  value = withoutFavoriteName(value);
   if (!value || typeof value !== 'object' || !value.id) return null;
   const normalized = makeItem(value);
   const extra = normalized._extra && typeof normalized._extra === 'object'
@@ -434,6 +462,35 @@ export function moveFavorite(itemId, direction, { visibleIds = null } = {}) {
   return true;
 }
 
+/** Drag and drop in "My order": put `itemId` just before or just after
+ *  `targetId` (place 'before' | 'after') in the saved list. `visibleIds`
+ *  (optional) are the favorites shown, with a filter or category: only they
+ *  are reordered, back into the places they had, so hidden favorites keep
+ *  their exact positions. One save and one favorites-change event. Returns
+ *  true when the order changed. */
+export function moveFavoriteTo(itemId, targetId, place = 'before', visibleIds = null) {
+  if (!itemId || itemId === targetId || (place !== 'before' && place !== 'after')) return false;
+  const visible = visibleIds ? new Set(visibleIds) : null;
+  if (visible && (!visible.has(itemId) || !visible.has(targetId))) return false;
+  const slots = [];
+  state.favorites.forEach((favorite, index) => {
+    if (!visible || visible.has(favorite.id)) slots.push(index);
+  });
+  const shown = slots.map((index) => state.favorites[index]);
+  const from = shown.findIndex((favorite) => favorite.id === itemId);
+  if (from < 0 || !shown.some((favorite) => favorite.id === targetId)) return false;
+  const moved = shown.filter((_, index) => index !== from);
+  const at = moved.findIndex((favorite) => favorite.id === targetId) + (place === 'after' ? 1 : 0);
+  moved.splice(at, 0, shown[from]);
+  const next = state.favorites.slice();
+  slots.forEach((slot, index) => { next[slot] = moved[index]; });
+  if (next.every((favorite, index) => favorite === state.favorites[index])) return false;
+  if (!persistFavorites(next)) return false;
+  state.favorites = next;
+  emit('favorites-change', state.favorites);
+  return true;
+}
+
 /** The stream format and bitrate a favorite was saved with stay when the item
  *  that rewrites it does not carry them (an older copy of the same station);
  *  when it does carry them, its fresh values win. */
@@ -574,12 +631,17 @@ export function clearCache() {
     localStorage.removeItem(STORAGE_KEYS.volume);
     localStorage.removeItem(STORAGE_KEYS.jobs);
     localStorage.removeItem(STORAGE_KEYS.favoriteGroups);
+    localStorage.removeItem(STORAGE_KEYS.favoriteNames);
+    clearStreamLookups();
+    clearStreamVerifications();
     clearEqState(localStorage);
   } catch (_) {}
   cancelScheduledProfileHandoff();
-  // The song log is kept apart from the profile (see song-log.js); it is
-  // cleared with it, here and in the data folder.
-  const nativeCleared = Promise.all([clearProfileHandoff(), songLog.clear()]).then(([cleared]) => cleared);
+  // The song log and starred songs are kept apart from the profile (see
+  // song-log.js, starred-songs.js); they are cleared with it, here and in the
+  // data folder.
+  const nativeCleared = Promise.all([clearProfileHandoff(), songLog.clear(), starredSongs.clear()])
+    .then(([cleared]) => cleared);
   nativeCleared.catch(() => {}); // Callers that do not wait must not see an unhandled rejection.
   state.favorites = [];
   state.settings = freshDefaultSettings();

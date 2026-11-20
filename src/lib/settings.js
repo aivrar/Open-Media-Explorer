@@ -3,16 +3,22 @@
  */
 
 import {
-  getState, saveSettings, setShowExplicitContent, setSourceEnabled, clearCache, subscribe,
+  getState, saveSettings, setShowExplicitContent, setSourceEnabled, clearCache,
 } from './state.js';
 import { SOURCES } from './sources.js';
 import { openDownloadsFolder } from './download-client.js';
 import { THEME_OPTIONS } from './themes.js';
-import { saveProfileHandoff } from './profile-transfer.js';
+import { saveProfileHandoff, suspendProfileRetries } from './profile-transfer.js';
 import { bindBackupControls } from './backup.js';
 import { STATION_IMAGES_HINT, bindStationImageControls } from './station-images.js';
 import { getPlaylistItems, playlistsLoaded } from './playlists.js';
 import { TUNER_CARD_SIZES, TUNER_CARD_SIZE_LABELS, normalizeTunerCardSize } from './tuner-card-size.js';
+import { TUNER_BACKGROUND_RELEASED, TUNER_BACKGROUND_TEXT } from './tuner-background.js';
+import { BEST_STREAM_MODES, BEST_STREAM_MODE_LABELS, bestStreamMode } from './best-stream.js';
+import {
+  PROCESSOR_LIMIT_MAX, PROCESSOR_LIMIT_MIN, PROCESSOR_LIMIT_STEP, PROCESSOR_USE_LABELS, PROCESSOR_USE_LEVELS,
+  normalizeProcessorLimit, normalizeProcessorUse, processorBudget,
+} from './processor-budget.js';
 import {
   FFMPEG_APPROX_SIZE,
   FFMPEG_PROVIDER,
@@ -26,7 +32,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.11';
+const VERSION = '0.1.12';
 
 function buildModal() {
   const state = getState();
@@ -76,6 +82,13 @@ function buildModal() {
               ${TUNER_CARD_SIZES.map((id) => `<option value="${id}">${TUNER_CARD_SIZE_LABELS[id]}</option>`).join('')}
             </select>
           </div>
+          ${TUNER_BACKGROUND_RELEASED ? `<div class="row">
+            <div>
+              <label for="settings-tuner-visualizer">${TUNER_BACKGROUND_TEXT.label}</label>
+              <span class="description">${TUNER_BACKGROUND_TEXT.description}</span>
+            </div>
+            <input id="settings-tuner-visualizer" type="checkbox" class="switch" data-field="tunerVisualizerBackground" />
+          </div>` : ''}
           <div class="row">
             <div>
               <label for="settings-sound-meter">Sound meter in the player bar</label>
@@ -100,6 +113,36 @@ function buildModal() {
             </div>
             <input id="settings-show-explicit" type="checkbox" class="switch" data-field="showExplicitContent" />
           </div>
+          <div class="row">
+            <div>
+              <label for="settings-best-stream">Pick the best stream</label>
+              <span class="description" id="settings-best-stream-hint">Listed streams: when a station or channel lists several streams, the best one is tried first; the next one is tried too if the best has not started playing within a few seconds or fails, and the rest if it connects but does not play within 30 seconds. Auto also checks other directory entries of a radio station in the background and uses one from the next start, only when two checks a few minutes apart found the same station playing the same song, a different song each time; a station that does not announce song titles cannot be verified and keeps its own stream. Off: as in earlier versions, the first two listed streams are tried together and the first to answer plays.</span>
+            </div>
+            <select id="settings-best-stream" data-field="bestStreamMode" aria-describedby="settings-best-stream-hint">
+              ${BEST_STREAM_MODES.map((id) => `<option value="${id}">${BEST_STREAM_MODE_LABELS[id]}</option>`).join('')}
+            </select>
+          </div>
+        </section>
+        <section data-processor-settings>
+          <h3>Processor use</h3>
+          <div class="row">
+            <div>
+              <label for="settings-processor-use">Processor use</label>
+              <span class="description" id="settings-processor-use-hint">${PROCESSOR_USE_HINT}
+                <a href="#about-processor-use" data-act="processor-about">What this means</a></span>
+            </div>
+            <select id="settings-processor-use" data-field="processorUse" aria-describedby="settings-processor-use-hint">
+              ${PROCESSOR_USE_LEVELS.map((id) => `<option value="${id}">${PROCESSOR_USE_LABELS[id]}</option>`).join('')}
+            </select>
+          </div>
+          <div class="row">
+            <div>
+              <label for="settings-processor-limit">Limit (% of the whole processor)</label>
+              <span class="processor-limit-hints" data-processor-limit-hints><span class="description" id="settings-processor-limit-hint" data-processor-limit-hint></span><span class="description processor-limit-note" role="status" data-processor-limit-note></span></span>
+            </div>
+            <input id="settings-processor-limit" type="number" data-field="processorLimit" aria-describedby="settings-processor-limit-hint"
+              min="${PROCESSOR_LIMIT_MIN}" max="${PROCESSOR_LIMIT_MAX}" step="${PROCESSOR_LIMIT_STEP}" inputmode="numeric" />
+          </div>
         </section>
         <section data-server-settings>
           <h3>Local server</h3>
@@ -119,7 +162,7 @@ function buildModal() {
           <h3>Capture &amp; storage</h3>
           <p class="tool-disclosure">
             Finite originals download beside the app. Live recording uses a separate upstream connection;
-            turn Recorder off to reserve network and CPU for smoother playback. The EQ curve active when a
+            turn Recorder off to reserve network and processor for smoother playback. The EQ curve active when a
             recording starts is baked into its audio. Stop recording finalizes MP3 audio or H.264/AAC MP4 video.
             A read-only portable folder disables media downloads; choose LocalAppData explicitly for managed
             FFmpeg tools. Capture only content you have permission to save.
@@ -127,7 +170,7 @@ function buildModal() {
           <div class="row">
             <div>
               <label for="settings-recording-enabled">Recorder</label>
-              <span class="description">Turn off to prevent new recordings and stop an active recording, giving playback more bandwidth and CPU while recording would otherwise be active. An idle recorder uses essentially none. Downloads remain available.</span>
+              <span class="description">Turn off to prevent new recordings and stop an active recording, giving playback more bandwidth and processor while recording would otherwise be active. An idle recorder uses essentially none. Downloads remain available.</span>
             </div>
             <input id="settings-recording-enabled" type="checkbox" class="switch" data-field="recordingEnabled" />
           </div>
@@ -228,7 +271,7 @@ function buildModal() {
           <div class="row">
             <div>
               <label>Clear local cache</label>
-              <span class="description">Removes favorites, preferences, equalizer settings, the song log, and job history. Downloaded media and FFmpeg tools are kept.</span>
+              <span class="description">Removes favorites, preferences, equalizer settings, the song log, starred songs, and job history. Downloaded media and FFmpeg tools are kept.</span>
             </div>
             <button class="btn btn-danger" type="button" data-act="clear-cache">Clear cache</button>
           </div>
@@ -262,9 +305,21 @@ function buildModal() {
   cardSizeSel.value = normalizeTunerCardSize(state.settings.tunerCardSize);
   cardSizeSel.addEventListener('change', () => saveSettings({ tunerCardSize: cardSizeSel.value }));
 
+  const tunerVisualizerToggle = root.querySelector('input[data-field="tunerVisualizerBackground"]');
+  if (tunerVisualizerToggle) {
+    tunerVisualizerToggle.checked = state.settings.tunerVisualizerBackground === true;
+    tunerVisualizerToggle.addEventListener('change', () => saveSettings({ tunerVisualizerBackground: tunerVisualizerToggle.checked }));
+  }
+
   const meterToggle = root.querySelector('input[data-field="soundMeter"]');
   meterToggle.checked = state.settings.soundMeter !== false;
   meterToggle.addEventListener('change', () => saveSettings({ soundMeter: meterToggle.checked }));
+
+  const bestSel = root.querySelector('select[data-field="bestStreamMode"]');
+  bestSel.value = bestStreamMode(state.settings);
+  bestSel.addEventListener('change', () => saveSettings({ bestStreamMode: bestStreamMode({ bestStreamMode: bestSel.value }) }));
+
+  bindProcessorUse(root, state.settings);
 
   const techToggle = root.querySelector('input[data-field="showTechnicalDetails"]');
   techToggle.checked = state.settings.showTechnicalDetails === true;
@@ -417,6 +472,8 @@ function buildModal() {
     saveServerPortButton.disabled = true;
     serverPortStatus.textContent = 'Saving your profile and local server port…';
     serverPortStatus.dataset.state = 'checking';
+    // No automatic retry starts while the port change writes the profile.
+    const resumeRetries = suspendProfileRetries();
     try {
       await saveProfileHandoff();
       const saved = await saveServerPort(requested);
@@ -428,6 +485,7 @@ function buildModal() {
       serverPortStatus.textContent = error?.message || 'Local server port could not be saved.';
       serverPortStatus.dataset.state = 'error';
     } finally {
+      resumeRetries();
       if (!disposed) saveServerPortButton.disabled = false;
     }
   });
@@ -594,6 +652,90 @@ export function bindClearCache({ button, status, confirmClear, clear, onDone, is
   return { run };
 }
 
+/** The line under "Processor use". */
+export const PROCESSOR_USE_HINT = 'Low keeps the app easy on the computer and is the default. Balanced and '
+  + 'High let the Visualizer use more of the processor, up to the limit below; a picture drawn without a '
+  + 'graphics card starts at Low quality, or at the quality chosen when the level is Balanced or High. '
+  + 'With a graphics card the Visualizer usually needs only a small share of the processor, so the limit matters most on computers without one or with few cores.';
+/** Said in place of the limit's hint for a moment when a typed limit was
+ *  out of range and corrected. */
+export const PROCESSOR_LIMIT_RANGE_TEXT = `The limit is from ${PROCESSOR_LIMIT_MIN}% to ${PROCESSOR_LIMIT_MAX}%.`;
+export const PROCESSOR_LIMIT_NOTE_MS = 5_000;
+export const PROCESSOR_LIMIT_HINTS = Object.freeze({
+  light: 'Used at Balanced and High. Low steers by smoothness only, as always.',
+  balanced: 'The app steers the Visualizer to stay under this share; it is a target, not a hard cap.',
+  high: 'The app steers the Visualizer to stay under this share; it is a target, not a hard cap. '
+    + 'High can make the fans louder and the battery last less.',
+});
+
+/** Wire the Processor use choice and its limit. */
+export function bindProcessorUse(root, settings, {
+  save = saveSettings, openAbout = openProcessorAbout,
+  setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (handle) => clearTimeout(handle),
+} = {}) {
+  const levelSel = root.querySelector('select[data-field="processorUse"]');
+  const limitInput = root.querySelector('input[data-field="processorLimit"]');
+  const limitHint = root.querySelector('[data-processor-limit-hint]');
+  // The range, said in the hint's place (the hint keeps its room, hidden,
+  // so nothing below moves) for a moment after a typed value was corrected.
+  const limitHints = root.querySelector('[data-processor-limit-hints]');
+  const limitNote = root.querySelector('[data-processor-limit-note]');
+  let noteTimer = null;
+  const endNote = () => {
+    if (noteTimer !== null) clearTimer(noteTimer);
+    noteTimer = null;
+    limitHints?.classList?.remove('is-noting');
+    if (limitNote) limitNote.textContent = '';
+  };
+  const sayRange = () => {
+    if (!limitNote) return;
+    if (noteTimer !== null) clearTimer(noteTimer);
+    limitHints?.classList?.add('is-noting');
+    limitNote.textContent = PROCESSOR_LIMIT_RANGE_TEXT;
+    noteTimer = setTimer(() => { noteTimer = null; endNote(); }, PROCESSOR_LIMIT_NOTE_MS);
+  };
+  if (!levelSel || !limitInput) return;
+  let current = { processorUse: normalizeProcessorUse(settings?.processorUse),
+    processorLimit: normalizeProcessorLimit(settings?.processorLimit) };
+  const show = () => {
+    const budget = processorBudget(current);
+    levelSel.value = budget.level;
+    limitInput.value = String(budget.limit);
+    limitInput.disabled = !budget.readsUse;
+    if (limitHint) limitHint.textContent = PROCESSOR_LIMIT_HINTS[budget.level];
+  };
+  show();
+  levelSel.addEventListener('change', () => {
+    // A new level starts at its own preset limit.
+    current = { processorUse: normalizeProcessorUse(levelSel.value), processorLimit: null };
+    endNote();
+    save(current);
+    show();
+  });
+  limitInput.addEventListener('change', () => {
+    const typed = String(limitInput.value ?? '').trim() === '' ? Number.NaN : Number(limitInput.value);
+    // Out of range: kept to the range, and the range is said.
+    if (Number.isFinite(typed) && (typed < PROCESSOR_LIMIT_MIN || typed > PROCESSOR_LIMIT_MAX)) sayRange();
+    else endNote();
+    current = { ...current, processorLimit: normalizeProcessorLimit(limitInput.value) };
+    save({ processorLimit: current.processorLimit });
+    show();
+  });
+  root.querySelector('[data-act="processor-about"]')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    openAbout(root);
+  });
+}
+
+/** Close Settings and show the About tab's "Processor use" section. */
+export function openProcessorAbout(root) {
+  (root.closest?.('[data-settings-modal]') || root).querySelector?.('[data-act="close"]')?.click();
+  document.querySelector('.mode-btn[data-mode="about"]')?.click();
+  const section = document.getElementById('about-processor-use');
+  section?.scrollIntoView?.({ block: 'start' });
+  section?.focus?.({ preventScroll: true });
+}
+
 export function openSettings() {
   const host = document.getElementById('modal-host') || document.body;
   const existing = host.querySelector?.('[data-settings-modal]');
@@ -604,11 +746,4 @@ export function openSettings() {
   const modal = buildModal();
   host.appendChild(modal);
   modal._activate?.();
-}
-
-export function initSettings() {
-  // Listen for settings-driven changes that affect global UI
-  subscribe('settings-change', (settings) => {
-    // No-op for now; modes re-read on next render.
-  });
 }

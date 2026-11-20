@@ -9,7 +9,12 @@
 import { getJson } from '../lib/http.js';
 import { makeItem, prefixId, detectStreamKind } from '../lib/item-model.js';
 import { cleanBitrate, cleanCodec, isHlsFlag } from '../lib/stream-quality.js';
-import { canFindOtherStreams, matchOtherStreams, otherStreamsQuery } from '../lib/other-streams.js';
+import {
+  canFindOtherStreams, homepageHost, matchOtherStreams, otherStreamsQuery, registrableDomain, sameStreamSite, stationId,
+  underOwnName,
+} from '../lib/other-streams.js';
+import { rankStreams } from '../lib/best-stream.js';
+import { MAX_LOOKUP_STREAMS, storedLookup, storeLookup } from '../lib/stream-lookups.js';
 
 export const id = 'radio-browser';
 export const displayName = 'Radio Browser';
@@ -87,6 +92,15 @@ function invalidateBase() {
   baseUrlPromise = null;
 }
 
+// A request the caller cut short after waiting this long on the mirror: the
+// mirror is too slow to keep (the Tuner and the Grid give a source 20 s).
+export const SLOW_MIRROR_MS = 10_000;
+
+/** Whether a mirror asked at `askedAt` and still silent at `now` is dropped. */
+export function mirrorTooSlow(askedAt, now = Date.now()) {
+  return now - askedAt >= SLOW_MIRROR_MS;
+}
+
 function normalize(station) {
   if (!station || !station.stationuuid || !station.url_resolved) return null;
   const tags = (station.tags || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -137,6 +151,7 @@ async function fetchStations(path, opts = {}) {
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const base = await awaitWithSignal(resolveBase(), opts.signal);
+    const askedAt = Date.now();
     try {
       const data = await getJson(base + path, {
         signal: opts.signal,
@@ -146,6 +161,13 @@ async function fetchStations(path, opts = {}) {
       throw new TypeError('Radio Browser returned a non-array response');
     } catch (err) {
       lastError = err;
+      // Cancelled by the caller (or its time limit): no new mirror search
+      // starts now. A mirror cut short early is kept; one that stayed silent
+      // for SLOW_MIRROR_MS is dropped, so the next request finds another.
+      if (opts.signal?.aborted) {
+        if (mirrorTooSlow(askedAt)) invalidateBase();
+        throw err;
+      }
       if (attempt === 0) {
         // Mirror probably died mid-session — drop it and re-resolve.
         invalidateBase();
@@ -219,7 +241,14 @@ export async function random(opts = {}) {
  * strict rule in lib/other-streams.js. Returns { streams, total, sameNameOnly }.
  */
 export async function findOtherStreams(item, opts = {}) {
+  item = underOwnName(item); // a renamed favorite is searched by its own name
   if (!canFindOtherStreams(item)) return matchOtherStreams(item, []);
+  return matchOtherStreams(item, await searchSameName(item, opts), { limit: opts.limit });
+}
+
+/** The directory's entries named like `item` (one search, most played
+ *  first), broken ones left out. */
+async function searchSameName(item, opts = {}) {
   const params = new URLSearchParams({
     name: otherStreamsQuery(item.title),
     limit: '100',
@@ -229,8 +258,114 @@ export async function findOtherStreams(item, opts = {}) {
     reverse: 'true',
   });
   const data = await fetchStations(`/json/stations/search?${params.toString()}`, opts);
-  const candidates = data.filter((station) => !isBrokenStation(station)).map(normalize).filter(Boolean);
-  return matchOtherStreams(item, candidates, { limit: opts.limit });
+  return data.filter((station) => !isBrokenStation(station)).map((station) => {
+    const item = normalize(station);
+    if (item) item._extra = { ...item._extra, health: healthOf(station) };
+    return item;
+  }).filter(Boolean);
+}
+
+// The default time limit of betterStationStreams (Auto's background check
+// passes its own, best-stream-auto.js CHECK_LOOKUP_MS). It includes finding
+// a working directory mirror when none was found yet in this run.
+export const BETTER_STREAMS_LOOKUP_MS = 4_000;
+
+function streamFacts(item) {
+  const health = item._extra?.health || {};
+  return {
+    url: item.stream_url,
+    kind: item.stream_kind,
+    headers: {},
+    bitrate: cleanBitrate(item._extra?.bitrate),
+    codec: cleanCodec(item._extra?.codec),
+    // The directory's own record of the entry (stream-verify.js sourceVeto).
+    lastCheckOk: health.lastCheckOk === true,
+    sslError: health.sslError !== false,
+    votes: health.votes || 0,
+    clicks: Number(item._extra?.clickcount) || 0,
+    changedAt: health.changedAt || 0,
+  };
+}
+
+/** What the directory says about an entry's health and age: its last check
+ *  passed, a TLS error was found, votes, and when it last changed (ms, 0
+ *  when unknown). Only for the entries a name search finds. */
+function healthOf(station) {
+  const flag = (value) => value === true || value === 1 || value === '1' || value === 'true';
+  const changed = Date.parse(String(station?.lastchangetime_iso8601 || ''));
+  return {
+    lastCheckOk: flag(station?.lastcheckok),
+    sslError: station?.ssl_error === undefined ? true : flag(station.ssl_error),
+    votes: Math.max(0, Math.floor(Number(station?.votes) || 0)),
+    changedAt: Number.isFinite(changed) ? changed : 0,
+  };
+}
+
+/** Entries of the same station that may be used without asking: the strict
+ *  rule of "Other streams" with the same homepage, plus the same country
+ *  code (both must give one) and a stream address on the same site as the
+ *  station's own stream (other-streams.js sameStreamSite). This is only the
+ *  first layer; the content check (stream-verify.js) proves the programme.
+ *  Anything else stays in the hand-picked "Other streams" list. */
+export function trustedOtherStreams(item, candidates) {
+  item = underOwnName(item);
+  const host = homepageHost(item?.source_url);
+  const ownDomain = registrableDomain(item?.stream_url);
+  if (!host || !ownDomain) return [];
+  const { streams, sameNameOnly } = matchOtherStreams(item, candidates, { limit: Number.MAX_SAFE_INTEGER });
+  if (sameNameOnly) return [];
+  const country = String(item.country || '').toUpperCase();
+  if (!country) return [];
+  return streams.filter((stream) => String(stream.country || '').toUpperCase() === country
+    && sameStreamSite(stream.stream_url, item.stream_url));
+}
+
+/**
+ * Other Radio Browser entries of the same station for the player to rank
+ * and try (lib/best-stream.js), best first, at most MAX_LOOKUP_STREAMS;
+ * see trustedOtherStreams for which ones. The station's own stream is not
+ * in the list (the player always has it). Nothing is written to the item:
+ * the result is kept in lib/stream-lookups.js, a found list for a day and a
+ * failed lookup for 30 minutes. A slow or failed lookup (now, or within
+ * those 30 minutes) throws an error with code LOOKUP_FAILED, so that it is
+ * never taken for "no other entry"; a cancelled one throws the abort.
+ */
+function lookupFailed(cause = null) {
+  const error = new Error('The station directory did not answer in time.');
+  error.code = 'LOOKUP_FAILED';
+  if (cause) error.cause = cause;
+  return error;
+}
+
+export async function betterStationStreams(item, opts = {}) {
+  item = underOwnName(item);
+  if (!item?.id || item.source !== id || !canFindOtherStreams(item) || !homepageHost(item.source_url)) return [];
+  const station = stationId(item);
+  const now = typeof opts.now === 'function' ? opts.now() : Date.now();
+  const stored = storedLookup(station, now);
+  if (stored?.ok === false) throw lookupFailed();
+  if (stored) return stored.streams;
+  if (opts.signal?.aborted) throw opts.signal.reason || new DOMException('Aborted', 'AbortError');
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(opts.signal?.reason);
+  opts.signal?.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error('Looking up other streams took too long.')),
+    Number(opts.timeoutMs) || BETTER_STREAMS_LOOKUP_MS);
+  let candidates;
+  try {
+    candidates = await (opts.searchImpl || searchSameName)(item, { signal: controller.signal });
+  } catch (error) {
+    if (opts.signal?.aborted) throw error;
+    storeLookup(station, null, now);
+    throw lookupFailed(error);
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', onAbort);
+  }
+  // Ranked before the limit, so lossless entries cannot push out better ones.
+  const streams = rankStreams(trustedOtherStreams(item, candidates).map(streamFacts)).slice(0, MAX_LOOKUP_STREAMS);
+  storeLookup(station, streams, now);
+  return streams;
 }
 
 /**

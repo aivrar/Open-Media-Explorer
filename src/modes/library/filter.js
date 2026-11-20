@@ -46,7 +46,8 @@ export function itemPassesFilters(it, inCategory = favoritesCategoryTest()) {
 
   if (personal) {
     const query = personalFilters().query.trim().toLocaleLowerCase();
-    const haystack = [it.title, it.description, ...(it.tags || [])].join(' ').toLocaleLowerCase();
+    // A renamed favorite is found by its new name and by the station's own.
+    const haystack = [it.title, it.originalTitle, it.description, ...(it.tags || [])].join(' ').toLocaleLowerCase();
     if (query && !haystack.includes(query)) return false;
   } else {
     const activeQ = (view.lastQuery || '').trim();

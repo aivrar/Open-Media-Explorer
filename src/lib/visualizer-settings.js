@@ -31,6 +31,14 @@ export const VISUALIZER_QUALITIES = Object.freeze([
   VISUALIZER_QUALITY_LOW, VISUALIZER_QUALITY_MEDIUM, VISUALIZER_QUALITY_HIGH,
 ]);
 export const DEFAULT_VISUALIZER_QUALITY = VISUALIZER_QUALITY_MEDIUM;
+/** Very high: offered at the Balanced and High Processor use levels only
+ *  (the Processor use extras). Every per-quality table uses High's
+ *  row at Very high (tableQuality); only the pixel budget is larger. */
+export const VISUALIZER_QUALITY_VERY_HIGH = 'very_high';
+/** Every quality a setting may hold, lowest first. */
+export const VISUALIZER_ALL_QUALITIES = Object.freeze([...VISUALIZER_QUALITIES, VISUALIZER_QUALITY_VERY_HIGH]);
+/** Very high's picture: every device pixel, up to twice High's budget. */
+export const VISUALIZER_VERY_HIGH_PRESET = Object.freeze({ label: 'Very high', scale: 1, maxPixels: 4800000 });
 /** The measured frame-rate readout is off until turned on in the tab. */
 export const DEFAULT_VISUALIZER_SHOW_FPS = false;
 /** The developer strip (sound values the scenes get) is off unless asked for. */
@@ -65,11 +73,18 @@ export const VISUALIZER_IDLE_FPS = 5;
 export const VISUALIZER_IDLE_SECONDS = 20;
 
 export function normalizeVisualizerQuality(value) {
-  return VISUALIZER_QUALITIES.includes(value) ? value : DEFAULT_VISUALIZER_QUALITY;
+  return VISUALIZER_ALL_QUALITIES.includes(value) ? value : DEFAULT_VISUALIZER_QUALITY;
+}
+
+/** The quality whose rows of the per-quality tables apply: High's at Very high. */
+export function tableQuality(value) {
+  const quality = normalizeVisualizerQuality(value);
+  return quality === VISUALIZER_QUALITY_VERY_HIGH ? VISUALIZER_QUALITY_HIGH : quality;
 }
 
 export function visualizerPreset(value) {
-  return VISUALIZER_PRESETS[normalizeVisualizerQuality(value)];
+  const quality = normalizeVisualizerQuality(value);
+  return quality === VISUALIZER_QUALITY_VERY_HIGH ? VISUALIZER_VERY_HIGH_PRESET : VISUALIZER_PRESETS[quality];
 }
 
 /** 15, 30 or 60 (a number, or the same number as text from a form field). */
@@ -201,6 +216,38 @@ export function normalizeVisualizerOverlaySet(value) {
   return out;
 }
 
+/** Most overlays with a Style picked by hand that are kept, and the most
+ *  styles an overlay may have. */
+export const VISUALIZER_OVERLAY_STYLES_MAX = 32;
+export const VISUALIZER_OVERLAY_STYLE_COUNT_MAX = 16;
+
+/** The overlays' Style choices picked by hand: { overlay id: style index }.
+ *  Anything else is dropped (a missing or unknown one reads as Any; the
+ *  Visualizer also drops an index its overlay does not have). */
+export function normalizeVisualizerOverlayStyles(value) {
+  const out = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  let count = 0;
+  for (const [id, style] of Object.entries(value)) {
+    if (count >= VISUALIZER_OVERLAY_STYLES_MAX) break;
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(id)) continue;
+    if (!Number.isInteger(style) || style < 0 || style >= VISUALIZER_OVERLAY_STYLE_COUNT_MAX) continue;
+    out[id] = style;
+    count += 1;
+  }
+  return out;
+}
+
+/** The sections of the Visualizer's side panel, in its order. */
+export const VISUALIZER_PANEL_SECTIONS = Object.freeze(['scene', 'shuffle', 'fx', 'ov', 'picture']);
+
+/** The side panel's folded sections: known ids, each once, in the panel's
+ *  order. Anything else is dropped (none: every section open). */
+export function normalizeVisualizerFolded(value) {
+  if (!Array.isArray(value)) return [];
+  return VISUALIZER_PANEL_SECTIONS.filter((id) => value.includes(id));
+}
+
 function normalizeFxTiming(value) {
   if (value === 'scene') return 'scene';
   const bars = Number(value);
@@ -225,7 +272,14 @@ function normalizeFxTiming(value) {
  *    visualizerFxSet          the effects chosen by hand (ids)
  *    visualizerOverlays       overlays on (default off)
  *    visualizerOverlayShuffle the overlay shuffle picks them (default on)
- *    visualizerOverlaySet     the overlays chosen by hand (saved tokens) */
+ *    visualizerOverlaySet     the overlays chosen by hand (saved tokens)
+ *    visualizerOverlayGlow    "Extra glow" on the overlays (held; default off)
+ *    visualizerOverlayStyles  the overlays' Style picked by hand
+ *                             ({ id: index }; none: Any)
+ *    visualizerDrift          slow drift of scene and effect settings
+ *                             (drift.js; default on)
+ *    visualizerFolded         the side panel's folded sections (default
+ *                             none: every section open) */
 export function normalizeVisualizerExtras(source = {}) {
   const value = source || {};
   const bars = Number(value.visualizerShuffleBars);
@@ -248,5 +302,10 @@ export function normalizeVisualizerExtras(source = {}) {
     visualizerOverlays: value.visualizerOverlays === true,
     visualizerOverlayShuffle: value.visualizerOverlayShuffle !== false,
     visualizerOverlaySet: normalizeVisualizerOverlaySet(value.visualizerOverlaySet),
+    visualizerOverlayGlow: value.visualizerOverlayGlow === true,
+    visualizerOverlayStyles: normalizeVisualizerOverlayStyles(value.visualizerOverlayStyles),
+    // Only an explicit false turns it off.
+    visualizerDrift: value.visualizerDrift !== false,
+    visualizerFolded: normalizeVisualizerFolded(value.visualizerFolded),
   };
 }

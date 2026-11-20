@@ -8,8 +8,9 @@ import {
   normalizeVisualizerExtras, normalizeVisualizerFavourites, parseVisualizerFavourite,
 } from '../src/lib/visualizer-settings.js';
 import loadPostFx from '../src/visualizer/vendor/psychedelia/engine/post-fx-library.js';
+import loadPalettes from '../src/visualizer/vendor/psychedelia/engine/palettes.js';
 import {
-  FX_CALM_MAX, FX_COST_UNITS, FX_EXCLUDED, FX_LIVELY, FX_SYNC, FX_TABLE, fxCalmIds, fxCatalog, fxClash, fxDrawnFor, fxOrder,
+  FX_CALM_MAX, FX_COST_UNITS, FX_EXCLUDED, FX_LIVELY, FX_SYNC, FX_TABLE, fxCalmIds, fxCatalog, fxClash, fxDrawnFor, fxOrder, fxShuffleAllowed,
 } from '../src/visualizer/fx-catalog.js';
 import {
   FX_BUDGETS, FX_COST_BUDGET, FX_LINK_SOURCES, FX_RECENT_COMBOS, createFxShuffle, fxLinkViolation, fxValues,
@@ -25,9 +26,12 @@ import { createStepDown, STEP_DOWN_WINDOW_MS, STEP_DOWN_SETTLE_MS } from '../src
 import {
   favouriteEntries, favouriteFx, favouriteKey, favouritesAsDrawn, isFavourite, withFavourite,
 } from '../src/visualizer/favourites.js';
-import { FX_CALM_SCENES, SCENES } from '../src/visualizer/scenes.js';
+import {
+  ACCUMULATING_RELEASED_IDS, FX_CALM_SCENES, FX_LEFT_OUT, FX_NONE_SCENES, SCENES, sceneById,
+} from '../src/visualizer/scenes.js';
+import { sceneLooks } from '../src/visualizer/looks.js';
 import { seededRandom } from '../src/visualizer/shuffle.js';
-import { COMPILE_POLL_MS } from '../src/visualizer/scene-renderer.js';
+import { COMPILE_POLL_MS, sceneDefaults } from '../src/visualizer/scene-renderer.js';
 import { CROSSFADE_SLOW_MS, NOTES, mountVisualizer } from '../src/visualizer/index.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
 import {
@@ -40,16 +44,19 @@ import {
    their controls, favourites with effects, and the step-down taking effects
    off before quality. No GPU; fake clocks. */
 
-const { PostFxLibrary } = loadPostFx({});
-const CATALOG = fxCatalog(PostFxLibrary);
+// The library as the tab loads it: with the palettes (its Palette Map pass).
+const { PsyPalettes } = loadPalettes({});
+const { PostFxLibrary } = loadPostFx({ PsyPalettes });
+const CATALOG = fxCatalog(PostFxLibrary, PsyPalettes);
 const byId = new Map(CATALOG.map((fx) => [fx.id, fx]));
 
 /* ---------------- The catalog ---------------- */
 
-test('the catalog: every library pass but the excluded one, each with a cost class, ranges inside its params', () => {
+test('the catalog: every library pass, each with a cost class, ranges inside its params', () => {
   const names = PostFxLibrary.list().map((def) => def.name);
-  assert.equal(names.includes('palette_map'), false, 'no palettes.js: the library leaves Palette Map out');
-  assert.ok(FX_EXCLUDED.palette_map);
+  // Since slice 12 none is left out: Palette Map gets the palettes.
+  assert.ok(names.includes('palette_map'));
+  assert.deepEqual(Object.keys(FX_EXCLUDED), []);
   assert.equal(CATALOG.length, names.length);
   for (const name of names) assert.ok(FX_TABLE[name], `${name} has a row`);
   for (const id of Object.keys(FX_TABLE)) assert.ok(names.includes(id), `${id} is in the library`);
@@ -123,7 +130,8 @@ test('values are drawn across their curated ranges, not stuck on one (the audit:
       else if (Array.isArray(spec) && spec[2] === 'int') {
         const span = spec[1] - spec[0] + 1;
         if (span <= 40) assert.equal(distinct, span, `${fx.id}.${name} every integer`);
-        else assert.ok(distinct > 100, `${fx.id}.${name} spread`);
+        // (Palette Map's 71 palettes: nearly all of them.)
+        else assert.ok(distinct > Math.min(100, span * 0.9), `${fx.id}.${name} spread (${distinct} of ${span})`);
       }
       else assert.ok(distinct > 300, `${fx.id}.${name} spread (${distinct})`);
     }
@@ -657,7 +665,8 @@ test('a calm scene gets no lively effect from the shuffle and at most two; a liv
   for (const id of FX_LIVELY) assert.ok(byId.has(id), `${id} is an effect`);
   const calmIds = fxCalmIds(CATALOG);
   assert.equal(calmIds.size, CATALOG.length - FX_LIVELY.size);
-  assert.deepEqual(SCENES.filter((scene) => scene.fxCalm).map((scene) => scene.id).sort(), [...FX_CALM_SCENES].sort());
+  // (The accumulating labs are calm by their own entries: accumulating-scenes.js.)
+  assert.deepEqual(SCENES.filter((scene) => scene.fxCalm).map((scene) => scene.id).sort(), [...FX_CALM_SCENES, ...ACCUMULATING_RELEASED_IDS].sort());
   // The shuffle with a calm scene's context.
   const shuffle = createFxShuffle({ catalog: CATALOG, random: seededRandom(5) });
   for (let roll = 0; roll < 2000; roll += 1) {
@@ -714,7 +723,82 @@ test('a calm scene gets no lively effect from the shuffle and at most two; a liv
   session.destroy();
 });
 
-/* ---------------- Codex review of slice 5 ---------------- */
+test('scenes with no room left get no effects at all: the ones whose own steps reach 0.085 are fxNone (and calm); nothing is drawn on them, the panel says so', async () => {
+  const NONE = ['fractal_flame_volume_flight', 'glow_lab', 'multibrot', 'polyfold_flight', 'sierpinski'];
+  assert.deepEqual([...FX_NONE_SCENES].sort(), NONE);
+  // (The accumulating labs take no effects by their own entries.)
+  assert.deepEqual(SCENES.filter((scene) => scene.fxNone).map((scene) => scene.id).sort(), [...NONE, ...ACCUMULATING_RELEASED_IDS].sort());
+  for (const id of NONE) {
+    const entry = SCENES.find((scene) => scene.id === id);
+    assert.equal(entry.fxCalm, true, `${id} is calm too`);
+    assert.deepEqual(fxDrawnFor(entry, ['bloom', 'chromatic']), [], `${id}: none drawn`);
+  }
+  // In the tab: a set chosen by hand on Sierpinski is kept, none of it drawn.
+  const set = fxOrder(CATALOG, ['bloom', 'chromatic']);
+  const m = await mount({ settings: { visualizerScene: 'sierpinski', visualizerFx: true, visualizerFxShuffle: false, visualizerFxSet: set } });
+  const { session } = m;
+  await m.until(() => Boolean(session.fx.shuffle), 'library');
+  assert.equal(session.switcher.current, 'sierpinski');
+  m.start();
+  await m.play(CROSSFADE_SLOW_MS + 200);
+  assert.deepEqual(sorted(session.fx.combo.ids), sorted(set), 'the chosen set is kept');
+  assert.deepEqual(session.fx.chain.ids, [], 'nothing drawn');
+  assert.equal(session.fx.note.hidden, false);
+  assert.equal(session.fx.note.textContent, 'No effects are shown with this scene: it would flicker.');
+  for (const id of ['bloom', 'chromatic', 'trails']) assert.equal(session.fx.boxes.get(id).getAttribute('aria-disabled'), 'true', id);
+  session.destroy();
+});
+
+test('a calm scene may leave out single effects (FX_LEFT_OUT): Plasma never gets Bloom or Watercolour, Nebula never Bloom, from the shuffle, by hand or in the tab', async () => {
+  assert.deepEqual(FX_LEFT_OUT, {
+    plasma: ['bloom', 'watercolour'], nebula: ['bloom'], aurora: ['palette_map'], sierpinski: ['palette_map'],
+  });
+  const nebula = SCENES.find((scene) => scene.id === 'nebula');
+  assert.deepEqual(nebula.fxLeftOut, ['bloom']);
+  assert.deepEqual(fxDrawnFor(nebula, ['color_grade', 'bloom']), ['color_grade']);
+  assert.ok(!fxShuffleAllowed(nebula, CATALOG, fxCalmIds(CATALOG)).has('bloom'));
+  const plasma = SCENES.find((scene) => scene.id === 'plasma');
+  const aurora = SCENES.find((scene) => scene.id === 'aurora');
+  assert.deepEqual(aurora.fxLeftOut, ['palette_map'], 'Palette Map past the margin on Aurora');
+  assert.ok(!fxShuffleAllowed(aurora, CATALOG, fxCalmIds(CATALOG)).has('palette_map'));
+  const fire = SCENES.find((scene) => scene.id === 'fire');
+  assert.deepEqual(plasma.fxLeftOut, ['bloom', 'watercolour']);
+  assert.deepEqual(fire.fxLeftOut, []);
+  assert.deepEqual(fxDrawnFor(plasma, ['watercolour', 'bloom', 'wave']), ['wave']);
+  assert.deepEqual(fxDrawnFor(fire, ['watercolour', 'bloom']), ['watercolour', 'bloom']);
+  // The shuffle's choice: the calm ones less those left out.
+  const calmIds = fxCalmIds(CATALOG);
+  const allowed = fxShuffleAllowed(plasma, CATALOG, calmIds);
+  assert.equal(allowed.size, calmIds.size - 2);
+  assert.ok(!allowed.has('bloom') && !allowed.has('watercolour') && allowed.has('wave'));
+  assert.equal(fxShuffleAllowed(fire, CATALOG, calmIds), calmIds, 'a calm scene without any: the calm set');
+  assert.equal(fxShuffleAllowed(SCENES.find((scene) => scene.id === 'tunnel'), CATALOG, calmIds), null, 'not calm: any');
+  // A scene that is not calm but leaves one out: everything else.
+  const notCalm = fxShuffleAllowed({ fxLeftOut: ['bloom'] }, CATALOG, calmIds);
+  assert.equal(notCalm.size, CATALOG.length - 1);
+  // In the tab: shuffled on Plasma, never either.
+  const m = await mount({ settings: { visualizerScene: 'plasma', visualizerFx: true, visualizerFxIntensity: 'strong', visualizerFxTiming: 4 } });
+  const { session, controls } = m;
+  m.start();
+  await m.play(500);
+  await m.until(() => Boolean(session.fx.shuffle), 'library');
+  for (let roll = 0; roll < 30; roll += 1) {
+    click(controls.fxNow);
+    await m.play(CROSSFADE_SLOW_MS + 200);
+    // Not even chosen (a shuffled set never carries what will not be drawn).
+    const ids = [...session.fx.chain.ids, ...(session.fx.combo?.ids || [])];
+    assert.ok(!ids.includes('bloom') && !ids.includes('watercolour'), ids.join('+'));
+  }
+  // By hand: kept as chosen, not drawn, marked unavailable.
+  change(session.fx.boxes.get('watercolour'), true);
+  await m.play(CROSSFADE_SLOW_MS + 200);
+  assert.ok(session.fx.combo.ids.includes('watercolour'));
+  assert.ok(!session.fx.chain.ids.includes('watercolour'));
+  assert.equal(session.fx.boxes.get('watercolour').getAttribute('aria-disabled'), 'true');
+  session.destroy();
+});
+
+/* ---------------- Review of slice 5 ---------------- */
 
 const sorted = (ids) => [...ids].sort();
 const entryById = (id) => SCENES.find((scene) => scene.id === id);
@@ -735,14 +819,15 @@ function assertCalmRule(session, label) {
 test('the calm rule on every path: start-up settings, by hand on a calm scene, scene changes by hand and by next; the chosen set is kept and comes back; the panel marks what is left out; the star saves what is drawn', async () => {
   // fxDrawnFor itself.
   assert.deepEqual(fxDrawnFor(entryById('tunnel'), ['glitch', 'bloom', 'grain']), ['glitch', 'bloom', 'grain']);
-  assert.deepEqual(fxDrawnFor(entryById('plasma'), ['glitch', 'bloom', 'grain']), ['bloom']);
-  assert.deepEqual(fxDrawnFor(entryById('plasma'), ['bloom', 'chromatic', 'trails']), ['bloom', 'chromatic']);
+  assert.deepEqual(fxDrawnFor(entryById('plasma'), ['glitch', 'chromatic', 'grain']), ['chromatic']);
+  assert.deepEqual(fxDrawnFor(entryById('plasma'), ['chromatic', 'wave', 'trails']), ['chromatic', 'wave']);
+  assert.deepEqual(fxDrawnFor(entryById('plasma'), ['bloom', 'chromatic', 'watercolour', 'trails']), ['chromatic', 'trails'], 'Plasma leaves out Bloom and Watercolour');
   assert.deepEqual(fxDrawnFor(entryById('mandelbrot'), ['glitch', 'bloom']), ['bloom'], 'Mandelbrot: calm');
   assert.deepEqual(fxDrawnFor({ ...entryById('mandelbrot'), fxNone: true }, ['bloom']), [], 'an fxNone scene: none');
   assert.deepEqual(fxDrawnFor(undefined, ['glitch']), ['glitch'], 'no scene yet: nothing to leave out');
 
   // Start-up: a hand set with two lively effects, read back on Plasma (calm).
-  const set = fxOrder(CATALOG, ['glitch', 'bloom', 'grain']);
+  const set = fxOrder(CATALOG, ['glitch', 'chromatic', 'grain']);
   const m = await mount({ settings: { visualizerScene: 'plasma', visualizerFx: true, visualizerFxShuffle: false, visualizerFxSet: set } });
   const { session, controls } = m;
   await m.until(() => Boolean(session.fx.shuffle), 'library');
@@ -750,24 +835,25 @@ test('the calm rule on every path: start-up settings, by hand on a calm scene, s
   m.start();
   await m.play(CROSSFADE_SLOW_MS + 200);
   assert.deepEqual(sorted(session.fx.combo.ids), sorted(set), 'the chosen set is kept whole');
-  assert.deepEqual(session.fx.chain.ids, ['bloom'], 'only bloom is drawn on plasma');
+  assert.deepEqual(session.fx.chain.ids, ['chromatic'], 'only chromatic is drawn on plasma');
   assertCalmRule(session, 'start-up');
   const boxes = session.fx.boxes;
   assert.equal(boxes.get('glitch').checked, true, 'glitch stays chosen');
   assert.equal(boxes.get('glitch').getAttribute('aria-disabled'), 'true', 'and is marked unavailable');
   assert.equal(boxes.get('vhs').getAttribute('aria-disabled'), 'true', 'a lively one not chosen too');
-  assert.equal(boxes.get('bloom').getAttribute('aria-disabled'), 'false');
+  assert.equal(boxes.get('bloom').getAttribute('aria-disabled'), 'true', 'Bloom: left out on plasma');
+  assert.equal(boxes.get('wave').getAttribute('aria-disabled'), 'false');
   assert.equal(boxes.get('chromatic').getAttribute('aria-disabled'), 'false');
   assert.equal(session.fx.note.hidden, false);
-  assert.equal(session.fx.note.textContent, 'Greyed effects are not shown with this scene: it would flicker.');
-  assert.match(controls.fxLine.textContent, /^Effects: Bloom$/i, 'the line says what is drawn');
+  assert.equal(session.fx.note.textContent, 'Grayed effects are not shown with this scene: it would flicker.');
+  assert.match(controls.fxLine.textContent, /^Effects: Chromatic Aberration$/i, 'the line says what is drawn');
 
   // By hand on the calm scene: a calm one joins, a lively one is kept but not drawn.
   change(boxes.get('grain'), false);
   await m.play(CROSSFADE_SLOW_MS + 200);
-  change(boxes.get('chromatic'), true);
+  change(boxes.get('wave'), true);
   await m.play(CROSSFADE_SLOW_MS + 200);
-  assert.deepEqual(sorted(session.fx.chain.ids), ['bloom', 'chromatic']);
+  assert.deepEqual(sorted(session.fx.chain.ids), ['chromatic', 'wave']);
   assertCalmRule(session, 'by hand');
   change(boxes.get('glitch'), false);
   await m.play(CROSSFADE_SLOW_MS + 200);
@@ -802,7 +888,7 @@ test('the calm rule on every path: start-up settings, by hand on a calm scene, s
   assert.ok(chosen.includes('glitch'));
 
   // Scene changes by hand: all of it back on tunnel; filtered on aurora and
-  // on mandelbrot (calm; no scene is fxNone now).
+  // on mandelbrot (calm).
   session.sceneList.pick('tunnel');
   await m.until(() => session.switcher.current === 'tunnel', 'tunnel');
   await m.play(CROSSFADE_SLOW_MS + 200);
@@ -1299,7 +1385,7 @@ test('the chain makes no garbage per frame once linked: one drawable list, polli
   chain.destroy();
 });
 
-/* ---------------- The flash budget's shares (Codex round 3) ---------------- */
+/* ---------------- The flash budget's shares (review round 3) ---------------- */
 
 /** The longest gap between successive `times` (and from 0 to the first, and
  *  from the last to `end`). */
@@ -1702,5 +1788,31 @@ test('a calm scene coming in under effect shuffle (bar timing) judges the latest
   await m.play(CROSSFADE_SLOW_MS * 2 + 200);
   assert.deepEqual(ticked(), ['color_grade'], 'the calm choice by hand stands');
   assert.deepEqual(sorted(session.fx.chain.ids), ['color_grade']);
+  session.destroy();
+});
+
+test('favourites shuffle: a favourite whose only look is left out now shows the start look, not the look picked by hand', async () => {
+  // Mandelbrot's colour scheme 1 is left out (looks.js LOOKS_LEFT_OUT); its
+  // scheme 2 was picked by hand (visualizerLooks).
+  const m = await mount({
+    settings: {
+      visualizerScene: 'tunnel', visualizerShuffle: true, visualizerShufflePool: 'favourites', visualizerShuffleBars: 8,
+      visualizerFavourites: ['tunnel', 'mandelbrot:1'], visualizerLooks: { mandelbrot: 2 },
+    },
+  });
+  const { session } = m;
+  m.start();
+  for (let round = 0; round < 30 && session.switcher.current !== 'mandelbrot'; round += 1) await m.play(5000);
+  assert.equal(session.switcher.current, 'mandelbrot', 'shuffled to it');
+  await m.play(CROSSFADE_SLOW_MS + 200);
+  const def = session.renderer.definition;
+  const offered = sceneLooks(def);
+  assert.ok(!offered.some((look) => look.number === 1), 'look 1 left out');
+  const handPicked = offered.find((look) => look.number === 2);
+  const [name] = Object.keys(handPicked.values);
+  const start = sceneDefaults(def, sceneById('mandelbrot').defaults || null)[name];
+  assert.notEqual(handPicked.values[name], start);
+  assert.equal(session.renderer.values[name], start, 'the start look');
+  assert.equal(session.looks.mandelbrot, 2, 'the look picked by hand stays saved');
   session.destroy();
 });

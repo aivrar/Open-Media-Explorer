@@ -16,21 +16,28 @@ import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import { resolveItemArtwork } from './thumbnails.js';
-import { createOtherStreams } from './other-streams.js';
+import { createBestStreamStatus, createOtherStreams } from './other-streams.js';
 import { streamQualityLabel } from '../../lib/stream-quality.js';
 import {
   contentBadgeText, favoriteForContentView, isContentAllowed,
 } from '../../lib/content-rating.js';
+import {
+  MAX_FAVORITE_NAME_LENGTH, favoriteName, withFavoriteName, withoutFavoriteName,
+} from '../../lib/favorite-names.js';
+import { renameFavorite, resetFavoriteName } from '../../lib/favorite-rename.js';
 
 let detailReturnFocus = null;
 let detailKeyHandler = null;
 let detailArtworkAbort = null;
 let detailArtworkShown = null;
 let detailOtherStreams = null;
+let detailBestStream = null;
 
 function stopOtherStreams() {
   detailOtherStreams?.abort();
   detailOtherStreams = null;
+  detailBestStream?.destroy();
+  detailBestStream = null;
 }
 
 /** A row in "Other streams" is its own Radio Browser entry: play it and show
@@ -131,6 +138,9 @@ export function openDetail(item, options = {}) {
     return;
   }
   stopOtherStreams();
+  // A saved favorite is shown under the name the user gave it, wherever the
+  // panel was opened from (favorite-names.js).
+  if (isFavorite(item.id)) item = withFavoriteName(withoutFavoriteName(item));
   item = favoriteForContentView(item, getState().settings);
   view.detailItemId = item.id;
   if (!ui.detailPanel) {
@@ -163,6 +173,11 @@ export function openDetail(item, options = {}) {
     text: item.title,
     attrs: { id: 'library-detail-title' },
   }));
+  if (item.__favoriteName === true && item.__contentHidden !== true) {
+    ui.detailPanel.appendChild(el('p', {
+      className: 'detail-original-name', text: `Original name: ${item.originalTitle || 'Untitled'}`,
+    }));
+  }
   const meta = el('div', { className: 'detail-meta' });
   meta.appendChild(el('span', { className: 'source-badge', text: getSourceLabel(item.source) }));
   if (item.year) meta.appendChild(el('span', { text: String(item.year) }));
@@ -180,6 +195,11 @@ export function openDetail(item, options = {}) {
     meta.appendChild(el('span', { className: 'content-rating-badge', text: ratingLabel }));
   }
   ui.detailPanel.appendChild(meta);
+  // Auto (verified): what the check knows of this station, kept up to date.
+  if (item.__contentHidden !== true) {
+    detailBestStream = createBestStreamStatus(item);
+    if (detailBestStream) ui.detailPanel.appendChild(detailBestStream.node);
+  }
   if (item.tags && item.tags.length) {
     const tagsHost = el('div', { className: 'detail-meta' });
     for (const t of item.tags.slice(0, 12)) tagsHost.appendChild(el('span', { className: 'chip', text: t }));
@@ -217,10 +237,104 @@ export function openDetail(item, options = {}) {
   const otherStreams = createOtherStreams(item, { onPlay: playOtherStream });
   detailOtherStreams = otherStreams;
   if (otherStreams.button) actions.appendChild(otherStreams.button);
+  const rename = isFavorite(item.id) && item.__contentHidden !== true ? buildRename(item) : null;
+  if (rename) {
+    actions.appendChild(rename.button);
+    if (rename.reset) actions.appendChild(rename.reset);
+  }
   ui.detailPanel.appendChild(actions);
+  if (rename) ui.detailPanel.appendChild(rename.form);
   if (otherStreams.section) ui.detailPanel.appendChild(otherStreams.section);
   if (otherStreams.note) ui.detailPanel.appendChild(otherStreams.note);
   if (options.focus === true) queueMicrotask(() => closeBtn.isConnected && closeBtn.focus());
+}
+
+/** "Rename" for a saved favorite: a small form under the buttons with the
+ *  name, Save and Cancel; "Use original name" when it has a name of its own.
+ *  The panel is drawn again after a change, with focus back on Rename. */
+function buildRename(item) {
+  const button = el('button', {
+    className: 'btn', text: 'Rename',
+    attrs: { type: 'button', 'data-act': 'rename-favorite', 'aria-expanded': 'false', 'aria-controls': 'library-detail-rename-form' },
+  });
+  const reset = favoriteName(item.id)
+    ? el('button', {
+      className: 'btn', text: 'Use original name',
+      attrs: { type: 'button', 'data-act': 'reset-favorite-name', title: `Show it as "${item.originalTitle || ''}" again` },
+    })
+    : null;
+  const form = el('form', { className: 'detail-rename', attrs: { 'aria-label': 'Rename favorite', id: 'library-detail-rename-form' } });
+  form.hidden = true;
+  const label = el('label', { className: 'detail-rename-label', text: 'Name' });
+  const input = el('input', {
+    className: 'detail-rename-input',
+    attrs: {
+      type: 'text', maxlength: String(MAX_FAVORITE_NAME_LENGTH), autocomplete: 'off', spellcheck: 'false',
+      id: 'library-detail-rename', 'aria-describedby': 'library-detail-rename-hint',
+    },
+  });
+  label.setAttribute('for', 'library-detail-rename');
+  const message = el('p', { className: 'detail-rename-message', attrs: { role: 'alert' } });
+  message.hidden = true;
+  const save = el('button', { className: 'btn btn-primary', text: 'Save', attrs: { type: 'submit' } });
+  const cancel = el('button', { className: 'btn', text: 'Cancel', attrs: { type: 'button' } });
+  const row = el('div', { className: 'detail-rename-row' });
+  row.appendChild(input);
+  row.appendChild(save);
+  row.appendChild(cancel);
+  form.appendChild(label);
+  form.appendChild(row);
+  form.appendChild(message);
+  form.appendChild(el('p', {
+    className: 'detail-rename-hint',
+    attrs: { id: 'library-detail-rename-hint' },
+    text: `Shown everywhere this favorite is. Leave it empty to use the original name${item.originalTitle ? ` ("${item.originalTitle}")` : ''}.`,
+  }));
+
+  const close = () => {
+    form.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    message.hidden = true;
+    button.focus?.();
+  };
+  const redraw = () => {
+    const saved = getState().favorites.find((favorite) => favorite.id === item.id);
+    if (!saved || !ui.detailPanel) return;
+    openDetail(saved);
+    ui.detailPanel?.querySelector?.('[data-act="rename-favorite"]')?.focus?.();
+  };
+  const done = (result) => {
+    if (!result.ok) {
+      message.textContent = result.error;
+      message.hidden = false;
+      return;
+    }
+    if (result.changed) redraw();
+    else close();
+  };
+  button.addEventListener('click', () => {
+    if (!form.hidden) { close(); return; }
+    form.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    input.value = item.title || '';
+    input.focus?.();
+    input.select?.();
+  });
+  reset?.addEventListener('click', () => done(resetFavoriteName(item.id)));
+  cancel.addEventListener('click', close);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault?.();
+    done(renameFavorite(item.id, input.value));
+  });
+  // Escape closes the form, not the panel, from any of its controls.
+  const onEscape = (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    close();
+  };
+  for (const control of [input, save, cancel]) control.addEventListener('keydown', onEscape);
+  return { button, reset, form, input };
 }
 
 export function closeDetail({ preserveSelection = false } = {}) {

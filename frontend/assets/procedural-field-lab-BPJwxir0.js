@@ -1,0 +1,343 @@
+function r(o){var t=o.EffectRegistry,e=o.FractalLab;return(function(){"use strict";var a=["Phyllotaxis Sunflower","Phasor Vine","Voronoi Shimmer Plus","Quasicrystal Overlay","Moire Lattice Plus","Spirograph Field Plus","Tunnel Rings Plus","Flow fBM Wall","Lissajous Weave Plus","Sine Interference Plus"];t.register({name:"procedural_field_lab",label:"Procedural Field Lab",category:"Fractals",description:"Animated 2D procedural and form-constant fields with phyllotaxis, Voronoi, moire, phasor, tunnel, and weave modes",fractalFlight:e.metadata({family:"Procedural Field Lab",familyKey:"procedural_field_lab",modeParam:"proc_mode",modes:a,modeTokens:["MODE_PROCEDURAL_PHYLLOTAXIS","MODE_PROCEDURAL_PHASOR_VINE","MODE_PROCEDURAL_VORONOI_SHIMMER","MODE_PROCEDURAL_QUASICRYSTAL","MODE_PROCEDURAL_MOIRE_LATTICE","MODE_PROCEDURAL_SPIROGRAPH","MODE_PROCEDURAL_TUNNEL_RINGS","MODE_PROCEDURAL_FLOW_FBM","MODE_PROCEDURAL_LISSAJOUS","MODE_PROCEDURAL_SINE_INTERFERENCE"],renderCost:"light",requiredGroups:["Formula","Animation","Domain","Color"],requiredParams:["proc_mode","proc_scale","proc_detail","proc_density","proc_seed","proc_phase_speed","proc_rotation_speed","proc_warp","proc_palette"],structuralParams:["proc_mode","proc_scale","proc_detail","proc_density","proc_seed","proc_angle_bias","proc_metric"],animationParams:["proc_phase_speed","proc_rotation_speed","proc_jitter","proc_jitter_speed","proc_flow_speed","proc_zoom_pulse","proc_warp","proc_spiral_twist","proc_color_speed"],smokePresets:[e.preset("Sunflower Drift",{proc_mode:0,proc_scale:2.1,proc_detail:1.12,proc_density:5.8,proc_seed:.18,proc_angle_bias:.24,proc_phase_speed:.74,proc_rotation_speed:.42,proc_zoom_pulse:.2,proc_warp:.08,proc_palette:3,proc_glow:.92}),e.preset("Phasor Vine Bloom",{proc_mode:1,proc_scale:2.45,proc_detail:1.34,proc_density:4.8,proc_seed:.42,proc_angle_bias:.36,proc_phase_speed:.86,proc_rotation_speed:.28,proc_flow_speed:.62,proc_spiral_twist:.18,proc_palette:0}),e.preset("Voronoi Amber Cells",{proc_mode:2,proc_scale:2.75,proc_detail:1.26,proc_density:6.2,proc_seed:.31,proc_metric:1.15,proc_jitter:.72,proc_jitter_speed:.8,proc_phase_speed:.7,proc_warp:.14,proc_palette:1,proc_edge_width:.62}),e.preset("Quasicrystal Glass",{proc_mode:3,proc_scale:2.95,proc_detail:1.42,proc_density:5.4,proc_seed:.58,proc_angle_bias:-.3,proc_phase_speed:.82,proc_rotation_speed:.34,proc_warp:.12,proc_palette:4,proc_glow:.82}),e.preset("Moire Lattice Push",{proc_mode:4,proc_scale:2.55,proc_detail:1.3,proc_density:6.6,proc_seed:.64,proc_angle_bias:.44,proc_phase_speed:.66,proc_rotation_speed:.6,proc_radial_pull:.24,proc_palette:2,proc_edge_width:.54}),e.preset("Spirograph Neon Trails",{proc_mode:5,proc_scale:2.15,proc_detail:1.42,proc_density:5,proc_seed:.22,proc_phase_speed:.9,proc_rotation_speed:.52,proc_zoom_pulse:.18,proc_palette:0,proc_glow:1.22}),e.preset("Tunnel Ring Hymn",{proc_mode:6,proc_scale:2.7,proc_detail:1.24,proc_density:6.4,proc_seed:.48,proc_phase_speed:1.04,proc_rotation_speed:.44,proc_radial_pull:.54,proc_spiral_twist:.4,proc_palette:3,proc_brightness:1.12}),e.preset("Flow fBM Wall",{proc_mode:7,proc_scale:2.35,proc_detail:1.5,proc_density:5.2,proc_seed:.73,proc_phase_speed:.72,proc_flow_speed:.94,proc_warp:.36,proc_warp_frequency:2.8,proc_palette:4,proc_glow:.78}),e.preset("Lissajous Weave",{proc_mode:8,proc_scale:2.25,proc_detail:1.28,proc_density:4.8,proc_seed:.37,proc_angle_bias:-.22,proc_phase_speed:.84,proc_rotation_speed:.32,proc_warp:.1,proc_palette:2,proc_edge_width:.48}),e.preset("Sine Interference Halo",{proc_mode:9,proc_scale:2.65,proc_detail:1.36,proc_density:5.6,proc_seed:.82,proc_phase_speed:.96,proc_flow_speed:.7,proc_jitter:.34,proc_radial_pull:.18,proc_palette:1,proc_brightness:1.18})]}),params:[{name:"proc_mode",label:"Procedural Mode",group:"Formula",type:"select",options:a,default:0},{name:"proc_scale",label:"Scale",group:"Formula",min:.25,max:8,default:2.35,step:.05},{name:"proc_detail",label:"Detail",group:"Formula",min:.25,max:3,default:1.24,step:.05},{name:"proc_density",label:"Density",group:"Formula",min:1,max:10,default:5.2,step:.1},{name:"proc_seed",label:"Seed",group:"Formula",min:0,max:1,default:.27,step:.01},{name:"proc_angle_bias",label:"Angle Bias",group:"Formula",min:-1,max:1,default:.18,step:.02},{name:"proc_metric",label:"Metric Mix",group:"Formula",min:0,max:2,default:.65,step:.05},{name:"proc_phase_speed",label:"Phase Speed",group:"Animation",min:-4,max:4,default:.78,step:.05},{name:"proc_rotation_speed",label:"Rotation Speed",group:"Animation",min:-4,max:4,default:.34,step:.05},{name:"proc_jitter",label:"Jitter Amount",group:"Animation",min:0,max:1.5,default:.42,step:.02},{name:"proc_jitter_speed",label:"Jitter Speed",group:"Animation",min:-4,max:4,default:.58,step:.05},{name:"proc_flow_speed",label:"Flow Speed",group:"Animation",min:-4,max:4,default:.52,step:.05},{name:"proc_zoom_pulse",label:"Zoom Pulse",group:"Animation",min:0,max:2,default:.18,step:.05},{name:"proc_warp",label:"Warp Amount",group:"Domain",min:0,max:1.5,default:.14,step:.02},{name:"proc_warp_frequency",label:"Warp Frequency",group:"Domain",min:.4,max:8,default:2.4,step:.05},{name:"proc_radial_pull",label:"Radial Pull",group:"Domain",min:-1.5,max:1.5,default:.12,step:.02},{name:"proc_spiral_twist",label:"Spiral Twist",group:"Domain",min:-2,max:2,default:.2,step:.02},{name:"proc_palette",label:"Palette",group:"Color",type:"select",palette:!0,options:["Neon Loom","Amber Cell","Cobalt Rose","Violet Gold","Aqua Coral"],default:0},{name:"proc_color_speed",label:"Color Speed",group:"Color",min:0,max:8,default:.64,step:.05},{name:"proc_edge_width",label:"Edge Width",group:"Color",min:.2,max:2.5,default:.72,step:.05},{name:"proc_glow",label:"Glow",group:"Color",min:0,max:2.5,default:.78,step:.05},{name:"proc_brightness",label:"Brightness",group:"Color",min:.2,max:3,default:1.08,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_proc_mode;
+uniform float u_proc_scale;
+uniform float u_proc_detail;
+uniform float u_proc_density;
+uniform float u_proc_seed;
+uniform float u_proc_angle_bias;
+uniform float u_proc_metric;
+uniform float u_proc_phase_speed;
+uniform float u_proc_rotation_speed;
+uniform float u_proc_jitter;
+uniform float u_proc_jitter_speed;
+uniform float u_proc_flow_speed;
+uniform float u_proc_zoom_pulse;
+uniform float u_proc_warp;
+uniform float u_proc_warp_frequency;
+uniform float u_proc_radial_pull;
+uniform float u_proc_spiral_twist;
+uniform float u_proc_palette;
+uniform float u_proc_color_speed;
+uniform float u_proc_edge_width;
+uniform float u_proc_glow;
+uniform float u_proc_brightness;
+
+// MODE_PROCEDURAL_PHYLLOTAXIS MODE_PROCEDURAL_PHASOR_VINE MODE_PROCEDURAL_VORONOI_SHIMMER
+// MODE_PROCEDURAL_QUASICRYSTAL MODE_PROCEDURAL_MOIRE_LATTICE MODE_PROCEDURAL_SPIROGRAPH
+// MODE_PROCEDURAL_TUNNEL_RINGS MODE_PROCEDURAL_FLOW_FBM MODE_PROCEDURAL_LISSAJOUS
+// MODE_PROCEDURAL_SINE_INTERFERENCE
+
+struct ProcHit {
+    float value;
+    float edge;
+    float phaseValue;
+    float mask;
+};
+
+float tau() { return 6.28318530718; }
+
+float procMode() {
+    return clamp(floor(u_proc_mode + 0.5), 0.0, 9.0);
+}
+
+float procPhase() {
+    return u_time * u_proc_phase_speed + seedPhase() * 0.13 + u_proc_seed * tau();
+}
+
+float hash11(float n) {
+    return fract(sin(n * 127.1 + u_proc_seed * 311.7) * 43758.5453123);
+}
+
+vec2 hash22(vec2 p) {
+    vec2 q = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return fract(sin(q + u_proc_seed * vec2(17.7, 43.3)) * 43758.5453);
+}
+
+vec3 procPalette(float x, float pal) {
+    x = fract(x);
+    if (pal > 4.5) return psyLutLinear(x);
+    if (pal < 0.5) return neon(x);
+    if (pal < 1.5) return palette(x, vec3(0.16,0.09,0.03), vec3(0.74,0.42,0.14), vec3(1.00,0.68,0.26), vec3(0.04,0.19,0.40));
+    if (pal < 2.5) return palette(x, vec3(0.02,0.11,0.25), vec3(0.26,0.46,0.84), vec3(0.96,0.38,0.54), vec3(0.10,0.40,0.63));
+    if (pal < 3.5) return palette(x, vec3(0.19,0.06,0.32), vec3(0.58,0.32,0.68), vec3(0.95,0.70,0.24), vec3(0.08,0.30,0.60));
+    return palette(x, vec3(0.04,0.20,0.22), vec3(0.24,0.74,0.70), vec3(1.00,0.45,0.36), vec3(0.09,0.38,0.64));
+}
+
+float aaLine(float d, float width) {
+    float w = max(width * (0.010 + 0.004 * fwidth(d)), 0.002);
+    return exp(-abs(d) / w);
+}
+
+float metricDistance(vec2 d) {
+    float euclid = length(d);
+    float manhattan = abs(d.x) + abs(d.y);
+    float cheb = max(abs(d.x), abs(d.y));
+    float a = clamp(u_proc_metric, 0.0, 2.0);
+    float first = mix(euclid, manhattan * 0.72, smoothstep(0.0, 1.0, a));
+    return mix(first, cheb * 1.08, smoothstep(1.0, 2.0, a));
+}
+
+ProcHit packProc(float value, float edge, float phaseValue, float mask) {
+    return ProcHit(value, clamp(edge, 0.0, 6.0), phaseValue, clamp(mask, 0.0, 5.0));
+}
+
+vec2 warpProcDomain(vec2 p, float t) {
+    float r = length(p);
+    float a = atan(p.y, p.x);
+    float radial = u_proc_radial_pull * 0.18 * sin(r * (2.0 + u_proc_density * 0.4) - t * 0.34);
+    p *= 1.0 + radial;
+    p = rot2(u_proc_spiral_twist * 0.22 * sin(r * (1.7 + u_proc_detail) - t * 0.28)) * p;
+    vec2 n = vec2(
+        snoise(vec3(p * u_proc_warp_frequency, t * 0.10 * u_proc_flow_speed)),
+        snoise(vec3(p.yx * (u_proc_warp_frequency * 1.13), t * 0.12 * u_proc_flow_speed + 9.3))
+    );
+    p += n * (0.12 * u_proc_warp);
+    p += vec2(cos(a + t * 0.08), sin(a - t * 0.07)) * (0.035 * u_proc_radial_pull);
+    return p;
+}
+
+ProcHit phyllotaxisField(vec2 p, float t) {
+    float count = clamp(floor(28.0 + u_proc_density * 8.0), 24.0, 96.0);
+    float golden = 2.39996323 + u_proc_angle_bias * 0.18;
+    float rot = t * (0.18 + 0.18 * u_proc_rotation_speed);
+    float dotSum = 0.0;
+    float ringSum = 0.0;
+    float minD = 9.0;
+    for (int i = 0; i < 96; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i) + 0.5;
+        float q = fi / count;
+        float r = sqrt(q) * (1.38 + u_proc_detail * 0.16);
+        float a = fi * golden + rot + sin(t * 0.07 + fi * 0.11) * u_proc_jitter * 0.018;
+        vec2 seed = vec2(cos(a), sin(a)) * r;
+        float d = length(p - seed);
+        float size = 0.048 + 0.030 * (1.0 - q) + 0.010 * u_proc_detail;
+        float dotGlow = exp(-(d * d) / max(size * size, 0.00001));
+        dotSum += dotGlow * (0.55 + 0.45 * sin(fi * 0.31 + t));
+        ringSum += aaLine(d - size * 0.72, u_proc_edge_width);
+        minD = min(minD, d);
+    }
+    float value = dotSum / max(count * 0.10, 1.0);
+    float edge = ringSum / max(count * 0.08, 1.0) + aaLine(minD, u_proc_edge_width);
+    return packProc(value, edge, atan(p.y, p.x) + value, value + edge);
+}
+
+ProcHit phasorVineField(vec2 p, float t) {
+    float count = clamp(floor(7.0 + u_proc_density * 1.4), 6.0, 20.0);
+    float value = 0.0;
+    float edge = 0.0;
+    vec2 q = p;
+    for (int i = 0; i < 20; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        float a = fi * 0.83 + u_proc_angle_bias * 1.4 + t * (0.08 + 0.015 * fi);
+        vec2 dir = vec2(cos(a), sin(a));
+        float wave = dot(q, dir) * (1.8 + u_proc_detail * 1.2 + fi * 0.08) + sin(t * 0.23 + fi) * u_proc_jitter;
+        float vine = sin(wave + sin(wave * 0.37 + t) * u_proc_detail);
+        value += vine / count;
+        edge += aaLine(vine, u_proc_edge_width) * (0.8 + 0.2 * sin(fi + t));
+        q += dir.yx * vec2(1.0, -1.0) * (0.015 * u_proc_flow_speed);
+    }
+    return packProc(value, edge / count, atan(q.y, q.x) + value, abs(value) + edge / count);
+}
+
+ProcHit voronoiField(vec2 p, float t) {
+    vec2 q = p * (1.6 + u_proc_density * 0.45);
+    vec2 cell = floor(q);
+    vec2 fracPart = fract(q);
+    float nearest = 9.0;
+    float second = 9.0;
+    vec2 nearestId = vec2(0.0);
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 g = vec2(float(x), float(y));
+            vec2 id = cell + g;
+            vec2 rnd = hash22(id);
+            vec2 jitter = sin((rnd * tau()) + t * u_proc_jitter_speed + id.yx) * (0.18 + 0.36 * u_proc_jitter);
+            vec2 site = g + rnd - fracPart + jitter;
+            float d = metricDistance(site);
+            if (d < nearest) {
+                second = nearest;
+                nearest = d;
+                nearestId = id;
+            } else if (d < second) {
+                second = d;
+            }
+        }
+    }
+    float edge = exp(-abs(second - nearest) * (6.0 + 8.0 / max(u_proc_edge_width, 0.1)));
+    float value = 1.0 - smoothstep(0.05, 0.92, nearest);
+    float ph = hash11(nearestId.x * 17.0 + nearestId.y * 41.0) + nearest * 0.4;
+    return packProc(value, edge, ph * tau(), value + edge);
+}
+
+ProcHit quasicrystalField(vec2 p, float t) {
+    float count = clamp(floor(5.0 + u_proc_density * 1.1), 5.0, 16.0);
+    float sum = 0.0;
+    float edge = 0.0;
+    vec2 grad = vec2(0.0);
+    for (int i = 0; i < 16; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        float a = tau() * fi / count + u_proc_angle_bias * 0.6 + sin(t * 0.09 + fi) * 0.05 * u_proc_rotation_speed;
+        vec2 dir = vec2(cos(a), sin(a));
+        float wave = cos(dot(p, dir) * (u_proc_density + u_proc_detail * 1.8) + t * (0.48 + fi * 0.025));
+        sum += wave;
+        grad += dir * sin(dot(p, dir) * (2.0 + u_proc_density) + t);
+        edge += aaLine(wave, u_proc_edge_width);
+    }
+    float value = sum / count;
+    return packProc(value, edge / count, atan(grad.y, grad.x), abs(value) + edge / count);
+}
+
+ProcHit moireField(vec2 p, float t) {
+    float freq = 3.0 + u_proc_density * 1.4;
+    float angle = u_proc_angle_bias * 0.9 + t * 0.08 * u_proc_rotation_speed;
+    vec2 a = rot2(angle) * p;
+    vec2 b = rot2(-angle * 0.73 + 0.35 + u_proc_seed) * (p * (1.0 + 0.035 * u_proc_detail));
+    float s1 = sin((a.x + sin(a.y * 0.7 + t * 0.2) * 0.06) * freq);
+    float s2 = sin((b.y + cos(b.x * 0.8 - t * 0.16) * 0.06) * (freq * (1.02 + 0.03 * u_proc_metric)));
+    float lattice = sin((a.x + a.y) * freq * 0.72 + t * 0.42);
+    float value = s1 * s2 + lattice * 0.38;
+    float edge = aaLine(s1, u_proc_edge_width) + aaLine(s2, u_proc_edge_width) + aaLine(lattice, u_proc_edge_width) * 0.5;
+    return packProc(value, edge * 0.38, atan(p.y, p.x) + value, abs(value) + edge * 0.2);
+}
+
+ProcHit spirographField(vec2 p, float t) {
+    float R = 0.74 + 0.08 * floor(u_proc_density);
+    float r = 0.18 + 0.035 * floor(2.0 + u_proc_detail * 4.0 + u_proc_seed * 3.0);
+    float d = 0.32 + 0.16 * u_proc_detail + 0.04 * sin(u_proc_seed * tau());
+    float minD = 8.0;
+    float trail = 0.0;
+    for (int i = 0; i < 96; i++) {
+        float fi = float(i) / 95.0;
+        float a = fi * tau() * (2.0 + floor(u_proc_density * 0.55)) + t * (0.25 + 0.08 * u_proc_rotation_speed);
+        float k = (R - r) / max(r, 0.02);
+        vec2 pt = vec2(
+            (R - r) * cos(a) + d * cos(k * a + u_proc_angle_bias),
+            (R - r) * sin(a) - d * sin(k * a + u_proc_angle_bias)
+        );
+        pt *= 0.78 / max(R + d, 0.1);
+        float distToCurve = length(p - pt);
+        minD = min(minD, distToCurve);
+        trail += exp(-distToCurve * (38.0 + u_proc_detail * 18.0)) * (0.55 + 0.45 * sin(fi * 21.0 + t));
+    }
+    float edge = exp(-minD * (40.0 + 18.0 / max(u_proc_edge_width, 0.1)));
+    return packProc(trail * 0.035, edge, atan(p.y, p.x) + trail * 0.03, trail * 0.04 + edge);
+}
+
+ProcHit tunnelRingsField(vec2 p, float t) {
+    float r = max(length(p), 0.0001);
+    float a = atan(p.y, p.x);
+    float tunnel = log(r) * (2.0 + u_proc_density * 0.52) - t * (0.72 + 0.18 * u_proc_flow_speed);
+    float spokes = a * (4.0 + floor(u_proc_density)) + sin(log(r) * u_proc_detail + t) * u_proc_spiral_twist;
+    float rings = sin(tunnel);
+    float radial = sin(spokes);
+    float value = rings + radial * 0.58 + sin((tunnel + spokes) * 0.45) * 0.35;
+    float edge = aaLine(rings, u_proc_edge_width) + aaLine(radial, u_proc_edge_width) * 0.7;
+    return packProc(value, edge * 0.42, a + tunnel * 0.08, abs(value) + edge * 0.2);
+}
+
+float fbm(vec2 p, float t) {
+    float value = 0.0;
+    float amp = 0.52;
+    vec2 q = p;
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        value += amp * snoise(vec3(q, t * (0.08 + fi * 0.015)));
+        q = rot2(0.55 + u_proc_angle_bias * 0.2) * q * (1.72 + 0.06 * u_proc_detail) + vec2(2.7, -1.9);
+        amp *= 0.52;
+    }
+    return value;
+}
+
+ProcHit flowFbmField(vec2 p, float t) {
+    vec2 q = p;
+    float flow = fbm(q * (1.0 + u_proc_density * 0.18), t * u_proc_flow_speed);
+    q += vec2(flow, fbm(q.yx * 1.13 + 4.0, t * u_proc_flow_speed + 3.1)) * (0.36 + 0.14 * u_proc_jitter);
+    float value = fbm(q * (1.4 + u_proc_detail), t * 0.9);
+    float veins = sin((value + q.x * 0.8 - q.y * 0.3) * (4.0 + u_proc_density) + t * 0.45);
+    float edge = aaLine(veins, u_proc_edge_width) + aaLine(value, u_proc_edge_width) * 0.45;
+    return packProc(value + veins * 0.42, edge * 0.5, value * tau(), abs(value) + edge * 0.2);
+}
+
+ProcHit lissajousField(vec2 p, float t) {
+    float ax = 2.0 + floor(mod(u_proc_density + u_proc_seed * 5.0, 7.0));
+    float ay = 3.0 + floor(mod(u_proc_density * 1.3 + u_proc_detail * 3.0, 8.0));
+    float minD = 8.0;
+    float accum = 0.0;
+    float phase = t * 0.22 + u_proc_angle_bias * tau();
+    for (int i = 0; i < 96; i++) {
+        float fi = float(i) / 95.0;
+        float a = fi * tau();
+        vec2 pt = vec2(sin(ax * a + phase), sin(ay * a + phase * 0.73 + u_proc_seed * tau())) * 0.82;
+        pt = rot2(t * 0.045 * u_proc_rotation_speed) * pt;
+        float d = length(p - pt);
+        minD = min(minD, d);
+        accum += exp(-d * (34.0 + 8.0 * u_proc_detail));
+    }
+    float weave = sin(p.x * ax * 2.4 + t) * sin(p.y * ay * 2.4 - t * 0.8);
+    float edge = exp(-minD * (38.0 + 16.0 / max(u_proc_edge_width, 0.1))) + aaLine(weave, u_proc_edge_width) * 0.35;
+    return packProc(accum * 0.035 + weave * 0.32, edge, atan(p.y, p.x) + accum * 0.02, accum * 0.05 + edge);
+}
+
+ProcHit sineInterferenceField(vec2 p, float t) {
+    float count = clamp(floor(3.0 + u_proc_density * 1.3), 4.0, 16.0);
+    float value = 0.0;
+    float edge = 0.0;
+    vec2 drift = vec2(cos(t * 0.16), sin(t * 0.13)) * (0.10 * u_proc_jitter);
+    for (int i = 0; i < 16; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        float a = tau() * fi / count + u_proc_seed * tau() + sin(t * 0.08 + fi) * 0.20 * u_proc_rotation_speed;
+        vec2 src = vec2(cos(a), sin(a)) * (0.45 + 0.18 * sin(fi * 1.7 + u_proc_angle_bias)) + drift;
+        float wave = sin(length(p - src) * (5.0 + u_proc_detail * 2.4) - t * (0.66 + 0.04 * fi));
+        value += wave / count;
+        edge += aaLine(wave, u_proc_edge_width) / count;
+    }
+    return packProc(value, edge, value * tau() + atan(p.y, p.x), abs(value) + edge);
+}
+
+ProcHit fieldForMode(vec2 p, float t) {
+    float m = procMode();
+    if (m < 0.5) return phyllotaxisField(p, t);
+    if (m < 1.5) return phasorVineField(p, t);
+    if (m < 2.5) return voronoiField(p, t);
+    if (m < 3.5) return quasicrystalField(p, t);
+    if (m < 4.5) return moireField(p, t);
+    if (m < 5.5) return spirographField(p, t);
+    if (m < 6.5) return tunnelRingsField(p, t);
+    if (m < 7.5) return flowFbmField(p, t);
+    if (m < 8.5) return lissajousField(p, t);
+    return sineInterferenceField(p, t);
+}
+
+vec3 colorize(ProcHit hit, vec2 p, float t) {
+    float colorValue = hit.phaseValue * 0.15915494 + hit.value * 0.22 + t * u_proc_color_speed * 0.035;
+    vec3 col = procPalette(colorValue, u_proc_palette);
+    float line = clamp(hit.edge * (1.3 / max(u_proc_edge_width, 0.15)), 0.0, 1.8);
+    float body = smoothstep(0.03, 1.25, hit.mask);
+    col *= 0.38 + body * 0.56 + line * 0.28;
+    col += procPalette(colorValue + 0.16 + line * 0.04, u_proc_palette) * line * u_proc_glow * 0.34;
+    col += procPalette(length(p) * 0.14 - t * 0.018, u_proc_palette) * u_proc_glow * 0.05;
+    col *= u_proc_brightness;
+    return psyGamma(psyTonemap(col));
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+    float t = procPhase();
+    float globalZoom = psyViewZoom(u_time);
+    float pulse = 1.0 + u_proc_zoom_pulse * 0.14 * sin(u_time * (0.42 + abs(u_proc_phase_speed) * 0.08) + u_proc_seed * tau());
+    vec2 p = uv * max(u_proc_scale, 0.05) * pulse / max(globalZoom, 0.05);
+    p = rot2(u_global_rotation + u_time * u_proc_rotation_speed * 0.08) * p;
+    p = warpProcDomain(p, t);
+
+    ProcHit hit = fieldForMode(p, t);
+    vec3 col = colorize(hit, p, t);
+    float vignette = smoothstep(1.82, 0.18, length(uv));
+    FRAG_OUT = vec4(col * (0.72 + 0.28 * vignette), 1.0);
+}
+`})})(),{}}export{r as default};

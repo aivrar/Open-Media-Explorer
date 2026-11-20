@@ -50,7 +50,7 @@ export function createHud({
   const prev = button('prev', 'Previous scene', MARKS.prev);
   const next = button('next', 'Next scene', MARKS.next);
   const shuffle = button('shuffle', 'Shuffle scenes', MARKS.shuffle, { 'aria-pressed': 'false' });
-  const star = button('star', 'Add to favourites', MARKS.starOff, { 'aria-pressed': 'false' });
+  const star = button('star', 'Add to favorites', MARKS.starOff, { 'aria-pressed': 'false' });
   const panel = button('panel', 'Visualizer settings', MARKS.panel, { 'aria-expanded': 'false', 'aria-controls': 'viz-panel' });
   element.append(prev, next, shuffle, star, panel);
   element.hidden = true; // until setActive(true)
@@ -142,7 +142,7 @@ export function createHud({
     setStar(on, enabled = true) {
       star.setAttribute('aria-pressed', on ? 'true' : 'false');
       star.textContent = on ? MARKS.starOn : MARKS.starOff;
-      const label = on ? 'Remove from favourites' : 'Add to favourites';
+      const label = on ? 'Remove from favorites' : 'Add to favorites';
       star.setAttribute('aria-label', label);
       star.setAttribute('title', label);
       star.disabled = !enabled;

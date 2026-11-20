@@ -33,6 +33,21 @@
  *             (drawn on top, as in Psychedelia) always
  *   under     it may go under the effects (most can)
  *   shuffle   the overlay shuffle may pick it (false: by hand only)
+ *   moods     (optional) the moods (mood.js) in which the shuffle may pick
+ *             it; by hand it can be chosen in any
+ *   anchored  (optional) drawn against the screen's edges or its horizontal
+ *             lines (a frame, bars, rows, lights hung from an edge): the
+ *             sheet holding it never moves (overlay-motion.js): Stage
+ *             Lights and Lightning (hung from an edge; the sky at the top),
+ *             Matrix Rain (columns from the top edge, upright glyphs),
+ *             Vignette, Scanlines, Cinematic's bars, Neon Frame, Spectrum
+ *             (on an edge or the middle line) and Contour Lines (level rows
+ *             across, like scanlines)
+ *   calmPlain (optional) on a calm scene (scenes.js fxCalm) drawn plain on
+ *             top only, never blended in
+ *   tintFloor (optional) blended in with "Scene colours", the least
+ *             saturation the tint may leave it (fx-chain.js): a white or
+ *             grey part of the scene never turns it neutral
  *   pins      settings held at one value whatever chose it (light rules)
  *   auto      Psychedelia's "Auto" beat settings, as there (sync on a hit)
  *   ranges    param -> [lo, hi] | [lo, hi, 'int'] | { pick: [...] } for the
@@ -45,19 +60,34 @@
  * Psychedelia's Studio sends).
  */
 
+import { OVERLAY_NEW_PATTERNS_RELEASED } from './overlay-patterns.js';
+
+/** Held: two more blend-ins, both calm by construction (fx-chain.js
+ *  OVERLAY_BLEND_SRC): Lighten (each channel the brighter of the scene and
+ *  the overlay: never more light than Screen adds) and Colour (the overlay's
+ *  hue and saturation on the scene's own luminance: no change of light at
+ *  all). Added after the others; nothing renumbered. PROPOSED. */
+export const OVERLAY_EXTRA_BLENDS_RELEASED = false;
+export const OVERLAY_EXTRA_BLENDS = Object.freeze(['lighten', 'colour']);
+
 /** How the overlay is put on the picture. 'add' is Psychedelia's (the canvas
  *  over the picture; its shapes add light). The others blend it into the
  *  picture on the graphics card (fx-chain.js OVERLAY_BLEND_SRC). */
-export const OVERLAY_BLENDS = Object.freeze(['add', 'screen', 'multiply', 'soft', 'difference']);
+export const OVERLAY_BLENDS = Object.freeze([
+  'add', 'screen', 'multiply', 'soft', 'difference', ...(OVERLAY_EXTRA_BLENDS_RELEASED ? OVERLAY_EXTRA_BLENDS : []),
+]);
 export const OVERLAY_BLEND_LABELS = Object.freeze({
-  add: 'Add', screen: 'Screen', multiply: 'Multiply', soft: 'Soft light', difference: 'Difference',
+  add: 'Add', screen: 'Screen', multiply: 'Multiply', soft: 'Soft light', difference: 'Difference', lighten: 'Lighten', colour: 'Color',
 });
 /** Scene shapes the overlay: shown only in the scene's bright or dark areas. */
 export const OVERLAY_MASKS = Object.freeze(['none', 'bright', 'dark']);
 export const OVERLAY_MASK_LABELS = Object.freeze({ none: 'Everywhere', bright: 'In bright areas', dark: 'In dark areas' });
 
 const ALL = OVERLAY_BLENDS;
-const SOFT = Object.freeze(['add', 'screen', 'soft']);
+const SOFT = Object.freeze(['add', 'screen', 'soft', ...(OVERLAY_EXTRA_BLENDS_RELEASED ? OVERLAY_EXTRA_BLENDS : [])]);
+/** Strobe under "Scene colours": at least this saturation (its own is about
+ *  0.82), so over white it stays a colour, never a white flash. */
+export const STROBE_TINT_FLOOR = 0.6;
 const ADD_ONLY = Object.freeze(['add']);
 /** Psychedelia's sync choices (its SYNC_TYPES): 1 kick, 2 snare, 4 beat, 5 bar. */
 const HITS = Object.freeze({ pick: [1, 2, 4, 5] });
@@ -65,6 +95,24 @@ const PALETTE = Object.freeze({
   pick: ['#ff2a6d', '#05d9e8', '#33e0ff', '#ff4fb0', '#b07cff', '#ffd27a', '#7aff9e', '#ff9a3c', '#ffffff', '#6f8bff'],
 });
 const COLOR_MODE = Object.freeze({ pick: [0, 1, 2] });
+
+/** Held: three more of ours (overlay-patterns.js HELD_OVERLAY_PATTERNS),
+ *  steady and calm: the soft blends only. Costs PROPOSED (light, as the
+ *  others of ours), to be measured. */
+export const HELD_OVERLAY_ROWS = Object.freeze({
+  ripples: {
+    label: 'Ripples', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
+    pins: {}, auto: {}, ranges: { size: [0.5, 1], speed: [0.4, 1.4] },
+  },
+  fireflies: {
+    label: 'Fireflies', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
+    pins: {}, auto: {}, ranges: { size: [0.4, 1], speed: [0.4, 1.4] },
+  },
+  orbits: {
+    label: 'Orbits', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
+    pins: {}, auto: {}, ranges: { size: [0.5, 1], speed: [0.4, 1.4] },
+  },
+});
 
 export const OVERLAY_TABLE = Object.freeze({
   /* ---- Light Show (Psychedelia) ---- */
@@ -81,7 +129,7 @@ export const OVERLAY_TABLE = Object.freeze({
     },
   },
   spotlights: {
-    label: 'Stage Lights', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true,
+    label: 'Stage Lights', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true, anchored: true,
     pins: {},
     auto: { spot_sync: 4 },
     ranges: {
@@ -92,7 +140,7 @@ export const OVERLAY_TABLE = Object.freeze({
   lightning: {
     // A sky flash lights the whole picture: kept to Add and Screen, low, and
     // left to a choice by hand (as Psychedelia keeps it out of its shuffle).
-    label: 'Lightning', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: Object.freeze(['add', 'screen']), under: true, shuffle: false,
+    label: 'Lightning', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: Object.freeze(['add', 'screen']), under: true, shuffle: false, anchored: true,
     pins: { bolt_flash: 0.2 },
     auto: { bolt_sync: 2 },
     ranges: { bolt_sync: { pick: [1, 2, 5] } },
@@ -169,7 +217,7 @@ export const OVERLAY_TABLE = Object.freeze({
     },
   },
   frame: {
-    label: 'Neon Frame', source: 'psychedelia', category: 'Shapes', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
+    label: 'Neon Frame', source: 'psychedelia', category: 'Shapes', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true, anchored: true,
     pins: {},
     auto: {},
     ranges: {
@@ -203,7 +251,7 @@ export const OVERLAY_TABLE = Object.freeze({
     },
   },
   matrix: {
-    label: 'Matrix Rain', source: 'psychedelia', category: 'Atmosphere', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true,
+    label: 'Matrix Rain', source: 'psychedelia', category: 'Atmosphere', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true, anchored: true,
     // Darken Behind would lay a black veil over the whole picture.
     pins: { mx_dim: 0, mx_glow: 0 },
     auto: { mx_sync: 1 },
@@ -213,14 +261,14 @@ export const OVERLAY_TABLE = Object.freeze({
     },
   },
   vignette: {
-    label: 'Vignette', source: 'psychedelia', category: 'Atmosphere', cost: 'light', flash: 'steady', blends: ADD_ONLY, under: true, shuffle: true,
+    label: 'Vignette', source: 'psychedelia', category: 'Atmosphere', cost: 'light', flash: 'steady', blends: ADD_ONLY, under: true, shuffle: true, anchored: true,
     pins: {},
     auto: {},
     ranges: { vignette_strength: [0.3, 0.6], vignette_size: [0.15, 0.35], vignette_shape: { pick: [0, 1] } },
   },
   scanlines: {
     // Lines scrolled fast shimmer at 15 fps: held to a slow drift.
-    label: 'Scanlines', source: 'psychedelia', category: 'Atmosphere', cost: 'light', flash: 'steady', blends: ADD_ONLY, under: true, shuffle: true,
+    label: 'Scanlines', source: 'psychedelia', category: 'Atmosphere', cost: 'light', flash: 'steady', blends: ADD_ONLY, under: true, shuffle: true, anchored: true,
     pins: {},
     auto: {},
     ranges: { scanline_density: [1, 3, 'int'], scanline_opacity: [0.1, 0.25], scanline_speed: [-12, 12], scanline_orientation: { pick: [0, 1, 2] } },
@@ -228,7 +276,7 @@ export const OVERLAY_TABLE = Object.freeze({
   cinematic: {
     // Letterbox bars and a warm film burn on the bar; the dip to black and
     // the projector flicker change the whole picture's light: pinned off.
-    label: 'Cinematic', source: 'psychedelia', category: 'Atmosphere', cost: 'light', flash: 'trigger', blends: ADD_ONLY, under: false, shuffle: true,
+    label: 'Cinematic', source: 'psychedelia', category: 'Atmosphere', cost: 'light', flash: 'trigger', blends: ADD_ONLY, under: false, shuffle: true, anchored: true,
     pins: { cn_dip: 0, cn_flicker: 0, cn_burn: 0.35 },
     auto: { cn_burn_sync: 5 },
     ranges: { cn_aspect: { pick: [1, 2, 3, 4] }, cn_burn_sync: { pick: [5] } },
@@ -242,7 +290,7 @@ export const OVERLAY_TABLE = Object.freeze({
     // Voronoi, Starfield and Islamic Stars over plain, every mode over and
     // under, the masks, tint and bend (0.064 on Plasma, whose own steps are
     // 0.062).
-    label: 'Spectrum', source: 'psychedelia', category: 'Audio', cost: 'light', flash: 'steady', blends: ALL, under: true, shuffle: true,
+    label: 'Spectrum', source: 'psychedelia', category: 'Audio', cost: 'light', flash: 'steady', blends: ALL, under: true, shuffle: true, anchored: true,
     pins: { spectrum_smoothing: 0.75, spectrum_glow: 0 },
     auto: {},
     ranges: {
@@ -266,7 +314,7 @@ export const OVERLAY_TABLE = Object.freeze({
   contours: {
     // Medium: its halo (OVERLAY_HALO) takes it to about 1.6 ms a frame on
     // Medium and 1.8 on High (0.8 to 0.9 without).
-    label: 'Contour Lines', source: 'ours', category: 'Ours', cost: 'medium', flash: 'steady', blends: ALL, under: true, shuffle: true,
+    label: 'Contour Lines', source: 'ours', category: 'Ours', cost: 'medium', flash: 'steady', blends: ALL, under: true, shuffle: true, anchored: true,
     pins: {}, auto: {}, ranges: { size: [0.4, 1], speed: [0.4, 1.4] },
   },
   starburst: {
@@ -281,11 +329,31 @@ export const OVERLAY_TABLE = Object.freeze({
     label: 'Harmonograph', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: ALL, under: true, shuffle: true,
     pins: {}, auto: {}, ranges: { size: [0.5, 1], speed: [0.4, 1.4] },
   },
+  color_strobe: {
+    // Ours (overlay-patterns.js strobe): a soft coloured pulse on a hit, picked
+    // by the shuffle only while the music is energetic. At its strongest
+    // (size 1, the green colour, on the kick, peak STROBE_PEAK 0.4), 40 s of
+    // hits on each overlay check scene at 752 x 398, every style: plain on
+    // top, and Add under, Screen and Soft over and under Bloom: its largest
+    // step 0.013 over the scene's own (Islamic Stars, bloom style, plain;
+    // 0.027 in all), at most 0.009 with Bloom; Plasma (calm, plain only) no
+    // step above its own 0.079. About one hit a second let through the gate
+    // (39 of 79), never more than the limiter's three large changes a
+    // second. Light: 0.3 to 0.6 ms a frame on Medium and High, as Rings.
+    label: 'Strobe', source: 'ours', category: 'Light show', cost: 'light', flash: 'trigger', blends: SOFT, under: true, shuffle: true,
+    moods: Object.freeze(['energetic']), calmPlain: true, tintFloor: STROBE_TINT_FLOOR,
+    // Its `style` values by name, for the Style choice in the tab (all four
+    // were in the measurement above).
+    styles: Object.freeze(['From the center', 'From the edges', 'Sweep', 'Halves']),
+    pins: {}, auto: {},
+    ranges: { size: [0.4, 1], style: { pick: [0, 1, 2, 3] }, sync: HITS, color: { pick: [0, 1, 2, 3, 4, 5] } },
+  },
+  ...(OVERLAY_NEW_PATTERNS_RELEASED ? HELD_OVERLAY_ROWS : {}),
 });
 
 /** Psychedelia overlays not offered, and why. */
 export const OVERLAY_EXCLUDED = Object.freeze({
-  strobe: 'strobes the whole picture by design (its job is full-screen flashes several times a second); no setting tames it',
+  strobe: 'flashes the whole picture by design (full-screen flashes several times a second; no setting tames it): replaced by ours, color_strobe, a soft coloured pulse',
   text: 'shows words the user types (its default is Psychedelia\'s name); needs a text box, not in this slice',
   lyrics: 'a sequence of the user\'s own lines; needs a text box, not in this slice',
   image_layer: 'the user\'s own picture file; the settings cannot hold a file, not in this slice',
@@ -343,6 +411,23 @@ export const OVERLAY_GLOW_PARAMS = Object.freeze({
 });
 export const OVERLAY_GLOW_SCALE = Object.freeze({ high: 0, medium: 0, low: 0 });
 
+/** Held: "Extra glow", a switch in the panel (off by default). Every sheet
+ *  without a line overlay's halo (OVERLAY_HALO_IDS) gets the same halo pass
+ *  (overlay-layer.js halo), at `near` and `wide` per quality (null: none).
+ *  It moves light rather than adding it: before the glow is laid on, the
+ *  sheet itself is faded by the glow's share (near x (1 + wide)), so the
+ *  sheet's mean light stays as it was (up to the glow spreading it onto
+ *  nearby pixels). Its cost: the halo's, about 0.6 to 1.5 ms a frame, to be
+ *  measured. Numbers PROPOSED. */
+export const OVERLAY_EXTRA_GLOW_RELEASED = false;
+/** The glow's share of the sheet's light (and what the sheet gives up). */
+export const extraGlowShare = (look) => (look ? look.near * (1 + (look.wide || 0)) : 0);
+export const OVERLAY_EXTRA_GLOW = Object.freeze({
+  high: Object.freeze({ near: 0.4, wide: 0.5 }),
+  medium: Object.freeze({ near: 0.4, wide: 0.5 }),
+  low: null,
+});
+
 /** A soft halo for thin-line overlays (their glow without a shadow blur or
  *  a wide line, both drawn on the processor): when a sheet holds one of
  *  OVERLAY_HALO_IDS, the sheet as drawn is shrunk by halvings on the graphics
@@ -378,6 +463,48 @@ export const OVERLAY_LINE_PARAMS = Object.freeze({
   frame: Object.freeze(['frame_thickness']),
   spectrum: Object.freeze(['spectrum_thickness']),
 });
+
+/** Held: Psychedelia's overlay sizes in pixels follow the picture's height
+ *  by the rule our own patterns use (overlay-patterns.js lineScale), which is
+ *  also Psychedelia's own rule now (its pixel sizes x the canvas height /
+ *  720): one unit is a 720th of the picture's height, and never less than
+ *  one of the picture's pixels (a picture under 720 lines keeps today's
+ *  sizes). A width is then the same share of the screen at every quality and
+ *  window size. Today one unit is one of the picture's pixels, so the same
+ *  width is a smaller share of the screen at High than at Low.
+ *  Switched on, in a 1920 x 1080 window (pictures 531, 797 and 1063 lines
+ *  high), the OVERLAY_LINE_PARAMS widths on the screen: Low as now, Medium
+ *  x 1.11, High x 1.48. Particles' Size (OVERLAY_SIZE_720_PARAMS), not
+ *  scaled at all today, then follows the same rule: on the plain sheet
+ *  smaller dots on Low and Medium (x 0.68 and x 0.71), about the same on
+ *  High (x 0.96); blended in (a smaller sheet) about half the size at each.
+ *  Not changed: Lasers (their own rule, per 1080 lines of the sheet) and the
+ *  overlays that already scale by 720 themselves (3D Laser Room, Matrix, Hex
+ *  Grid, Sacred Geometry, Image and Lyrics glow). */
+export const OVERLAY_SIZE_720_RELEASED = false;
+/** Sizes in pixels that are not scaled at all today, scaled with the switch. */
+export const OVERLAY_SIZE_720_PARAMS = Object.freeze({
+  particles: Object.freeze(['particle_size']),
+});
+
+/** The pixel-size settings of overlay `id` that tune() scales (with the
+ *  switch, OVERLAY_SIZE_720_PARAMS too). */
+export function overlaySizedParams(id, size720 = OVERLAY_SIZE_720_RELEASED) {
+  const lines = OVERLAY_LINE_PARAMS[id] || [];
+  const more = size720 ? OVERLAY_SIZE_720_PARAMS[id] || [] : [];
+  return more.length ? [...lines, ...more] : lines;
+}
+
+/** What a pixel-size setting is multiplied by on a sheet `sheetHeight`
+ *  pixels high over a picture `pictureHeight` pixels high: held, the sheet's
+ *  share of the picture (at most 1); with the switch, the sheet's height /
+ *  min(720, the picture's height). 1 when either is unknown. */
+export function overlaySizeUnit(sheetHeight, pictureHeight, size720 = OVERLAY_SIZE_720_RELEASED) {
+  const sheet = Number(sheetHeight);
+  const picture = Number(pictureHeight);
+  if (!(sheet > 0) || !(picture > 0)) return 1;
+  return size720 ? sheet / Math.min(720, picture) : Math.min(1, sheet / picture);
+}
 
 /** The most (max) or least (min) a setting may be per quality, whatever the
  *  shuffle drew: less work on Medium and Low where an overlay's own drawing
@@ -432,10 +559,14 @@ export const overlayRow = (id) => (Object.prototype.hasOwnProperty.call(OVERLAY_
    the mode's letter (a add, s screen, m multiply, o soft light, d difference),
    then "u" (under the effects), "b" or "k" (mask: bright or dark areas), "t"
    (tinted from the scene), "n" (bends the scene), in that order. */
-const MODE_LETTER = Object.freeze({ add: 'a', screen: 's', multiply: 'm', soft: 'o', difference: 'd' });
+const MODE_LETTER = Object.freeze({
+  add: 'a', screen: 's', multiply: 'm', soft: 'o', difference: 'd', lighten: 'l', colour: 'c',
+});
 const LETTER_MODE = Object.freeze(Object.fromEntries(Object.entries(MODE_LETTER).map(([mode, letter]) => [letter, mode])));
-export const OVERLAY_TOKEN = '[a-z][a-z0-9_]{0,23}(?:~[asmod]u?[bk]?t?n?)?';
-const TOKEN = new RegExp(`^([a-z][a-z0-9_]{0,23})(?:~([asmod])(u?)([bk]?)(t?)(n?))?$`);
+// Only the letters of the modes offered (held ones are not read back).
+const MODE_LETTERS = OVERLAY_BLENDS.map((mode) => MODE_LETTER[mode]).join('');
+export const OVERLAY_TOKEN = `[a-z][a-z0-9_]{0,23}(?:~[${MODE_LETTERS}]u?[bk]?t?n?)?`;
+const TOKEN = new RegExp(`^([a-z][a-z0-9_]{0,23})(?:~([${MODE_LETTERS}])(u?)([bk]?)(t?)(n?))?$`);
 
 export const PLAIN_BLEND = Object.freeze({ mode: 'add', under: false, mask: 'none', tint: false, bend: false });
 
@@ -478,7 +609,8 @@ export function parseOverlayToken(token) {
  *  [{ id, blend }]: ids this build does not offer dropped, at most OVERLAY_MAX,
  *  at most one blended in (the first; the others drawn plain on top), each
  *  blend-in kept to what the overlay allows and the scene allows (fxNone:
- *  none; fxCalm: no lively blend, no mask, no bending). The one rule for every
+ *  none; fxCalm: no lively blend, no mask, no bending, none at all for one
+ *  marked calmPlain). The one rule for every
  *  way overlays come (shuffle, by hand, favourites, settings). */
 export function overlaysDrawnFor(entry, list) {
   const out = [];
@@ -490,7 +622,7 @@ export function overlaysDrawnFor(entry, list) {
     let blend = normalizeBlend(item.blend);
     if (!row.blends.includes(blend.mode)) blend = { ...blend, mode: 'add' };
     if (!row.under) blend = { ...blend, under: false };
-    if (entry?.fxNone) blend = { ...PLAIN_BLEND };
+    if (entry?.fxNone || (entry?.fxCalm && row.calmPlain)) blend = { ...PLAIN_BLEND };
     else if (entry?.fxCalm) {
       blend = {
         ...blend, mode: OVERLAY_LIVELY_BLENDS.has(blend.mode) ? 'add' : blend.mode, mask: 'none', bend: false,
@@ -513,6 +645,12 @@ export function overlayOrder(list) {
   return items
     .filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)))
     .sort((a, b) => OVERLAY_IDS.indexOf(a.id) - OVERLAY_IDS.indexOf(b.id));
+}
+
+/** A sheet holding `items` ([{ id }]) may move (overlay-motion.js): none of
+ *  them is anchored to the screen, and there is one. */
+export function overlaysMove(items) {
+  return Array.isArray(items) && items.length > 0 && items.every((item) => overlayRow(item?.id) && !overlayRow(item.id).anchored);
 }
 
 /** The key of a chosen or drawn list ("a+b~su"), '' for none. */

@@ -177,6 +177,7 @@
 .station-pill {
   box-sizing: border-box;
   height: 39px;
+  max-width: min(24em, 70vw);
   line-height: 14px;
   flex: 0 0 auto;
   padding: 6px 12px;
@@ -193,8 +194,19 @@
   gap: 1px 8px;
   text-align: left;
 }
+/* A long name (a station's, or one the user gave it) ends in an ellipsis,
+   as on a Library card; the card's title carries the whole name. */
+.station-pill > span:not(.content-rating-badge):not(.pill-art) {
+  min-width: 0;
+  max-width: 18em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .station-pill > small {
   grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-mute);
   font-size: 9px;
   font-weight: 500;
@@ -359,8 +371,6 @@
   font-size: 11px;
 }
 
-.tuner-tick { fill: rgba(255,255,255,0.45); }
-.tuner-tick.major { fill: rgba(255,255,255,0.85); }
 .tuner-pointer { fill: var(--accent); }
 .tuner-bezel {
   fill: url(#bezelGrad);
@@ -413,4 +423,24 @@
 
   .tuner-root[data-card-size='medium'] .tuner-strip { min-height: 83px; }
   .tuner-root[data-card-size='large'] .tuner-strip { min-height: 111px; }
+}
+
+/* The dimmed Visualizer behind the Tuner (modes/tuner-background.js): one
+   layer under the Tuner's own content, over its own background. Opacity
+   0.08 keeps every text colour at 4.5:1 or more in every theme, whatever the
+   picture (lib/tuner-background.js TUNER_BACKGROUND_OPACITY). */
+.tuner-root.has-viz-bg {
+  position: relative;
+  isolation: isolate;
+}
+.tuner-viz-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.08;
+  pointer-events: none;
+  overflow: hidden;
+}
+.tuner-viz-bg .viz-stage > :not(.viz-canvas):not(.viz-fade) {
+  display: none !important;
 }

@@ -6,12 +6,14 @@ import { createAudioSignal } from '../src/lib/audio-signal.js';
 import { normalizeSettings } from '../src/lib/state.js';
 import {
   normalizeVisualizerExtras, normalizeVisualizerOverlaySet, parseVisualizerFavourite,
+  normalizeVisualizerFolded,
 } from '../src/lib/visualizer-settings.js';
 import loadOverlays from '../src/visualizer/vendor/psychedelia/engine/overlays.js';
 import loadPostFx from '../src/visualizer/vendor/psychedelia/engine/post-fx-library.js';
-import { fxCatalog } from '../src/visualizer/fx-catalog.js';
+import { FX_CLASHES, fxCatalog, fxClashedFor, fxDrawnFor, fxOrder } from '../src/visualizer/fx-catalog.js';
+import loadPalettes from '../src/visualizer/vendor/psychedelia/engine/palettes.js';
 import {
-  OVERLAY_BLENDS, OVERLAY_BLEND_MAX_PIXELS, OVERLAY_COST_BUDGET, OVERLAY_GLOW_PARAMS, OVERLAY_GLOW_SCALE, OVERLAY_LINE_PARAMS, OVERLAY_QUALITY_LIMITS, OVERLAY_SHUFFLE_COST_MAX, OVERLAY_TOP_MAX_PIXELS, OVERLAY_COST_UNITS, OVERLAY_EXCLUDED, OVERLAY_IDS, OVERLAY_LIVELY_BLENDS, OVERLAY_MAX,
+  OVERLAY_BLENDS, OVERLAY_BLEND_MAX_PIXELS, OVERLAY_COST_BUDGET, OVERLAY_GLOW_PARAMS, OVERLAY_GLOW_SCALE, OVERLAY_LINE_PARAMS, OVERLAY_QUALITY_LIMITS, OVERLAY_SHUFFLE_COST_MAX, OVERLAY_TOP_MAX_PIXELS, OVERLAY_COST_UNITS, OVERLAY_EXCLUDED, OVERLAY_IDS, OVERLAY_LIVELY_BLENDS,
   OVERLAY_MASKS, OVERLAY_TABLE, PLAIN_BLEND, isBlendIn, overlayOrder, overlayRow, overlayToken, overlaysDrawnFor, overlaysKey,
   OVERLAY_HALO, OVERLAY_HALO_IDS, parseOverlayToken,
 } from '../src/visualizer/overlay-catalog.js';
@@ -19,7 +21,10 @@ import { CONTOUR_ALPHA, OVERLAY_PATTERNS, patternValues } from '../src/visualize
 import {
   LASER_BEAM, OVERLAY_FADE_IN_S, OVERLAY_FADE_OUT_S, OVERLAY_SPECTRUM_RISE_PER_S, createFlashGate, createOverlayLayer, laserBeam,
 } from '../src/visualizer/overlay-layer.js';
-import { createOverlayShuffle, overlayModesFor } from '../src/visualizer/overlay-shuffle.js';
+import {
+  OVERLAY_BEND_CHANCE, OVERLAY_BLEND_CHANCE, OVERLAY_MASK_CHANCE, OVERLAY_TINT_CHANCE, OVERLAY_UNDER_CHANCE, createOverlayShuffle, overlayModesFor,
+} from '../src/visualizer/overlay-shuffle.js';
+import { createFxShuffle, fxKey } from '../src/visualizer/fx-shuffle.js';
 import {
   OVERLAY_BLEND_SRC, OVERLAY_MODE_STRENGTH, REACTION_SRC, createFxChain, fxFragment,
 } from '../src/visualizer/fx-chain.js';
@@ -33,7 +38,7 @@ import { seededRandom } from '../src/visualizer/shuffle.js';
 import { FAVOURITES_FILTER_TITLE } from '../src/visualizer/scene-list.js';
 import { COMPILE_POLL_MS } from '../src/visualizer/scene-renderer.js';
 import {
-  CROSSFADE_SLOW_MS, NOTES, OVERLAY_TEXT, mountVisualizer,
+  CROSSFADE_SLOW_MS, FX_TEXT, NOTES, OVERLAY_TEXT, mountVisualizer,
 } from '../src/visualizer/index.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
 import {
@@ -48,18 +53,21 @@ import {
 
 const PSY = loadOverlays({}).Overlays;
 const FX_CATALOG = fxCatalog(loadPostFx({}).PostFxLibrary);
+// With the palettes, as the tab loads it (Palette Map).
+const PALETTES6 = loadPalettes({}).PsyPalettes;
+const CATALOG6 = fxCatalog(loadPostFx({ PsyPalettes: PALETTES6 }).PostFxLibrary, PALETTES6);
 const DEFS = PSY.getDefs();
 const PARAM = new Map(DEFS.flatMap((def) => def.params.map((param) => [param.name, param])));
 const calm = SCENES.find((scene) => scene.fxCalm);
-// No scene is fxNone now (scenes.js FX_NONE_SCENES): the rule is checked on one made so.
-const none = { ...calm, id: 'none-scene', fxNone: true };
+// A scene with no effects at all (scenes.js FX_NONE_SCENES).
+const none = SCENES.find((scene) => scene.id === 'sierpinski' && scene.fxNone);
 const lively = SCENES.find((scene) => !scene.fxCalm && !scene.fxNone);
 
 /* ---------------- The catalog ---------------- */
 
 test('the catalog: every Psychedelia overlay is offered or left out with a reason; every setting named is a real one, in range', () => {
   for (const def of DEFS) assert.ok(OVERLAY_TABLE[def.id] || OVERLAY_EXCLUDED[def.id], `${def.id}: offered or left out`);
-  assert.ok(OVERLAY_EXCLUDED.strobe, 'Strobe stays out (strobes by design)');
+  assert.ok(OVERLAY_EXCLUDED.strobe, 'the Psychedelia Strobe stays out (strobes by design); ours is color_strobe');
   for (const [id, row] of Object.entries(OVERLAY_TABLE)) {
     assert.ok(['psychedelia', 'ours'].includes(row.source), id);
     assert.ok(OVERLAY_COST_UNITS[row.cost], `${id} cost`);
@@ -70,7 +78,8 @@ test('the catalog: every Psychedelia overlay is offered or left out with a reaso
       for (const [name, spec] of Object.entries(row.ranges)) {
         const p = OVERLAY_PATTERNS[id].params[name];
         assert.ok(p, `${id}.${name}`);
-        for (const value of spec) assert.ok(value >= p.min && value <= p.max, `${id}.${name} ${value}`);
+        const values = Array.isArray(spec) ? spec.slice(0, 2) : spec.pick;
+        for (const value of values) assert.ok(value >= p.min && value <= p.max, `${id}.${name} ${value}`);
       }
       continue;
     }
@@ -89,8 +98,8 @@ test('the catalog: every Psychedelia overlay is offered or left out with a reaso
       }
     }
   }
-  // Seven of our own, marked so.
-  assert.equal(OVERLAY_IDS.filter((id) => overlayRow(id).source === 'ours').length, 7);
+  // Eight of our own (Strobe the eighth), marked so.
+  assert.equal(OVERLAY_IDS.filter((id) => overlayRow(id).source === 'ours').length, 8);
 });
 
 test('flash rules of the catalog: no flicker, no free run, Lightning by hand only and low, full-screen ones only on top', () => {
@@ -844,6 +853,34 @@ test('the overlay shuffle: seedable, within the cost budget, no immediate repeat
   }
 });
 
+test('the overlay shuffle blends one overlay in about two sets in three at Medium, a mask in about one in three; still one per set, inside the budget', () => {
+  assert.deepEqual(
+    [OVERLAY_BLEND_CHANCE, OVERLAY_UNDER_CHANCE, OVERLAY_MASK_CHANCE, OVERLAY_TINT_CHANCE, OVERLAY_BEND_CHANCE],
+    [0.75, 0.5, 0.5, 0.4, 0.3],
+  );
+  let sets = 0;
+  let blended = 0;
+  let masked = 0;
+  for (let seed = 1; seed <= 5; seed += 1) {
+    const shuffle = createOverlayShuffle({ random: seededRandom(seed) });
+    for (let roll = 0; roll < 400; roll += 1) {
+      const combo = shuffle.next({ maxCount: 3, costBudget: OVERLAY_COST_BUDGET.medium, costMax: 'heavy', entry: lively, blendIns: true, bend: true });
+      shuffle.shown(combo);
+      if (!combo.items.length) continue;
+      sets += 1;
+      const ins = combo.items.filter((x) => isBlendIn(x.blend));
+      assert.ok(ins.length <= 1, 'one blended in at most');
+      const cost = combo.items.reduce((sum, x) => sum + OVERLAY_COST_UNITS[overlayRow(x.id).cost], 0) + (ins.length ? 1 : 0);
+      assert.ok(cost <= OVERLAY_COST_BUDGET.medium);
+      if (ins.length) blended += 1;
+      if (ins.some((x) => x.blend.mask !== 'none')) masked += 1;
+    }
+  }
+  // Was about 0.41 and 0.13 at 0.5 / 0.3.
+  assert.ok(blended / sets > 0.55 && blended / sets < 0.75, `blended in ${(blended / sets).toFixed(2)}`);
+  assert.ok(masked / sets > 0.25 && masked / sets < 0.4, `masked ${(masked / sets).toFixed(2)}`);
+});
+
 test('the overlay shuffle offers no heavy overlay on Low (OVERLAY_SHUFFLE_COST_MAX), and the tab asks it so', () => {
   const heavy = OVERLAY_IDS.filter((id) => overlayRow(id).cost === 'heavy');
   assert.deepEqual(heavy, ['hexgrid'], 'measured heavy: Tron Hex Grid only');
@@ -865,7 +902,9 @@ test('the overlay shuffle offers no heavy overlay on Low (OVERLAY_SHUFFLE_COST_M
   // (Its 4 units are over Low's budget of 3 too.) The tab rolls with the cap for its quality.
   const tab = readFileSync(new URL('../src/visualizer/index.js', import.meta.url), 'utf8');
   const roll = tab.slice(tab.indexOf('function rollOverlays()'), tab.indexOf('function applyOverlays('));
-  assert.match(roll, /costMax: lighterCost\(shuffleCostMax\(\), OVERLAY_SHUFFLE_COST_MAX\[stepDown\.quality\]/);
+  // (tq(): the quality whose table rows apply, High's at Very high.)
+  assert.match(roll, /costMax: lighterCost\(shuffleCostMax\(\), OVERLAY_SHUFFLE_COST_MAX\[tq\(\)\]/);
+  assert.match(tab, /const tq = \(\) => tableQuality\(stepDown\.quality\);/);
 });
 
 /* ---------------- Favourites ---------------- */
@@ -993,6 +1032,8 @@ async function mount({ settings = {}, seed = 3, failOverlays = false, gl: givenG
   return m;
 }
 const click = (node) => node.dispatchEvent(new Event('click'));
+/** A section title's words: its name, then what is set. */
+const titleOf = (head) => [...head.children].map((part) => part.textContent || '').join(' ').trim();
 const change = (node, value) => {
   if (typeof value === 'boolean') node.checked = value;
   else if (value !== undefined) node.value = value;
@@ -1013,12 +1054,55 @@ test('in the tab, overlays off (the default): nothing made, loaded, uploaded or 
   assert.equal(session.overlayCanvas.context2d, undefined, 'no 2D context');
   assert.equal(m.gl.uploads, 0);
   assert.equal(m.gl.draws, m.gl.screenDraws, 'the scene straight to the screen');
-  assert.equal(controls.overlaysBody.hidden, true, 'the section is folded');
-  assert.equal(controls.overlaysShuffle.disabled, true);
-  click(controls.overlaysHead);
-  assert.equal(controls.overlaysBody.hidden, false);
+  // The section is open and shows its switch; the rest waits for the switch.
+  assert.equal(controls.overlaysBody.hidden, false, 'the section is open');
   assert.equal(controls.overlaysHead.getAttribute('aria-expanded'), 'true');
+  assert.equal(controls.overlaysToggle.checked, false);
+  assert.equal(controls.overlaysMore.hidden, true, 'only the switch while overlays are off');
+  assert.equal(controls.overlaysShuffle.disabled, true);
+  assert.equal(titleOf(controls.overlaysHead), 'Overlays Off', 'the title says Off');
   session.destroy();
+});
+
+test('the side panel: each section has a title button that folds it and says what is set; Effects and Overlays always show their switch; folded sections are saved', async () => {
+  const m = await mount({ settings: { visualizerFolded: ['picture'] } });
+  const { session, controls } = m;
+  const heads = controls.sectionHeads;
+  const bodies = controls.sectionBodies;
+  for (const [index, name] of ['Scene', 'Shuffle', 'Effects', 'Overlays', 'Picture'].entries()) assert.ok(titleOf(heads[index]).startsWith(name), name);
+  assert.equal(heads.length, 5);
+  for (const [index, head] of heads.entries()) {
+    assert.equal(head.getAttribute('aria-controls'), bodies[index].getAttribute('id'));
+    assert.equal(head.getAttribute('aria-expanded'), index === 4 ? 'false' : 'true');
+    assert.equal(bodies[index].hidden, index === 4, 'only the saved one is folded');
+  }
+  // What is set, at the right of the title (also while folded).
+  assert.equal(titleOf(heads[1]), 'Shuffle Off');
+  assert.equal(titleOf(heads[2]), 'Effects Off');
+  assert.equal(titleOf(heads[3]), 'Overlays Off');
+  assert.match(titleOf(heads[4]), /^Picture \S.*, \d+ fps$/);
+  // Off: the switch alone. On: the rest too, and the title says On.
+  assert.equal(controls.effectsMore.hidden, true);
+  assert.equal(controls.overlaysMore.hidden, true);
+  change(controls.overlaysToggle, true);
+  assert.equal(controls.overlaysMore.hidden, false);
+  assert.equal(titleOf(heads[3]), 'Overlays On');
+  change(controls.fxToggle, true);
+  assert.equal(controls.effectsMore.hidden, false);
+  assert.equal(titleOf(heads[2]), 'Effects On');
+  // Folding: the title button, saved in the panel's order.
+  click(heads[3]);
+  assert.equal(bodies[3].hidden, true);
+  assert.equal(heads[3].getAttribute('aria-expanded'), 'false');
+  assert.equal(titleOf(heads[3]), 'Overlays On', 'still says On while folded');
+  assert.deepEqual(m.settings.visualizerFolded, ['ov', 'picture']);
+  click(heads[4]);
+  assert.equal(bodies[4].hidden, false);
+  assert.deepEqual(m.settings.visualizerFolded, ['ov']);
+  session.destroy();
+  // The setting: known sections only, each once, in the panel's order.
+  assert.deepEqual(normalizeVisualizerFolded(['picture', 'nonsense', 'ov', 'ov', 7]), ['ov', 'picture']);
+  assert.deepEqual(normalizeVisualizerFolded('ov'), []);
 });
 
 test('in the tab: overlays by hand, quick ticks all count, plain ones cost the chain nothing, a blend-in uploads, star and leaving free everything', async () => {
@@ -1081,6 +1165,32 @@ test('in the tab: overlays by hand, quick ticks all count, plain ones cost the c
   assert.equal(session.overlays.layer, null);
   assert.equal(session.overlayCanvas.width, 0);
   assert.equal(gl.textures.size, 0);
+});
+
+test('in the tab: a lost context holds the overlay sheet still (no transform, no will-change) and it moves again once drawing resumes', async () => {
+  const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerOverlays: true, visualizerOverlayShuffle: false } });
+  const { session } = m;
+  await m.until(() => session.switcher.current === 'tunnel', 'tunnel');
+  m.start();
+  await m.play(500);
+  change(session.overlays.boxes.get('rings'), true);
+  await m.play(SETTLE_MS);
+  await m.until(() => !session.overlays.layer.loading, 'module');
+  await m.play(3000);
+  const style = session.overlayCanvas.style;
+  assert.match(style.transform, /rotate/, 'moving with slow drift');
+  assert.equal(style.willChange, 'transform');
+  session.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+  assert.equal(style.transform, '');
+  assert.equal(style.willChange, '');
+  await m.play(1000);
+  assert.equal(style.transform, '', 'still held while lost');
+  session.canvas.dispatchEvent(new Event('webglcontextrestored'));
+  await m.until(() => Boolean(session.switcher.current), 'scene back');
+  await m.play(1000);
+  assert.match(style.transform, /rotate/, 'moving again');
+  session.destroy();
+  assert.equal(style.transform, '', 'gone with the tab');
 });
 
 test('in the tab: on a calm scene a lively blend chosen by hand is drawn plain and its option greyed', async () => {
@@ -1503,6 +1613,42 @@ test('in the tab: each blend row is a group named by its overlay, and each contr
   session.destroy();
 });
 
+test('in the tab: Strobe\'s row has a Style choice that every set drawn keeps; overlays without styles show none', async () => {
+  assert.deepEqual(overlayRow('color_strobe').styles.length, 4);
+  assert.equal(overlayRow('rings').styles, undefined);
+  const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerOverlays: true, visualizerOverlayShuffle: false, visualizerOverlaySet: ['color_strobe', 'rings'] } });
+  const { session } = m;
+  m.start();
+  await m.play(SETTLE_MS);
+  const strobeRow = session.overlays.rows.find((row) => row.id === 'color_strobe');
+  const ringsRow = session.overlays.rows.find((row) => row.id === 'rings');
+  assert.ok(strobeRow && ringsRow);
+  assert.equal(strobeRow.styleField.hidden, false);
+  assert.equal(ringsRow.styleField.hidden, true);
+  assert.equal(strobeRow.style.value, 'any');
+  assert.equal(strobeRow.style.getAttribute('aria-label'), 'Style: Strobe');
+  assert.deepEqual([...strobeRow.style.children].map((option) => option.value), ['any', '0', '1', '2', '3']);
+  const before = session.overlays.stats.byHand;
+  change(strobeRow.style, '2');
+  await m.play(SETTLE_MS);
+  const strobeValues = () => session.overlays.combo.items.find((item) => item.id === 'color_strobe').values;
+  assert.equal(strobeValues().style, 2);
+  assert.equal(strobeRow.style.value, '2');
+  assert.equal(session.overlays.stats.byHand, before + 1);
+  // A blend changed afterwards, and a fresh set: the style is kept.
+  change(strobeRow.tint, true);
+  await m.play(SETTLE_MS);
+  assert.equal(strobeValues().style, 2);
+  change(strobeRow.style, '0');
+  await m.play(SETTLE_MS);
+  assert.equal(strobeValues().style, 0);
+  // Any: left as drawn until the next set.
+  change(strobeRow.style, 'any');
+  assert.equal(strobeRow.style.value, 'any');
+  assert.equal(strobeValues().style, 0);
+  session.destroy();
+});
+
 test('favouriteToRecall: the first favourite of the scene, then the one after what is shown, round again; none starred: null', () => {
   const list = ['tunnel|bloom/rings~su', 'aurora:2/petals', 'tunnel/petals', 'tunnel'];
   const keyOf = (entry) => favouriteKey(entry.scene, entry.look, entry.fx, entry.overlays);
@@ -1570,4 +1716,415 @@ test('in the tab: a scene picked from the list\'s favourites comes with its star
   await m.play(2000);
   assert.deepEqual([fxNow(), drawn()], ['bloom', 'rings~su'], 'what was drawn stays (nothing recalled, nothing shuffled)');
   session.destroy();
+});
+
+/* The shuffle picks only what is drawn: a roll asks for no more than the
+   step-down lets the picture draw, and a set the shuffle made is cut to what
+   is drawn when a cap comes in, so no shuffled effect or overlay is ticked
+   and struck through at once. Sets chosen by hand and favourites are never
+   cut (the cap only shortens what they draw). */
+const SHUFFLED_FX = {
+  visualizerScene: 'tunnel', visualizerShuffle: false, visualizerFx: true, visualizerFxShuffle: true,
+  visualizerFxTiming: 16, visualizerFxIntensity: 'strong',
+};
+/** Effects ticked in the panel that are also marked as not drawn here. */
+const fxTickedAndStruck = (session) => [...session.fx.boxes]
+  .filter(([, box]) => box.checked && box.getAttribute('aria-disabled') === 'true').map(([id]) => id);
+const ovTickedAndStruck = (session) => [...session.overlays.boxes]
+  .filter(([id, box]) => box.checked && session.overlays.fields.get(id).classList.contains('viz-fx-unavailable')).map(([id]) => id);
+/** "New effects now" until at least `count` are drawn. */
+async function rollFxUntil(m, count) {
+  const { session } = m;
+  for (let round = 0; round < 40 && session.fx.drawn.length < count; round += 1) {
+    click(session.controls.fxNow);
+    await m.play(SETTLE_MS);
+  }
+  assert.ok(session.fx.drawn.length >= count, `the shuffle drew ${count} or more`);
+}
+
+test('in the tab: a notch while a shuffled set of effects shows cuts the set to what is drawn; later rolls ask for no more than that', async () => {
+  const m = await mount({ settings: SHUFFLED_FX });
+  const { session } = m;
+  m.start();
+  await m.until(() => Boolean(session.fx.shuffle), 'library');
+  await rollFxUntil(m, 2);
+  assert.equal(session.fx.combo.shuffled, true);
+  for (let round = 0; round < 80 && session.stepDown.stats.fxSteps === 0; round += 1) await m.play(500, 100);
+  await m.play(SETTLE_MS);
+  const most = session.stepDown.fx;
+  assert.ok(most < 2, `effects held back to ${most}`);
+  assert.ok(session.fx.combo === null || session.fx.combo.ids.length <= most, 'the shuffled set cut to what is drawn');
+  assert.deepEqual(fxTickedAndStruck(session), []);
+  assert.ok(session.fx.stats.trimmed > 0);
+  // Rolled again under the cap: never asked for more than it.
+  const asked = [];
+  const next = session.fx.shuffle.next;
+  session.fx.shuffle.next = (context) => { asked.push(context.maxCount); return next(context); };
+  for (let round = 0; round < 12; round += 1) {
+    click(session.controls.fxNow);
+    await m.play(SETTLE_MS);
+    assert.ok((session.fx.combo?.ids.length || 0) <= session.stepDown.fx, `roll ${round}: ${session.fx.combo?.ids}`);
+    assert.deepEqual(fxTickedAndStruck(session), []);
+  }
+  assert.equal(asked.length, 12);
+  assert.ok(asked.every((count) => count <= most), `asked for ${asked}`);
+  session.destroy();
+});
+
+test('in the tab: a shuffled set kept onto a scene that needed fewer effects before is cut there', async () => {
+  const m = await mount({ settings: SHUFFLED_FX });
+  const { session } = m;
+  m.start();
+  await m.until(() => Boolean(session.fx.shuffle), 'library');
+  await rollFxUntil(m, 2);
+  for (let round = 0; round < 80 && session.stepDown.stats.fxSteps === 0; round += 1) await m.play(500, 100);
+  await m.play(SETTLE_MS);
+  const most = session.stepDown.fx;
+  // Another scene (no cap): a larger set rolled there, kept (bar timing).
+  session.sceneList.pick('starfield');
+  await m.until(() => session.switcher.current === 'starfield', 'starfield');
+  await m.play(SETTLE_MS);
+  await rollFxUntil(m, 2);
+  const there = session.fx.combo.ids.slice();
+  // Back: the tunnel's remembered cap cuts it at once.
+  session.sceneList.pick('tunnel');
+  await m.until(() => session.switcher.current === 'tunnel', 'tunnel');
+  await m.play(SETTLE_MS);
+  assert.equal(session.stepDown.fx, most);
+  assert.ok((session.fx.combo?.ids.length || 0) <= most, `${there} cut to ${session.fx.combo?.ids}`);
+  assert.ok((session.fx.combo?.ids || []).every((id) => there.includes(id)), 'from the same set');
+  assert.deepEqual(fxTickedAndStruck(session), []);
+  session.destroy();
+});
+
+test('in the tab: a shuffled set asked for while a change is in progress, with a notch before it is made, is cut when it is made', async () => {
+  const m = await mount({ settings: { ...SHUFFLED_FX, visualizerOverlayShuffle: false, visualizerOverlaySet: [] } });
+  const { session, controls } = m;
+  m.start();
+  await m.until(() => Boolean(session.fx.shuffle), 'library');
+  await rollFxUntil(m, 2);
+  await m.play(2000);
+  // A change in progress, past its dark half; then a roll (no cap yet) waits.
+  change(controls.overlaysToggle, true);
+  for (let i = 0; i < 100 && !['in', 'fading'].includes(session.transition.phase); i += 1) m.h.run(10, 10);
+  let asked = 0;
+  for (let tries = 0; tries < 20 && asked < 2; tries += 1) {
+    click(controls.fxNow);
+    asked = [...session.fx.boxes.values()].filter((box) => box.checked).length;
+  }
+  assert.ok(asked >= 2, `a roll of ${asked} waiting`);
+  // A notch before it is made.
+  let t = m.h.now + 1;
+  let stepped = false;
+  for (let i = 0; i < 2000 && !stepped; i += 1) { t += 100; stepped = session.stepDown.frame(t); }
+  assert.ok(stepped, 'a notch');
+  const most = session.stepDown.fx;
+  assert.ok(most < asked);
+  await m.play(SETTLE_MS);
+  assert.ok((session.fx.combo?.ids.length || 0) <= most, `made and cut: ${session.fx.combo?.ids}`);
+  assert.deepEqual(fxTickedAndStruck(session), []);
+  session.destroy();
+});
+
+test('in the tab: overlays the shuffle picked are cut to what is drawn on a notch and rolled under the cap after; a favourite\'s effects are never cut', async () => {
+  const m = await mount({
+    settings: { visualizerScene: 'tunnel', visualizerShuffle: false, visualizerOverlays: true, visualizerOverlayShuffle: true },
+  });
+  const { session, controls } = m;
+  m.start();
+  await m.play(SETTLE_MS);
+  for (let round = 0; round < 40 && session.overlays.drawn.length < 2; round += 1) {
+    click(controls.overlaysNow);
+    await m.play(SETTLE_MS);
+  }
+  assert.ok(session.overlays.drawn.length >= 2, 'the shuffle drew two or more');
+  for (let round = 0; round < 80 && session.stepDown.stats.overlaySteps === 0; round += 1) await m.play(500, 100);
+  await m.play(SETTLE_MS);
+  const most = session.stepDown.overlays;
+  assert.ok(most < 2);
+  assert.ok(session.overlays.chosen.length <= most, 'cut to what is drawn');
+  assert.deepEqual(ovTickedAndStruck(session), []);
+  const asked = [];
+  const next = session.overlays.shuffle.next;
+  session.overlays.shuffle.next = (context) => { asked.push(context.maxCount); return next(context); };
+  for (let round = 0; round < 12; round += 1) {
+    click(controls.overlaysNow);
+    await m.play(SETTLE_MS);
+    assert.ok(session.overlays.chosen.length <= session.stepDown.overlays, `roll ${round}`);
+    assert.deepEqual(ovTickedAndStruck(session), []);
+  }
+  assert.ok(asked.length === 12 && asked.every((count) => count <= most), `asked for ${asked}`);
+  session.destroy();
+  // A favourite's effects (favourites shuffle): what is drawn is shortened,
+  // the set never.
+  const f = await mount({
+    settings: {
+      visualizerScene: 'tunnel', visualizerShuffle: true, visualizerShufflePool: 'favourites', visualizerFavourites: ['tunnel|bloom+glitch'],
+      visualizerFx: true, visualizerFxShuffle: false, visualizerFxSet: [],
+    },
+  });
+  f.start();
+  await f.until(() => f.session.fx.drawn.length === 2, 'the favourite\'s two effects');
+  await f.play(SETTLE_MS);
+  assert.notEqual(f.session.fx.combo.shuffled, true);
+  for (let round = 0; round < 80 && f.session.stepDown.stats.fxSteps === 0; round += 1) await f.play(500, 100);
+  await f.play(SETTLE_MS);
+  assert.equal(f.session.stepDown.fx, 1);
+  assert.equal(f.session.fx.drawn.length, 1);
+  assert.deepEqual(f.session.fx.combo.ids.slice().sort(), ['bloom', 'glitch'], 'the favourite stays whole');
+  f.session.destroy();
+});
+
+test('the shuffles: a set cut to fewer or none takes the place of the rolled one in their history (no new entry); with nothing allowed a roll is empty at once, no retries', () => {
+  const catalog = fxCatalog(loadPostFx({}).PostFxLibrary);
+  const fx = createFxShuffle({ catalog, random: seededRandom(7) });
+  const context = { intensity: 'strong', maxCount: 3, costBudget: 99, costMax: 'heavy' };
+  let rolled = fx.next(context);
+  for (let tries = 0; tries < 50 && rolled.ids.length < 2; tries += 1) rolled = fx.next(context);
+  assert.ok(rolled.ids.length >= 2);
+  fx.shown(rolled);
+  const before = fx.recent.length;
+  fx.cut({ ids: rolled.ids.slice(0, 1) });
+  assert.deepEqual(fx.last, rolled.ids.slice(0, 1));
+  assert.equal(fx.recent.length, before, 'no new entry');
+  assert.equal(fx.recent.at(-1), fxKey(rolled.ids.slice(0, 1)));
+  fx.cut({ ids: [] });
+  assert.deepEqual(fx.last, []);
+  assert.equal(fx.recent.length, before - 1, 'an empty set has no key');
+  // Nothing showed: the next roll is not empty (no empty set twice running).
+  for (let roll = 0; roll < 20; roll += 1) assert.ok(fx.next(context).ids.length > 0);
+  // Nothing allowed: empty at once.
+  const retries = fx.stats.retries;
+  for (let roll = 0; roll < 5; roll += 1) assert.deepEqual(fx.next({ ...context, maxCount: 0 }).ids, []);
+  assert.equal(fx.stats.retries, retries, 'no retries');
+
+  const ov = createOverlayShuffle({ random: seededRandom(7) });
+  const ovContext = { maxCount: 3, costBudget: 99, costMax: 'heavy', entry: lively, blendIns: false, bend: false };
+  let set = ov.next(ovContext);
+  for (let tries = 0; tries < 50 && set.items.length < 2; tries += 1) set = ov.next(ovContext);
+  assert.ok(set.items.length >= 2);
+  ov.shown(set);
+  const ovBefore = ov.recent.length;
+  ov.cut({ items: set.items.slice(0, 1) });
+  assert.deepEqual(ov.last, [set.items[0].id]);
+  assert.equal(ov.recent.length, ovBefore);
+  assert.equal(ov.recent.at(-1), overlaysKey(set.items.slice(0, 1)));
+  ov.cut({ items: [] });
+  assert.deepEqual(ov.last, []);
+  assert.equal(ov.recent.length, ovBefore - 1);
+  for (let roll = 0; roll < 20; roll += 1) assert.ok(ov.next(ovContext).items.length > 0);
+  const ovRetries = ov.stats.retries;
+  for (let roll = 0; roll < 5; roll += 1) assert.deepEqual(ov.next({ ...ovContext, maxCount: 0 }).items, []);
+  assert.equal(ov.stats.retries, ovRetries, 'no retries');
+});
+
+test('in the tab: a shuffled set trimmed by a lower quality stays the shuffle\'s (a later cap cuts it); a box ticked by hand makes it the hand\'s', async () => {
+  const m = await mount({ settings: { ...SHUFFLED_FX, visualizerQuality: 'medium' } });
+  const { session, controls } = m;
+  m.start();
+  await m.until(() => Boolean(session.fx.shuffle), 'library');
+  await rollFxUntil(m, 3);
+  change(controls.qualitySelect, 'low');
+  await m.play(SETTLE_MS);
+  assert.equal(session.fx.combo.ids.length, 2, 'trimmed to Low\'s two');
+  assert.equal(session.fx.combo.shuffled, true, 'still the shuffle\'s');
+  for (let round = 0; round < 80 && session.stepDown.stats.fxSteps === 0; round += 1) await m.play(500, 100);
+  await m.play(SETTLE_MS);
+  assert.ok((session.fx.combo?.ids.length || 0) <= session.stepDown.fx, 'cut by the cap');
+  assert.deepEqual(fxTickedAndStruck(session), []);
+  assert.deepEqual(session.fx.shuffle.last, session.fx.combo ? session.fx.combo.ids : [], 'the history holds what is shown');
+  // A box ticked by hand: the hand's set, never cut.
+  const free = [...session.fx.boxes].find(([id, box]) => !box.checked && !box.disabled)[0];
+  change(session.fx.boxes.get(free), true);
+  await m.play(SETTLE_MS);
+  assert.notEqual(session.fx.combo.shuffled, true);
+  session.destroy();
+});
+
+test('in the tab: overlays the shuffle picked, trimmed by a lower quality, stay the shuffle\'s; a blend row changed by hand makes them the hand\'s', async () => {
+  const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerShuffle: false, visualizerQuality: 'medium', visualizerOverlays: true, visualizerOverlayShuffle: true } });
+  const { session, controls } = m;
+  m.start();
+  await m.play(SETTLE_MS);
+  // Three plain ones, as the shuffle gives them.
+  const next = session.overlays.shuffle.next;
+  session.overlays.shuffle.next = () => session.overlays.shuffle.build([{ id: 'rings' }, { id: 'petals' }, { id: 'ribbons' }]);
+  click(controls.overlaysNow);
+  session.overlays.shuffle.next = next;
+  await m.play(SETTLE_MS);
+  assert.equal(session.overlays.combo.items.length, 3);
+  change(controls.qualitySelect, 'low');
+  await m.play(SETTLE_MS);
+  assert.equal(session.overlays.combo.items.length, 2, 'trimmed to Low\'s two');
+  assert.equal(session.overlays.combo.shuffled, true, 'still the shuffle\'s');
+  // A blend row changed by hand.
+  const row = session.overlays.rows.find((r) => !r.row.hidden);
+  change(row.tint, true);
+  await m.play(SETTLE_MS);
+  assert.notEqual(session.overlays.combo.shuffled, true);
+  session.destroy();
+});
+
+test('in the tab: the cap cuts a shuffled set of overlays to what is drawn, but one that failed here stays in it (its note still shows)', async () => {
+  const pattern = OVERLAY_PATTERNS.harmonograph;
+  const draw = pattern.draw;
+  pattern.draw = () => { throw new Error('harmonograph broken here'); };
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerShuffle: false, visualizerOverlays: true, visualizerOverlayShuffle: true } });
+    const { session, controls } = m;
+    m.start();
+    await m.play(SETTLE_MS);
+    const next = session.overlays.shuffle.next;
+    session.overlays.shuffle.next = () => session.overlays.shuffle.build([{ id: 'harmonograph' }, { id: 'rings' }, { id: 'petals' }]);
+    click(controls.overlaysNow);
+    session.overlays.shuffle.next = next;
+    await m.play(SETTLE_MS);
+    assert.ok(session.overlays.layer.failedIds.includes('harmonograph'));
+    assert.deepEqual(session.overlays.drawn.map((x) => x.id).sort(), ['petals', 'rings']);
+    for (let round = 0; round < 80 && session.stepDown.stats.overlaySteps === 0; round += 1) await m.play(500, 100);
+    await m.play(SETTLE_MS);
+    assert.equal(session.stepDown.overlays, 1);
+    const ids = session.overlays.combo.items.map((x) => x.id);
+    assert.ok(ids.includes('harmonograph'), `the failed one stays: ${ids}`);
+    assert.equal(ids.length, 2, 'one of the two drawn left out');
+    assert.deepEqual(session.overlays.shuffle.last.sort(), ids.slice().sort(), 'the history holds the set as cut');
+    assert.match(session.overlays.note.textContent, /Harmonograph/i);
+    assert.deepEqual(ovTickedAndStruck(session), []);
+    session.destroy();
+  } finally {
+    pattern.draw = draw;
+    console.error = errors;
+  }
+});
+/* ---------------- Pairs never drawn together ---------------- */
+
+test('a pair never combined (FX_CLASHES): of two chosen only the first in the chain is drawn, on any scene; the other stays chosen; a scene that drops one draws the other', () => {
+  const tunnel = SCENES.find((scene) => scene.id === 'tunnel');
+  const plasma = SCENES.find((scene) => scene.id === 'plasma');
+  // Palette Map's two (slice 12), in either order chosen: the chain's order decides.
+  for (const ids of [['palette_map', 'halftone'], ['halftone', 'palette_map']]) {
+    const ordered = fxOrder(CATALOG6, ids);
+    assert.deepEqual(fxDrawnFor(tunnel, ordered), ['palette_map'], ids.join('+'));
+    assert.deepEqual(fxClashedFor(tunnel, ordered), ['halftone']);
+  }
+  assert.deepEqual(fxDrawnFor(tunnel, fxOrder(CATALOG6, ['palette_map', 'fisheye'])), ['fisheye']);
+  // Every older pair the same way, with a third one (in no pair) untouched.
+  assert.ok(!FX_CLASHES.flat().includes('relief'));
+  for (const [a, b] of FX_CLASHES) {
+    const ordered = fxOrder(CATALOG6, [a, b, 'relief']);
+    const drawn = fxDrawnFor(tunnel, ordered);
+    assert.ok(!(drawn.includes(a) && drawn.includes(b)), `${a}+${b}: never both`);
+    assert.ok(drawn.includes('relief') && drawn.length === 2, `${a}+${b}: ${drawn.join('+')}`);
+  }
+  // Plasma (calm) never draws Palette Map: Halftone is then drawn, not held back.
+  assert.deepEqual(fxDrawnFor(plasma, fxOrder(CATALOG6, ['palette_map', 'halftone'])), ['halftone']);
+  assert.deepEqual(fxClashedFor(plasma, ['palette_map', 'halftone']), []);
+});
+
+test('in the tab: a pair ticked by hand in either order, restored from the settings, recalled from a favourite or under the step-down\'s cap is never drawn together; the other is greyed with the "would flicker" note', async () => {
+  const pairDrawn = (session) => ['palette_map', 'halftone'].every((id) => session.fx.chain.ids.includes(id))
+    || ['palette_map', 'fisheye'].every((id) => session.fx.chain.ids.includes(id));
+  // By hand, both orders.
+  for (const order of [['palette_map', 'halftone'], ['halftone', 'palette_map']]) {
+    const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerShuffle: false, visualizerFx: true, visualizerFxShuffle: false, visualizerFxSet: [] } });
+    const { session } = m;
+    await m.until(() => Boolean(session.fx.shuffle), 'library');
+    m.start();
+    for (const id of order) change(session.fx.boxes.get(id), true);
+    await m.play(SETTLE_MS);
+    assert.deepEqual(session.fx.combo.ids, ['palette_map', 'halftone'], `${order.join(' then ')}: both stay chosen`);
+    assert.deepEqual(session.fx.chain.ids, ['palette_map'], `${order.join(' then ')}: one drawn`);
+    assert.equal(session.fx.boxes.get('halftone').checked, true);
+    assert.equal(session.fx.boxes.get('halftone').getAttribute('aria-disabled'), 'true');
+    assert.equal(session.fx.boxes.get('palette_map').getAttribute('aria-disabled'), 'false');
+    assert.ok(session.fx.note.textContent.includes(FX_TEXT.pairHere), session.fx.note.textContent);
+    // Untick the drawn one: the other comes in.
+    change(session.fx.boxes.get('palette_map'), false);
+    await m.play(SETTLE_MS);
+    assert.deepEqual(session.fx.chain.ids, ['halftone']);
+    assert.equal(session.fx.boxes.get('halftone').getAttribute('aria-disabled'), 'false');
+    assert.ok(!session.fx.note.textContent.includes(FX_TEXT.pairHere));
+    session.destroy();
+  }
+  // Restored from the settings (a reload).
+  for (const [set, drawn, greyed] of [[['palette_map', 'halftone'], ['palette_map'], 'halftone'], [['fisheye', 'palette_map'], ['fisheye'], 'palette_map']]) {
+    const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerShuffle: false, visualizerFx: true, visualizerFxShuffle: false, visualizerFxSet: set } });
+    const { session } = m;
+    await m.until(() => Boolean(session.fx.shuffle), 'library');
+    m.start();
+    await m.play(SETTLE_MS);
+    assert.deepEqual(session.fx.chain.ids, drawn, `reload: ${set.join('+')}`);
+    assert.equal(session.fx.boxes.get(greyed).getAttribute('aria-disabled'), 'true');
+    session.destroy();
+  }
+  // Recalled from a favourite (the favourites shuffle).
+  {
+    const m = await mount({
+      settings: {
+        visualizerScene: 'plasma', visualizerFx: true, visualizerFxShuffle: true, visualizerShuffle: true, visualizerShufflePool: 'favourites',
+        visualizerFavourites: ['tunnel|palette_map+halftone', 'starfield|fisheye+palette_map'],
+      },
+    });
+    const { session } = m;
+    await m.until(() => Boolean(session.fx.shuffle), 'library');
+    m.start();
+    for (const scene of ['tunnel', 'starfield']) {
+      session.sceneList.pick(scene);
+      await m.until(() => session.switcher.current === scene, scene);
+      await m.play(SETTLE_MS);
+      assert.equal(session.fx.chain.ids.length, 1, `${scene}: ${session.fx.chain.ids.join('+')}`);
+      assert.ok(!pairDrawn(session), scene);
+    }
+    session.destroy();
+  }
+  // Under the step-down's cap.
+  {
+    const m = await mount({ settings: FX_AND_CAP });
+    const { session } = m;
+    m.start();
+    await stepFxToOne(m);
+    chooseFx(session, ['palette_map', 'halftone']);
+    await m.play(SETTLE_MS);
+    assert.deepEqual(session.fx.chain.ids, ['palette_map']);
+    assert.deepEqual(session.fx.capped, [], 'the pair, not the cap, held Halftone back');
+    chooseFx(session, ['fisheye', 'palette_map', 'bloom']);
+    await m.play(SETTLE_MS);
+    assert.equal(session.fx.chain.ids.length, 1);
+    assert.ok(!pairDrawn(session));
+    session.destroy();
+  }
+});
+
+test('in the tab: the first of a pair failing here never holds its partner back; the partner is drawn and not greyed', async () => {
+  const settings = (set) => ({ visualizerScene: 'tunnel', visualizerShuffle: false, visualizerFx: true, visualizerFxShuffle: false, visualizerFxSet: set });
+  for (const pair of [['fisheye', 'palette_map'], ['posterize', 'dither'], ['crt', 'vision']]) {
+    assert.ok(FX_CLASHES.some(([a, b]) => pair.includes(a) && pair.includes(b)), pair.join('+'));
+    // Which one the pair rule keeps when both can be drawn.
+    let first;
+    {
+      const m = await mount({ settings: settings(pair) });
+      await m.until(() => Boolean(m.session.fx.shuffle), 'library');
+      m.start();
+      await m.play(SETTLE_MS);
+      assert.equal(m.session.fx.drawn.length, 1);
+      [first] = m.session.fx.drawn;
+      m.session.destroy();
+    }
+    const second = pair.find((id) => id !== first);
+    const gl = new PickyGL();
+    gl.failing = new Set([first]);
+    const m = await mount({ gl, settings: settings(pair) });
+    const { session } = m;
+    await m.until(() => Boolean(session.fx.shuffle), 'library');
+    m.start();
+    await m.play(SETTLE_MS);
+    await m.play(SETTLE_MS);
+    assert.deepEqual(session.fx.failedIds, [first]);
+    assert.deepEqual(session.fx.drawn, [second], `${first} failed: ${second} drawn`);
+    assert.equal(session.fx.boxes.get(second).getAttribute('aria-disabled'), 'false');
+    assert.ok(!session.fx.note.textContent.includes(FX_TEXT.pairHere), session.fx.note.textContent);
+    session.destroy();
+  }
 });

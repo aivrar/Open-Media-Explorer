@@ -1,0 +1,227 @@
+function u(t){var n=t.EndlessScenes,c=t.FractalFlight;return t.Music,(function(){"use strict";function e(r,l,i,s,a,p,f,v){var d=c.range(r,l,i,s,a,p,f,v);return d.audioLink=!1,d}function o(r,l,i,s){var a=c.select(r,l,i,s,0);return a.audioLink=!1,a}n.register({name:"robot_foundry",label:"Robot Foundry",description:"Fly through an endless industrial dance procession: six intact robot families, four factory worlds, and jointed choreography that follows the music.",constants:"const float ES_INTERIOR = 0.0; const float ES_SPEED = 3.0; const float ES_LOOK_DROP = 0.25;",specialize:["world_style"],params:[o("world_style","World Style","Structure",["Iron Foundry","Neon Assembly","Retro Machine City","Cosmic Refinery"]),o("robot_cast","Robot Cast","Structure",["Mixed Ensemble","Boxbots","Cyclops","Striders","Heavy Loaders","Astrobots","Four-Arm Conductors"]),e("robot_variety","Robot Variety","Structure",0,1,1,.01),e("robot_size","Robot Size","Structure",.8,1.3,1,.01),e("crowd_spacing","Procession Spacing","Structure",10,18,12,.1),e("factory_height","Factory Skyline","Structure",8,28,18,.1),o("choreography","Dance Style","Dance",["Factory Groove","Robot Pop","Disco Signal","Circuit Wave"]),e("dance_amount","Dance Amount","Dance",0,1.5,.9,.01),e("dance_audio","Music Response","Dance",0,2,1,.01),e("idle_dance","Idle Groove","Dance",0,1,.28,.01),e("ensemble_sync","Ensemble Sync","Dance",0,1,.75,.01)],defaults:{speed:.8,altitude:.95,sway:.18,bank:.08,fov:1.35,view_distance:125,fog:.36,glow:.65,exposure:1.1,audio_react:.5,detail:170},palettes:["Copper Circuit","Toxic Mint","Ultraviolet Steel","Ice Chrome","Magenta Reactor","Solar Rust","Prismatic Oil"],paletteShader:n.paletteShader([[[.025,.1,.14],[.11,.6,.64],[1,.47,.12]],[[.055,.045,.16],[.18,.72,.45],[.74,1,.2]],[[.06,.025,.19],[.4,.21,.79],[.51,.9,1]],[[.02,.07,.17],[.13,.54,.76],[.84,.95,1]],[[.1,.018,.15],[.86,.13,.45],[1,.65,.35]],[[.13,.025,.025],[.66,.2,.045],[1,.83,.3]],[[.1,.025,.24],[.08,.72,.67],[1,.28,.69]]]),presets:[{name:"Copper Parade",values:{world_style:0,palette:0,choreography:0}},{name:"Neon Night Shift",values:{world_style:1,palette:2,choreography:1,glow:.95,ensemble_sync:.95,factory_height:24}},{name:"Retro Disco District",values:{world_style:2,palette:5,choreography:2,dance_amount:1.15,idle_dance:.4,fog:.28}},{name:"Cosmic Conductors",values:{world_style:3,palette:6,choreography:3,robot_cast:6,ensemble_sync:.25,speed:.55}},{name:"Mint Machine Carnival",values:{world_style:1,palette:1,choreography:2,crowd_spacing:10,robot_size:.95,dance_amount:1.2}},{name:"Chrome Giants",values:{world_style:0,palette:3,robot_cast:4,robot_size:1.25,altitude:1.2,speed:.5,factory_height:28}}],shader:`
+const float RF_PI = 3.14159265;
+vec2 rfUnion(vec2 a, vec2 b) { return a.x < b.x ? a : b; }
+float rfCapsule(vec3 p, vec3 a, vec3 b, float r) {
+    vec3 pa = p - a, ba = b - a;
+    return length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 0.00001), 0.0, 1.0)) - r;
+}
+float rfCylinder(vec3 p, float radius, float halfHeight) {
+    vec2 d = vec2(length(p.xz) - radius, abs(p.y) - halfHeight);
+    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+vec3 rfLean(vec3 p, float a) {
+    return vec3(cos(a)*p.x - sin(a)*p.y, sin(a)*p.x + cos(a)*p.y, p.z);
+}
+float rfCell(float z) { return floor(z / u_crowd_spacing + 0.5); }
+float rfIdentity(vec3 p) { return esHash(vec2(rfCell(p.z), step(0.0, p.x) + 9.7) + u_seed_vec.xy * 17.0); }
+float rfFamily(float id) {
+    return u_robot_cast > 0.5 ? floor(u_robot_cast - 0.5) : floor(min(id * 6.0, 5.999) * u_robot_variety);
+}
+// All limbs are capsules between the same joint positions. Animation rotates
+// fixed-length arm segments, while equal-length leg IK keeps the feet planted.
+vec2 rfRobot(vec3 p, float id) {
+    float bound = esBox(p - vec3(0.0, 2.0, 0.0), vec3(2.65, 2.3, 1.65));
+    if (bound > 0.45) return vec2(bound, 4.0);
+    float family = rfFamily(id);
+    float tall = 1.0 - step(0.5, abs(family - 2.0));
+    float heavy = 1.0 - step(0.5, abs(family - 3.0));
+    float roundBot = 1.0 - step(0.5, abs(family - 4.0));
+    float cyclops = 1.0 - step(0.5, abs(family - 1.0));
+    float conductor = step(4.5, family);
+    float beat = u_beat.w * RF_PI + id * 6.283185 * (1.0 - u_ensemble_sync);
+    float drive = clamp(u_audio.w * 0.65 + u_audio.x * 0.25 + u_beat.x * 0.35 + u_beat.y * 0.15, 0.0, 1.0);
+    float amount = clamp(u_dance_amount * (u_idle_dance + u_dance_audio * drive), 0.0, 1.25);
+    float groove = sin(beat), bounce = 0.5 - 0.5*cos(beat*2.0);
+    if (u_choreography > 0.5 && u_choreography < 1.5) groove = 1.25*groove/(0.25+abs(groove));
+    float lean = groove * amount * 0.105;
+    vec3 pelvis = vec3(groove * amount * 0.085, 1.35 + tall*0.35 - bounce*amount*0.09, 0.0);
+    vec3 q = rfLean(p - pelvis, -lean);
+    float width = 0.43 + heavy*0.21 - tall*0.10;
+    float depth = 0.26 + heavy*0.075;
+    float torso = esBox(q - vec3(0.0,0.57,0.0), vec3(width,0.46,depth)) - 0.06;
+    if (cyclops > 0.5) torso = rfCylinder(q - vec3(0.0,0.57,0.0), 0.43, 0.46) - 0.035;
+    if (roundBot > 0.5) torso = (length((q-vec3(0.0,0.53,0.0))/vec3(0.58,0.59,0.37))-1.0)*0.37;
+    vec2 d = vec2(torso, 4.0 + family*0.1);
+    d = rfUnion(d, vec2(esBox(q, vec3(width*0.66,0.17,0.24))-0.04, 13.0));
+    d = rfUnion(d, vec2(rfCapsule(q,vec3(0.0,0.0,0.0),vec3(0.0,1.23,0.0),0.125),12.0));
+    vec3 h = q - vec3(0.0,1.43,0.0);
+    float head = esBox(h, vec3(0.36-tall*0.09,0.31+tall*0.06,0.30))-0.055;
+    if (cyclops > 0.5 || roundBot > 0.5) head = length(h/vec3(0.42,0.36,0.36))*0.36-0.36;
+    d = rfUnion(d,vec2(head,4.0+family*0.1));
+    // A dark inset face, separate luminous lenses and a small grille.
+    d = rfUnion(d,vec2(esBox(h-vec3(0.0,0.015,-0.308),vec3(0.29-tall*0.07,0.16,0.045))-0.02,12.0));
+    vec3 eye = h-vec3(0.0,0.055,-0.37);
+    if (cyclops < 0.5) eye.x = abs(eye.x)- (0.145-tall*0.035);
+    d = rfUnion(d,vec2(esBox(eye,vec3(cyclops>0.5?0.12:0.066,0.048,0.035))-0.018,14.0));
+    d = rfUnion(d,vec2(esBox(h-vec3(0.0,-0.15,-0.34),vec3(0.12,0.028,0.03)),13.0));
+    if (roundBot+conductor > 0.5) {
+        d = rfUnion(d,vec2(rfCapsule(h,vec3(0.0,0.3,0.0),vec3(0.0,0.58,0.0),0.035),13.0));
+        d = rfUnion(d,vec2(length(h-vec3(0.0,0.6,0.0))-0.08,14.0));
+    }
+    float panelZ = cyclops>0.5 ? -0.43 : (roundBot>0.5 ? -0.365 : -depth-0.06);
+    d = rfUnion(d,vec2(esBox(q-vec3(0.0,0.59,panelZ),vec3(width*0.54,0.22,0.045))-0.025,12.0));
+    d = rfUnion(d,vec2(length(q-vec3(0.0,0.61,panelZ-0.05))-0.125,15.0));
+    // Every family has two complete legs. Knees bend toward the viewer.
+    for (int i=0; i<2; i++) {
+        float side = i==0 ? -1.0 : 1.0;
+        float stepPhase = beat + float(i)*RF_PI;
+        float lift = pow(max(sin(stepPhase),0.0),2.0)*amount*0.17;
+        vec3 hip = pelvis + rfLean(vec3(side*width*0.55,0.0,0.0),lean);
+        vec3 ankle = vec3(side*(0.34+heavy*0.11),0.19+lift, -0.06+sin(stepPhase)*amount*0.12);
+        vec3 delta = ankle-hip;
+        float bone = 0.77+tall*0.18;
+        vec3 bend = normalize(cross(vec3(1.0,0.0,0.0),delta));
+        vec3 knee = (hip+ankle)*0.5 + bend*sqrt(max(bone*bone-dot(delta,delta)*0.25,0.001));
+        float radius = 0.115+heavy*0.075-tall*0.025;
+        d = rfUnion(d,vec2(min(rfCapsule(p,hip,knee,radius),rfCapsule(p,knee,ankle,radius)),13.0));
+        d = rfUnion(d,vec2(min(length(p-hip),min(length(p-knee),length(p-ankle)))-radius*1.28,12.0));
+        d = rfUnion(d,vec2(esBox(p-ankle-vec3(0.0,-0.055,-0.13),vec3(0.20+heavy*0.08,0.135,0.30))-0.025,4.0+family*0.1));
+    }
+    // Conductors have a second, independently articulated pair of arms.
+    for (int i=0; i<4; i++) {
+        if (i>=2 && conductor<0.5) break;
+        float side = mod(float(i),2.0)<0.5 ? -1.0 : 1.0;
+        float lower = step(1.5,float(i));
+        float phase = beat + side*0.65 + lower*1.9;
+        float angle = -0.48 + amount*(0.43+sin(phase)*0.47) - lower*0.7;
+        if (u_choreography>1.5 && u_choreography<2.5) angle += amount*(side*0.65+0.3);
+        if (u_choreography>2.5) angle += amount*(0.45+sin(phase*0.5)*0.38);
+        vec3 shoulder = vec3(side*(width+0.045),0.82-lower*0.46,0.0);
+        vec3 elbow = shoulder + normalize(vec3(side*cos(angle),sin(angle),-0.12))* (0.67+heavy*0.06);
+        vec3 wrist = elbow + normalize(vec3(side*0.22,0.2+amount*(0.7+sin(phase+0.7)*0.4),-0.70))*0.61;
+        float radius = 0.105+heavy*0.065;
+        d = rfUnion(d,vec2(min(rfCapsule(q,shoulder,elbow,radius),rfCapsule(q,elbow,wrist,radius)),13.0));
+        d = rfUnion(d,vec2(min(length(q-shoulder),length(q-elbow))-radius*1.35,12.0));
+        d = rfUnion(d,vec2(esBox(q-wrist,vec3(0.14+heavy*0.055,0.17,0.14))-0.035,4.0+family*0.1));
+    }
+    return d;
+}
+vec3 esPath(float z) { return vec3(sin(z*0.027)*u_sway*0.8,1.85+u_altitude*1.45,z); }
+vec2 esMap(vec3 p) {
+    vec2 d = vec2(p.y,1.0);
+    float sideX = abs(p.x), cell = rfCell(p.z), zz = p.z-cell*u_crowd_spacing;
+    float id = rfIdentity(p);
+    float scale = 1.45*u_robot_size*(1.0 + (id-0.5)*0.14*u_robot_variety);
+    vec3 robotP = vec3(sideX-6.4,p.y-0.24,zz)/scale;
+    vec2 robot = rfRobot(robotP,id); robot.x *= scale;
+    d = rfUnion(d,robot);
+    float platform = esBox(vec3(sideX-6.4,p.y-0.10,zz),vec3(2.5,0.12,2.65));
+    d = rfUnion(d,vec2(platform,2.0));
+    // Continuous service pipes and long avenues make the travel legible.
+    float pipe = length(vec2(sideX-10.2,p.y-1.35))-0.32;
+    float rail = length(vec2(sideX-9.9,p.y-2.2))-0.07;
+    d = rfUnion(d,vec2(min(pipe,rail),3.0));
+    float bay = floor((p.z+8.0)/16.0), bz = p.z-bay*16.0;
+    float row = max(0.0,floor((sideX-12.5)/8.0));
+    float bx = sideX-(16.5+row*8.0);
+    float factoryId = esHash(vec2(bay+step(0.0,p.x)*37.0,row)+u_seed_vec.yz*13.0);
+    float height = u_factory_height*(0.45+factoryId*0.65);
+    vec3 b = vec3(bx,p.y-height*0.5,bz);
+    float building = esBox(b,vec3(3.0,height*0.5,5.3));
+    if (u_world_style>1.5 && u_world_style<2.5) building = rfCylinder(b,3.35,height*0.5);
+    if (u_world_style>2.5) {
+        building = rfCylinder(b,2.25,height*0.5);
+        vec2 ring = vec2(length(b.xz)-3.35,mod(p.y+1.7,3.4)-1.7);
+        building = min(building,max(length(ring)-0.19,abs(b.y)-height*0.5));
+    }
+    d = rfUnion(d,vec2(building,2.0));
+    // Smokestacks, roof machinery and bridge cranes break up the skyline.
+    vec3 stack = vec3(bx+1.2,p.y-height-1.65,bz+1.4);
+    d = rfUnion(d,vec2(rfCylinder(stack,0.48,1.75),3.0));
+    float support = esBox(vec3(sideX-11.8,p.y-4.9,bz),vec3(0.23,4.9,0.24));
+    float crane = esBox(vec3(p.x,p.y-9.8,bz),vec3(12.0,0.25,0.25));
+    if (u_world_style>0.5 && u_world_style<1.5) {
+        crane = min(crane,esBox(vec3(sideX-9.0,p.y-8.65,bz),vec3(0.09,1.1,0.09)));
+    }
+    d = rfUnion(d,vec2(min(support,crane),3.0));
+    return d;
+}
+float esTone(vec3 p, vec3 n, float material) {
+    if (material>3.5 && material<5.0) return rfIdentity(p)*0.78 + material*0.17;
+    return 0.13 + floor(p.y/3.4)*0.065 + step(2.5,material)*0.22;
+}
+vec3 esEmission(vec3 p, vec3 n, float material) {
+    if (material>13.5) return mix(esPalette(rfIdentity(p)*0.6+0.12),vec3(0.62,0.9,1.0),0.35)*(material>14.5?0.8:1.6);
+    if (material<1.5) {
+        float lane = 1.0-smoothstep(0.035,0.10,abs(abs(p.x)-3.1));
+        float crossLine = (1.0-smoothstep(0.025,0.055,abs(mod(p.z+2.0,4.0)-2.0)))*step(3.6,abs(p.x));
+        return esPalette(p.z*0.005)* (lane*0.42+crossLine*0.1);
+    }
+    if (material<2.5 && abs(p.x)>12.0) {
+        float stripe = 1.0-smoothstep(0.05,0.13,abs(mod(p.y+1.7,3.4)-1.7));
+        float pane = step(0.58,fract(p.y*0.294))*step(0.23,fract(p.z*0.48))*step(0.18,fract(p.x*0.45));
+        float windows = pane*(0.12+0.18*step(0.5,u_world_style));
+        return esPalette(p.y*0.022+0.1)*(stripe*(0.14+step(0.5,u_world_style)*0.3)+windows);
+    }
+    return vec3(0.0);
+}
+`,stride:`
+float esStrideLimit(vec3 p) {
+    float robotBorder = u_crowd_spacing*0.5-abs(p.z-rfCell(p.z)*u_crowd_spacing);
+    float bayBorder = 8.0-abs(mod(p.z+8.0,16.0)-8.0);
+    float rowBorder = 4.0-abs(mod(abs(p.x)-12.5,8.0)-4.0);
+    // Don't leap over a neighbor with a different pose, type or tower height.
+    return max(0.012,min(robotBorder,min(bayBorder,rowBorder))+0.012);
+}
+`,renderShader:`
+vec3 rfNormal(vec3 p,float eps) {
+    vec3 n=vec3(0.0);
+    for(int i=0;i<4;i++) {
+        vec3 e=i==0?vec3(1,-1,-1):(i==1?vec3(-1,-1,1):(i==2?vec3(-1,1,-1):vec3(1)));
+        n+=e*esMap(p+e*eps).x;
+    }
+    return normalize(n+vec3(0.0,0.00001,0.0));
+}
+void main() {
+    float z=u_time*u_speed*ES_SPEED+seedPhase()*4.0;
+    vec3 ro=esPath(z), target=esPath(z+6.0)-vec3(0,ES_LOOK_DROP,0);
+    vec3 rd=psyRayDirection(gl_FragCoord.xy,u_resolution,ro,target,u_fov,u_bank*sin(z*0.035)*0.10);
+    vec3 sun=normalize(vec3(-0.45,0.65,-0.60));
+    float night = (u_world_style>0.5 && u_world_style<1.5) || u_world_style>2.5 ? 1.0 : 0.0;
+    vec3 sky=esSky(rd,sun)*(1.0-night*0.60), col=sky;
+    float t=0.03, material=0.0;
+    bool hit=false;
+    for(int i=0;i<220;i++) {
+        if(float(i)>=u_detail || t>u_view_distance) break;
+        vec3 p=ro+rd*t; vec2 h=esMap(p);
+        if(h.x<0.0018+t*0.00045) {hit=true;material=h.y;break;}
+        t+=clamp(min(h.x*0.8,esStrideLimit(p)),0.002,4.0);
+    }
+    if(hit) {
+        vec3 p=ro+rd*t, n=rfNormal(p,0.002+t*0.0004);
+        float facing=clamp(dot(n,-rd),0.0,1.0), diffuse=max(dot(n,sun),0.0);
+        float tone=esTone(p,n,material);
+        vec3 base=mix(esPalette(tone),vec3(0.38,0.43,0.49),0.16);
+        if(material<3.5) {
+            // Seamed panels, ventilation slots and stage hazard stripes give
+            // the factories readable scale without multiplying SDF work.
+            vec2 metalUV=abs(n.x)>0.5?p.zy:p.xy;
+            float seam=step(0.965,fract(metalUV.x*0.6))+step(0.975,fract(p.y*0.294));
+            float vents=step(0.75,fract(metalUV.x*0.22))*step(0.72,fract(p.y*0.294))*step(0.5,fract(p.y*7.0));
+            base*=mix(0.52,0.23,night)*(1.0-min(seam,1.0)*0.6-vents*0.24);
+            if(material>1.5 && material<2.5 && abs(p.x)<9.0) {
+                float stripe=step(0.5,fract((p.x+p.z)*1.6));
+                base=mix(vec3(0.035,0.045,0.055),vec3(0.7,0.39,0.06),stripe)*0.65;
+                if(n.y>0.5) base=vec3(0.10,0.14,0.18)*(0.7+0.3*stripe);
+            }
+        }
+        if(material>11.5 && material<12.5) base=vec3(0.025,0.033,0.045);
+        if(material>12.5 && material<13.5) base=mix(esPalette(tone),vec3(0.48,0.58,0.66),0.65);
+        float ao=clamp(1.0-(0.3-esMap(p+n*0.3).x)*1.2,0.4,1.0);
+        col=base*(vec3(0.10,0.15,0.23)+vec3(1.0,0.85,0.67)*diffuse*0.95+vec3(0.60,0.77,1.0)*facing*0.35)*ao;
+        float spec=pow(max(dot(reflect(-sun,n),-rd),0.0),32.0);
+        col+=vec3(0.75,0.87,1.0)*spec*0.38+esPalette(tone+0.2)*pow(1.0-facing,3.0)*0.14;
+        if(material<1.5) {
+            float grid=step(0.975,fract(p.z*0.125))+step(0.985,fract(p.x*0.25));
+            col*=0.28+min(grid,1.0)*0.12;
+            col+=esPalette(0.18)*pow(1.0-facing,4.0)*0.055;
+        }
+        col+=esEmission(p,n,material)*u_glow*(1.0+u_audio_react*(u_beat.x*0.65+u_audio.x*0.3));
+        col=mix(col,sky,1.0-exp(-t*u_fog*0.018));
+        col=mix(col,sky,smoothstep(u_view_distance*0.83,u_view_distance,t));
+    }
+    vec2 uv=gl_FragCoord.xy/u_resolution;
+    col*=0.80+0.20*pow(max(16.0*uv.x*uv.y*(1.0-uv.x)*(1.0-uv.y),0.0),0.18);
+    FRAG_OUT=vec4(psyGamma(psyTonemap(col*u_exposure)),1.0);
+}
+`})})(),{}}export{u as default};

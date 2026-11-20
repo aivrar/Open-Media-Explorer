@@ -1,0 +1,463 @@
+function l(o){var t=o.EffectRegistry,e=o.FractalLab;return(function(){"use strict";var a=["Mandelbrot","Julia","Multibrot","MultiJulia","Tricorn","Burning Ship","Burning Ship Julia","Buffalo","Celtic","Perpendicular Mandelbrot","Perpendicular Burning Ship","Perpendicular Buffalo","Perpendicular Celtic","Phoenix","Magnet I","Magnet II","Lambda","Cosine","Sine","Exponential","Z + Cos","Lyapunov","Nova","Manowar","Spider","Dual Power","Mandelbox 2D","Newton z^3","Newton z^4","Halley","Householder","Secant"];t.register({name:"escape_time_lab",label:"2D Formula Lab",category:"Fractals",description:"Broad animated escape-time, root-solver, transcendental, and fold formula lab",fractalFlight:e.metadata({family:"2D Formula Lab",familyKey:"escape_time_lab",modeParam:"formula",modes:a,modeTokens:["MODE_ESCAPE_MANDELBROT","MODE_ESCAPE_JULIA","MODE_ESCAPE_MULTIBROT","MODE_ESCAPE_MULTIJULIA","MODE_ESCAPE_TRICORN","MODE_ESCAPE_BURNING_SHIP","MODE_ESCAPE_BURNING_SHIP_JULIA","MODE_ESCAPE_BUFFALO","MODE_ESCAPE_CELTIC","MODE_ESCAPE_PERP_MANDELBROT","MODE_ESCAPE_PERP_BURNING_SHIP","MODE_ESCAPE_PERP_BUFFALO","MODE_ESCAPE_PERP_CELTIC","MODE_ESCAPE_PHOENIX","MODE_ESCAPE_MAGNET_I","MODE_ESCAPE_MAGNET_II","MODE_ESCAPE_LAMBDA","MODE_ESCAPE_COSINE","MODE_ESCAPE_SINE","MODE_ESCAPE_EXPONENTIAL","MODE_ESCAPE_Z_PLUS_COS","MODE_ESCAPE_LYAPUNOV","MODE_ESCAPE_NOVA","MODE_ESCAPE_MANOWAR","MODE_ESCAPE_SPIDER","MODE_ESCAPE_DUAL_POWER","MODE_ESCAPE_MANDELBOX_2D","MODE_ESCAPE_NEWTON_Z3","MODE_ESCAPE_NEWTON_Z4","MODE_ESCAPE_HALLEY","MODE_ESCAPE_HOUSEHOLDER","MODE_ESCAPE_SECANT"],renderCost:"medium",requiredGroups:["Formula","View","Animation","Domain","Color"],requiredParams:["formula","power","iterations","bailout","formula_zoom","target_x","target_y","color_mode","palette"],structuralParams:["formula","power","iterations","bailout","julia_x","julia_y","target_x","target_y","root_relax","phoenix_feedback","nova_relaxation"],animationParams:["zoom_speed","zoom_depth","motion_mode","formula_motion","target_drift","root_spin","warp_speed","color_speed","trap_rotation"],smokePresets:[e.preset("Seahorse Lab Dive",{formula:0,target_x:-.7435,target_y:.1314,formula_zoom:1.18,zoom_speed:.62,zoom_depth:10,domain_mode:2,warp_amount:.18,palette:0,color_mode:1,stripe_density:6.4,brightness:1.12}),e.preset("Buffalo Wake",{formula:7,power:2,target_x:-.34,target_y:-.22,formula_zoom:1.34,formula_motion:.72,domain_mode:3,warp_amount:.22,color_mode:2,palette:2,trap_shape:2}),e.preset("Celtic Glass",{formula:8,formula_zoom:1.52,view_rotate:.16,domain_mode:4,kaleido_sides:7,moire_strength:.18,color_mode:3,palette:3,contrast:1.28}),e.preset("Magnet Gate",{formula:14,target_x:-.12,target_y:.08,formula_zoom:1.68,formula_motion:.66,target_drift:.34,domain_mode:1,palette:1,color_mode:2,brightness:1.18}),e.preset("Lambda Bloom",{formula:16,julia_x:.72,julia_y:.22,formula_zoom:1.44,formula_motion:.88,target_drift:.42,color_mode:4,palette:4,trap_size:.28}),e.preset("Spider Tendrils",{formula:24,target_x:-.58,target_y:.05,formula_zoom:1.36,formula_motion:.72,target_drift:.56,domain_mode:5,warp_amount:.18,palette:0,color_mode:2}),e.preset("Transcendental Curtain",{formula:20,formula_zoom:1.28,formula_motion:.94,motion_mode:2,domain_mode:6,warp_amount:.28,warp_frequency:3.6,color_mode:4,palette:3,brightness:1.24}),e.preset("Root Solver Bloom",{formula:28,formula_zoom:1.62,root_relax:.82,root_spin:.78,target_drift:.24,color_mode:3,palette:1,detail_density:1.26,trap_rotation:.44}),e.preset("Mandelbox 2D Fold",{formula:26,power:2.2,formula_zoom:1.52,formula_motion:.76,domain_mode:4,kaleido_sides:6,warp_amount:.16,color_mode:2,palette:2,contrast:1.34})]}),params:[{name:"formula",label:"Formula",group:"Formula",type:"select",options:a,default:0},{name:"power",label:"Power",group:"Formula",min:2,max:8,default:2.5,step:.05},{name:"iterations",label:"Iterations",group:"Formula",min:32,max:220,default:120,step:1,type:"int"},{name:"bailout",label:"Bailout",group:"Formula",min:4,max:256,default:48,step:1},{name:"julia_x",label:"Julia X",group:"Formula",min:-1.5,max:1.5,default:-.72,step:.001},{name:"julia_y",label:"Julia Y",group:"Formula",min:-1.5,max:1.5,default:.24,step:.001},{name:"target_x",label:"Target X",group:"Formula",min:-2.5,max:1.5,default:-.62,step:.001},{name:"target_y",label:"Target Y",group:"Formula",min:-1.8,max:1.8,default:.08,step:.001},{name:"root_relax",label:"Root Relax",group:"Formula",min:.2,max:1.5,default:.86,step:.02},{name:"phoenix_feedback",label:"Phoenix Feedback",group:"Formula",min:-1.2,max:1.2,default:-.48,step:.02},{name:"nova_relaxation",label:"Nova Relax",group:"Formula",min:.1,max:1.6,default:.74,step:.02},{name:"formula_zoom",label:"Formula Zoom",group:"View",min:0,max:8,default:1.18,step:.05},{name:"zoom_speed",label:"Dive Speed",group:"View",min:0,max:4,default:.45,step:.05},{name:"zoom_depth",label:"Dive Depth",group:"View",min:2,max:24,default:9,step:1},{name:"pan_x",label:"Pan X",group:"View",min:-2,max:2,default:0,step:.01},{name:"pan_y",label:"Pan Y",group:"View",min:-2,max:2,default:0,step:.01},{name:"view_rotate",label:"View Rotate",group:"View",min:-3.14,max:3.14,default:.05,step:.01},{name:"motion_mode",label:"Motion Path",group:"Animation",type:"select",options:["Orbit","Lemniscate","Rotozoom","Pulse"],default:1},{name:"motion_phase",label:"Motion Phase",group:"Animation",min:0,max:1,default:.18,step:.01},{name:"formula_motion",label:"Formula Motion",group:"Animation",min:0,max:2,default:.56,step:.05},{name:"target_drift",label:"Target Drift",group:"Animation",min:0,max:1.5,default:.34,step:.05},{name:"root_spin",label:"Root Spin",group:"Animation",min:0,max:3,default:.46,step:.05},{name:"domain_mode",label:"Domain Warp",group:"Domain",type:"select",options:["None","Swirl","Wave","Kaleido","Moire","Log Spiral","Water"],default:2},{name:"warp_amount",label:"Warp Amount",group:"Domain",min:0,max:1.5,default:.18,step:.02},{name:"warp_speed",label:"Warp Speed",group:"Domain",min:-4,max:4,default:.72,step:.05},{name:"warp_frequency",label:"Warp Frequency",group:"Domain",min:.5,max:12,default:3.2,step:.1},{name:"kaleido_sides",label:"Kaleido Sides",group:"Domain",min:3,max:14,default:6,step:1,type:"int"},{name:"moire_strength",label:"Moire Strength",group:"Domain",min:0,max:1,default:.16,step:.02},{name:"color_mode",label:"Color Mode",group:"Color",type:"select",options:["Smooth","Stripes","Orbit Trap","Root Phase","Field Glow"],default:1},{name:"palette",label:"Palette",group:"Color",type:"select",palette:!0,options:["Neon Rainbow","Fire Glass","Ocean Acid","Violet Gold","Candy Root","Cyber Lotus","Infrared Jungle","Glacier Bloom","Sepia Dream","Blacklight Pastel","Solarized Glass","Ghost Mono"],default:0},{name:"color_speed",label:"Color Speed",group:"Color",min:0,max:8,default:.58,step:.05},{name:"stripe_density",label:"Stripe Density",group:"Color",min:1,max:18,default:7.5,step:.1},{name:"detail_density",label:"Detail Density",group:"Color",min:.2,max:3,default:1.15,step:.05},{name:"trap_shape",label:"Trap Shape",group:"Color",type:"select",options:["Ring","Cross","Grid","Petal"],default:1},{name:"trap_size",label:"Trap Size",group:"Color",min:.03,max:.8,default:.22,step:.01},{name:"trap_rotation",label:"Trap Rotation",group:"Color",min:-3,max:3,default:.28,step:.02},{name:"brightness",label:"Brightness",group:"Color",min:.2,max:3,default:1.08,step:.05},{name:"contrast",label:"Contrast",group:"Color",min:.4,max:2.4,default:1.18,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_formula;
+uniform float u_power;
+uniform float u_iterations;
+uniform float u_bailout;
+uniform float u_julia_x;
+uniform float u_julia_y;
+uniform float u_target_x;
+uniform float u_target_y;
+uniform float u_root_relax;
+uniform float u_phoenix_feedback;
+uniform float u_nova_relaxation;
+uniform float u_formula_zoom;
+uniform float u_zoom_speed;
+uniform float u_zoom_depth;
+uniform float u_pan_x;
+uniform float u_pan_y;
+uniform float u_view_rotate;
+uniform float u_motion_mode;
+uniform float u_motion_phase;
+uniform float u_formula_motion;
+uniform float u_target_drift;
+uniform float u_root_spin;
+uniform float u_domain_mode;
+uniform float u_warp_amount;
+uniform float u_warp_speed;
+uniform float u_warp_frequency;
+uniform float u_kaleido_sides;
+uniform float u_moire_strength;
+uniform float u_color_mode;
+uniform float u_palette;
+uniform float u_color_speed;
+uniform float u_stripe_density;
+uniform float u_detail_density;
+uniform float u_trap_shape;
+uniform float u_trap_size;
+uniform float u_trap_rotation;
+uniform float u_brightness;
+uniform float u_contrast;
+
+// MODE_ESCAPE_MANDELBROT MODE_ESCAPE_JULIA MODE_ESCAPE_MULTIBROT MODE_ESCAPE_MULTIJULIA
+// MODE_ESCAPE_TRICORN MODE_ESCAPE_BURNING_SHIP MODE_ESCAPE_BURNING_SHIP_JULIA
+// MODE_ESCAPE_BUFFALO MODE_ESCAPE_CELTIC MODE_ESCAPE_PERP_MANDELBROT
+// MODE_ESCAPE_PERP_BURNING_SHIP MODE_ESCAPE_PERP_BUFFALO MODE_ESCAPE_PERP_CELTIC
+// MODE_ESCAPE_PHOENIX MODE_ESCAPE_MAGNET_I MODE_ESCAPE_MAGNET_II MODE_ESCAPE_LAMBDA
+// MODE_ESCAPE_COSINE MODE_ESCAPE_SINE MODE_ESCAPE_EXPONENTIAL MODE_ESCAPE_Z_PLUS_COS
+// MODE_ESCAPE_LYAPUNOV MODE_ESCAPE_NOVA MODE_ESCAPE_MANOWAR MODE_ESCAPE_SPIDER
+// MODE_ESCAPE_DUAL_POWER MODE_ESCAPE_MANDELBOX_2D MODE_ESCAPE_NEWTON_Z3
+// MODE_ESCAPE_NEWTON_Z4 MODE_ESCAPE_HALLEY MODE_ESCAPE_HOUSEHOLDER MODE_ESCAPE_SECANT
+
+float phase() {
+    return u_motion_phase * 6.28318530718 + seedPhase() * 0.11;
+}
+
+float formulaMode() {
+    return clamp(floor(u_formula + 0.5), 0.0, 31.0);
+}
+
+vec2 cmul(vec2 a, vec2 b) {
+    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+vec2 cdiv(vec2 a, vec2 b) {
+    float d = max(dot(b, b), 0.000001);
+    return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / d;
+}
+
+vec2 cinv(vec2 z) {
+    return cdiv(vec2(1.0, 0.0), z);
+}
+
+vec2 csinSafe(vec2 z) {
+    float y = clamp(z.y, -4.0, 4.0);
+    float ey = exp(y);
+    float emy = exp(-y);
+    float sy = 0.5 * (ey - emy);
+    float cy = 0.5 * (ey + emy);
+    return vec2(sin(z.x) * cy, cos(z.x) * sy);
+}
+
+vec2 ccosSafe(vec2 z) {
+    float y = clamp(z.y, -4.0, 4.0);
+    float ey = exp(y);
+    float emy = exp(-y);
+    float sy = 0.5 * (ey - emy);
+    float cy = 0.5 * (ey + emy);
+    return vec2(cos(z.x) * cy, -sin(z.x) * sy);
+}
+
+vec2 cexpSafe(vec2 z) {
+    float e = exp(clamp(z.x, -4.0, 4.0));
+    return vec2(cos(z.y), sin(z.y)) * e;
+}
+
+vec2 cpowReal(vec2 z, float p) {
+    float r = max(length(z), 0.000001);
+    float a = atan(z.y, z.x);
+    float rp = pow(r, p);
+    return vec2(cos(a * p), sin(a * p)) * rp;
+}
+
+vec2 cpowInt(vec2 z, int n) {
+    vec2 outZ = vec2(1.0, 0.0);
+    z = clamp(z, vec2(-8.0), vec2(8.0));
+    for (int i = 0; i < 8; i++) {
+        if (i >= n) break;
+        outZ = cmul(outZ, z);
+        outZ = clamp(outZ, vec2(-8192.0), vec2(8192.0));
+    }
+    return outZ;
+}
+
+vec2 clampComplex(vec2 z, float limit) {
+    return clamp(z, vec2(-limit), vec2(limit));
+}
+
+vec3 labPalette(float t, float pal) {
+    t = fract(t);
+    if (pal > 11.5) return psyLutLinear(t);
+    if (pal < 0.5) return neon(t);
+    if (pal < 1.5) return palette(t, vec3(0.34,0.13,0.05), vec3(0.72,0.36,0.18), vec3(1.0,0.72,0.28), vec3(0.02,0.20,0.35));
+    if (pal < 2.5) return palette(t, vec3(0.04,0.16,0.26), vec3(0.32,0.64,0.76), vec3(0.55,0.82,1.0), vec3(0.55,0.22,0.08));
+    if (pal < 3.5) return palette(t, vec3(0.22,0.08,0.30), vec3(0.50,0.36,0.70), vec3(0.86,0.64,0.28), vec3(0.08,0.32,0.58));
+    if (pal < 4.5) return palette(t, vec3(0.20,0.06,0.16), vec3(0.78,0.32,0.54), vec3(1.0,0.52,0.74), vec3(0.12,0.40,0.68));
+    if (pal < 5.5) return palette(t, vec3(0.07,0.05,0.23), vec3(0.30,0.18,0.68), vec3(0.52,0.96,1.0), vec3(0.82,0.20,0.46));
+    if (pal < 6.5) return palette(t, vec3(0.09,0.20,0.05), vec3(0.52,0.56,0.20), vec3(1.0,0.32,0.16), vec3(0.12,0.55,0.36));
+    if (pal < 7.5) return palette(t, vec3(0.04,0.11,0.20), vec3(0.36,0.56,0.72), vec3(0.78,0.96,1.0), vec3(0.64,0.18,0.42));
+    if (pal < 8.5) return palette(t, vec3(0.26,0.20,0.13), vec3(0.54,0.38,0.22), vec3(0.92,0.74,0.46), vec3(0.12,0.22,0.36));
+    if (pal < 9.5) return palette(t, vec3(0.10,0.07,0.18), vec3(0.60,0.36,0.82), vec3(1.0,0.60,0.88), vec3(0.26,0.72,0.90));
+    if (pal < 10.5) return palette(t, vec3(0.10,0.12,0.13), vec3(0.45,0.36,0.22), vec3(0.90,0.76,0.38), vec3(0.06,0.28,0.44));
+    float mono = 0.35 + 0.65 * smoothstep(0.0, 1.0, sin(t * 6.28318530718) * 0.5 + 0.5);
+    return vec3(mono) * vec3(0.78, 0.86, 1.0);
+}
+
+vec2 animatedJulia(float t) {
+    vec2 base = vec2(u_julia_x, u_julia_y);
+    float a = t * (0.31 + 0.24 * u_formula_motion) + phase();
+    return base + vec2(cos(a), sin(a * 1.37)) * (0.10 + 0.12 * u_target_drift);
+}
+
+vec2 animatedTarget(float t) {
+    vec2 base = vec2(u_target_x, u_target_y) + vec2(u_pan_x, u_pan_y);
+    float a = t * (0.18 + 0.20 * u_formula_motion) + phase();
+    vec2 drift = vec2(cos(a * 1.31), sin(a * 0.91 + 1.2)) * u_target_drift * 0.18;
+    if (u_motion_mode >= 0.5 && u_motion_mode < 1.5) {
+        drift = vec2(sin(a), sin(a * 2.0) * 0.5) * u_target_drift * 0.20;
+    } else if (u_motion_mode >= 1.5 && u_motion_mode < 2.5) {
+        drift = vec2(cos(a * 0.7), sin(a * 0.7)) * u_target_drift * 0.15;
+    } else if (u_motion_mode >= 2.5) {
+        drift = vec2(sin(a * 0.42), cos(a * 0.58)) * u_target_drift * 0.12;
+    }
+    return base + drift;
+}
+
+vec2 warpDomain(vec2 p, float t) {
+    float m = floor(u_domain_mode + 0.5);
+    float amt = u_warp_amount;
+    float f = max(u_warp_frequency, 0.1);
+    float wt = t * u_warp_speed + phase();
+    if (m < 0.5) {
+        return p;
+    } else if (m < 1.5) {
+        float r = length(p);
+        p = rot2(amt * sin(r * f - wt)) * p;
+    } else if (m < 2.5) {
+        p += amt * 0.12 * vec2(sin(p.y * f + wt), cos(p.x * (f * 0.83) - wt));
+    } else if (m < 3.5) {
+        float sides = max(3.0, floor(u_kaleido_sides + 0.5));
+        float a = atan(p.y, p.x);
+        float sector = 6.28318530718 / sides;
+        a = abs(mod(a + sector * 0.5, sector) - sector * 0.5);
+        p = vec2(cos(a), sin(a)) * length(p);
+        p = rot2(wt * 0.05) * p;
+    } else if (m < 4.5) {
+        float moire = sin(p.x * f * 7.0 + wt) * sin(p.y * f * 6.0 - wt);
+        p += normalize(p + vec2(0.001)) * moire * (amt + u_moire_strength) * 0.18;
+    } else if (m < 5.5) {
+        vec2 pol = vec2(log(max(length(p), 0.0001)), atan(p.y, p.x));
+        pol.y += pol.x * amt * 1.7 + wt * 0.08;
+        p = vec2(cos(pol.y), sin(pol.y)) * exp(pol.x);
+    } else {
+        p += amt * 0.10 * vec2(sin((p.x + p.y) * f + wt), sin(length(p) * f * 2.0 - wt));
+    }
+    return p;
+}
+
+vec2 escapeStep(vec2 z, vec2 c, vec2 prev, float mode, float t, float fi) {
+    float pwr = clamp(u_power + sin(t * 0.13 + mode) * u_formula_motion * 0.35, 1.5, 8.5);
+    vec2 z2 = cmul(z, z);
+    if (mode < 0.5) {
+        return z2 + c;
+    } else if (mode < 1.5) {
+        return z2 + c;
+    } else if (mode < 2.5) {
+        return cpowReal(z, pwr) + c;
+    } else if (mode < 3.5) {
+        return cpowReal(z, pwr) + c;
+    } else if (mode < 4.5) {
+        z = vec2(z.x, -z.y);
+        return cmul(z, z) + c;
+    } else if (mode < 5.5) {
+        z = abs(z);
+        return cmul(z, z) + c;
+    } else if (mode < 6.5) {
+        z = abs(z);
+        return cmul(z, z) + c;
+    } else if (mode < 7.5) {
+        vec2 q = cmul(z, z);
+        return vec2(abs(q.x), abs(q.y)) + c;
+    } else if (mode < 8.5) {
+        vec2 q = cmul(z, z);
+        return vec2(abs(q.x), q.y) + c;
+    } else if (mode < 9.5) {
+        vec2 q = cmul(z, z);
+        return vec2(q.x, -abs(q.y)) + c;
+    } else if (mode < 10.5) {
+        z = vec2(abs(z.x), -abs(z.y));
+        return cmul(z, z) + c;
+    } else if (mode < 11.5) {
+        vec2 q = cmul(z, z);
+        return vec2(abs(q.x), -abs(q.y)) + c;
+    } else if (mode < 12.5) {
+        vec2 q = cmul(z, z);
+        return vec2(abs(q.x), -q.y) + c;
+    } else if (mode < 13.5) {
+        return z2 + c + prev * u_phoenix_feedback;
+    } else if (mode < 14.5) {
+        vec2 num = z2 + c - vec2(1.0, 0.0);
+        vec2 den = z * 2.0 + c - vec2(2.0, 0.0);
+        vec2 q = cdiv(num, den);
+        return cmul(q, q);
+    } else if (mode < 15.5) {
+        vec2 z3 = cmul(z2, z);
+        vec2 num = z3 + cmul(c - vec2(1.0, 0.0), z) * 3.0 + cmul(c - vec2(1.0, 0.0), c - vec2(2.0, 0.0));
+        vec2 den = z2 * 3.0 + cmul(c - vec2(2.0, 0.0), z) * 3.0 + cmul(c - vec2(1.0, 0.0), c - vec2(2.0, 0.0)) + vec2(0.0001, 0.0);
+        return cmul(cdiv(num, den), cdiv(num, den));
+    } else if (mode < 16.5) {
+        return cmul(c, cmul(z, vec2(1.0, 0.0) - z));
+    } else if (mode < 17.5) {
+        return ccosSafe(z) + c;
+    } else if (mode < 18.5) {
+        return csinSafe(z) + c;
+    } else if (mode < 19.5) {
+        return cexpSafe(z) + c * 0.65;
+    } else if (mode < 20.5) {
+        return z + ccosSafe(z * (0.92 + 0.08 * sin(t))) + c * 0.38;
+    } else if (mode < 21.5) {
+        return z2 + c;
+    } else if (mode < 22.5) {
+        vec2 f = cpowReal(z, pwr) - vec2(1.0, 0.0);
+        vec2 fp = cpowReal(z, pwr - 1.0) * max(pwr, 0.5);
+        return z - cdiv(f, fp) * u_nova_relaxation + c * 0.34;
+    } else if (mode < 23.5) {
+        // Manowar: z(n+1) = z(n)^2 + c + z(n-1).
+        return z2 + c + prev;
+    } else if (mode < 24.5) {
+        return z2 + c;
+    } else if (mode < 25.5) {
+        return mix(cpowReal(z, max(2.0, pwr)), cpowReal(z, max(2.0, pwr + 1.35)), 0.5 + 0.5 * sin(t * 0.23 + fi * 0.03)) + c;
+    } else {
+        vec2 q = clamp(z, -1.0, 1.0) * 2.0 - z;
+        float r2 = dot(q, q);
+        if (r2 < 0.25) q *= 4.0;
+        else if (r2 < 1.0) q /= max(r2, 0.0001);
+        return q * (1.35 + 0.18 * sin(t + fi)) + c * 0.34;
+    }
+}
+
+float lyapunovField(vec2 p, float t) {
+    float a = 3.18 + 0.68 * sin(p.x * 1.45 + t * 0.25 + phase());
+    float b = 3.28 + 0.62 * cos(p.y * 1.35 - t * 0.21);
+    float x = 0.5 + 0.08 * sin(t + p.x);
+    float sum = 0.0;
+    float lyapIter = min(u_iterations, 112.0);
+    for (int i = 0; i < 160; i++) {
+        if (float(i) >= lyapIter) break;
+        float sel = mod(float(i) + floor(abs(p.x + p.y) * 2.0), 4.0);
+        float r = (sel < 1.5 || sel > 2.5) ? a : b;
+        x = clamp(r * x * (1.0 - x), 0.00001, 0.99999);
+        sum += log(abs(r * (1.0 - 2.0 * x)) + 0.00001);
+    }
+    return sum / max(lyapIter, 1.0);
+}
+
+vec2 rootTarget(float t) {
+    float rootPhase = t * u_root_spin + phase();
+    return vec2(cos(rootPhase * 0.13), sin(rootPhase * 0.13)) * (0.92 + 0.08 * sin(t * 0.17));
+}
+
+vec2 rootStep(vec2 z, vec2 previousZ, float mode, float t) {
+    int n = 3;
+    if (mode >= 27.5 && mode < 28.5) n = 4;
+    z = clampComplex(z, 6.0);
+    vec2 one = rootTarget(t);
+    vec2 f = cpowInt(z, n) - one;
+    vec2 fp = cpowInt(z, n - 1) * float(n);
+    vec2 fpp = cpowInt(z, max(n - 2, 1)) * float(n * (n - 1));
+    vec2 fppp = cpowInt(z, max(n - 3, 0)) * float(n * (n - 1) * (n - 2));
+    vec2 stepN = cdiv(f, fp);
+    if (mode >= 28.5 && mode < 29.5) {
+        vec2 denom = cmul(fp, fp) * 2.0 - cmul(f, fpp);
+        stepN = cdiv(cmul(f, fp) * 2.0, denom);
+    } else if (mode >= 29.5 && mode < 30.5) {
+        // Fourth-order Householder update. The previous expression was
+        // algebraically identical to Halley, so both modes rendered the same.
+        vec2 fp2 = cmul(fp, fp);
+        vec2 numerator = cmul(f, fp2 * 6.0 - cmul(f, fpp) * 3.0);
+        vec2 denominator = cmul(fp2, fp) * 6.0 - cmul(cmul(f, fp), fpp) * 6.0 + cmul(cmul(f, f), fppp);
+        stepN = cdiv(numerator, denominator);
+    } else if (mode >= 30.5) {
+        // True secant history, rather than a fresh finite-difference offset on
+        // every iteration.
+        vec2 fPrev = cpowInt(previousZ, n) - one;
+        stepN = cdiv(f * (z - previousZ), f - fPrev);
+    }
+    stepN = clampComplex(stepN, 1.35);
+    return clampComplex(z - stepN * u_root_relax, 6.0);
+}
+
+float trapValue(vec2 z, vec2 p, float t) {
+    vec2 q = rot2(u_trap_rotation + t * 0.13) * z;
+    float size = max(u_trap_size, 0.01);
+    float shape = floor(u_trap_shape + 0.5);
+    if (shape < 0.5) return abs(length(q) - size);
+    if (shape < 1.5) return min(abs(q.x), abs(q.y));
+    if (shape < 2.5) {
+        vec2 g = abs(fract(q / size + 0.5) - 0.5);
+        return min(g.x, g.y) * size;
+    }
+    float a = atan(q.y, q.x);
+    return abs(sin(a * 4.0 + t * 0.4)) * length(q);
+}
+
+vec3 colorize(float mode, vec2 p, vec2 z, float iter, float maxIter, float trap, float lyap, float terminal, float t) {
+    float escaped = clamp(terminal, 0.0, 1.0);
+    float smoothT = iter / max(maxIter, 1.0);
+    if (escaped > 0.5 && dot(z, z) > 1.1) {
+        smoothT = (iter - log2(max(log2(max(dot(z, z), 1.0001)), 0.0001)) + 4.0) / maxIter;
+    }
+    float angle = atan(z.y, z.x) / 6.28318530718;
+    float stripes = 0.5 + 0.5 * sin(angle * u_stripe_density * 6.28318530718 + smoothT * u_detail_density * 18.0 + t * u_color_speed);
+    float trapGlow = exp(-trap * (9.0 / max(u_trap_size, 0.04)));
+    float field = 0.5 + 0.5 * sin(length(p) * u_detail_density * 9.0 - t * (0.3 + u_color_speed) + angle * 6.0);
+    float colorValue = smoothT * (3.5 + u_detail_density) + angle + t * u_color_speed * 0.045;
+    float colorMode = floor(u_color_mode + 0.5);
+    if (mode >= 21.0 && mode < 22.0) colorValue = lyap * 0.8 + field * 0.7 + t * u_color_speed * 0.04;
+    if (mode >= 27.0) colorValue = angle + smoothT * 1.8 + trapGlow * 0.45 + t * u_color_speed * 0.05;
+    if (colorMode < 0.5) {
+        colorValue = smoothT * 4.0 + field * 0.25;
+    } else if (colorMode < 1.5) {
+        colorValue += stripes * 0.55;
+    } else if (colorMode < 2.5) {
+        colorValue += trapGlow * 0.9;
+    } else if (colorMode < 3.5) {
+        colorValue = angle * 2.0 + trapGlow * 0.6 + smoothT;
+    } else {
+        colorValue = field + trapGlow * 0.35 + smoothT * 1.2;
+    }
+    vec3 col = labPalette(colorValue, u_palette);
+    float shade = mix(0.18 + 0.82 * escaped, 0.65 + 0.35 * field, clamp(trapGlow, 0.0, 1.0));
+    if (mode >= 21.0 && mode < 22.0) shade = 0.35 + 0.65 * smoothstep(-0.8, 0.8, lyap);
+    if (mode >= 27.0) shade = 0.44 + 0.56 * smoothstep(0.0, 1.0, trapGlow + 1.0 - smoothT);
+    col *= shade;
+    col += labPalette(colorValue + 0.18, u_palette) * trapGlow * 0.22;
+    col = (col - 0.5) * u_contrast + 0.5;
+    col *= u_brightness;
+    return psyGamma(psyTonemap(col));
+}
+
+vec3 renderFormulaView(vec2 uv, float mode, float t, float localDive) {
+    float localZoom = max(u_formula_zoom, 0.02) * exp(sin(localDive * 0.65 + phase()) * 0.16);
+    if (u_motion_mode >= 1.5 && u_motion_mode < 2.5) localZoom *= 1.0 + 0.14 * sin(t * 0.38);
+    vec2 p = uv * (2.55 / localZoom) * pow(0.5, localDive * 0.13);
+    p = rot2(u_view_rotate + t * 0.018 * u_formula_motion) * p;
+    p = warpDomain(p, t);
+    vec2 target = animatedTarget(t);
+    vec2 c = target + p;
+    vec2 julia = animatedJulia(t);
+
+    vec2 z = vec2(0.0);
+    vec2 prev = vec2(0.0);
+    if ((mode >= 1.0 && mode < 1.5) || (mode >= 3.0 && mode < 3.5) || (mode >= 6.0 && mode < 6.5) || mode >= 27.0) {
+        z = p;
+        c = julia;
+    }
+    if (mode >= 16.0 && mode < 17.0) {
+        z = p * 0.6 + vec2(0.5, 0.0);
+        c = julia * 0.55 + vec2(0.8, 0.0);
+    }
+    if (mode >= 24.0 && mode < 25.0) c = target + p;
+    vec2 rootPrev = z + vec2(0.018, -0.014);
+
+    float maxIter = clamp(u_iterations, 8.0, 220.0);
+    float loopIter = maxIter;
+    if (mode >= 20.0 && mode < 27.0) loopIter = min(loopIter, 104.0);
+    if (mode >= 27.0) loopIter = min(loopIter, 88.0);
+    float bailout = max(u_bailout, 4.0);
+    float iter = 0.0;
+    float trap = 20.0;
+    float lyap = 0.0;
+    float terminal = 0.0;
+
+    if (mode >= 21.0 && mode < 22.0) {
+        lyap = lyapunovField(p + target * 0.2, t);
+        iter = loopIter * clamp(0.5 + lyap * 0.35, 0.0, 1.0);
+        z = vec2(lyap, sin(lyap * 3.0 + t));
+        trap = abs(lyap) * 0.2 + trapValue(z, p, t);
+        terminal = 1.0;
+    } else {
+        for (int i = 0; i < 220; i++) {
+            if (float(i) >= loopIter) break;
+            float fi = float(i);
+            trap = min(trap, trapValue(z, p, t));
+            vec2 old = z;
+            if (mode >= 27.0) {
+                z = rootStep(z, rootPrev, mode, t);
+                rootPrev = old;
+                int rootN = 3;
+                if (mode >= 27.5 && mode < 28.5) rootN = 4;
+                if (length(cpowInt(z, rootN) - rootTarget(t)) < 0.0005) {
+                    iter = fi + 1.0;
+                    terminal = 1.0;
+                    break;
+                }
+            } else {
+                z = escapeStep(z, c, prev, mode, t, fi);
+                if (mode >= 24.0 && mode < 25.0) c = c * 0.5 + z;
+                if (mode >= 20.0) z = clampComplex(z, 8.0);
+                if (dot(z, z) > bailout * bailout) {
+                    iter = fi + 1.0;
+                    terminal = 1.0;
+                    break;
+                }
+            }
+            prev = old;
+            iter = fi + 1.0;
+        }
+    }
+
+    return colorize(mode, p, z, iter, loopIter, trap, lyap, terminal, t);
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+    float mode = formulaMode();
+    float effectTime = u_unwrapped_time;
+    float t = effectTime + phase();
+    float dive = psyZoomDive(effectTime, u_zoom_speed, 0.0, u_zoom_depth);
+    vec3 col = renderFormulaView(uv, mode, t, dive);
+
+    float handoff = psyZoomHandoff(effectTime, u_zoom_speed, 0.0, u_zoom_depth);
+    if (handoff > 0.0) {
+        float nextDive = psyZoomNextDive(effectTime, u_zoom_speed, u_zoom_depth);
+        vec3 nextCol = renderFormulaView(uv, mode, t, nextDive);
+        col = mix(col, nextCol, psyZoomPortal(uv, handoff));
+    }
+
+    float vignette = smoothstep(1.85, 0.20, length(uv));
+    FRAG_OUT = vec4(col * (0.58 + 0.42 * vignette), 1.0);
+}
+`})})(),{}}export{l as default};

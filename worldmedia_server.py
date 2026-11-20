@@ -57,6 +57,8 @@ from worldmedia_media import (
     rewrite_hls_manifest,
 )
 from worldmedia_recording import RecordingError, RecordingService, normalize_recording_eq
+from worldmedia_stream_probe import ProbeBusy, client_went_away, probe_pair
+from worldmedia_processor import PROCESSOR_USE
 from worldmedia_playlists import PlaylistStore
 from worldmedia_station_images import StationImages
 from worldmedia_songlog import (
@@ -65,6 +67,13 @@ from worldmedia_songlog import (
     export_song_log,
     load_song_log,
     save_song_log,
+)
+from worldmedia_starred import (
+    MAX_BODY_BYTES as STARRED_SONGS_BODY_LIMIT,
+    StarredSongsError,
+    export_starred_songs,
+    load_starred_songs,
+    save_starred_songs,
 )
 from worldmedia_runtime import (
     DEFAULT_SERVER_PORT,
@@ -94,7 +103,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.11 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.12 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -142,6 +151,7 @@ STATION_IMAGE_SLOTS = threading.BoundedSemaphore(8)
 ICY_REFUSED_HOSTS = RefusedIcyHosts()
 
 CATALOG_BODY_LIMITS = {
+    "/api/v1/streams/probe": 8 * 1024,
     "/api/v1/playlists/import": 48 * 1024 * 1024 + 8 * 1024,
     "/api/v1/catalog/feed/resolve": 12 * 1024,
     "/api/v1/catalog/peertube/resolve": 16 * 1024,
@@ -151,6 +161,8 @@ CATALOG_BODY_LIMITS = {
     "/api/v1/backup/create": 1024,
     "/api/v1/song-log": SONG_LOG_BODY_LIMIT,
     "/api/v1/song-log/export": SONG_LOG_BODY_LIMIT,
+    "/api/v1/starred-songs": STARRED_SONGS_BODY_LIMIT,
+    "/api/v1/starred-songs/export": STARRED_SONGS_BODY_LIMIT,
     # Preferences are JSON strings inside JSON: escaping expands the payload.
     "/api/v1/profile/preferences": 12 * 1024 * 1024 + 8 * 1024,
 }
@@ -223,6 +235,23 @@ def _strippable_metaint(response) -> tuple[bool, int | None]:
 
 
 def open_relay_upstream(
+    registration: MediaRegistration,
+    method: str,
+    headers: dict[str, str],
+    *,
+    ask_icy: bool,
+) -> tuple[Upstream, int | None]:
+    """Open the relay's upstream (see _open_relay_upstream). A registration
+    that requires https (a stream verified by "Pick the best stream: Auto")
+    fails when a redirect took it to plain http."""
+    upstream, metaint = _open_relay_upstream(registration, method, headers, ask_icy=ask_icy)
+    if registration.require_https and not str(upstream.url).lower().startswith("https:"):
+        upstream.close()
+        raise MediaError(HTTPStatus.BAD_GATEWAY, "MEDIA_HTTPS_REQUIRED", "The stream left https.", False)
+    return upstream, metaint
+
+
+def _open_relay_upstream(
     registration: MediaRegistration,
     method: str,
     headers: dict[str, str],
@@ -583,12 +612,21 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     )
                 if path == "/api/v1/runtime/server-port":
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
+                if path == "/api/v1/system/processor-use":
+                    # Read on request only (processor-budget.js asks while the
+                    # Visualizer steers by it); nothing runs in between.
+                    return self._send_api_success(PROCESSOR_USE.reading())
                 if path == "/api/v1/profile/preferences":
                     return self._send_api_success({"values": load_profile_transfer(RUNTIME_PATHS)})
                 if path == "/api/v1/song-log":
                     try:
                         return self._send_api_success(load_song_log(RUNTIME_PATHS))
                     except SongLogError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
+                if path == "/api/v1/starred-songs":
+                    try:
+                        return self._send_api_success(load_starred_songs(RUNTIME_PATHS))
+                    except StarredSongsError as error:
                         raise ApiError(error.status, error.code, str(error), error.retryable) from error
                 if path == "/api/v1/ffmpeg/status":
                     return self._send_api_success(FFMPEG_SERVICE.status().as_data())
@@ -606,9 +644,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     "/api/v1/assets/register",
                 } or re.fullmatch(r"/api/v1/assets/[A-Za-z0-9_-]{22,128}/expire", path):
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
+                if path == "/api/v1/streams/probe":
+                    raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 if path in {
                     "/api/v1/jobs/download", "/api/v1/jobs/record", "/api/v1/backup/create",
-                    "/api/v1/song-log/export",
+                    "/api/v1/song-log/export", "/api/v1/starred-songs/export",
                 }:
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 now_playing = re.fullmatch(r"/api/v1/media/([A-Za-z0-9_-]{22,128})/now-playing", path)
@@ -660,6 +700,18 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         return self._send_api_success({"removed": True})
                     except ValueError as error:
                         raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_PLAYLIST", str(error)) from error
+                if path == "/api/v1/streams/probe":
+                    # "Pick the best stream: Auto (verified)": a short look at
+                    # two streams through the relay's connector, one at a time
+                    # (worldmedia_stream_probe.py).
+                    try:
+                        return self._send_api_success(probe_pair(
+                            MEDIA_REGISTRY.connector, body, client_gone=lambda: client_went_away(self.connection),
+                        ))
+                    except ValueError as error:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_STREAM_PROBE", str(error)) from error
+                    except ProbeBusy as error:
+                        raise ApiError(HTTPStatus.CONFLICT, "STREAM_PROBE_BUSY", "Another stream check is running.") from error
                 if path == "/api/v1/catalog/feed/resolve":
                     return self._send_api_success(CATALOG_SERVICE.resolve_feed(body))
                 if path == "/api/v1/catalog/peertube/resolve":
@@ -815,6 +867,27 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         # The server names the file; nothing in a request is a path.
                         result = export_song_log(body, RUNTIME_PATHS)
                     except SongLogError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
+                    return self._send_api_success(result)
+                if path == "/api/v1/starred-songs":
+                    try:
+                        # A stale revision is answered (not an error) with what is stored.
+                        result = save_starred_songs(body, RUNTIME_PATHS)
+                    except ValueError as error:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_STARRED_SONGS", str(error)) from error
+                    except StarredSongsError as error:
+                        raise ApiError(error.status, error.code, str(error), error.retryable) from error
+                    except OSError as error:
+                        raise ApiError(
+                            HTTPStatus.INTERNAL_SERVER_ERROR, "STARRED_SONGS_SAVE_FAILED",
+                            "The starred songs could not be saved in your data folder.", retryable=True,
+                        ) from error
+                    return self._send_api_success(result)
+                if path == "/api/v1/starred-songs/export":
+                    try:
+                        # The server names the file; nothing in a request is a path.
+                        result = export_starred_songs(body, RUNTIME_PATHS)
+                    except StarredSongsError as error:
                         raise ApiError(error.status, error.code, str(error), error.retryable) from error
                     return self._send_api_success(result)
                 if path in {"/api/v1/ffmpeg/install", "/api/v1/ffmpeg/repair"}:

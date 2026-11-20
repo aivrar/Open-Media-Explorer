@@ -25,7 +25,11 @@
  *             4 ms at Medium): Infinite Lattice 32 ms, Planet Sunrise 55,
  *             Mandelbulb Flight 56, Menger Citadel 59, Recursive Cathedral
  *             59.5 (close to the line); KIFS Fold Flight 73 and the rest
- *             from 140 up, heavy.
+ *             from 140 up, heavy. The slice 13 scenes by the slowest of
+ *             their looks (a lab's preset compiles its own formula in):
+ *             Cymatics 5 ms and Analytic Field Lab 12, light; Procedural
+ *             Field Lab 29, medium; 2D Formula Lab 74 (its start look 34),
+ *             Fractal Flame Lab 382 and Robot Foundry 291, heavy.
  *   audio     'shader': the scene reads u_audio / u_beat itself (no links);
  *             'links': it moves with the music through parameter links and
  *             the reactor's time surge; 'motion': only the time surge and the
@@ -43,16 +47,34 @@
  *             0.6 by the flash limiter and at most 3 a second. One link per
  *             param. Every scene also gets the limiter's zoom punch.
  *   mood, hue tags for the shuffle (TAGS below)
+ *   drift     its slow drift where not the automatic one (SCENE_DRIFT)
  *   defaults  our own starting values for some params, in place of
  *             Psychedelia's (where its default looks wrong without its post
  *             pass and display chain, or is far too dark or bright: see the
  *             flash check); every other param keeps Psychedelia's.
  *
- * Only scenes drawn by one shader of their own are here (their files need
- * the effect registry, and the 3D flights and endless scenes also
- * Psychedelia's flight helpers). Borrowed code is credited in CREDITS.md and
- * listed per scene in vendor/psychedelia/manifest.json `borrowed`.
+ * Most are drawn by one shader of their own (their files need the effect
+ * registry, and the 3D flights and endless scenes also Psychedelia's flight
+ * helpers); since slice 14 some own their passes (simulations and
+ * frame-feedback scenes, `needs`: sim-host.js). Borrowed code is credited in
+ * CREDITS.md and listed per scene in vendor/psychedelia/manifest.json
+ * `borrowed`.
  */
+
+import { simSupported } from './sim-host.js';
+import { LINE_QUALITY_CAPS, OFFERED_LINE_SCENES } from './line-scenes.js';
+
+// The line-drawing scenes (line-scenes.js): held out of SCENES until
+// LINE_SCENES_RELEASED.
+export { LINE_SCENE_ENTRIES, LINE_SCENES_RELEASED } from './line-scenes.js';
+import { ACCUMULATING_QUALITY_CAPS, OFFERED_ACCUMULATING_SCENES } from './accumulating-scenes.js';
+// The accumulating labs (accumulating-scenes.js): each held out of SCENES
+// until it is in ACCUMULATING_RELEASED_IDS.
+export { ACCUMULATING_RELEASED_IDS, ACCUMULATING_SCENE_ENTRIES } from './accumulating-scenes.js';
+// World Media's own scenes (own-scenes.js): held out of SCENES until
+// OWN_SCENES_RELEASED.
+import { OFFERED_OWN_SCENES } from './own-scenes.js';
+export { OWN_SCENE_ENTRIES, OWN_SCENES_RELEASED } from './own-scenes.js';
 
 export const DEFAULT_SCENE = 'plasma';
 export const COST_CLASSES = Object.freeze(['light', 'medium', 'heavy']);
@@ -73,6 +95,37 @@ const loadSkyCrystal = () => Promise.all([
   import('./vendor/psychedelia/effects/endless-sky-crystal.js'),
 ]).then(([engine, own]) => ({
   default: (G) => own.default({ ...G, EndlessScenes: engine.default(G).EndlessScenes }),
+}));
+
+/** Robot Foundry registers through EndlessScenes, as endless-sky-crystal.js
+ *  does (slice 13). */
+const loadRobotFoundry = () => Promise.all([
+  loadEndless(),
+  import('./vendor/psychedelia/effects/robot-foundry.js'),
+]).then(([engine, own]) => ({
+  default: (G) => own.default({ ...G, EndlessScenes: engine.default(G).EndlessScenes }),
+}));
+
+/** Slice 14: the simulations draw on Psychedelia's GpuSim (its toolkit for
+ *  float targets, ping-pong pairs and programs), loaded with them; one
+ *  instance per scene registered. */
+const withGpuSim = (own) => () => Promise.all([
+  import('./vendor/psychedelia/engine/gpu-sim.js'),
+  own(),
+]).then(([gpu, file]) => ({
+  default: (G) => file.default({ ...G, GpuSim: gpu.default(G).GpuSim }),
+}));
+/** The frame-feedback scenes run on the app's small Shadertoy adapter
+ *  (shadertoy-adapter.js) and Psychedelia's ShadertoyCompiler, loaded with
+ *  them. */
+const withShadertoy = (own) => () => Promise.all([
+  import('./vendor/psychedelia/engine/shadertoy-compiler.js'),
+  import('./shadertoy-adapter.js'),
+  own(),
+]).then(([compiler, adapter, file]) => ({
+  default: (G) => file.default({
+    ...G, ...adapter.createShadertoyAdapter({ ...G, ShadertoyCompiler: compiler.default({}).ShadertoyCompiler }),
+  }),
 }));
 
 /** Tags for the shuffle (shuffle.js), set by judgement from what each scene
@@ -106,7 +159,11 @@ const TAGS = Object.freeze({
   strange_attractor_flight: ['lively', 'rainbow'], lsystem_tube_flight: ['calm', 'warm'], path_traced_fractal_flight: ['calm', 'rainbow'],
   menger_citadel: ['calm', 'warm'], recursive_cathedral: ['calm', 'warm'], fractal_canyon: ['calm', 'warm'],
   infinite_lattice: ['calm', 'warm'], crystal_geode: ['calm', 'cool'], golden_hour_clouds: ['calm', 'warm'],
-  planet_sunrise: ['calm', 'warm'],
+  planet_sunrise: ['calm', 'warm'], robot_foundry: ['lively', 'warm'], escape_time_lab: ['calm', 'rainbow'],
+  analytic_field_lab: ['calm', 'rainbow'], procedural_field_lab: ['calm', 'rainbow'], fractal_flame_lab: ['lively', 'warm'],
+  cymatics: ['calm', 'warm'],
+  curl_silk: ['calm', 'cool'], fluid_ink: ['lively', 'rainbow'], lenia: ['calm', 'cool'], physarum: ['calm', 'warm'],
+  feedback: ['lively', 'rainbow'], reaction_diffusion: ['calm', 'cool'],
 });
 
 /** The most the time surge may speed a scene up (the flash limiter's cap is
@@ -139,10 +196,16 @@ export const SPEED_CAPS = Object.freeze({
   endless_terrain: 1.5,
   // Slice 7, each over the same stretch of its clock as 120 s at 3x (so
   // 288 s at 1.25x, 360 s at 1x), over its looks. Mandelbulb Flight (0.026
-  // at 3x), KIFS Fold Flight (0.030), the endless scenes (0.034 at most) and
-  // Strange Attractor Flight (0.017, drawn as the tab draws it: around the
-  // trajectory its setUniforms hook feeds; its Aizawa Bloom Tunnel, left
-  // out in looks.js PRESETS_LEFT_OUT, still drops by 0.37) need none.
+  // at 3x), KIFS Fold Flight (0.030) and the endless scenes (0.034 at most)
+  // need none.
+  // Strange Attractor Flight, drawn as the tab draws it (around the
+  // trajectory its setUniforms hook feeds, at Medium's size and caps; at
+  // 3x Low and High step the same to 0.001), flies through its glowing
+  // trajectory: its start look steps by 0.106 at 3x, 0.072 at 2x, 0.059 at
+  // 1.5x; its Thomas Knot Orbit 0.102, 0.086, 0.076. 1.5x keeps both well
+  // under 0.10; 0.06 or more, so calm (FX_CALM_SCENES). Its looks that step
+  // over 0.10 even at 1x are left out (looks.js PRESETS_LEFT_OUT).
+  strange_attractor_flight: 1.5,
   // Its Branch Grove Dive look steps by 0.103 at 3x, 0.065 at 1.5x, 0.054
   // at 1.25x; its Crystal Fern Cathedral (since Psychedelia 0a4fdc1) 0.062
   // at 1.25x, 0.056 at 1x: 1x keeps all its looks clear of the 0.06 of
@@ -164,6 +227,25 @@ export const SPEED_CAPS = Object.freeze({
   // Its fourth look beats at 3 Hz and more at 3x (0.12 peak to peak, steps
   // of 0.076); 0.060 at 2x, 0.052 at 1.5x with no oscillation.
   infinite_lattice: 1.5,
+  // Slice 12, back from the held list, each checked at 1x over 360 s of its
+  // clock (the stretch its old fault showed in), its failing looks left out
+  // (looks.js PRESETS_LEFT_OUT). Apollonian Foam, Folded Box Variants and
+  // Mandelbox fade into their background as the camera nears the surface
+  // (scripts/import_psychedelia.mjs FLIGHT_CAMERA_NEAR); Triplex Mutation
+  // and the Glass Fractal keep Psychedelia's own camera bubble. The most
+  // over their offered looks: Apollonian Foam 0.084, Mandelbox 0.065,
+  // Triplex Mutation 0.065, Folded Box Variants 0.044, Glass Fractal 0.041
+  // (0.056 with its drift; the others have none, SCENE_DRIFT).
+  apollonian_foam_flight: 1,
+  folded_box_variants_flight: 1,
+  mandelbox_flight: 1,
+  triplex_mutation_flight: 1,
+  path_traced_fractal_flight: 1,
+  // Slice 13, over 360 s of its clock, the surge at its most: Analytic Field
+  // Lab's start look (its Quasicrystal Wave, phase and colour on the clock)
+  // steps by 0.108 at 3x, 0.102 at 2, 0.096 at 1.5 and 0.069 at 1; its
+  // presets 0.044 at most at 3x.
+  analytic_field_lab: 1,
 });
 
 /** Scenes whose own frame-to-frame steps of light reach 0.06 with the
@@ -179,15 +261,64 @@ export const FX_CALM_SCENES = Object.freeze(new Set([
   'mandelbrot', 'burning_ship', 'glow_lab', 'nebula', 'sierpinski', 'plasma', 'aurora', 'fire',
   // Slice 7, back from the held list: 0.06 or more at every speed cap down to 1x.
   'polyfold_flight', 'fractal_flame_volume_flight',
+  // 0.076 at its speed cap (SPEED_CAPS).
+  'strange_attractor_flight',
+  // 0.096 on one of its looks: no effects at all (FX_NONE_SCENES).
+  'multibrot',
+  // Slice 12, back from the held list: 0.06 or more at 1x (SPEED_CAPS).
+  'apollonian_foam_flight', 'mandelbox_flight', 'triplex_mutation_flight',
+  // Slice 13: 2D Formula Lab's Magnet Gate 0.076, Analytic Field Lab's start
+  // look 0.069 at its cap of 1x.
+  'escape_time_lab', 'analytic_field_lab',
+  // Slice 14: Feedback Loop 0.062 (its trails zooming in on themselves).
+  'feedback',
 ]));
-/** Calm scenes that get no shuffled effects at all (and overlays only plain
- *  on top): none now. Mandelbrot was one until Psychedelia b4739fa stopped
- *  its inside changing colour as its dive deepened. The FX check on it as a
- *  calm scene (135 runs of the calm effects, at most two, over the three
- *  intensities, flash on and off, and Shockwave): 0.023 at most, against
- *  0.045 on Burning Ship and 0.099 on Plasma in the same check; overlays as
- *  the calm rule draws them on it: 0.079 at most (Bokeh, Screen). */
-export const FX_NONE_SCENES = Object.freeze(new Set());
+/** Calm scenes that get no effects at all (and overlays only plain on top):
+ *  those whose own frame-to-frame steps reach 0.085 on some look they offer
+ *  (no effects, no drift, the surge at its most under the scene's speed
+ *  cap, on the graphics card), so no effect has room. The FX check over a
+ *  whole drift cycle (51 s) put calm effects past 0.10 on Sierpinski
+ *  (Halftone 0.127, Colour Grade 0.112).
+ *  Their own steps, the most over their looks:
+ *    Multibrot                  0.096
+ *    Glow Lab                   0.096
+ *    3D Fractal Flame Volume    0.094
+ *    Sierpinski                 0.093
+ *    Polyfold Flight            0.090 */
+export const FX_NONE_SCENES = Object.freeze(new Set([
+  'multibrot', 'glow_lab', 'fractal_flame_volume_flight', 'sierpinski', 'polyfold_flight',
+]));
+
+/** Effects a calm scene does not get (by effect id), on top of the calm
+ *  rule: each one that the FX check, alone at the strong intensity, over a
+ *  whole drift cycle (51 s, the surge at its most, on the graphics card),
+ *  found stepping past 0.10 on it, or (two at once, as a calm scene may
+ *  draw) close to it. */
+const NO_FX_LEFT_OUT = Object.freeze([]);
+export const FX_LEFT_OUT = Object.freeze({
+  // Bloom: 0.108 without drift, 0.095 with it; Watercolour (beat flash on,
+  // drift on): 0.107 (the scene alone 0.079). Its other calm effects that
+  // raised its steps in 3-s clips stay under over the whole cycle: 0.086 at
+  // most (Tilt-Shift).
+  plasma: Object.freeze(['bloom', 'watercolour']),
+  // Bloom: with Colour Grade (the two at once, strong, beat flash and drift
+  // on, the whole cycle) 0.098, too near 0.10 (the scene alone 0.037; Colour
+  // Grade with Halftone 0.088, Halftone with Bloom 0.069).
+  nebula: Object.freeze(['bloom']),
+  // Palette Map alone (slice 14, the colour index running there and back
+  // along the palette), the whole cycle, three intensities: 0.094 on Aurora
+  // (the scene alone 0.069), 0.087 on Sierpinski (0.055; it gets no
+  // effects at all, FX_NONE_SCENES). Past the 0.085 margin; on the other
+  // eight scenes checked 0.061 at most.
+  aurora: Object.freeze(['palette_map']),
+  sierpinski: Object.freeze(['palette_map']),
+});
+// The other calm scenes (Nebula for its single effects), each with the calm effects that raised its steps in
+// 3-s clips (or, where it had none, the ones that raised others' most), alone
+// at the strong intensity, beat flash and drift on, over the whole cycle: none
+// past 0.10. The most: Aurora 0.082 (Fisheye), Nebula 0.082 (Colour Grade),
+// Burning Ship 0.046 (Halftone), Fire 0.042 (Zoom Blur), Mandelbrot 0.041
+// (Bloom), Strange Attractor Flight 0.015 (Fisheye).
 
 /** The most some params may be at each quality: the 3D flights' and endless
  *  scenes' own detail settings (orbit samples, iterations, branch quality,
@@ -221,6 +352,27 @@ export const FX_NONE_SCENES = Object.freeze(new Set());
  *  on Low too. Lowering the ray detail of the other flights saved nothing
  *  measurable (their rays end early); they keep their own. */
 export const SCENE_QUALITY_CAPS = Object.freeze({
+  // The simulations' own size (sim-host.js): particles, grid, agents.
+  curl_silk: Object.freeze({
+    low: Object.freeze({ particles: 0 }),
+    medium: Object.freeze({ particles: 1 }),
+    high: Object.freeze({ particles: 1 }),
+  }),
+  fluid_ink: Object.freeze({
+    low: Object.freeze({ resolution: 0 }),
+    medium: Object.freeze({ resolution: 1 }),
+    high: Object.freeze({ resolution: 1 }),
+  }),
+  lenia: Object.freeze({
+    low: Object.freeze({ resolution: 0 }),
+    medium: Object.freeze({ resolution: 1 }),
+    high: Object.freeze({ resolution: 1 }),
+  }),
+  physarum: Object.freeze({
+    low: Object.freeze({ agents: 0, resolution: 0, steps: 1 }),
+    medium: Object.freeze({ agents: 1, resolution: 0, steps: 1 }),
+    high: Object.freeze({ agents: 1, resolution: 0, steps: 1 }),
+  }),
   strange_attractor_flight: Object.freeze({
     low: Object.freeze({ detail: 0.55 }),
     medium: Object.freeze({ detail: 0.55 }),
@@ -263,9 +415,120 @@ export function sceneMaxPixels(id, quality) {
   return SCENE_MAX_PIXELS[id]?.[quality];
 }
 
+/** The params of scene `id` with a quality cap at any quality (never
+ *  drifted automatically: drift.js). */
+export function sceneCappedParams(id) {
+  const caps = SCENE_QUALITY_CAPS[id] || LINE_QUALITY_CAPS[id] || ACCUMULATING_QUALITY_CAPS[id];
+  return caps ? [...new Set(Object.values(caps).flatMap((row) => Object.keys(row)))] : [];
+}
+
+/** Slow drift per scene (drift.js), where the automatic choice is not
+ *  kept: false (no drift), or { depth (each way, a share of the range;
+ *  drift.js DRIFT_DEPTH otherwise), exclude: [params], params: { param:
+ *  depth } (these instead of the automatic choice) }. Set from the flash
+ *  check run with drift at its deepest (the swell and the mood at their
+ *  most, the drift clock at its fastest), on top of its worst case (the
+ *  surge held at its most, the scene's speed cap), on the graphics card at
+ *  752 x 398 with Medium's caps, every look: the scene's own over the same
+ *  stretch of its clock as its speed cap, the others over two full drift
+ *  cycles (tests/helpers/visualizer-flash-check.mjs --worst --looks --drift
+ *  --clock-stretch=360 --looks-seconds=105). A calm scene (fxCalm) keeps
+ *  its drift only where no look's largest step rises by more than 0.003.
+ *  The entries from Plasma to Infinite Lattice were found with every wave at
+ *  full depth and the clock at the track's 120 BPM, and are kept. */
+export const SCENE_DRIFT = Object.freeze({
+  // A calm scene (fxCalm). Its scale on the 4-bar wave: 0.104 at most, one
+  // step over 0.10 (0.079 without drift); its saturation alone: 0.075.
+  plasma: { exclude: ['scale'] },
+  // A calm scene. Its zoom drifting: 0.120 at most, steps over 0.10 (0.096
+  // without drift); without it: 0.094.
+  glow_lab: { exclude: ['zoom'] },
+  // Its zoom (its one param that drifts) at 0.10: 0.108 at most, steps over
+  // 0.10 (0.055 without drift); at 0.05: 0.078.
+  julia: { depth: 0.05 },
+  // Its scale drifting: 0.110 at most over its looks, steps over 0.10 (0.044
+  // without drift); without it: 0.068. Its thickness then: a 3.8 Hz
+  // flicker of 0.100 peak to peak on its second look (0.053 without
+  // drift); without both: 0.047.
+  gyroid_tunnels: { exclude: ['scale', 'thickness'] },
+  // Its power (its one param that drifts) between whole numbers moves the
+  // set's cut across the picture: 0.111 at most at 0.10, steps over 0.10;
+  // at 0.05 worse, 0.166 over its looks (0.096 without drift).
+  multibrot: false,
+  // Its angle on the 4-bar wave turns every seed at once: 0.102 at most, a
+  // step over 0.10 (0.057 without drift); without it: 0.066.
+  phyllotaxis: { exclude: ['angle_offset'] },
+  // A calm scene: with its level shift drifting, 0.091 at most on its own
+  // look (0.091 without), 0.095 on its fourth (0.093 without). Higher, so
+  // none.
+  sierpinski: false,
+  // As Multibrot, its power (its one param that drifts): 0.131 at most,
+  // a step over 0.10 (0.054 without drift).
+  tricorn: false,
+  // A calm scene. Its fold scale drifting: 0.042 at most (0.034 without
+  // drift); without it: 0.030.
+  polyfold_flight: { exclude: ['fold_scale'] },
+  // One step reaches 0.106 without drift (a flare 40 s in); with drift,
+  // 0.129 and steps over 0.10 in two stretches. None.
+  strange_attractor_flight: false,
+  // Its walls moving under the camera: 0.163 at most over its looks, 3.7
+  // steps over 0.10 a second on its third (0.052 at most without drift);
+  // without its iridescence, 0.188. None.
+  infinite_lattice: false,
+  // Its lacunarity (every octave's scale at once): 0.125 at most on its
+  // fifth look, steps over 0.10 (0.044 without drift); without it: 0.048.
+  fbm: { exclude: ['lacunarity'] },
+  // Its slice through the set moves its cut across the picture: 0.117 at
+  // most, steps over 0.10 on three looks; without it still 0.091 (its zoom),
+  // against 0.051 at most over its looks without drift. None, so it keeps
+  // its effects.
+  mandelbulb_slice: false,
+  // Its sphere gap on the 4-bar wave opens the spheres around the camera:
+  // 0.233 at most, steps over 0.10 on every look; without it: 0.080.
+  schottky_inversion_flight: { exclude: ['sphere_gap'] },
+  // Slice 12, the flights back from the held list, at their cap of 1x over
+  // 360 s of their clock. Their automatic drift (fold and foam shapes) moves
+  // the surface past the camera: Apollonian Foam 0.094 (0.084 without),
+  // Folded Box Variants 0.091 (0.044), Mandelbox 0.132 (0.065), Triplex
+  // Mutation 0.210 (0.065), most over their offered looks. None. The Glass
+  // Fractal keeps its drift: 0.056 (0.041 without).
+  apollonian_foam_flight: false,
+  folded_box_variants_flight: false,
+  mandelbox_flight: false,
+  triplex_mutation_flight: false,
+  // Slice 13, over 360 s of their clock at their cap. Analytic Field Lab's
+  // drift (scale, kaleidoscope, warp) moves its start look's bands across
+  // the picture: 0.177 (0.069 without); without its scale still 0.156.
+  // 2D Formula Lab's (its Julia point, the formula's motion) moves Lambda
+  // Bloom's basins: 0.148 (0.030 without); without the Julia point still
+  // 0.094, and Magnet Gate 0.082 (0.076). None for either. Cymatics 0.044
+  // (0.037 without), Procedural Field Lab 0.039 (0.038), Fractal Flame Lab
+  // 0.040 (0.023), Robot Foundry 0.015 (0.015) keep theirs.
+  analytic_field_lab: false,
+  escape_time_lab: false,
+  // Slice 14. Lenia's drift (its growth centre and width) kills its
+  // creatures: two of its three palettes then sat under 0.05 for about
+  // 31 s at a time (none without). None.
+  lenia: false,
+  // Physarum's deposit drifting dims its trails: its first look then sat
+  // under 0.05 for up to 11 s at a time (none without).
+  physarum: { exclude: ['deposit'] },
+  // Curl-Noise Silk's trail length on the fast wave: 0.062 at most (0.038
+  // without drift), past the 0.06 of FX_CALM_SCENES.
+  curl_silk: { exclude: ['trail'] },
+  // Fluid Ink (stepping every other frame since slice 14's cost fix): with
+  // its drift (stream size, swirl, motion) its darker colour schemes sat
+  // under 0.05 for up to 5 s at a time (1.1 s without); with swirl and
+  // motion only up to 7.8 s, without the stream size up to 19 s. None.
+  fluid_ink: false,
+  // Reaction-Diffusion's feed and kill rates drifting starve its pattern:
+  // its third palette then sat under 0.05 for 109 s (none without). None.
+  reaction_diffusion: false,
+});
+
 /** The caps for scene `id` at `quality` ({ param: most }), or null. */
 export function sceneCaps(id, quality) {
-  return SCENE_QUALITY_CAPS[id]?.[quality] || null;
+  return SCENE_QUALITY_CAPS[id]?.[quality] || LINE_QUALITY_CAPS[id]?.[quality] || ACCUMULATING_QUALITY_CAPS[id]?.[quality] || null;
 }
 
 /** `values` with scene `id`'s caps at `quality` applied (a copy when one
@@ -281,7 +544,7 @@ export function cappedValues(id, quality, values) {
 }
 
 /** Scenes ported but held out of the list, the shuffle and favourites until
- *  Psychedelia fixes them (their files, credits and manifest rows stay, so
+ *  they are fixed (their files, credits and manifest rows stay, so
  *  bringing one back is a re-import, the flash check, and taking it off this
  *  list). A saved scene or favourite of a held scene is kept in the settings
  *  but not offered: the tab opens the default scene instead.
@@ -293,16 +556,18 @@ export function cappedValues(id, quality, values) {
  *  same stretch of its clock as 120 s at 3x (360 s at 1x): a slower clock
  *  only reaches the same pop later. Reported upstream (camera clearance);
  *  the numbers are after its camera bubble (Psychedelia 0a4fdc1), which
- *  brought Polyfold, the Flame Volume and Schottky Inversion back. */
+ *  brought Polyfold, the Flame Volume and Schottky Inversion back. Slice 12
+ *  brought back five more (SPEED_CAPS); the three below still fail with
+ *  their start look, which cannot be left out (the most it may step by is
+ *  0.085, for room under 0.10). Hypercomplex Slice's and DIFS Tunnel's
+ *  distance estimates jump from one frame to the next (the surface appears
+ *  at the camera), so a fade by the camera's distance does not help (it
+ *  raised DIFS Tunnel's start look from 0.092 to 0.138); Quaternion Julia's
+ *  start look steps by 0.099 with the camera clear of the surface. */
 export const HELD_SCENES = Object.freeze({
-  apollonian_foam_flight: 'camera passes through the surface: step 0.53 at 1x over 360 s on Sphere Chain Glide (0.20 to 0.53 on all six looks)',
-  hypercomplex_slice_flight: 'camera passes through the surface: step 0.63 at 1x over 360 s on Tricomplex Ribbon Gate (0.39 to 0.63 on all five looks)',
-  difs_tunnel_flight: 'camera passes through the surface: step 0.41 at 1x over 360 s on Mandalay Deep Box (Torus Tube Push 0.16, Kaleido Column Graze 0.13; the other two pass)',
-  mandelbox_flight: 'camera passes through the surface: step 0.116 at 1x over 360 s on Cyan Circuit, once (t 195 s; its other three looks 0.095 at most)',
-  path_traced_fractal_flight: 'camera passes through the surface: step 0.35 at 1x over 360 s on Void Caustic Shell Orbit (0.17 to 0.21 on three more; Default passes)',
-  triplex_mutation_flight: 'camera passes through the surface: step 0.53 at 1x over 360 s on Burning Tunnel Push (Spudsville Fold Dive 0.29; the other three pass)',
-  folded_box_variants_flight: 'camera passes through the surface: step 0.41 at 1x over 360 s on Smooth Mandelbox Drift (0.26 to 0.37 on three more; two pass)',
-  quaternion_julia_flight: 'camera dips into the surface: step 0.14 at 1x over 360 s on Blue Plasma and Rose Metal (once each; the other two 0.099 at most)',
+  hypercomplex_slice_flight: 'the surface appears at the camera from one frame to the next: steps of 0.40 to 0.49 at 1x over 360 s on every look, its start look 0.43',
+  difs_tunnel_flight: 'the surface appears at the camera from one frame to the next: its start look steps by 0.092 at 1x over 360 s (Mandalay Deep Box 0.41, Torus Tube Push 0.16, Kaleido Column Graze 0.13; Koch Vault Orbit 0.024)',
+  quaternion_julia_flight: 'its start look (Alien Coral) steps by 0.099 at 1x over 360 s (Blue Plasma and Rose Metal 0.14; Amber Glass 0.075); not near the camera',
 });
 
 /** Every ported scene, held ones too (HELD_SCENES). */
@@ -347,7 +612,7 @@ const ALL_SCENES = Object.freeze([
   }),
   scene('islamic_stars', 'Islamic Star Patterns', 'Patterns', 'islamic-stars', 'light', 'shader', () => import('./vendor/psychedelia/effects/islamic-stars.js')),
   scene('spiral_galaxy', 'Spiral Galaxy', 'Cosmic', 'spiral-galaxy', 'light', 'shader', () => import('./vendor/psychedelia/effects/spiral-galaxy.js')),
-  scene('domain_colouring', 'Complex Domain Colouring', 'Math', 'domain-colouring', 'light', 'shader', () => import('./vendor/psychedelia/effects/domain-colouring.js')),
+  scene('domain_colouring', 'Complex Domain Coloring', 'Math', 'domain-colouring', 'light', 'shader', () => import('./vendor/psychedelia/effects/domain-colouring.js')),
   // Slice 3.
   scene('aurora', 'Aurora', 'Nature', 'aurora', 'medium', 'shader', () => import('./vendor/psychedelia/effects/aurora.js'), {
     // Its mids and kicks brighten the curtains (its own shader). On a real
@@ -517,7 +782,18 @@ const ALL_SCENES = Object.freeze([
   // (CREDITS.md; manifest.json `borrowed`).
   scene('apollonian_foam_flight', 'Apollonian Foam Flight', 'Fractals', 'apollonian-foam-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/apollonian-foam-flight.js')),
   scene('polyfold_flight', 'Polyfold Flight', 'Fractals', 'polyfold-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/polyfold-flight.js')),
-  scene('fractal_flame_volume_flight', '3D Fractal Flame Volume Flight', 'Fractals', 'fractal-flame-volume-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/fractal-flame-volume-flight.js')),
+  scene('fractal_flame_volume_flight', '3D Fractal Flame Volume Flight', 'Fractals', 'fractal-flame-volume-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/fractal-flame-volume-flight.js'), {
+    // It starts on its Spherical Bloom Cloud preset: its own start look sat
+    // under 0.05 for 6.7 s at a time (the near-black sweep, 30 s at Medium
+    // on the graphics card; 6.5 s with more glow), Spherical Bloom Cloud
+    // never (mean 0.285).
+    defaults: {
+      flame_mode: 1, iterations: 14, affine_scale: 1.18, swirl_strength: 0.82, spherical_warp: 1.24, density: 1.48, detail: 1.3,
+      flight_speed: 2.24, flight_depth: 1.58, orbit_radius: 1.28, orbit_spin: 1.58, motion_mode: 0, motion_phase: 0.28,
+      transform_morph: 0.94, volume_twist: 0.74, color_bleed: 0.82, roll: 0.3, roll_speed: 1.48, fov: 1.04, color_speed: 0.84,
+      palette: 1, shade_mode: 3, fog: 0.24, glow: 1.94,
+    },
+  }),
   scene('strange_attractor_flight', 'Strange Attractor Flight', 'Fractals', 'strange-attractor-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/strange-attractor-flight.js')),
   scene('lsystem_tube_flight', 'L-System Tube Flight', 'Fractals', 'lsystem-tube-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/lsystem-tube-flight.js')),
   scene('path_traced_fractal_flight', 'Glass Fractal DE Flight', 'Fractals', 'path-traced-fractal-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/path-traced-fractal-flight.js')),
@@ -531,6 +807,40 @@ const ALL_SCENES = Object.freeze([
   scene('crystal_geode', 'Crystal Geode', 'Endless Scenes', 'endless-sky-crystal', 'heavy', 'shader', loadSkyCrystal),
   scene('golden_hour_clouds', 'Golden-Hour Clouds', 'Endless Scenes', 'endless-sky-crystal', 'heavy', 'shader', loadSkyCrystal),
   scene('planet_sunrise', 'Planet Sunrise', 'Endless Scenes', 'endless-sky-crystal', 'medium', 'shader', loadSkyCrystal),
+  // Slice 13: one more endless scene, Psychedelia's four Fractal Labs (each
+  // one shader, its formula mode compiled in; they read no sound and move
+  // with the music through the time surge) and Cymatics, whose hook picks
+  // the plate's pattern from the strongest pitch the Beat Reactor hears.
+  scene('robot_foundry', 'Robot Foundry', 'Endless Scenes', 'robot-foundry', 'heavy', 'shader', loadRobotFoundry),
+  scene('escape_time_lab', '2D Formula Lab', 'Fractals', 'escape-time-lab', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/escape-time-lab.js')),
+  scene('analytic_field_lab', 'Analytic Field Lab', 'Fractals', 'analytic-field-lab', 'light', 'motion', () => import('./vendor/psychedelia/effects/analytic-field-lab.js')),
+  scene('procedural_field_lab', 'Procedural Field Lab', 'Fractals', 'procedural-field-lab', 'medium', 'motion', () => import('./vendor/psychedelia/effects/procedural-field-lab.js')),
+  scene('fractal_flame_lab', 'Fractal Flame Lab', 'Fractals', 'fractal-flame-lab', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/fractal-flame-lab.js')),
+  scene('cymatics', 'Cymatics', 'Math', 'cymatics', 'light', 'shader', () => import('./vendor/psychedelia/effects/cymatics.js')),
+  // Slice 14: scenes that own their passes (sim-host.js), each with the
+  // render targets it needs (`needs`: 'float' for float targets, 'half'
+  // for half floats at least, 'webgl2' for 8-bit ones); where the context
+  // cannot make them they are not offered. They read the beat sources
+  // themselves ('shader').
+  scene('curl_silk', 'Curl-Noise Silk', 'Simulation', 'curl-silk', 'heavy', 'shader', withGpuSim(() => import('./vendor/psychedelia/effects/curl-silk.js')), {
+    needs: 'float',
+    // At its own brightness (1) it sat under 0.05 for up to 38 s at a time.
+    defaults: { brightness: 2.6 },
+  }),
+  scene('fluid_ink', 'Fluid Ink', 'Simulation', 'fluid-ink', 'heavy', 'shader', withGpuSim(() => import('./vendor/psychedelia/effects/fluid-ink.js')), {
+    needs: 'float',
+    // Its first look's brightness (looks.js LOOK_ADJUSTED).
+    defaults: { brightness: 1.6 },
+  }),
+  scene('lenia', 'Lenia', 'Simulation', 'lenia', 'heavy', 'shader', withGpuSim(() => import('./vendor/psychedelia/effects/lenia.js')), {
+    needs: 'float',
+    // Its own SmoothLife rule dies out to near black in about 100 s with
+    // two of its three palettes; the Lenia ring rule keeps living.
+    defaults: { rule: 1 },
+  }),
+  scene('physarum', 'Physarum', 'Simulation', 'physarum', 'heavy', 'shader', () => import('./vendor/psychedelia/effects/physarum.js'), { needs: 'float' }),
+  scene('feedback', 'Feedback Loop', 'Distortion', 'feedback-loop', 'heavy', 'motion', withShadertoy(() => import('./vendor/psychedelia/effects/feedback-loop.js')), { needs: 'webgl2' }),
+  scene('reaction_diffusion', 'Reaction-Diffusion', 'Simulation', 'reaction-diffusion', 'heavy', 'motion', withShadertoy(() => import('./vendor/psychedelia/effects/reaction-diffusion.js')), { needs: 'half' }),
 ].map((entry) => Object.freeze({
   ...entry,
   mood: TAGS[entry.id][0],
@@ -538,17 +848,40 @@ const ALL_SCENES = Object.freeze([
   ...(SPEED_CAPS[entry.id] ? { maxSpeed: SPEED_CAPS[entry.id] } : {}),
   fxCalm: FX_CALM_SCENES.has(entry.id),
   fxNone: FX_NONE_SCENES.has(entry.id),
+  fxLeftOut: FX_LEFT_OUT[entry.id] || NO_FX_LEFT_OUT,
+  ...(Object.hasOwn(SCENE_DRIFT, entry.id) ? { drift: SCENE_DRIFT[entry.id] } : {}),
   links: entry.links ? Object.freeze(entry.links) : null,
   defaults: entry.defaults ? Object.freeze(entry.defaults) : null,
 })));
 
-/** The scenes offered: every ported scene but the held ones. */
-export const SCENES = Object.freeze(ALL_SCENES.filter((entry) => !Object.hasOwn(HELD_SCENES, entry.id)));
+/** The scenes offered: every ported scene but the held ones (and the
+ *  line-drawing scenes, the accumulating labs and World Media's own scenes
+ *  once released, line-scenes.js, accumulating-scenes.js, own-scenes.js). */
+export const SCENES = Object.freeze([
+  ...ALL_SCENES.filter((entry) => !Object.hasOwn(HELD_SCENES, entry.id)), ...OFFERED_LINE_SCENES, ...OFFERED_ACCUMULATING_SCENES,
+  ...OFFERED_OWN_SCENES,
+]);
 /** The held scenes' entries (for the flash check and the tests; never offered). */
 export const HELD_SCENE_ENTRIES = Object.freeze(ALL_SCENES.filter((entry) => Object.hasOwn(HELD_SCENES, entry.id)));
 
 /** The scenes as the list shows them: by category, then by name. Previous
  *  and next follow this order. */
+/** Scenes that own their passes (`needs` set: sim-host.js). */
+export function ownsPasses(entry) {
+  return Boolean(entry?.needs);
+}
+
+/** `scenes` less those that need render targets the context cannot make
+ *  (`support`: sim-host.js simSupport). */
+export function drawableScenes(scenes, support) {
+  return scenes.filter((entry) => !entry.needs || simSupported(entry.needs, support));
+}
+
+/** Steps a second for a frame-feedback scene (its `simRate`), or null. */
+export function sceneSimRate(id) {
+  return sceneById(id)?.simRate ?? null;
+}
+
 export function orderedScenes(scenes = SCENES) {
   return [...scenes].sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
 }

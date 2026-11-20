@@ -5,7 +5,7 @@
  * The text between the BEGIN and END lines is that file unchanged, except that
  * any non-ASCII character is written as a \u escape. It was a classic script;
  * here the Psychedelia modules it names come in through G.
- * BORROWED: distance functions sdBox, sdTorus, sdOctahedron (bound version) and the 2D box.
+ * BORROWED: distance functions sdBox, sdTorus, sdOctahedron (bound version), the 2D box, the capsule and the capped cylinder.
  *   Author: Inigo Quilez. Source: https://iquilezles.org/articles/distfunctions/.
  *   Licence: MIT for code snippets ("all technical code snippets you'll find are under the MIT license", https://iquilezles.org/articles/).
  * BORROWED: tetrahedron technique for numerical normals (calcNormal, estimateNormal), which he credits to Paulo Falcao and Paul Malin.

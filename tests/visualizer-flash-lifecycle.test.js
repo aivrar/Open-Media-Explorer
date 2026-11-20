@@ -14,7 +14,7 @@ import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle,
 } from './helpers/visualizer-fakes.js';
 
-/* The flash budget across the tab's whole life (Codex round 3): every large
+/* The flash budget across the tab's whole life (review round 3): every large
    change of light the picture shows, counted from what reaches it - pulses
    from the limiter's limited output, wraps from the beat clock it gives a
    scene that shows it, trigger firings from the u_age each effect program

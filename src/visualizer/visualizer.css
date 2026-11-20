@@ -154,11 +154,61 @@
   flex-direction: column;
   gap: 8px;
 }
+/* A section's title: a button that folds the section. It looks like one (a
+   bar with an arrow), with what is set at its right ("Off", "High, 30 fps"),
+   so a folded section is still seen and still says what it holds. */
 .viz-section-title {
+  color: #e3e8ee;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.viz-section-head {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.viz-section-head:hover { background: rgba(255, 255, 255, 0.13); }
+.viz-section-head:focus-visible { outline: 2px solid #f1f4f7; outline-offset: 2px; }
+.viz-section-head::before {
+  content: "";
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid currentColor;
+}
+.viz-section-head[aria-expanded="true"]::before { transform: rotate(90deg); }
+.viz-section-name { flex: 1 1 auto; min-width: 0; }
+.viz-section-summary {
+  flex: 0 1 auto;
+  max-width: 60%;
+  overflow: hidden;
   color: #a7b0bc;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 11.5px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viz-section-body,
+.viz-section-more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.viz-section-body[hidden],
+.viz-section-more[hidden] { display: none; }
+@media (forced-colors: active) {
+  .viz-section-head { border-color: ButtonText; }
 }
 
 .viz-field,
@@ -501,12 +551,14 @@
 .viz-fx-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px 8px;
+  gap: 0 8px;
 }
 .viz-fx-list:empty { display: none; }
+/* Each row answers over at least 24 px (the rows touch; nothing overlaps). */
 .viz-fx-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  min-height: 24px;
   gap: 4px;
   min-width: 0;
   font-size: 11px;
@@ -523,36 +575,7 @@
 .viz-fx-box:focus-visible { outline: 2px solid #f1f4f7; outline-offset: 1px; }
 .viz-fx-box:disabled + span { color: #7d8692; }
 
-/* ---- Overlays (overlay-layer.js): a section that folds ---- */
-.viz-ov-head {
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.viz-ov-head::before {
-  content: "";
-  flex: none;
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid currentColor;
-}
-.viz-ov-head[aria-expanded="true"]::before { transform: rotate(90deg); }
-.viz-ov-head:focus-visible { outline: 2px solid #f1f4f7; outline-offset: 2px; }
-.viz-ov-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.viz-ov-body[hidden] { display: none; }
+/* ---- Overlays (overlay-layer.js) ---- */
 .viz-ov-now { align-self: flex-start; }
 /* One small block per chosen overlay: its name, then Blend and Show on a
    line each, then the switches, which wrap. */

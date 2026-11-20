@@ -23,7 +23,11 @@
  *               times as its category has scenes left in the bag, so big
  *               categories are spread out and a bag rarely ends on scenes of
  *               one category only (the one case where the category rule has
- *               to give: about 1 pick in 100,000).
+ *               to give: about 1 pick in 100,000). With the tone
+ *               (tone.js, while MOOD_TONE_RELEASED), toneWeight leans
+ *               gently: dark and bass-heavy sound toward calm, cool scenes,
+ *               bright sound toward lively, warm or rainbow ones (at most
+ *               x(1 + TONE_WEIGHT) either way; never a filter).
  * When the rules leave nothing, they are let go one at a time from the
  * bottom: category, then recent, then the bag - never "not the one showing".
  *
@@ -48,6 +52,47 @@ export const SHUFFLE_TEMPO_CONFIDENCE = 0.5;
 export const SHUFFLE_FALLBACK_BPM = 120;
 export const MOOD_WEIGHT = 3;
 export const SAME_HUE_WEIGHT = 0.5;
+/** The most the tone moves a scene's weight, either way (PROPOSED). */
+export const TONE_WEIGHT = 0.6;
+
+/**
+ * How the tone ({ brightness, weight, swell }, 0..1; tone.js) weighs scene
+ * `scene` (its mood and hue tags): a factor from 1 / (1 + TONE_WEIGHT) to
+ * 1 + TONE_WEIGHT, 1 without a tone. The sound leans from dark (low
+ * brightness, heavy bass) to bright (a swelling sound a little toward
+ * lively); a scene leans from calm and cool to lively and warm or rainbow.
+ * The tags stand in for how dark and how fast a scene looks.
+ */
+export function toneWeight(scene, tone) {
+  if (!tone || !tone.ready || !scene) return 1;
+  const dark = toneDarkness(tone);
+  let lean = 1 - 2 * dark + (tone.swell - 0.5) * 0.3;
+  lean = Math.max(-1, Math.min(1, lean));
+  const sceneLean = (scene.mood === 'lively' ? 0.5 : -0.5) + (scene.hue === 'cool' ? -0.5 : 0.5);
+  const factor = 1 + TONE_WEIGHT * lean * sceneLean;
+  return Math.max(1 / (1 + TONE_WEIGHT), Math.min(1 + TONE_WEIGHT, factor));
+}
+
+/** How dark the sound is (0..1): low brightness and heavy bass. */
+export function toneDarkness(tone) {
+  return Math.max(0, Math.min(1, (1 - tone.brightness) * 0.7 + Math.max(0, tone.weight - 0.5) * 0.6));
+}
+
+/** How much the tone leans a look's choice (as TONE_WEIGHT for scenes). */
+export const LOOK_TONE_WEIGHT = 0.6;
+
+/**
+ * How the tone weighs a look of `darkness` (0 bright to 1 dark;
+ * look-darkness.js): x(1 + LOOK_TONE_WEIGHT) for a look as dark as the
+ * sound, down to / (1 + LOOK_TONE_WEIGHT) for the opposite; 1 without a tone
+ * or a darkness. A weighting, never a filter.
+ */
+export function lookToneWeight(darkness, tone) {
+  if (!tone || !tone.ready || !Number.isFinite(darkness)) return 1;
+  const lean = 1 - 2 * Math.abs(darkness - toneDarkness(tone));
+  const factor = 1 + LOOK_TONE_WEIGHT * lean;
+  return Math.max(1 / (1 + LOOK_TONE_WEIGHT), Math.min(1 + LOOK_TONE_WEIGHT, factor));
+}
 
 /** A small, fast seeded random source (mulberry32): () => [0, 1). */
 export function seededRandom(seed = 1) {
@@ -111,7 +156,7 @@ export function createShuffle({ scenes, random = seededRandom(Date.now()) } = {}
     return scenes.filter((scene) => (!wanted || wanted.has(scene.id)) && costRank(scene.cost) <= max).map((scene) => scene.id);
   }
 
-  function weightOf(id, mood, previous, left) {
+  function weightOf(id, mood, previous, left, tone) {
     const scene = byId.get(id);
     // Categories with more scenes left in the bag go sooner, so the bag does
     // not end on a run of one category.
@@ -119,12 +164,13 @@ export function createShuffle({ scenes, random = seededRandom(Date.now()) } = {}
     if (mood === 'calm' && scene.mood === 'calm') weight *= MOOD_WEIGHT;
     if (mood === 'energetic' && scene.mood === 'lively') weight *= MOOD_WEIGHT;
     if (previous && scene.hue === previous.hue) weight *= SAME_HUE_WEIGHT;
+    if (tone) weight *= toneWeight(scene, tone);
     return weight;
   }
 
-  function weighted(ids, mood, previous, left) {
+  function weighted(ids, mood, previous, left, tone) {
     let total = 0;
-    const weights = ids.map((id) => { const w = weightOf(id, mood, previous, left); total += w; return w; });
+    const weights = ids.map((id) => { const w = weightOf(id, mood, previous, left, tone); total += w; return w; });
     let r = random() * total;
     for (let i = 0; i < ids.length; i += 1) {
       r -= weights[i];
@@ -149,6 +195,7 @@ export function createShuffle({ scenes, random = seededRandom(Date.now()) } = {}
    *   pool       'all' | 'favourites'; favourites: [{ scene, look }]
    *   costMax    heaviest cost class allowed
    *   mood       'calm' | 'steady' | 'energetic'
+   *   tone       (optional) tone.js { brightness, weight, swell, ready }
    */
   function next(context = {}) {
     const ids = poolOf(context);
@@ -187,7 +234,7 @@ export function createShuffle({ scenes, random = seededRandom(Date.now()) } = {}
       const category = byId.get(bagId)?.category;
       if (ids.includes(bagId)) left.set(category, (left.get(category) || 0) + 1);
     }
-    const id = weighted(tiers[level], context.mood, byId.get(current), left);
+    const id = weighted(tiers[level], context.mood, byId.get(current), left, context.tone || null);
     stats.picks += 1;
     // Nothing is remembered yet: the bag, the last scenes and categories
     // change only when it is shown (shown()), so a pick dropped before then
@@ -199,10 +246,11 @@ export function createShuffle({ scenes, random = seededRandom(Date.now()) } = {}
    * A look for scene `id`: not the one it had last time (when it has more
    * than one). `offered`: the look numbers it offers (looks.js: a left-out
    * look has none), or a count for the numbers 0 to count - 1. `allowed`:
-   * the look numbers to choose from (favourites), or null for any. Returns a
-   * look number, or null (no looks).
+   * the look numbers to choose from (favourites), or null for any.
+   * `weightOf` (number -> weight; the tone, lookToneWeight): how likely each
+   * is, or null for all alike. Returns a look number, or null (no looks).
    */
-  function look(id, offered, allowed = null) {
+  function look(id, offered, allowed = null, weightOf = null) {
     const numbers = Array.isArray(offered) ? offered : Array.from({ length: Math.max(0, offered || 0) }, (_, n) => n);
     let options = Array.isArray(allowed) && allowed.length
       ? allowed.filter((n) => Number.isInteger(n) && numbers.includes(n))
@@ -210,7 +258,19 @@ export function createShuffle({ scenes, random = seededRandom(Date.now()) } = {}
     if (!options.length) return null;
     const before = lastLook.get(id);
     if (options.length > 1 && before !== undefined) options = options.filter((n) => n !== before);
-    const pick = options[Math.floor(random() * options.length) % options.length];
+    let pick;
+    if (typeof weightOf === 'function' && options.length > 1) {
+      const weights = options.map((n) => { const w = Number(weightOf(n)); return w > 0 ? w : 0; });
+      const total = weights.reduce((sum, w) => sum + w, 0);
+      let at = random() * total;
+      pick = options[options.length - 1];
+      if (total > 0) {
+        for (let index = 0; index < options.length; index += 1) {
+          at -= weights[index];
+          if (at < 0) { pick = options[index]; break; }
+        }
+      } else pick = options[0];
+    } else pick = options[Math.floor(random() * options.length) % options.length];
     lastLook.set(id, pick);
     return pick;
   }
@@ -272,6 +332,14 @@ export function createShuffleTimer({
     step(now, beats, confidence) {
       due = due || check(now, beats, confidence);
       return due;
+    },
+    /** A drop (structure.js): the change is due now, when the scene has
+     *  shown for minDwell (else nothing). It replaces the scheduled change,
+     *  never adds one. Returns true when it brought one forward. */
+    bringForward() {
+      if (due || dwell < minDwell) return false;
+      due = true;
+      return true;
     },
     get due() { return due; },
   };

@@ -95,7 +95,7 @@ test('a dropped playlist is imported and never handed to Windows', async () => {
   assert.equal(fire('dragover', drag).prevented, true);
   assert.equal(drag.dropEffect, 'copy');
   assert.equal(hint.hidden, false);
-  assert.match(hint.textContent, /Drop a playlist file \(\.m3u, \.m3u8, \.pls or \.xspf\)/);
+  assert.match(hint.textContent, /Drop a playlist file \(\.m3u, \.m3u8, \.pls, \.xspf, \.json or \.csv\)/);
 
   // Leaving the window hides the hint; moving between elements does not.
   fire('dragleave', drag, { relatedTarget: {} });
@@ -114,7 +114,7 @@ test('a dropped playlist is imported and never handed to Windows', async () => {
   await Promise.resolve();
   assert.equal(imported.length, 1);
   assert.equal(hint.hidden, false);
-  assert.match(hint.textContent, /Only \.m3u, \.m3u8, \.pls or \.xspf/);
+  assert.match(hint.textContent, /Only \.m3u, \.m3u8, \.pls, \.xspf, \.json or \.csv/);
   assert.equal(hint.classList.contains('is-rejected'), true);
 
   // Dragging text or a link inside the page is left alone.

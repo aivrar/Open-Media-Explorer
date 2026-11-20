@@ -46,14 +46,21 @@ adapter policies:
 | NASA | Default one lane | Search pages are finite; assets resolve lazily |
 | Wikimedia Commons | Default one lane | Audio/video searches are paged independently and may run in parallel |
 | LibriVox | Default one lane | Audiobook pages finite; RSS and cover resolution cached in session |
-| media.ccc.de | Two lanes, at least 500 ms between starts | Recent/search ~5 minutes, details ~1 hour, live ~10 seconds; live refresh about every minute |
+| media.ccc.de | Two lanes, at least 500 ms between starts | Recent/search ~5 minutes, details ~1 hour, live ~10 seconds; the live list is read again at most every 5 minutes, and only while it is shown in the Library; after a failed read it also waits 5 minutes |
 | gPodder | Four lanes | Directory/feed data ~30 minutes; searches ~5 minutes; at most four feeds active globally and one per host |
 | PeerTube | Two lanes, at least 500 ms between starts | Index ~5 minutes, origin details ~10 minutes; `Retry-After` is honored |
-| Owncast | One lane | Verified snapshot refresh about every 2 minutes; last-known-good data can be stale |
+| Owncast | One lane | Verified snapshot refresh about every 2 minutes while the list is shown in the Library; after a failed read it also waits 2 minutes; last-known-good data can be stale |
 
 These are provider-protection policies, not an item cap. The Library can keep
 collecting while a source has more authoritative pages. A short or empty page is
 not treated as exhaustion unless the adapter returns an explicit end marker.
+
+Since v0.1.12, a page that fails without the provider saying when to try again
+(and is not a rate limit) is asked for again after a wait that grows each time,
+and after two failures in a row the source stops loading by itself until you
+press **Retry now**. A page the provider refuses outright, such as a PeerTube
+search past the deepest page its index serves, ends that listing instead of
+being asked for again.
 
 ## Live snapshots versus finite catalogs
 

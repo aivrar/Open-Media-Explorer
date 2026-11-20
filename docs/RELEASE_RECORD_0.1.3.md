@@ -54,9 +54,7 @@ a valid Python Software Foundation Authenticode signature (launcher SHA-256
 
 ## Boundaries
 
-The historical v0.1.2 exhaustive appearance/recording/provider matrix was not
-fully repeated; this release has the focused evidence above. Favorites remain
-in WebView2 storage; the native cross-port backup is bounded to 2 MiB of raw
+Favorites remain in WebView2 storage; the native cross-port backup is bounded to 2 MiB of raw
 values and now warns on failure. Playlist imports are snapshots, not subscriptions,
 and are available in Library/Favorites rather than Grid/Tuner/Discovery.
 EQ/volume/job-history persistence is not migrated to a native database.

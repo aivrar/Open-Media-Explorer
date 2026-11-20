@@ -3,7 +3,7 @@ fx-chain.js in Chromium and reports, per intensity, the mean luminance, the
 largest frame-to-frame luminance step and the steps over 0.10 a second, with
 the worst runs and the effects found in them.
 
-    python tests/helpers/visualizer-fx-check.py runs.json [width height] [--gpu]
+    python tests/helpers/visualizer-fx-check.py runs.json [width height] [--gpu] [--readback] [--low] [--cores=2] [--progress=file]
 
 --gpu draws on the graphics card (ANGLE on Direct3D 11) as the app does;
 without it SwiftShader. Serves src/ and tests/helpers/ from a local port for
@@ -13,7 +13,13 @@ part of npm test. Luminance is Rec. 709 luma of the 8-bit canvas, 0..1.
 Overlay runs (visualizer-fx-check.mjs --overlays) are drawn the same way;
 the top sheet is laid over the picture before the luminance is taken. Cost
 runs (their own size) report the time per frame instead, with the overlays'
-own drawing and the blended one's upload."""
+own drawing and the blended one's upload.
+
+The mean luminance is added up on the graphics card (luma-meter.js) and only
+a small float target read back; --readback reads every pixel back and adds
+them up in the page instead (the old way, for comparing). --low, --cores and
+--progress: check_limits.py; each row gives the processor time it took
+(cpu_s)."""
 
 import functools
 import http.server
@@ -23,6 +29,8 @@ import sys
 import threading
 
 from playwright.sync_api import sync_playwright
+
+from check_limits import Limits, options
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PAGE = (b'<!doctype html><html><body>'
@@ -61,8 +69,10 @@ def measure(lumas, fps):
 
 
 def main():
-    gpu = '--gpu' in sys.argv
-    argv = [arg for arg in sys.argv if arg != '--gpu']
+    limits, argv = options(sys.argv)
+    gpu = '--gpu' in argv
+    readback = '--readback' in argv
+    argv = [arg for arg in argv if arg not in ('--gpu', '--readback')]
     path = argv[1] if len(argv) > 1 else 'visualizer-fx-frames.json'
     width = int(argv[2]) if len(argv) > 2 else 320
     height = int(argv[3]) if len(argv) > 3 else 180
@@ -75,7 +85,8 @@ def main():
     # and quality the app draws. Runs with their own size or quality (overlay
     # cost runs) give theirs in their row; the rest are drawn at Medium.
     qualities = sorted({run.get('quality') or 'medium' for run in data['runs']})
-    print(json.dumps({'size': [width, height], 'quality': qualities, 'gpu': gpu,
+    meter = Limits(limits, len(data['scenes']) + len(data['runs']))
+    print(json.dumps({'size': [width, height], 'quality': qualities, 'gpu': gpu, 'readback': readback,
                       'note': 'scene values capped last at each run quality (scenes.js cappedValues), linked ones included'}), flush=True)
     with sync_playwright() as p:
         flags = (['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'] if gpu
@@ -84,18 +95,25 @@ def main():
         page = browser.new_page()
         page.goto(f'http://127.0.0.1:{port}/fx-check.html')
         page.wait_for_function('window.fxReady === true')
+        if readback:
+            page.evaluate('() => { window.lumaReadback = true; }')
+        meter.apply_to_children()
         page.evaluate('(s) => window.setScenes(s)', data['scenes'])
         baseline = {}
         for index, scene in enumerate(data['scenes']):
             whole = {'scene': index, 'from': 0, 'fx': [], 'intensity': 'normal', 'flash': False}
+            meter.begin(f"baseline {scene['id']}")
             result = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)',
                                    [whole, scene['frameCount'], width, height])
             baseline[index] = measure(result['lumas'], scene['fps'])
+            baseline[index]['cpu_s'] = meter.end()
         for run in data['runs']:
             scene = data['scenes'][run['scene']]
             w, h = run.get('size') or (width, height)
-            result = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)', [run, data['clip'], w, h])
+            meter.begin(f"{run.get('group', '')} on {scene['id']}")
+            result = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)', [run, run.get('clip') or data['clip'], w, h])
             row = measure(result['lumas'], scene['fps'])
+            row['cpu_s'] = meter.end()
             if run.get('overlays') is not None:
                 row.update({
                     'overlays': '+'.join(o['id'] + ('~' + o['blend']['mode'] + ('u' if o['blend']['under'] else '')
@@ -123,7 +141,7 @@ def main():
             rows.append(row)
         browser.close()
     server.shutdown()
-    report = {'size': [width, height], 'quality': qualities, 'gpu': gpu, 'baseline': {data['scenes'][i]['id']: v for i, v in baseline.items()},
+    report = {'size': [width, height], 'quality': qualities, 'gpu': gpu, 'readback': readback, 'baseline': {data['scenes'][i]['id']: v for i, v in baseline.items()},
               'summary': {}, 'worst': {}, 'rows': rows}
     for key in sorted({row['group'] for row in rows}):
         part = [row for row in rows if row['group'] == key]

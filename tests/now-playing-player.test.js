@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPlayerDom } from './helpers/fake-dom.js';
-import { subscribe } from '../src/lib/state.js';
+import { FakeElement, createPlayerDom } from './helpers/fake-dom.js';
+import { emit, getState, subscribe } from '../src/lib/state.js';
+import { FAVORITE_NAMES_KEY } from '../src/lib/favorite-names.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import { RECONNECTING_TEXT } from '../src/lib/live-resume.js';
 import { NOW_PLAYING_EVENT, NOW_PLAYING_FIRST_POLL_MS, NOW_PLAYING_POLL_MS } from '../src/lib/now-playing.js';
@@ -55,6 +56,7 @@ async function setup(t) {
     MediaMetadata: Object.getOwnPropertyDescriptor(globalThis, 'MediaMetadata'),
   };
   const { elements, document } = createPlayerDom();
+  elements['player-art-initials'] = document.register(new FakeElement('player-art-initials'));
   const net = { registrations: 0, titles: new Map(), polls: [], held: [], hold: false };
   const mediaSession = {
     playbackState: 'none', metadata: 'metadata-before-song', setActionHandler() {},
@@ -301,6 +303,38 @@ test('errors stop polling, and on-demand or video items are never polled', { tim
   assert.equal(net.polls.length, 1);
   audio.duration = Number.NaN;
   player.stop();
+});
+
+test('renaming the playing favorite updates its initials and the media session at once', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, elements, net, mediaSession, tick } = await setup(t);
+  const state = getState();
+  const before = { favorites: state.favorites, storage: Object.getOwnPropertyDescriptor(globalThis, 'localStorage') };
+  const storage = new MemoryStorage();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, writable: true, value: storage });
+  t.after(() => {
+    state.favorites = before.favorites;
+    if (before.storage) Object.defineProperty(globalThis, 'localStorage', before.storage);
+    else delete globalThis.localStorage;
+  });
+  const item = liveItem('a', { title: 'Radio One' });
+  state.favorites = [{ ...item }];
+  await player.playItem(item);
+  await settle();
+  net.titles.set(mediaId(1), { title: 'Artist - Song', changed_at: 1_700_000_000 });
+  await tick(NOW_PLAYING_FIRST_POLL_MS);
+  const initials = elements['player-art-initials'];
+  assert.equal(initials.textContent, 'RO');
+  assert.equal(mediaSession.metadata.artist, 'Radio One');
+
+  storage.setItem(FAVORITE_NAMES_KEY, JSON.stringify({ version: 1, names: { [item.id]: 'Morning Jazz' } }));
+  emit('favorites-change', state.favorites);
+  assert.equal(elements['player-title'].textContent, 'Morning Jazz');
+  assert.equal(initials.textContent, 'MJ');
+  assert.equal(mediaSession.metadata.title, 'Artist - Song');
+  assert.equal(mediaSession.metadata.artist, 'Morning Jazz');
+  // The song going away still brings back what was there before.
+  player.stop();
+  assert.equal(mediaSession.metadata, 'metadata-before-song');
 });
 
 test('station text is shown as plain text only', { timeout: TEST_TIMEOUT_MS }, async (t) => {

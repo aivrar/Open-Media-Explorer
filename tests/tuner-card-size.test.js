@@ -218,6 +218,8 @@ test('Small stays exactly as it was: text-only cards, 39 px, strip 70 px (66 nar
     '.station-pill', '.station-pill > small', '.station-pill > .content-rating-badge',
     '.station-pill.is-active > small', '.station-pill:hover', '.station-pill.is-favorite:not(.is-active)',
     '.station-pill.is-active',
+    // A long name ends in an ellipsis at every size (the height is unchanged).
+    '.station-pill > span:not(.content-rating-badge):not(.pill-art)',
   ]);
   const selectors = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+\{/g)
     .flatMap((raw) => raw.slice(0, -1).split(',').map((part) => part.trim()));
@@ -506,3 +508,12 @@ test('a new station picture in the folder redraws only the cards it changes', as
   assert.equal(calls.load.length, 8);
   assert.equal(calls.load.at(-1).source, PICTURE);
 });
+
+test('the station name on the dial carries the whole name as its title, and none while loading', async () => {
+  const tuner = await read('src/modes/tuner.js');
+  const update = tuner.match(/function updateFrequencyDisplay\(\) \{[\s\S]*?\n\}/)[0];
+  assert.match(update, /ui\.stationName\.setAttribute\('title', s\.title \|\| ''\);/);
+  assert.match(update, /'No station';\s+ui\.stationName\.removeAttribute\('title'\);/);
+  assert.match(tuner, /ui\.stationName\.textContent = 'Loading\u2026';\s+ui\.stationName\.removeAttribute\('title'\);/);
+});
+

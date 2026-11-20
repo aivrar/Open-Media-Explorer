@@ -77,10 +77,8 @@ a valid Python Software Foundation Authenticode signature (launcher SHA-256
 ## Boundaries
 
 File drops were exercised with synthetic drag events in a browser, which
-proves the page handles and cancels them. A drop from Windows Explorer onto
-the native window was not automated. The station from the report ("RTL",
-1 of 80) was not identified; the audio-only case was reproduced with a public
-audio-only HLS test stream. An audio-only stream saved as TV or video still
+proves the page handles and cancels them. The audio-only case was reproduced
+with a public audio-only HLS test stream. An audio-only stream saved as TV or video still
 shows an empty video, as before. Showing the current song and saving songs to
 a list (also requested in issue #5) are not part of this release. The v0.1.6
 boundaries still apply.

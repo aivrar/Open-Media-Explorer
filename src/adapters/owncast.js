@@ -17,6 +17,8 @@ export const itemTypes = ['tv'];
 export const catalogPolicy = Object.freeze({ maxConcurrent: 1, minIntervalMs: 0 });
 
 export const OWNCAST_REFRESH_AFTER_MS = 2 * 60 * 1000;
+// A failed or stale refresh waits as long (modes/library/snapshots.js).
+export const snapshotRetryMinMs = OWNCAST_REFRESH_AFTER_MS;
 export const OWNCAST_STALE_RETRY_MS = 30 * 1000;
 
 const APP_PAGE_SIZE = 30;

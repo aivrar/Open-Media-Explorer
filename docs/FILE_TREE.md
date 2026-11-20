@@ -29,6 +29,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.9.md
 |   |-- RELEASE_NOTES_0.1.10.md
 |   |-- RELEASE_NOTES_0.1.11.md
+|   |-- RELEASE_NOTES_0.1.12.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -38,6 +39,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.9.md
 |   |-- RELEASE_RECORD_0.1.10.md
 |   |-- RELEASE_RECORD_0.1.11.md
+|   |-- RELEASE_RECORD_0.1.12.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -55,6 +57,7 @@ WorldMediaWindows/
 |   `-- 5.PNG
 |-- scripts/
 |   |-- import_psychedelia.mjs
+|   |-- look_darkness.mjs
 |   `-- prepare_wiki.py
 |-- src/
 |   |-- adapters/
@@ -95,11 +98,15 @@ WorldMediaWindows/
 |-- worldmedia_media.py
 |-- worldmedia_native.py
 |-- worldmedia_playlists.py
+|-- worldmedia_playlist_tables.py
+|-- worldmedia_processor.py
 |-- worldmedia_recording.py
 |-- worldmedia_runtime.py
 |-- worldmedia_security.py
 |-- worldmedia_songlog.py
+|-- worldmedia_starred.py
 |-- worldmedia_station_images.py
+|-- worldmedia_stream_probe.py
 |-- worldmedia_theme.py
 |-- worldmedia_server.py
 `-- README.md
@@ -123,15 +130,19 @@ WorldMediaWindows/
 | `worldmedia_icy.py` | Shoutcast/Icecast song titles: when the relay asks a station for them, removing the metadata blocks from the audio, and cleaning the title. |
 | `worldmedia_songlog.py` | The song log file (`state/song-log.json`): ordered writes, safe handling of an unreadable file, and the CSV export. |
 | `worldmedia_station_images.py` | The user's `station-images` folder: safe listing (with the files that were not used and why), station-name matching, and serving verified pictures. |
+| `worldmedia_starred.py` | Starred songs (`state/starred-songs.json`): ordered writes, safe handling of an unreadable file, and the **Save as text** and **Save as CSV** exports. |
+| `worldmedia_playlist_tables.py` | JSON and CSV channel lists, turned into the M3U form every playlist is stored in, with limits on size and entries. |
+| `worldmedia_stream_probe.py` | A short, bounded look at two radio streams for **Pick the best stream: Auto (verified)**: what each says about itself (format, bitrate, name, song title); nothing is decoded or kept. |
+| `worldmedia_processor.py` | The app's processor use (its own and its window's processes, as a share of the whole processor), read only when the Visualizer asks at Balanced or High. |
 | `src/lib/capture-client.js` | Authenticated control client and frontend relay lifecycle. |
 | `src/lib/catalog-scheduler.js` | Fair global/provider metadata scheduling, retry cooldowns, visibility pause, cancellation, and deduplication. |
 | `src/lib/catalog-client.js` | Authenticated semantic catalog and opaque artwork control client. |
 | `src/lib/artwork.js` | Prioritized, deduplicated, retryable conversion from provider image metadata to opaque local asset URLs, with playback-aware concurrency. |
 | `src/modes/library/catalog-store.js` | Bounded resident catalog, stable merge/update identities, snapshot replacement, and eviction pins. |
-| `src/modes/library/snapshots.js` | Independent live-snapshot refresh, stale-cache state, reconciliation, and teardown. |
+| `src/modes/library/snapshots.js` | Independent live-snapshot refresh (only while the list is shown), stale-cache state, reconciliation, and teardown. |
 | `src/lib/live-load.js` | Tuner/Grid progressive source loading and per-source time limits. |
 | `src/lib/initials.js` | Initials and stable colours for items without artwork. |
-| `src/lib/playlist-drop.js` | Drag-and-drop import of local M3U playlists; keeps other dropped files from being opened by Windows. |
+| `src/lib/playlist-drop.js` | Drag-and-drop import of local playlist files (`.m3u`, `.m3u8`, `.pls`, `.xspf`, `.json`, `.csv`); keeps other dropped files from being opened by Windows. |
 | `src/lib/video-picture.js` | Decides whether the floating video is shown: at once for TV/video, only with a picture for radio/audio. |
 | `src/lib/themes.js` | Persisted appearance catalog, DOM theme application, and native-caption synchronization. |
 | `src/lib/dash-player.js` | Lazy dash.js playback lifecycle, MSE checks, errors, and deterministic cleanup. |
@@ -146,27 +157,37 @@ WorldMediaWindows/
 | `src/lib/resolve-message.js` | Plain wording for an item whose details could not be looked up before play, for example one from a removed source. |
 | `src/lib/now-playing.js` | Follows the song title a station announces while a live audio item plays. |
 | `src/lib/song-log.js` | The song log: keeps the newest 500 songs and saves them to the data folder. |
-| `src/lib/song-log-panel.js` | The Song log panel opened from the top bar: list, Copy, Remove, Save to file, and Clear log. |
+| `src/lib/song-log-panel.js` | The Song log panel opened from the top bar: list, Copy, Remove, Save to file, and Clear log, and the **Starred songs** list with its searches, **Save as text** and **Save as CSV**. |
+| `src/lib/starred-songs.js`, `src/lib/song-star.js` | Starred songs: the page's store (kept by the local server, at most 2,000) and the star on the player bar. |
+| `src/lib/favorite-names.js`, `src/lib/favorite-rename.js` | Names of your own for favorites, kept apart from the favorites, and their removal when a favorite goes. |
 | `src/styles/song-log.css` | Styles for the Song log panel. |
 | `src/lib/station-images.js` | Station images: the list from the backend, name matching, and the Settings controls. |
 | `src/lib/stream-quality.js` | The format and bitrate label for Radio Browser stations. |
 | `src/lib/other-streams.js` | The rule that decides which Radio Browser entries are listed as other streams of a station. |
-| `src/modes/library/other-streams.js` | The **Other streams** button and list in the Library detail panel. |
+| `src/modes/library/other-streams.js` | The **Other streams** button and list in the Library detail panel, and the **Auto (verified)** line. |
+| `src/lib/best-stream.js`, `src/lib/media-failover.js`, `src/lib/start-failover.js` | **Pick the best stream**: ranking a station's listed streams, the best one's head start, and handing a stream that never begins to the next. |
+| `src/lib/best-stream-auto.js`, `src/lib/stream-verify.js`, `src/lib/stream-lookups.js` | **Auto (verified)**: when the background checks run, the rules a better stream must pass, and the saved directory lookups. |
+| `src/lib/processor-budget.js` | **Processor use**: the level, the limit, the quality steering, and what Balanced and High add (Very high, larger simulations). |
 | `src/lib/audio-signal.js` | Reads the sound for visuals from the audio engine's side tap, once per frame for every listener; runs only while something audible plays and the window is visible. |
 | `src/lib/player-meter.js` | The LED-style sound meter in the player bar (14 bars), switched by Settings > Appearance > Sound meter in the player bar. |
 | `src/lib/tuner-card-size.js` | The Tuner card size choice (Small, Medium, Large) and which sizes show pictures. |
 | `src/lib/tuner-card-art.js` | Pictures on Medium and Large Tuner cards: initials first, pictures only for cards in view once the strip has stopped moving. |
 | `src/lib/favorite-migration.js` | After a playlist is imported again, moves the favorites of channels that changed between radio and TV to the new channel, keeping place, category and equalizer. |
-| `src/lib/visualizer-settings.js` | The Visualizer's saved choices (quality, frame rate, brightness, scene, shuffle, effects, overlays, favourites, notice) and their checks. Small on purpose: it is in the main bundle. |
+| `src/lib/visualizer-settings.js` | The Visualizer's saved choices (quality, frame rate, brightness, scene, shuffle, effects, overlays, Strobe style, slow drift, folded panel sections, favorites, notice) and their checks. Small on purpose: it is in the main bundle. |
 | `src/modes/visualizer.js` | The Visualizer tab's shell: loads the Visualizer when the tab first opens and tears it down when the tab closes. |
-| `src/visualizer/index.js` | The Visualizer's panel and wiring: scene, look, shuffle, effects, overlays, picture, the photosensitivity notice, and the step-down note. |
-| `src/visualizer/scenes.js` | The table of scenes (name, category, cost badge, sound links), the flash-safety caps, and `HELD_SCENES`, the scenes that are not offered. With `scene-list.js` (the searchable list), `scene-renderer.js` (WebGL drawing), `scene-switcher.js`, `looks.js` and `transition.js`. |
+| `src/visualizer/index.js` | The Visualizer's panel (sections with title bars that fold and say what is set) and wiring: scene, look, shuffle, effects, overlays, picture, the photosensitivity notice, and the step-down note. |
+| `src/visualizer/scenes.js` | The table of scenes (name, category, cost badge, sound links), the flash-safety caps, and `HELD_SCENES`, the scenes that are not offered. It takes the line drawings, World Media's own scenes and Buddhabrot Lab from `line-scenes.js`, `own-scenes.js` and `accumulating-scenes.js`. With `scene-list.js` (the searchable list), `scene-renderer.js` (WebGL drawing), `scene-switcher.js`, `looks.js` (with the extra looks) and `transition.js` (cross-fades, stretched while Buddhabrot Lab's picture is prepared). |
+| `src/visualizer/line-host.js`, `sim-host.js`, `shadertoy-adapter.js`, `density-host.js`, `density-worker.js` | Hosts for scenes that draw their own way: glowing line drawings, simulations and frame-feedback scenes, and Buddhabrot Lab's picture built in a worker. |
+| `src/visualizer/own/`, `src/visualizer/own-scenes.js` | World Media's own scenes: Band Ridgelines, Sound Ring, Petal Bloom, Hex Weave and Contour Lines. |
+| `src/visualizer/drift.js`, `swell.js`, `overlay-motion.js` | Slow drift: scene and effect settings moving with the music's bars, the music's slow swell, and the overlays' slow turn and sway. |
+| `src/visualizer/spelling.js` | American spelling for names that come from Psychedelia (effects, their groups, looks); saved values are unchanged. |
+| `src/visualizer/look-darkness.js`, `scripts/look_darkness.mjs` | Each look's darkness (0 bright to 1 dark) from a brightness check of every look; the script writes the table. Generated: do not edit by hand. |
 | `src/visualizer/reactor.js`, `loop.js`, `mood.js` | The sound side: Psychedelia's Beat Reactor fed from the shared signal, when to draw, and the music's mood. |
 | `src/visualizer/flash-limiter.js` | The flash limiter that every sound-derived value passes: at most three large pulses a second, shared by everything. |
-| `src/visualizer/fx-catalog.js`, `fx-chain.js`, `fx-shuffle.js`, `fx-reactions.js` | Post effects: the table of the 38 offered, the graphics chain that draws them, the shuffle, and the limited beat reactions. |
-| `src/visualizer/overlay-catalog.js`, `overlay-layer.js`, `overlay-patterns.js`, `overlay-shuffle.js` | Overlays: the table of the 25 offered and their blend-ins, the canvas that draws them, the seven patterns written for this app, and the shuffle. |
+| `src/visualizer/fx-catalog.js`, `fx-chain.js`, `fx-shuffle.js`, `fx-reactions.js` | Post effects: the table of the 39 offered, the graphics chain that draws them, the shuffle, and the limited beat reactions. |
+| `src/visualizer/overlay-catalog.js`, `overlay-layer.js`, `overlay-patterns.js`, `overlay-shuffle.js` | Overlays: the table of the 26 offered and their blend-ins, the canvas that draws them, the eight patterns written for this app (Strobe among them), and the shuffle. |
 | `src/visualizer/shuffle.js`, `favourites.js`, `step-down.js`, `hud.js`, `notice.js`, `size.js`, `visualizer.js`, `visualizer.css` | The scene shuffle, favourites, the automatic step-down, the buttons over the picture, the photosensitivity notice, drawing size, the chunk's entry and its styles. |
-| `src/visualizer/vendor/psychedelia/` | Code copied from Psychedelia Studio (same author, MIT): 76 files in `effects/` (the scenes and their helpers), 5 in `engine/`, `manifest.json` (each file's source and SHA-256) and licence files. Generated: do not edit by hand. |
+| `src/visualizer/vendor/psychedelia/` | Code copied from Psychedelia Studio (same author, MIT): 100 files in `effects/` (the scenes and their helpers), 9 in `engine/`, 1 in `workers/`, `manifest.json` (each file's source and SHA-256) and licence files. Generated: do not edit by hand. |
 | `scripts/import_psychedelia.mjs` | Copies the used parts of Psychedelia Studio into the vendor folder and writes the manifest. `--check-drift` lists what changed upstream. |
 | `src/modes/about-credits.js`, `src/modes/about-credits-load.js` | The About page's **Visualizer credits**, built from the manifest's borrowed list and loaded as their own chunk. |
 | `CREDITS.md` | Credits for catalogs and libraries, and for the Visualizer's copied and borrowed code. |
@@ -181,7 +202,7 @@ WorldMediaWindows/
 | `tests_python/` | Local media fixtures, frozen backend schemas, and deterministic Python seams. |
 | `tests_python/production_ui_harness.py` | Opt-in real-Edge acceptance run of the exact production bundle (see its docstring). |
 | `tests_python/single_exe_real_smoke.py` | Opt-in real FFmpeg/download/MP3/MP4 gate that executes the classic one-file artifact under isolated roots. |
-| `tests/favorites-order.test.js`, `tests/favorite-groups.test.js`, `tests/favorite-categories-ui.test.js` | Favorites order and categories: sorting and moving, saved data, and the Library controls. |
+| `tests/favorites-order.test.js`, `tests/favorite-groups.test.js`, `tests/favorite-categories-ui.test.js` | Favorites order and categories: sorting, moving and dragging, saved data, and the Library controls. |
 | `tests/slice1-mute-volume.test.js`, `tests/slice2-tuner-strip.test.js` | Crossed-out speaker and volume percentage; the Tuner strip centring and dial glow. |
 | `tests/slice4-pls-import.test.js`, `tests/slice4-xspf-import.test.js`, `tests/slice5-star-all.test.js` | `.pls` and `.xspf` playlist import, and **Star all**. |
 | `tests/now-playing.test.js`, `tests/now-playing-player.test.js`, `tests/song-log.test.js`, `tests/song-log-panel.test.js` | Song title following, its use in the player bar, and the song log and its panel. |
@@ -197,6 +218,13 @@ WorldMediaWindows/
 | `tests/tuner-card-size.test.js`, `tests/tuner-card-art-stop.test.js` | Tuner card sizes, knob text, and the card pictures (when they load and stop). |
 | `tests/issue6-stations-and-pictures.test.js`, `tests_python/test_issue6_stations.py` | Issue #6 and discussion #8 (v0.1.11): favorites on the dial, Add as Auto, favorites following a re-import, station pictures for names with forbidden characters, the list of unused pictures, Move to bottom, Remove all favorites, and the local port a second copy would share. |
 | `tests/visualizer.test.js`, `tests/visualizer-signal.test.js`, `tests/visualizer-slice2.test.js` to `tests/visualizer-slice7.test.js`, `tests/visualizer-tuning.test.js`, `tests/visualizer-flash-lifecycle.test.js`, `tests/visualizer-real-window.test.js` | The Visualizer: the vendored files against their manifest, the sound signal, scenes and looks, shuffle, favourites, step-down, effects, overlays, the flash limiter, and the tab in a window. |
+| `tests/visualizer-lines.test.js`, `tests/visualizer-own-scenes.test.js`, `tests/visualizer-accumulating.test.js`, `tests/visualizer-extra-looks.test.js`, `tests/visualizer-drift.test.js`, `tests/visualizer-very-high.test.js`, `tests/visualizer-american-spelling.test.js` | The Visualizer's line drawings, own scenes, scenes that build their picture (Buddhabrot Lab), extra looks, slow drift, Very high quality, and American spelling. |
+| `tests/starred-songs.test.js`, `tests_python/test_starred_songs.py` | Starred songs: the store, the panel, the server file and the exports. |
+| `tests/favorite-names.test.js`, `tests_python/test_favorite_names.py` | Names of your own for favorites: where they are shown, backups, and lookups under the station's own name. |
+| `tests/playlist-json-csv.test.js`, `tests_python/test_playlists_tables.py` | `.json` and `.csv` playlist import. |
+| `tests/best-stream.test.js`, `tests/best-stream-auto.test.js`, `tests_python/test_stream_probe.py` | Pick the best stream: ranking, the hand-over to the next stream, the Auto checks and the server's look at two streams. |
+| `tests/processor-budget.test.js`, `tests/processor-extras.test.js`, `tests/visualizer-processor-use.test.js`, `tests_python/test_processor.py` | Processor use: levels and limit, the steering, Very high and the larger simulations, and the server's reading. |
+| `tests/paging-guard.test.js` | Library catalog retries: the wait, the stop after two failures, and a refused page. |
 | `tests/about-credits.test.js` | The About page's Visualizer credits, and that `CREDITS.md` and the notices name every borrowed piece. |
 | `tests/helpers/audio-sim.js`, `scene-luminance.js`, `signal-harness.js`, `visualizer-fakes.js` | Test helpers: simulated music for the analyser, a CPU recompute of two scenes' brightness, a clock and timer simulation, and fake graphics, DOM and window objects. |
 | `tests/helpers/visualizer-flash-check.mjs` and `.py`, `visualizer-fx-check.mjs` and `.py`, `visualizer-fx-check-page.js` | Checks run by hand, not by `npm test`: they draw scenes, effects and overlays in Chromium and report the largest frame-to-frame step of light. |
@@ -208,3 +236,5 @@ WorldMediaWindows/
 | `docs/RELEASE_NOTES_0.1.10.md` | GitHub release notes for the `v0.1.10` tag and its release assets. |
 | `docs/RELEASE_NOTES_0.1.11.md` | GitHub release notes for the `v0.1.11` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.11.md` | What was checked for v0.1.11, with artifact hashes and limits. |
+| `docs/RELEASE_NOTES_0.1.12.md` | GitHub release notes for the `v0.1.12` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.12.md` | What was checked for v0.1.12, with artifact hashes and limits. |

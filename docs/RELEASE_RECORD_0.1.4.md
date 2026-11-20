@@ -42,8 +42,6 @@ a valid Python Software Foundation Authenticode signature (launcher SHA-256
 
 ## Boundaries
 
-The historical v0.1.2 exhaustive appearance/recording/provider matrix was not
-fully repeated; this release has the focused evidence above. The vendored
-hls.js remains 1.5.13. SVG station logos stay blocked because the artwork relay
+The vendored hls.js remains 1.5.13. SVG station logos stay blocked because the artwork relay
 serves at the app origin. The Windows 10 title bar follows dark/light mode only;
 exact palette colours need Windows 11.

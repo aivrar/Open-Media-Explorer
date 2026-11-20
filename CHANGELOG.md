@@ -1,5 +1,182 @@
 # Changelog
 
+## 0.1.12 - 2026-11-20
+
+The five requests promised in discussion #8 (starred songs, your own station
+names, drag to reorder, JSON and CSV playlists, and a better stream chosen for
+you), a Processor use setting, 28 more Visualizer scenes, and fixes, two of
+them for issue #6.
+
+- Starred songs: star a song in the **Song log**, or the song playing now with
+  the star beside it on the player bar. **Starred songs** in the Song log
+  panel lists them, newest first, with the station and the time. Each one can
+  be copied, looked up on the web or on YouTube in your browser, or unstarred.
+  **Save as text** and **Save as CSV** write the list to a file. Up to 2,000
+  are kept; starring one more removes the oldest, and the panel says which.
+  They are kept apart from the song log, so **Clear log** leaves them, and
+  they are in backups (discussion #8).
+- Rename a station: **Rename** in a favorite's details gives it a name of your
+  own, shown everywhere that favorite is: the Library, the Tuner's dial and
+  cards, the player bar, the song log and starred songs. The details still
+  show the original name, and **Use original name** brings it back. A renamed
+  favorite is found in searches by either name, keeps the station picture
+  named after the station, and is still matched to its other directory
+  entries under the station's own name. It works for any favorite, radio or
+  TV (discussion #8).
+- Drag to reorder: in Favorites, with **My order**, a card can be dragged
+  before or after another. **Move to top**, **Move up**, **Move down** and
+  **Move to bottom** still work, also from the keyboard (discussion #8).
+- JSON and CSV playlists: **My Playlists** imports `.json` and `.csv` channel
+  lists, from a file, by dropping the file on the window, or from a web
+  address. A JSON list is a list of entries with a `url` (or an object with a
+  `stations` or `channels` list); a CSV list has a header row with a `url`
+  column, and name, logo, group and type columns are used too. Comma,
+  semicolon and tab are all read, and a CSV list without a header row is read
+  too when its first row holds a web address. When a file cannot be read, the
+  message says why, and for a broken file near which line (discussion #8).
+- Pick the best stream (**Settings > Content**) has three choices
+  (discussion #8):
+  - **Listed streams** (the default): when a station or channel lists several
+    streams, the best one is tried first (a larger picture for TV; for radio a
+    higher bitrate up to 320 kbps, then the more efficient format). The next
+    one is tried too if the best has not answered within six seconds, or at
+    once if it fails. A stream that connects but never begins hands over to
+    the streams not tried yet, at the latest after 30 seconds. A stream that
+    has begun gets 10 seconds from when it started to play one full second
+    before the next one is tried; after that, an interruption is handled by
+    the usual reconnecting.
+  - **Auto (verified)**: as Listed streams, and for a radio station also other
+    Radio Browser entries of the same station. One is used, from the next
+    start of that station, only after it is verified: two checks in the
+    background, a few minutes apart, each found both streams playing the same
+    song, a different song each time. So only a station that announces song
+    titles can be verified; any other keeps its own stream. The first check
+    waits for about 45 seconds of playing, counted from when the sound starts
+    (and again after a pause). Pausing, changing station, or choosing another
+    setting stops a check on its way. A line in the station's details says
+    what the checks know so far (checking, one match so far, none found, or
+    could not be verified). Once a better stream is verified it reads
+    **Better stream: ..., verified. It is used from the next start.**, and
+    **Use the station's own stream** is there at once; choosing it keeps the
+    station's own stream and restarts nothing.
+  - **Off**: as in earlier versions.
+- Processor use (**Settings > Processor use**, and a new section on the About
+  page): **Low**, the default, is how the app has always behaved. **Balanced**
+  and **High** let the Visualizer use more of the processor, up to a limit you
+  set from 2% to 80% of the whole processor (40% and 60% to start with); a
+  number outside that range is corrected, and a note says so. While the
+  Visualizer plays at those levels, the app checks every few seconds how much
+  of the processor it uses: over the limit for a few seconds, the picture
+  quality steps down; with plenty of room for a while, it steps back up,
+  slowly. The limit is a target, not a hard cap: the sound is never held back
+  to meet it. With a graphics card the Visualizer usually needs only a small
+  share of the processor, so the limit matters most on computers without one
+  or with few cores. At Balanced and High the shuffle's default **Scenes**
+  choice includes heavy scenes too, and a line under it says so.
+- Processor use, Balanced and High: **Quality** also offers **Very high**. It
+  is sharper than High on a large screen, where High cannot draw every pixel;
+  on a smaller one it looks the same. Light and Medium scenes, Mandelbox
+  Flight, Curl-Noise Silk, Fluid Ink, Lenia and Physarum draw at Very high;
+  the other heavy scenes stay at High, and the panel says so. At
+  the High level, Curl-Noise Silk, Fluid Ink and Physarum start one size
+  larger at High or Very high quality. The frame rate, the most effects and
+  overlays at once (three of each), and the flash and brightness safety
+  limits are the same at every level.
+- Visualizer: 28 more scenes, 99 in all (32 Light, 23 Medium, 44 Heavy):
+  - Line drawings: Hopf Fibration, Knots & Surfaces, Lissajous, Attractor
+    Ribbons and Spirograph, glowing lines with trails.
+  - Simulations: Curl-Noise Silk, Fluid Ink, Lenia, Physarum, Reaction-Diffusion
+    and Feedback Loop, pictures that grow and flow from one frame to the next.
+  - 3D flights: Apollonian Foam Flight, Folded Box Variants Flight, Mandelbox
+    Flight, Triplex Mutation Flight and Glass Fractal DE Flight.
+  - Labs and more: 2D Formula Lab, Analytic Field Lab, Procedural Field Lab,
+    Fractal Flame Lab, Buddhabrot Lab, Cymatics and Robot Foundry.
+  - Five scenes of World Media's own: Band Ridgelines, Sound Ring and Petal
+    Bloom (in a new group, Sound Shapes), Hex Weave and Contour Lines. The
+    music moves only their shapes, never their colors or brightness.
+- Visualizer: Buddhabrot Lab builds its picture point by point for about a
+  minute and then holds it. The cross-fade into it waits (up to four seconds)
+  until its picture shows, so the screen does not go dark meanwhile.
+- Visualizer: 28 more looks for three labs, one for each formula that no
+  ready-made look showed:
+  - 2D Formula Lab (16): Multibrot, Tricorn, Burning Ship, Burning Ship Julia,
+    Perpendicular Mandelbrot, Perpendicular Burning Ship, Perpendicular
+    Buffalo, Perpendicular Celtic, Phoenix, Magnet II, Cosine, Sine,
+    Exponential, Lyapunov, Nova and Manowar.
+  - Analytic Field Lab (2): Pentagrid Loom and Arnold Tongue Map.
+  - Fractal Flame Lab (10): Linear + Spherical, Polar + Spherical,
+    Handkerchief + Spherical, Heart + Spherical, Spiral + Spherical, Swirl +
+    Linear, Swirl + Horseshoe, Swirl + Disc, Swirl + Julia and Swirl + Popcorn.
+- Visualizer effect: **Palette Map** recolors the picture with a color scheme
+  (39 effects in all).
+- Visualizer overlay: **Strobe**, a soft colored pulse on the beat, picked by
+  the shuffle only while the music is energetic. Its **Style** is Any, From
+  the center, From the edges, Sweep or Halves, and the choice is kept with
+  the other Visualizer settings (26 overlays in all).
+- Visualizer: **Slow drift** (on by default, in the panel): between scene
+  changes, a few settings of the scene and its effects move slowly in time
+  with the music's bars, further when the music swells, and the overlays turn
+  and sway slowly. It changes shape, size and color mixes, never brightness.
+- Visualizer panel: each section (Scene, Shuffle, Effects, Overlays and
+  Picture) has a title bar. A click, or Enter or Space, folds the section, and
+  the bar says at the right what is set, for example "Medium, 30 fps". Folded
+  sections stay folded next time. **Effects on** and **Overlays on** are
+  always shown; the other effect and overlay controls show while their switch
+  is on.
+- Visualizer: the music's mood (calm, steady, energetic) is read more
+  carefully. One drum stroke heard on several bands counts once, hi-hats
+  alone count half, and the tempo adds energy only from 80 beats a minute, so
+  a slow beat with busy hi-hats no longer reads as energetic. Music now reads
+  as energetic from a lower energy than before (above 0.48, was 0.65), set
+  from readings of seven stations of different styles.
+- Visualizer: the **Music:** mood line in the panel is read out once when the
+  panel opens, not at every change.
+- Larger targets for the pointer: the Move buttons on Favorites cards in **My
+  order** (now a 2 x 2 block) and the effect and overlay rows in the
+  Visualizer panel.
+- Library: the media.ccc.de live list is read again at most every five minutes
+  (was every minute), and live lists (media.ccc.de and Owncast) are refreshed
+  only while they are shown in the Library.
+- Tuner: a long station name on the dial ends in an ellipsis and shows in full
+  when the pointer rests on it.
+- American spelling throughout, also in names that come from the Visualizer's
+  scenes and effects (Watercolor, favorites, license).
+- Backups also carry the names you gave your favorites, your starred songs and
+  the stations you keep on their own stream.
+- Player: a live station whose connection closed stayed silent with a **Play**
+  button, with no message and no new try. It now says "Connection lost.
+  Retrying..." and connects again, as for other dropped connections (found
+  while looking into a report in issue #6).
+- Favorites: with **Show technical source details** on, cards in **My order**
+  in a wide window squeezed the source label (such as "MY PLAYLISTS") into a
+  narrow box, where it wrapped. The cards are now wide enough for the label to
+  show whole on one line (issue #6).
+- Library: a catalog page that failed without the server saying when to try
+  again was retried at once, again and again, with no wait and no limit. It now
+  waits longer each time, and after two failures in a row the source stops
+  loading by itself until you press **Retry now**.
+- Tuner: when a live source did not answer in time and the dial stayed empty,
+  it said "No stations found for this country." It now says the stations could
+  not be loaded and that **Radio** or **TV** tries again. A Radio Browser
+  directory server that stayed silent until the time limit is replaced by
+  another at the next request.
+- Library: a page a source refuses outright (for example PeerTube search past
+  the deepest page its index serves) ends that listing instead of being asked
+  for again.
+- Library: a live list that fails to refresh is asked again after its usual
+  wait (five minutes for media.ccc.de, two for Owncast), not every 30 seconds.
+- Player: pressing **Play** after a stream had ended by itself now connects to
+  the stream again, instead of trying to play the stream that had ended.
+- Settings: a long description beside a switch could squeeze the switch to a
+  dot; the switch now keeps its size and the text wraps. Buttons such as
+  **Clear cache** stay on one line.
+- A notice that "the portable profile backup could not be updated" could show
+  on a first start, while the first catalog load was still busy: an automatic
+  save that fails is now tried once more, quietly, before the notice is shown.
+- Visualizer: when it cannot start, everything it had made is freed again.
+  The mood starts fresh after another station, a resume or a gap in the sound,
+  and keeps its last word until the new reading is ready.
+
 ## 0.1.11 - 2026-11-18
 
 A new Visualizer tab, fixes for issue #6, and more requests from

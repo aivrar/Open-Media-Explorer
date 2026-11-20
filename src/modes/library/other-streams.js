@@ -12,9 +12,16 @@
 import { catalogScheduler, CATALOG_PRIORITY } from '../../lib/catalog-scheduler.js';
 import { loadAdapter } from '../../lib/sources.js';
 import {
-  OTHER_STREAMS_LIMIT, OTHER_STREAMS_SOURCE, canFindOtherStreams,
+  OTHER_STREAMS_LIMIT, OTHER_STREAMS_SOURCE, canFindOtherStreams, stationId,
 } from '../../lib/other-streams.js';
 import { streamQualityLabel } from '../../lib/stream-quality.js';
+import { getCurrentItem, getVerifiedStream, playItem } from '../../lib/player.js';
+import {
+  keepOwnStream, keepsOwnStream, storedVerification, verifiedLabel,
+} from '../../lib/stream-verify.js';
+import { bestStreamAutoOn } from '../../lib/best-stream.js';
+import { checkPlannedFor, onBestStreamChange } from '../../lib/best-stream-auto.js';
+import { getState, subscribe } from '../../lib/state.js';
 import { el } from './utils.js';
 
 export const OTHER_STREAMS_TEXT = Object.freeze({
@@ -26,9 +33,119 @@ export const OTHER_STREAMS_TEXT = Object.freeze({
   sameStation: 'Other streams of this station',
   sameName: 'Stations with the same name. They may be different stations.',
   playlistNote: 'Other streams are offered only for Radio Browser stations, not for playlist items.',
+  useOwn: "Use the station's own stream",
 });
 
 const SECTION_ID = 'library-other-streams';
+
+// "Pick the best stream: Auto (verified)": what the check knows of a station.
+export const BEST_STREAM_STATUS_TEXT = Object.freeze({
+  checking: 'Better stream: checking...',
+  pending: 'Better stream: one match so far, checking again later',
+  none: 'Better stream: none found',
+  noTitles: 'Better stream: could not be verified (this station sends no song titles)',
+  failed: 'Better stream: could not be verified',
+  // After the verified line while the station is not on that stream yet.
+  nextStart: 'It is used from the next start.',
+});
+
+/** The Auto line of `item`: null when it has none (the setting is not
+ *  Auto, or not a Radio Browser station), '' when there is nothing to say
+ *  yet (the line keeps its place), else its text. `playing` is the
+ *  verified stream that plays now ({ itemId, bitrate, codec }) or null;
+ *  `checking` is true while a check of the station is planned or running. */
+export function bestStreamStatusText(item, { settings = {}, playing = null, checking = false, now = Date.now() } = {}) {
+  if (!bestStreamAutoOn(settings) || item?.source !== OTHER_STREAMS_SOURCE) return null;
+  const id = stationId(item);
+  if (!id) return null;
+  if (playing && playing.itemId === item.id) return verifiedLabel(playing);
+  if (keepsOwnStream(id)) return '';
+  const found = storedVerification(id, now);
+  if (found?.ok) return `${verifiedLabel(found.alt)}. ${BEST_STREAM_STATUS_TEXT.nextStart}`;
+  if (found?.pending) return BEST_STREAM_STATUS_TEXT.pending;
+  if (found) {
+    if (found.reason === 'noTitles') return BEST_STREAM_STATUS_TEXT.noTitles;
+    if (found.reason === 'noCandidate' || found.reason === 'notBetter') return BEST_STREAM_STATUS_TEXT.none;
+    return BEST_STREAM_STATUS_TEXT.failed;
+  }
+  return checking ? BEST_STREAM_STATUS_TEXT.checking : '';
+}
+
+/** Whether `item` has a verified better stream: 'playing' (it plays on it
+ *  now), 'next' (verified, used from its next start), or null. */
+function verifiedState(item, settings, playing, now = Date.now()) {
+  if (!bestStreamAutoOn(settings) || item?.source !== OTHER_STREAMS_SOURCE) return null;
+  const id = stationId(item);
+  if (!id) return null;
+  if (playing && playing.itemId === item.id) return 'playing';
+  if (keepsOwnStream(id)) return null;
+  return storedVerification(id, now)?.ok ? 'next' : null;
+}
+
+/** The details panel's Auto line, under the stream facts: one quiet status
+ *  line (role=status, its place kept so nothing jumps), kept up to date as
+ *  the check plans, finishes, or a verified stream starts. Whenever the
+ *  station has a verified stream, a button keeps it on its own stream from
+ *  now on: while it plays on the verified stream it switches back at once;
+ *  before that (verified, used from the next start) nothing restarts. null
+ *  when there is no line (Listed streams, Off, or not a Radio Browser
+ *  station). */
+export function createBestStreamStatus(item, {
+  settings = () => getState().settings,
+  verified = getVerifiedStream,
+  checking = checkPlannedFor,
+  keepOwn = keepOwnStream,
+  current = getCurrentItem,
+  play = playItem,
+  onAutoChange = onBestStreamChange,
+  on = subscribe,
+} = {}) {
+  const textNow = () => bestStreamStatusText(item, {
+    settings: settings(), playing: verified(), checking: checking(item?.id),
+  });
+  if (textNow() === null) return null;
+  const line = el('p', { className: 'detail-best-stream-line', attrs: { role: 'status' } });
+  const node = el('div', { className: 'detail-best-stream' }, line);
+  let use = null;
+  const update = () => {
+    const text = textNow();
+    node.hidden = text === null;
+    // Written only when it changes, so a status is not said twice.
+    if ((text || '') !== line.textContent) line.textContent = text || '';
+    const state = text === null ? null : verifiedState(item, settings(), verified());
+    const onVerified = state !== null;
+    if (onVerified && !use) {
+      use = el('button', { className: 'btn btn-small', text: OTHER_STREAMS_TEXT.useOwn, attrs: { type: 'button' } });
+      use.addEventListener('click', () => {
+        // Played on the verified stream now: switched back at once below.
+        const playingIt = verifiedState(item, settings(), verified()) === 'playing';
+        keepOwn(stationId(item));
+        const panel = node.parentNode;
+        use?.remove?.();
+        use = null;
+        // The button is gone: focus the panel's first action.
+        panel?.querySelector?.('.detail-actions button')?.focus?.();
+        const now = current();
+        if (playingIt && now?.id === item.id) play(now).catch?.(() => {});
+        update();
+      });
+      node.appendChild(use);
+    } else if (!onVerified && use) {
+      use.remove?.();
+      use = null;
+    }
+  };
+  const stops = [onAutoChange(update), on('media-relay', update), on('settings-change', update)];
+  update();
+  return {
+    node,
+    update,
+    destroy() {
+      for (const stop of stops) if (typeof stop === 'function') stop();
+      stops.length = 0;
+    },
+  };
+}
 
 /** One request through the catalog queue, at the priority of what the user
  *  is looking at. Equal requests for one station share the same answer. */

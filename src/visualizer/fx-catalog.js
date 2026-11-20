@@ -33,10 +33,10 @@
  * `fixed` notes below say.
  */
 
+import { americanText } from './spelling.js';
+
 /** Passes of Psychedelia's library that are not offered, and why. */
-export const FX_EXCLUDED = Object.freeze({
-  palette_map: 'needs palettes.js, whose Twilight and Cubehelix samples have no licence stated (not imported, so the library leaves this pass out)',
-});
+export const FX_EXCLUDED = Object.freeze({});
 
 /** Parts of passes that are pinned or left out (light rules). */
 export const FX_PINNED = Object.freeze({
@@ -48,11 +48,16 @@ export const FX_PINNED = Object.freeze({
   glitch: 'Colour swaps pinned at 0 and static lines held low (line strobing)',
   shockwave: 'Ring glow held low; fires on the beat or bar only',
   datamosh: 'Refreshes on the bar only, with live bleed kept up so the snap back is small',
+  palette_map: 'Bands pinned at 0 (they flip many pixels at once); its offset never moves with the beat; its mix held under full and its colour cycling slow',
 });
 
 export const FX_COSTS = Object.freeze(['light', 'medium', 'heavy']);
 /** What a cost class counts for against a combination's cost budget. */
 export const FX_COST_UNITS = Object.freeze({ light: 1, medium: 2, heavy: 4 });
+
+/** The last palette of Psychedelia's palettes.js (71 palettes): the
+ *  Palette Map pass picks any of them. */
+export const PALETTE_MAP_LAST = 70;
 
 const MIX = 1; // an FX's own mix stays full: the shuffle never fades one half in
 
@@ -168,6 +173,15 @@ export const FX_TABLE = Object.freeze({
     ranges: {
       levels: [3, 8, 'int'], gamma: [0.9, 1.15], ink: [0.2, 0.7], ink_threshold: [0.08, 0.2], mix: MIX,
     },
+  },
+  // Its palette is a look-up texture the chain binds (fxCatalog: lut).
+  palette_map: {
+    cost: 'light', weight: 0.8, tags: ['calm', 'lively'], groups: ['replace'],
+    ranges: {
+      palette: [0, PALETTE_MAP_LAST, 'int'], mix: { strength: [0.35, 0.7] }, spread: [0.6, 1.6], cycle: [-0.03, 0.03],
+      source: { pick: [0, 1, 2] }, offset: [0, 1], posterize: 0,
+    },
+    links: { spread: 'size' },
   },
   vision: {
     cost: 'light', weight: 0.9, tags: ['lively'], groups: ['replace'],
@@ -328,27 +342,60 @@ export const FX_TABLE = Object.freeze({
  *  scenes already near 0.07-0.09 (streaks and rays that gather light,
  *  quantising that flips many pixels at once, copies of the picture, grain),
  *  or 0.03 and more alone. A scene marked fxCalm in scenes.js does not get
- *  them from the shuffle, and gets at most FX_CALM_MAX effects. */
+ *  them from the shuffle, and gets at most FX_CALM_MAX effects. Palette Map
+ *  (slice 12) adds 0.03 to 0.065 alone: its palettes turn small changes of
+ *  light into larger ones (Kaleidoscope 0.018 to 0.083, Liquid Light 0.007
+ *  to 0.074, Mandelbrot 0.014 to 0.075, strong, the most of 9 scenes 0.085). */
 export const FX_LIVELY = Object.freeze(new Set([
   'anamorphic', 'color_wash', 'datamosh', 'dither', 'droste', 'edge_glow', 'glitch', 'god_rays', 'grain',
-  'mirror', 'posterize', 'stained_glass', 'swirl', 'vhs',
+  'mirror', 'palette_map', 'posterize', 'stained_glass', 'swirl', 'vhs',
 ]));
 export const FX_CALM_MAX = 2;
 
-/** The effects of `ids` (in their order) scene `entry` draws: none on a
- *  scene marked fxNone; on a calm one (fxCalm) none of FX_LIVELY and at
- *  most FX_CALM_MAX, the first ones; all of them on any other. The one rule
- *  for every way effects come (shuffle, by hand, favourites, settings). */
-export function fxDrawnFor(entry, ids) {
+/** What scene `entry` allows of `ids` before the pairs: none on fxNone,
+ *  not its fxLeftOut, on a calm one none of FX_LIVELY. */
+function sceneKept(entry, ids) {
   const list = Array.isArray(ids) ? ids : [];
   if (entry?.fxNone) return [];
-  if (!entry?.fxCalm) return list.slice();
-  return list.filter((id) => !FX_LIVELY.has(id)).slice(0, FX_CALM_MAX);
+  const out = entry?.fxLeftOut;
+  const kept = out?.length ? list.filter((id) => !out.includes(id)) : list.slice();
+  return entry?.fxCalm ? kept.filter((id) => !FX_LIVELY.has(id)) : kept;
+}
+
+/** The effects of `ids` (in their order) scene `entry` draws: none on a
+ *  scene marked fxNone; never one the scene leaves out (scenes.js
+ *  FX_LEFT_OUT, its fxLeftOut); on a calm one (fxCalm) none of FX_LIVELY and
+ *  at most FX_CALM_MAX, the first ones; all the others on any other. Of a
+ *  pair that is never combined (FX_CLASHES) only the first in `ids` (the
+ *  chain's order) is drawn: the other stays chosen (fxClashedFor). The one
+ *  rule for every way effects come (shuffle, by hand, favourites, settings). */
+export function fxDrawnFor(entry, ids) {
+  const kept = sceneKept(entry, ids);
+  const clashed = clashedOut(kept);
+  const drawn = clashed.length ? kept.filter((id) => !clashed.includes(id)) : kept;
+  return entry?.fxCalm ? drawn.slice(0, FX_CALM_MAX) : drawn;
+}
+
+/** The effects of `ids` scene `entry` would draw but for a pair: each one
+ *  after another of `ids` it is never combined with (fxDrawnFor). */
+export function fxClashedFor(entry, ids) {
+  return clashedOut(sceneKept(entry, ids));
 }
 
 /** The ids of `catalog` a calm scene may get. */
 export function fxCalmIds(catalog) {
   return new Set(catalog.map((fx) => fx.id).filter((id) => !FX_LIVELY.has(id)));
+}
+
+/** The ids the FX shuffle may choose from for scene `entry`, or null (any):
+ *  `calmIds` (fxCalmIds) on a calm scene, without the ones it leaves out
+ *  (fxLeftOut); `catalog` gives every id for a scene that is not calm but
+ *  leaves some out. */
+export function fxShuffleAllowed(entry, catalog, calmIds) {
+  const out = entry?.fxLeftOut || [];
+  if (!entry?.fxCalm && !out.length) return null;
+  const from = entry?.fxCalm ? [...calmIds] : catalog.map((fx) => fx.id);
+  return out.length ? new Set(from.filter((id) => !out.includes(id))) : calmIds;
 }
 
 /** Pairs that look like mush together or fight over the same thing (beyond
@@ -367,23 +414,60 @@ export const FX_CLASHES = Object.freeze([
   ['edge_glow', 'posterize'],
   ['bloom', 'led_wall'],
   ['mirror', 'shockwave'],
+  // Palette Map with Halftone 0.104 on Plasma, with Fisheye 0.107 on Aurora
+  // (strong, flash on); with the other pairs measured 0.085 at most.
+  ['palette_map', 'halftone'],
+  ['palette_map', 'fisheye'],
 ]);
 
 const CLASH = new Set(FX_CLASHES.flatMap(([a, b]) => [`${a}|${b}`, `${b}|${a}`]));
 export function fxClash(a, b) { return a === b || CLASH.has(`${a}|${b}`); }
 
+/** The ids of `list` that clash with one kept before them (in order). */
+function clashedOut(list) {
+  const kept = [];
+  const out = [];
+  for (const id of list) {
+    if (kept.some((other) => other !== id && CLASH.has(`${other}|${id}`))) out.push(id);
+    else kept.push(id);
+  }
+  return out;
+}
+
+/** A palette's look-up texture data (256 x 1, RGBA bytes), as
+ *  Psychedelia's palettes.js bakes it: from its sample() at each texel's
+ *  start (which returns that texel exactly). */
+export function paletteLut(palettes, index) {
+  const data = new Uint8Array(PALETTE_LUT_SIZE * 4);
+  for (let i = 0; i < PALETTE_LUT_SIZE; i += 1) {
+    const rgb = palettes.sample(index, i / PALETTE_LUT_SIZE);
+    data[i * 4] = Math.round(rgb[0] * 255);
+    data[i * 4 + 1] = Math.round(rgb[1] * 255);
+    data[i * 4 + 2] = Math.round(rgb[2] * 255);
+    data[i * 4 + 3] = 255;
+  }
+  return data;
+}
+export const PALETTE_LUT_SIZE = 256;
+
 /** The FX the app offers, in the library's own order (the chain's order):
- *  [{ id, label, category, cost, weight, tags, groups, ranges, links, def }]
- *  from the loaded library (`PostFxLibrary`). */
-export function fxCatalog(library) {
+ *  [{ id, label, category, cost, weight, tags, groups, ranges, links, def,
+ *  lut }] from the loaded library (`PostFxLibrary`). A pass that samples a
+ *  palette (its options.lut: Palette Map) gets `lut(index)`, its look-up
+ *  texture data from `palettes` (Psychedelia's PsyPalettes, the same one
+ *  the library was given); without them it is not offered. */
+export function fxCatalog(library, palettes = null) {
   const list = [];
   for (const def of library?.list?.() || []) {
     const row = FX_TABLE[def.name];
     if (!row || FX_EXCLUDED[def.name]) continue;
+    const lut = def.options?.lut ? (typeof palettes?.sample === 'function' ? (index) => paletteLut(palettes, index) : null) : undefined;
+    if (lut === null) continue;
     list.push(Object.freeze({
       id: def.name,
-      label: def.label,
-      category: def.category,
+      // Shown in American spelling (Watercolor, Acid Colors, Color).
+      label: americanText(def.label),
+      category: americanText(def.category),
       cost: row.cost,
       weight: row.weight,
       tags: row.tags,
@@ -391,6 +475,7 @@ export function fxCatalog(library) {
       ranges: row.ranges,
       links: row.links || {},
       def,
+      ...(lut ? { lut } : {}),
     }));
   }
   return list;

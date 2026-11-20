@@ -10,7 +10,7 @@ WorldMediaWindows-data\
   cache\                 catalog/provider cache records
   state\                 launcher.json, profile-preferences.json,
                          profile-preferences-extra.json, playlists.json,
-                         song-log.json
+                         song-log.json, starred-songs.json
   station-images\        your own station pictures (made when you open it)
   logs\                  native.log and runtime diagnostics
   webview2_data\         WebView2 browser profile and localStorage
@@ -50,15 +50,36 @@ the keys that every version knows, and the newer data goes into the extra file
 and `song-log.json`, which older versions never open. See **Going back to an
 older version** below.
 
+Version 0.1.12 adds these, kept in the same way:
+
+- your **starred songs** are stored in `state/starred-songs.json`, apart from
+  the song log, so **Clear log** and the log's limit leave them;
+- the **names you gave your favorites** are saved in the browser profile under
+  their own key (`worldmedia.favnames.v1`) and mirrored to
+  `state/profile-preferences-extra.json`. The favorite itself keeps the
+  station's original name;
+- the **stations you keep on their own stream** (with **Use the station's own
+  stream**) are saved the same way (`worldmedia.ownstream.v1`);
+- `.json` and `.csv` playlists are stored as M3U in `state/playlists.json`,
+  like every other playlist, so that file keeps its format;
+- the new settings (**Pick the best stream**, **Processor use** and its limit,
+  and the Visualizer's new choices) are fields inside the existing settings.
+
 The browser profile stores:
 
 - favorites (`worldmedia.favorites.v1`);
 - favorites categories (`worldmedia.favgroups.v1`);
+- the names you gave your favorites (`worldmedia.favnames.v1`);
+- the stations you keep on their own stream (`worldmedia.ownstream.v1`);
 - settings, enabled sources, the Favorites sort choice, and the Visualizer's
-  choices and favourites (`worldmedia.settings.v1`);
+  choices and favorites (`worldmedia.settings.v1`);
 - volume (`worldmedia.volume.v1`);
 - recent capture job history (`worldmedia.jobs.v1`);
-- global/favorite/custom EQ (`worldmedia.eq.v1`).
+- global/favorite/custom EQ (`worldmedia.eq.v1`);
+- with **Auto (verified)**, the results of its checks
+  (`worldmedia.streamverify.v1`) and its directory lookups
+  (`worldmedia.streamlookups.v1`). These two are a cache: they are not copied
+  to the data folder or into backups.
 
 Short-lived artwork and playback relay IDs are not persisted as usable URLs.
 They are re-resolved from stable adapter metadata at the next launch. Live
@@ -105,12 +126,13 @@ folder:
 
 - `WorldMediaWindows-data\state\` holds `playlists.json`,
   `profile-preferences.json` (favorites, settings, volume, equalizer curves),
-  `profile-preferences-extra.json` (categories) and `song-log.json`, for each
-  of them that exists;
+  `profile-preferences-extra.json` (categories, the names you gave your
+  favorites, and the stations you keep on their own stream), `song-log.json`
+  and `starred-songs.json`, for each of them that exists;
 - `WorldMediaWindows-data\station-images\` holds your station pictures;
 - `exports\` holds `.m3u8` playlist files that other players can open:
-  `favorites-radio.m3u8`, `favorites-tv.m3u8`, `favorites-other.m3u8`, and one
-  file for each imported playlist;
+  `favorites-radio.m3u8`, `favorites-tv.m3u8`, `favorites-other.m3u8` (with
+  the names you gave your favorites), and one file for each imported playlist;
 - `README.txt` explains the files and how to restore them.
 
 The cache, logs, browser profile, FFmpeg tools, and your downloads are never
@@ -121,9 +143,10 @@ some station pictures did not fit.
 **There is no restore button.** To restore, close World Media, copy the
 `WorldMediaWindows-data` folder from the ZIP into the folder that holds
 `WorldMediaWindows.exe`, and let it replace files with the same names.
-Imported playlists come back at once. Favorites and settings are only taken
-from the backup by a copy of World Media that has none of its own yet, such as
-a new computer or a fresh copy of the app. Copying the entire
+Imported playlists, the song log and starred songs come back at once.
+Favorites and settings are only taken from the backup by a copy of World Media
+that has none of its own yet, such as a new computer or a fresh copy of the
+app. Copying the entire
 `WorldMediaWindows-data` folder remains the most complete backup.
 
 Playlist addresses can contain private links or account tokens, so share the
@@ -158,6 +181,18 @@ settings. Going back from v0.1.10 to v0.1.9 keeps your favorites, settings and
 everything else; v0.1.9 ignores the two choices, and they are still there when
 you return to v0.1.10.
 
+Version 0.1.12 adds one new file, `state/starred-songs.json`, which older
+versions never open, and puts nothing new into `profile-preferences.json`. A
+renamed favorite keeps the station's original name in the favorites list, so
+an older version shows it under that name. `.json` and `.csv` playlists are
+stored as M3U, so an older version reads them like any other playlist.
+
+An older version rewrites `state/profile-preferences-extra.json` with only the
+keys it knows. While it is in use, the names you gave your favorites and the
+stations you keep on their own stream are missing from that file; v0.1.12
+writes them back from the browser profile when it next starts. Make a backup
+before you go back to an older version.
+
 ## Cache semantics
 
 Provider metadata cache records are bounded (256 total/64 per provider, 2 MiB
@@ -175,14 +210,16 @@ discard unseen collected items.
 ## Clearing cache safely
 
 Settings → Storage → **Clear local cache** removes local favorites, favorites
-categories, preferences (including the Visualizer's choices and favourites, so
-its notice about flashing pictures is shown again), EQ, volume, and job
-history, empties the song log, and clears catalog/artwork cache records. It
-keeps:
+categories, the names you gave your favorites, preferences (including the
+Visualizer's choices and favorites, so its notice about flashing pictures is
+shown again), EQ, volume, job history and the **Auto (verified)** check
+results and lookups, empties the song log and your starred songs, and clears
+catalog/artwork cache records. It keeps:
 
 - files already in `downloads`, including backup ZIPs;
 - imported playlists (`state/playlists.json`);
 - your station pictures;
+- the stations you keep on their own stream;
 - managed FFmpeg tools;
 - the EXE and source code.
 
@@ -205,16 +242,11 @@ portable test copy.
 
 ## Test portable profile
 
-This repository's dedicated test launcher is:
+For testing, keep a separate copy with its own data, for example:
 
 ```text
-E:\WorldMediaWindows\dist\PortableTest\WorldMediaWindows.exe
-```
-
-Its data is:
-
-```text
-E:\WorldMediaWindows\dist\PortableTest\WorldMediaWindows-data\
+dist\PortableTest\WorldMediaWindows.exe
+dist\PortableTest\WorldMediaWindows-data\
 ```
 
 Keep that profile separate from development and release data. Never overwrite

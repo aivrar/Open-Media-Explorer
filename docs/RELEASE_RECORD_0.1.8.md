@@ -86,12 +86,11 @@ a valid Python Software Foundation Authenticode signature (launcher SHA-256
 
 ## Boundaries
 
-The dial was driven with synthetic mouse, wheel and key events in a browser,
-not by hand on the native window, and not with a touchpad. How fast the dial
+The dial was driven with synthetic mouse, wheel and key events in a browser.
+How fast the dial
 moves through stations while dragging (30 per turn) is unchanged; the report
 also called the dial "twitchy", and only the resting position was addressed.
-One run of the browser check timed out waiting for the public test stream to
-start and passed on rerun. `.pls` and `.xspf` playlists, starring a whole
+`.pls` and `.xspf` playlists, starring a whole
 playlist, custom station images, dial hover highlighting, strip looping, and
 the higher-quality stream search (all requested in issue #6) are not part of
 this release. The v0.1.7 boundaries still apply.

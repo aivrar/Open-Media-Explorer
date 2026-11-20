@@ -9,11 +9,38 @@ export const RETRY_MAX_MS = 30_000;
 // scheduler's declared cooldown.
 export const RETRY_AFTER_MAX_MS = MAX_RETRY_AFTER_MS;
 
+/** The same page failing this many times in a row stops automatic loading
+ *  of that source until the user asks again (Retry). */
+export const AUTO_RETRY_LIMIT = 2;
+
+/** A refusal of the request itself (HTTP 4xx other than 408 and 429, with
+ *  no wait declared): asking for the same page again cannot help. A source
+ *  that declares a wait (a block with Retry-After) is held instead. */
+/** The wait an error declares (Retry-After), in ms, or NaN when it declares
+ *  none. An HttpError without a Retry-After carries retryAfterMs: null, and
+ *  Number(null) is 0: read that way, every failed request "declared" a wait
+ *  of 0 ms and was retried at once, with no backoff and no bound. */
+export function declaredWaitMs(err) {
+  const value = err?.retryAfterMs;
+  if (value == null || value === '') return Number.NaN;
+  return Number(value);
+}
+
+export function isClientRefusal(err) {
+  const status = Number(err?.status || 0);
+  const declared = declaredWaitMs(err);
+  if (Number.isFinite(declared) && declared > 0) return false;
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
 export function createSourceProgress() {
   return {
     cursor: null,
     loaded: 0,
     exhausted: false,
+    // Automatic loading stopped after repeated failures (or a refusal);
+    // only the user's Retry starts it again.
+    stopped: false,
     failures: 0,
     retryAt: 0,
     error: '',
@@ -104,12 +131,27 @@ export function recordSourceSuccess(progress, page, loadedCount) {
   progress.error = '';
   progress.notice = '';
   progress.rateLimited = false;
+  progress.stopped = false;
   return progress;
 }
 
 export function recordSourceFailure(progress, err, now = Date.now()) {
+  if (isClientRefusal(err)) {
+    // The provider refused this page (for example a page past the end of
+    // what its index serves): the listing ends here for this session, and
+    // the page is never asked for again automatically.
+    progress.failures += 1;
+    progress.exhausted = true;
+    progress.cursor = null;
+    progress.stopped = true;
+    progress.retryAt = 0;
+    progress.error = '';
+    progress.notice = sourceNoticeFromError(err);
+    progress.rateLimited = false;
+    return 0;
+  }
   progress.failures += 1;
-  const declared = Number(err?.retryAfterMs);
+  const declared = declaredWaitMs(err);
   const delay = Number.isFinite(declared) && declared >= 0
     ? Math.min(RETRY_AFTER_MAX_MS, declared)
     : Math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ** (progress.failures - 1)));
@@ -118,7 +160,10 @@ export function recordSourceFailure(progress, err, now = Date.now()) {
   progress.notice = sourceNoticeFromError(err);
   progress.rateLimited = Number(err?.status) === 429 || Number.isFinite(declared);
   // Failures are never exhaustion. Keep the cursor intact and retry the same
-  // page after the cooldown.
+  // page after the cooldown, but only a bounded number of times: a source
+  // that did not declare a wait stops after AUTO_RETRY_LIMIT failures of the
+  // same page until the user asks again.
   progress.exhausted = false;
+  progress.stopped = !progress.rateLimited && progress.failures >= AUTO_RETRY_LIMIT;
   return delay;
 }

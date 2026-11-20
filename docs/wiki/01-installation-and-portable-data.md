@@ -97,18 +97,13 @@ keys into `state\profile-preferences.json`, and the favorites categories into
 
 ## Test portable installation
 
-The repository's dedicated test launcher is:
+To try a rebuilt EXE without touching your everyday copy, keep a separate test
+folder, for example:
 
 ```text
-E:\WorldMediaWindows\dist\PortableTest\WorldMediaWindows.exe
+dist\PortableTest\WorldMediaWindows.exe
+dist\PortableTest\WorldMediaWindows-data\
 ```
 
-Its persistent profile is:
-
-```text
-E:\WorldMediaWindows\dist\PortableTest\WorldMediaWindows-data\
-```
-
-Use this directory for rebuilt EXE verification. Keep its data profile intact;
-replace the executable only after the old process has exited and verify the
-Favorites count after launching the new build.
+Keep its data folder intact; replace the executable only after the old process
+has exited, and verify the Favorites count after launching the new build.

@@ -35,6 +35,7 @@ from worldmedia_runtime import (
 )
 from worldmedia_security import sanitize_filename
 from worldmedia_songlog import MAX_FILE_BYTES as MAX_SONG_LOG_FILE_BYTES, SONG_LOG_FILENAME
+from worldmedia_starred import MAX_FILE_BYTES as MAX_STARRED_FILE_BYTES, STARRED_FILENAME
 from worldmedia_station_images import FOLDER_NAME as STATION_IMAGES_FOLDER, StationImages
 
 
@@ -47,6 +48,9 @@ FAVORITES_KEY = "worldmedia.favorites.v1"
 # Favorites categories (src/lib/favorite-groups.js): the category name becomes a
 # favorite's group-title in the exports.
 FAVORITE_GROUPS_KEY = "worldmedia.favgroups.v1"
+# The user's own names for favorites (src/lib/favorite-names.js): a renamed
+# favorite is written under that name in the exports.
+FAVORITE_NAMES_KEY = "worldmedia.favnames.v1"
 # The old job-history key is never written by this version, and job records can
 # hold local file paths, so it stays out of the copy in the ZIP.
 STRIPPED_PROFILE_KEYS = frozenset({"worldmedia.jobs.v1"})
@@ -252,7 +256,7 @@ def _favorite_bucket(item: dict) -> str:
     return kind if kind in {"radio", "tv"} else "other"
 
 
-def _favorite_entry(item: dict, index: int, category: str = "") -> str | None:
+def _favorite_entry(item: dict, index: int, category: str = "", own_name: str = "") -> str | None:
     url = _export_url(item.get("stream_url")) or _export_url(item.get("download_url"))
     if not url:
         return None
@@ -265,7 +269,8 @@ def _favorite_entry(item: dict, index: int, category: str = "") -> str | None:
         group = _clean_attribute(item.get("description")) or "My playlists"
     elif not group:
         group = _clean_attribute(SOURCE_NAMES.get(source, source))
-    name = _clean_text(item.get("title")) or _clean_text(item.get("id")) or f"Favorite {index}"
+    name = (_clean_text(own_name) or _clean_text(item.get("title")) or _clean_text(item.get("id"))
+            or f"Favorite {index}")
     return _m3u_entry(name, url, logo, group)
 
 
@@ -310,18 +315,40 @@ def favorite_categories(values: dict[str, str]) -> dict[str, str]:
     }
 
 
+def favorite_names(values: dict[str, str]) -> dict[str, str]:
+    """Favorite id -> the user's own name for it; {} when there are none or they
+    cannot be read. Never stops a backup."""
+
+    raw = values.get(FAVORITE_NAMES_KEY)
+    if not isinstance(raw, str):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, RecursionError):
+        return {}
+    if not isinstance(parsed, dict) or parsed.get("version") != 1 or not isinstance(parsed.get("names"), dict):
+        return {}
+    return {
+        favorite_id: name for favorite_id, name in parsed["names"].items()
+        if isinstance(favorite_id, str) and isinstance(name, str) and name.strip()
+    }
+
+
 def build_favorite_exports(favorites: list[dict], categories: dict[str, str] | None = None,
+                           names: dict[str, str] | None = None,
                            ) -> tuple[dict[str, str], int, int]:
     """Extended M3U text per favorites file, how many were written, how many skipped.
 
-    ``categories`` maps a favorite id to the name of the category it is in."""
+    ``categories`` maps a favorite id to the name of the category it is in,
+    ``names`` to the user's own name for it."""
 
     entries: dict[str, list[str]] = {bucket: [] for bucket, _ in FAVORITE_FILES}
     skipped = 0
     for index, item in enumerate(favorites, start=1):
         item_id = item.get("id")
         category = (categories or {}).get(item_id, "") if isinstance(item_id, str) else ""
-        entry = _favorite_entry(item, index, category)
+        own_name = (names or {}).get(item_id, "") if isinstance(item_id, str) else ""
+        entry = _favorite_entry(item, index, category, own_name)
         if entry is None:
             skipped += 1
             continue
@@ -442,10 +469,12 @@ def _readme(*, created: datetime, favorites: int, skipped: int,
         lines.append("    profile-preferences.json - your favorites, settings, volume and equalizer curves")
     if PROFILE_TRANSFER_EXTRA_FILENAME in state_names:
         lines.append("    profile-preferences-extra.json - newer saved data, such as your favorites")
-        lines.append("      categories, kept apart so older versions of World Media can still read")
-        lines.append("      the file above")
+        lines.append("      categories and the names you gave favorites, kept apart so older")
+        lines.append("      versions of World Media can still read the file above")
     if SONG_LOG_FILENAME in state_names:
         lines.append("    song-log.json - the songs radio stations announced while you listened")
+    if STARRED_FILENAME in state_names:
+        lines.append("    starred-songs.json - the songs you starred")
     if not state_names:
         lines.append("    (Empty: there was no saved data yet.)")
     lines.append("  Cache, logs, browser data, FFmpeg tools and your downloads are not included.")
@@ -484,7 +513,8 @@ def _readme(*, created: datetime, favorites: int, skipped: int,
         f"   {PORTABLE_STATE_DIR} folder next to the World Media program, and let it",
         "   replace the files with the same names.",
         "3. Start World Media.",
-        "Your imported playlists come back straight away. Favorites and settings are",
+        "Your imported playlists, song log and starred songs come back straight away.",
+        "Favorites and settings are",
         "only taken from the backup by a copy of World Media that has none of its own",
         "yet, such as a new computer or a fresh copy of the app. A copy that already",
         "has favorites keeps its own.",
@@ -600,9 +630,20 @@ def _create_backup(paths: RuntimePaths, store: PlaylistStore, secrets_to_exclude
         if song_log_raw is not None:
             members.append((f"{STATE_ARCHIVE_DIR}/{SONG_LOG_FILENAME}", song_log_raw))
             state_names.append(SONG_LOG_FILENAME)
+        # Starred songs: the same (starred-songs-unreadable-*.json never included).
+        try:
+            starred_raw = _read_state_file(state_folder / STARRED_FILENAME, MAX_STARRED_FILE_BYTES)
+        except BackupError as error:
+            if error.code != "BACKUP_TOO_LARGE":
+                raise
+            starred_raw = None
+        if starred_raw is not None:
+            members.append((f"{STATE_ARCHIVE_DIR}/{STARRED_FILENAME}", starred_raw))
+            state_names.append(STARRED_FILENAME)
 
     favorites, favorites_readable = _favorites_from_profile(profile_values)
-    favorite_files, written, skipped = build_favorite_exports(favorites, favorite_categories(profile_values))
+    favorite_files, written, skipped = build_favorite_exports(
+        favorites, favorite_categories(profile_values), favorite_names(profile_values))
     used_names: set[str] = {filename.casefold() for _, filename in FAVORITE_FILES}
     exports: list[tuple[str, str]] = [
         (filename, favorite_files[filename]) for _, filename in FAVORITE_FILES if filename in favorite_files

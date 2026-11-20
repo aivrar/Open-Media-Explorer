@@ -17,6 +17,15 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
+**New in v0.1.12:** star the songs you like, give a station a name of your
+own, drag Favorites into order, import `.json` and `.csv` playlists, and let
+the app pick a station's best stream. A **Processor use** setting lets the
+Visualizer use more of the computer, and the Visualizer now has 99 scenes, a
+Strobe overlay and a side panel that folds into clear sections. A live
+station whose connection closes now reconnects. Reported in
+[issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
+and requested in [discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8).
+
 **New in v0.1.11:** a **Visualizer** tab shows pictures that move with the
 sound of what is playing (71 scenes, effects, overlays and a shuffle). It shows
 moving, flashing pictures, so a photosensitivity notice comes first. Importing
@@ -87,7 +96,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.11-portable.zip
+WorldMediaWindows-0.1.12-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -145,15 +154,18 @@ play it.
 **Discovery** - random open media from the enabled sources.
 
 **Visualizer** - pictures that move with the sound of whatever is playing. It
-has 71 scenes (flat patterns and 3D scenes), a **Look** choice for the scenes
-that have ready-made looks, a scene shuffle you can limit to **Light only**,
-**Light and medium**, or all scenes (heavy too), post effects and overlays
-(off until you turn them on), a star that keeps a scene with its
-effects and overlays, and a quality, frame rate and brightness choice. When the
-computer cannot keep up it lowers the load by itself, and it costs nothing while
-its tab is closed. It never changes the sound. It shows moving, flashing
-pictures: a notice about photosensitivity comes before the first picture, and a
-flash limiter is always on. Work on it continues. See the
+has 99 scenes (flat patterns, 3D scenes, simulations and line drawings), a
+**Look** choice for the scenes that have ready-made looks, a scene shuffle you
+can limit to **Light only**, **Light and medium**, or all scenes (heavy too),
+post effects and overlays (off until you turn them on), a slow drift in time
+with the music, a star that keeps a scene with its effects and overlays, and a
+quality, frame rate and brightness choice. Its side panel folds into sections
+that say what is set. When the computer cannot keep up it lowers the load by
+itself, and **Settings > Processor use** can let it use more of the processor
+for a finer picture. It costs nothing while its tab is closed. It never
+changes the sound. It shows moving, flashing pictures: a notice about
+photosensitivity comes before the first picture, and a flash limiter is always
+on. Work on it continues. See the
 [Visualizer page](docs/wiki/09-visualizer.md).
 
 Library discovery collects concurrently from enabled sources, with independent
@@ -167,8 +179,8 @@ collection and artwork; normal background priority returns when playback stops.
 
 Open **Library → My Playlists → Add link**, paste a stream URL, optionally
 name it, and press **Add**. Choose **Online playlist** for a channel-list
-URL, or use **Import playlist** for a local `.m3u`, `.m3u8`, `.pls` or `.xspf`
-file. You can also drop
+URL, or use **Import playlist** for a local `.m3u`, `.m3u8`, `.pls`, `.xspf`,
+`.json` or `.csv` file. You can also drop
 a local playlist file anywhere on the window. A direct HLS
 `.m3u8` stream belongs under **Single channel**. These are Library collections,
 not subscriptions: importing the same link again updates the saved list.
@@ -185,11 +197,13 @@ Playlists adds every listed channel to Favorites. Removing a playlist keeps its
 favorites. Playlist URLs may contain access tokens: keep your data folder
 private.
 
-Favorites can be sorted **My order** (move a card up, down, to the top or to
-the bottom with the buttons on it) or **A-Z**. Use the tag button on a favorite
-card to put it in a category of your own, such as "Rock" or "Talk", and the
-category buttons above the list to show one category. **Remove all favorites**
-asks first and says how many it will remove.
+Favorites can be sorted **My order** (drag a card before or after another, or
+move it up, down, to the top or to the bottom with the buttons on it) or
+**A-Z**. Use the tag button on a favorite card to put it in a category of your
+own, such as "Rock" or "Talk", and the category buttons above the list to show
+one category. **Rename** in a favorite's details gives it a name of your own;
+**Use original name** brings the station's name back. **Remove all
+favorites** asks first and says how many it will remove.
 
 ![My Playlists and the Add link form, shown with public sample channels](screenshots/v0.1.3/my-playlists.png)
 
@@ -198,8 +212,10 @@ asks first and says how many it will remove.
 Many radio stations announce the song they are playing. When a station does,
 the title shows under the station name in the player bar, and the note button
 at the top right opens a **Song log** of the songs you heard, which you can
-copy or save as a CSV file. Not every station sends titles, and stations
-delivered as HLS do not show one.
+copy or save as a CSV file. Star a song in the log, or the one playing now
+with the star on the player bar, to keep it under **Starred songs**, where it
+can be looked up on the web or on YouTube or saved as a text or CSV file. Not
+every station sends titles, and stations delivered as HLS do not show one.
 
 Put a picture named exactly like a station (PNG, JPG, WebP or GIF, up to 2 MB)
 in the `station-images` folder (**Settings → Station images → Open folder**),
@@ -209,10 +225,15 @@ never cut off. A name Windows cannot use in a file, such as the "/" in
 Settings lists the pictures that were not used and why. Radio Browser
 stations show their format and bitrate in the detail panel, and **Other
 streams** lists other listings of the same station to pick from by hand.
+**Settings > Content > Pick the best stream** tries a station's or channel's
+best listed stream first. Its **Auto (verified)** choice also checks other
+listings of a radio station in the background and switches to a better one
+from the next start, only after two checks found it playing the same songs.
 
 **Settings → Storage → Back up my data** writes one ZIP into the `downloads`
-folder with your favorites, settings, categories, song log, imported playlists
-and station pictures, plus `.m3u8` playlist files that other players can open.
+folder with your favorites and the names you gave them, settings, categories,
+song log, starred songs, imported playlists and station pictures, plus `.m3u8`
+playlist files that other players can open.
 There is no restore button; the
 [data guide](docs/wiki/05-data-cache-and-portability.md) says how to copy it
 back. Playlist addresses can contain private links or account tokens, so share
@@ -343,7 +364,8 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - A favorite missing from the Tuner dial may be saved as the other type: the
   Tuner's status line says so. The same guide tells how to fix it.
 - If the Visualizer is slow, set **Quality** to Low, **Frame rate** to 15 or 30,
-  and choose Light scenes; effects and overlays are off by default.
+  and choose Light scenes; effects and overlays are off by default, and
+  **Settings > Processor use** starts at Low.
 - Runtime diagnostics are under `WorldMediaWindows-data\logs\` beside the
   launcher and do
   not contain upstream media URLs or authentication secrets.
@@ -370,7 +392,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.11-portable.zip
+dist\WorldMediaWindows-0.1.12-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke
@@ -400,7 +422,7 @@ The packaged app exposes its complete third-party notice at
 The Visualizer's scenes, effects and overlays are ported from
 [Psychedelia Studio](https://github.com/aivrar/psychedelia-studio) (MIT, same
 author). Some of its shader code is borrowed from others and keeps its own
-licence. It is credited under **Visualizer credits** on the About page, in
+license. It is credited under **Visualizer credits** on the About page, in
 [CREDITS.md](CREDITS.md) and in `/THIRD_PARTY_NOTICES.txt`.
 
 ### Optional FFmpeg recording tool

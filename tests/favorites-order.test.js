@@ -7,8 +7,8 @@ import {
   FAVORITES_SORT_MANUAL, FAVORITES_SORT_NAME, favoritesInDisplayOrder, normalizeFavoritesSort, sortFavoritesByName,
 } from '../src/lib/favorites-order.js';
 import {
-  addFavorite, addFavorites, displayFavorites, getState, moveFavorite, normalizeSettings, persistFavoriteMetadata,
-  removeFavorite, STORAGE_KEYS, subscribe,
+  addFavorite, addFavorites, displayFavorites, getState, moveFavorite, moveFavoriteTo, normalizeSettings,
+  persistFavoriteMetadata, removeFavorite, STORAGE_KEYS, subscribe,
 } from '../src/lib/state.js';
 import { clearPersistenceFailure } from '../src/lib/persistence-notice.js';
 import { favoriteStations, keptStationIndex } from '../src/modes/tuner.js';
@@ -17,7 +17,9 @@ import { selectSource } from '../src/modes/library/sidebar.js';
 import { view, renderedIds } from '../src/modes/library/state.js';
 import { ui } from '../src/modes/library/shell-refs.js';
 import { libraryPool } from '../src/modes/library/personal.js';
-import { favoritesManualOrder, onMoveFavorite, renderResults } from '../src/modes/library/render.js';
+import {
+  FAVORITE_DRAG_TYPE, favoriteDropPlace, favoritesManualOrder, onDropFavorite, onMoveFavorite, renderResults,
+} from '../src/modes/library/render.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const ids = (items) => items.map((item) => item.id);
@@ -685,8 +687,234 @@ test('the move buttons fit beside the star in the compact Favorites card', async
   // The star keeps its place; the move column sits just left of it.
   assert.match(rule('.library-root.is-personal-view .card-star'), /right: 10px;/);
   assert.match(rule('.card-order'), /right: 40px;/);
-  assert.match(rule('.card-order-btn'), /width: 22px;/);
+  assert.match(rule('.card-order-btn'), /width: 24px;/);
   // The card text makes room for both, so the title is cut short, not covered.
-  assert.match(css, /\.library-root\.is-personal-view \.card\.has-order-controls \.card-body \{ padding-right: 72px; \}/);
+  assert.match(css, /\.library-root\.is-personal-view \.card\.has-order-controls \.card-body \{ padding-right: 100px; \}/);
   assert.match(css, /\.card-order-btn\[aria-disabled="true"\]/);
+});
+
+/* ============ Dragging cards in "My order" ============ */
+
+test('moveFavoriteTo puts a favorite before or after another with one save and one event', () => {
+  withFavorites([fav('a'), fav('b'), fav('c'), fav('d')], ({ state, storage, values, events }) => {
+    assert.equal(moveFavoriteTo('d', 'b', 'before'), true);
+    assert.deepEqual(ids(state.favorites), ['a', 'd', 'b', 'c']);
+    assert.deepEqual(ids(JSON.parse(values.get(STORAGE_KEYS.favorites))), ['a', 'd', 'b', 'c']);
+    assert.equal(storage.writes, 1);
+    assert.equal(events(), 1);
+    assert.equal(moveFavoriteTo('a', 'c', 'after'), true);
+    assert.deepEqual(ids(state.favorites), ['d', 'b', 'c', 'a']);
+    // Already there, onto itself, unknown ids or places: nothing is saved.
+    assert.equal(moveFavoriteTo('b', 'c', 'before'), false);
+    assert.equal(moveFavoriteTo('c', 'b', 'after'), false);
+    assert.equal(moveFavoriteTo('b', 'b', 'after'), false);
+    assert.equal(moveFavoriteTo('x', 'b', 'after'), false);
+    assert.equal(moveFavoriteTo('b', 'x', 'after'), false);
+    assert.equal(moveFavoriteTo('b', 'a', 'middle'), false);
+    assert.equal(storage.writes, 2);
+    assert.equal(events(), 2);
+    // A save that fails leaves the order as it was.
+    storage.fail = true;
+    assert.equal(moveFavoriteTo('a', 'd', 'before'), false);
+    assert.deepEqual(ids(state.favorites), ['d', 'b', 'c', 'a']);
+  });
+});
+
+test('the top-left half of a card is before it and the bottom-right half after it', () => {
+  const rect = { left: 100, top: 50, width: 200, height: 80 };
+  assert.equal(favoriteDropPlace(rect, 110, 60), 'before');
+  assert.equal(favoriteDropPlace(rect, 290, 120), 'after');
+  // A wide row in one column: the top is before, the bottom after.
+  assert.equal(favoriteDropPlace(rect, 200, 55), 'before');
+  assert.equal(favoriteDropPlace(rect, 200, 125), 'after');
+  // Grid cards side by side: the left part is before, the right part after.
+  assert.equal(favoriteDropPlace(rect, 120, 90), 'before');
+  assert.equal(favoriteDropPlace(rect, 280, 90), 'after');
+  assert.equal(favoriteDropPlace(null, 0, 0), 'before');
+});
+
+/** The drag listeners the Library binds on the results host, called with
+ *  plain drag events (the fake DOM does not bubble). */
+function dragHarness(host) {
+  const listeners = new Map();
+  const add = host.addEventListener.bind(host);
+  host.addEventListener = (type, listener, options) => {
+    listeners.set(type, listener);
+    add(type, listener, options);
+  };
+  host.contains = (node) => {
+    for (let current = node; current; current = current.parentNode) if (current === host) return true;
+    return false;
+  };
+  const cardOf = (node) => {
+    for (let current = node; current; current = current.parentNode) {
+      if (current.dataset?.id && current.tagName === 'ARTICLE') return current;
+    }
+    return null;
+  };
+  const fire = (type, target, { x = 10, y = 10, files = false } = {}) => {
+    const data = new Map();
+    const event = {
+      type, target, clientX: x, clientY: y, relatedTarget: null, prevented: false,
+      preventDefault() { this.prevented = true; },
+      dataTransfer: {
+        types: files ? ['Files'] : [],
+        setData: (kind, value) => data.set(kind, value),
+        effectAllowed: '', dropEffect: '',
+      },
+    };
+    if (target) {
+      target.closest ??= function closest() { return cardOf(this); };
+      for (let node = target; node; node = node.parentNode) {
+        node.getBoundingClientRect ??= () => ({ left: 0, top: 0, width: 200, height: 80 });
+      }
+    }
+    listeners.get(type)?.(event);
+    return { event, data };
+  };
+  return { listeners, fire };
+}
+
+const cardNode = (host, id) => host.children.find((node) => node.dataset.id === id);
+
+test('dragging a card onto another moves it there and saves "My order"', () => {
+  withLibrary([card('a', 'Alpha'), card('b', 'Beta'), card('c', 'Gamma'), card('d', 'Delta')], ({ state, host, values, events }) => {
+    const drag = dragHarness(host);
+    renderResults();
+    assert.deepEqual([...drag.listeners.keys()].sort(), ['dragend', 'dragleave', 'dragover', 'dragstart', 'drop']);
+    const d = cardNode(host, 'd');
+    assert.equal(d.getAttribute('draggable'), 'true');
+    assert.equal(d.classList.contains('is-draggable'), true);
+    // Started from the card's own button.
+    const start = drag.fire('dragstart', d.children[0]);
+    assert.equal(start.data.get(FAVORITE_DRAG_TYPE), 'd');
+    assert.equal(start.event.dataTransfer.effectAllowed, 'move');
+    assert.equal(d.classList.contains('is-dragging'), true);
+    const b = cardNode(host, 'b');
+    const over = drag.fire('dragover', b, { x: 20, y: 10 });
+    assert.equal(over.event.prevented, true, 'the card accepts the drop');
+    assert.equal(over.event.dataTransfer.dropEffect, 'move');
+    assert.equal(b.classList.contains('drop-before'), true);
+    drag.fire('dragover', b, { x: 190, y: 70 });
+    assert.equal(b.classList.contains('drop-before'), false);
+    assert.equal(b.classList.contains('drop-after'), true);
+    // Over itself: no mark, no drop.
+    const self = drag.fire('dragover', d, { x: 20, y: 10 });
+    assert.equal(self.event.prevented, false);
+    assert.equal(b.classList.contains('drop-after'), false);
+    const drop = drag.fire('drop', b, { x: 20, y: 10 });
+    assert.equal(drop.event.prevented, true);
+    assert.deepEqual(ids(state.favorites), ['a', 'd', 'b', 'c']);
+    assert.deepEqual(ids(JSON.parse(values.get(STORAGE_KEYS.favorites))), ['a', 'd', 'b', 'c']);
+    assert.deepEqual(shownIds(host), ['a', 'd', 'b', 'c']);
+    assert.equal(events(), 1);
+    assert.equal(d.classList.contains('is-dragging'), false);
+    assert.equal(b.classList.contains('drop-before'), false);
+    drag.fire('dragend', d);
+  });
+});
+
+test('a drag that is not a card (a playlist file) is left alone, and a drag can be cancelled', () => {
+  withLibrary([card('a', 'Alpha'), card('b', 'Beta')], ({ state, host, events }) => {
+    const drag = dragHarness(host);
+    renderResults();
+    const a = cardNode(host, 'a');
+    const file = drag.fire('dragover', a, { files: true });
+    assert.equal(file.event.prevented, false);
+    assert.equal(drag.fire('drop', a, { files: true }).event.prevented, false);
+    // Started, then let go outside the list.
+    drag.fire('dragstart', cardNode(host, 'b'));
+    drag.fire('dragover', a, { x: 5, y: 5 });
+    assert.equal(a.classList.contains('drop-before'), true);
+    drag.fire('dragleave', a);
+    assert.equal(a.classList.contains('drop-before'), false);
+    drag.fire('dragend', cardNode(host, 'b'));
+    assert.equal(cardNode(host, 'b').classList.contains('is-dragging'), false);
+    assert.equal(drag.fire('drop', a).event.prevented, false);
+    assert.deepEqual(ids(state.favorites), ['a', 'b']);
+    assert.equal(events(), 0);
+  });
+});
+
+test('in A-Z cards cannot be dragged; back in My order they can', () => {
+  withLibrary([card('b', 'Beta'), card('a', 'Alpha')], ({ state, host }) => {
+    const drag = dragHarness(host);
+    state.settings = normalizeSettings({ favoritesSort: 'name' });
+    renderResults();
+    assert.equal(cardNode(host, 'a').getAttribute('draggable'), null);
+    drag.fire('dragstart', cardNode(host, 'a'));
+    assert.equal(cardNode(host, 'a').classList.contains('is-dragging'), false);
+    assert.equal(onDropFavorite('a', 'b', 'before'), false);
+    state.settings = normalizeSettings({ favoritesSort: 'manual' });
+    renderResults();
+    assert.equal(cardNode(host, 'a').getAttribute('draggable'), 'true');
+    assert.equal(cardNode(host, 'b').getAttribute('draggable'), 'true');
+  });
+});
+
+test('with a filter or a category, a drop moves the card among the shown ones only', () => {
+  const list = [card('r1', 'One'), card('t1', 'TV one', 'tv'), card('r2', 'Two'), card('t2', 'TV two', 'tv'), card('r3', 'Three')];
+  withLibrary(list, ({ state, host }) => {
+    const drag = dragHarness(host);
+    view.personalFilters.favorites.type = 'radio';
+    renderResults();
+    assert.deepEqual(shownIds(host), ['r1', 'r2', 'r3']);
+    drag.fire('dragstart', cardNode(host, 'r3'));
+    drag.fire('drop', cardNode(host, 'r1'), { x: 190, y: 70 });
+    // The hidden TV favorites keep their places.
+    assert.deepEqual(ids(state.favorites), ['r1', 't1', 'r3', 't2', 'r2']);
+    assert.deepEqual(shownIds(host), ['r1', 'r3', 'r2']);
+    // A card that is not shown cannot be the target.
+    assert.equal(onDropFavorite('r2', 't2', 'before'), false);
+  });
+  withLibrary(list, ({ state, host, values }) => {
+    values.set('worldmedia.favgroups.v1', JSON.stringify({
+      version: 1, groups: [{ id: 'g1', name: 'Rock' }], assign: { r1: 'g1', r3: 'g1', t2: 'g1' },
+    }));
+    const drag = dragHarness(host);
+    view.personalFilters.favorites = { query: '', type: '', category: 'g1' };
+    renderResults();
+    assert.deepEqual(shownIds(host), ['r1', 't2', 'r3']);
+    drag.fire('dragstart', cardNode(host, 'r3'));
+    drag.fire('drop', cardNode(host, 'r1'), { x: 5, y: 5 });
+    assert.deepEqual(ids(state.favorites), ['r3', 't1', 'r2', 'r1', 't2']);
+    assert.deepEqual(shownIds(host), ['r3', 'r1', 't2']);
+  });
+});
+
+test('a drop among shown favorites leaves the hidden ones exactly where they were', () => {
+  // [A, hidden X, B]: B before A gives [B, X, A].
+  withFavorites([fav('a'), fav('x'), fav('b')], ({ state, storage }) => {
+    assert.equal(moveFavoriteTo('b', 'a', 'before', ['a', 'b']), true);
+    assert.deepEqual(ids(state.favorites), ['b', 'x', 'a']);
+    assert.equal(storage.writes, 1);
+  });
+  // Hidden ones at both ends and between.
+  withFavorites([fav('h1'), fav('a'), fav('h2'), fav('b'), fav('c'), fav('h3')], ({ state }) => {
+    assert.equal(moveFavoriteTo('a', 'c', 'after', new Set(['a', 'b', 'c'])), true);
+    assert.deepEqual(ids(state.favorites), ['h1', 'b', 'h2', 'c', 'a', 'h3']);
+    assert.equal(moveFavoriteTo('a', 'b', 'before', ['a', 'b', 'c']), true);
+    assert.deepEqual(ids(state.favorites), ['h1', 'a', 'h2', 'b', 'c', 'h3']);
+    // A hidden favorite is never the dragged card or the target.
+    assert.equal(moveFavoriteTo('h2', 'a', 'before', ['a', 'b', 'c']), false);
+    assert.equal(moveFavoriteTo('a', 'h3', 'after', ['a', 'b', 'c']), false);
+    assert.deepEqual(ids(state.favorites), ['h1', 'a', 'h2', 'b', 'c', 'h3']);
+  });
+  // A category: the others keep their places through several moves.
+  withFavorites([fav('r1'), fav('t1'), fav('r2'), fav('t2'), fav('r3')], ({ state }) => {
+    const rock = ['r1', 'r2', 'r3'];
+    assert.equal(moveFavoriteTo('r3', 'r1', 'before', rock), true);
+    assert.deepEqual(ids(state.favorites), ['r3', 't1', 'r1', 't2', 'r2']);
+    assert.equal(moveFavoriteTo('r3', 'r2', 'after', rock), true);
+    assert.deepEqual(ids(state.favorites), ['r1', 't1', 'r2', 't2', 'r3']);
+  });
+});
+
+test('the drag styles use the theme accent and add nothing that keeps running', async () => {
+  const css = await read('src/styles/library.css');
+  assert.match(css, /\.card\.is-draggable img \{ -webkit-user-drag: none; \}/);
+  assert.match(css, /\.card\.drop-before \{ box-shadow: inset 4px 4px 0 var\(--accent\); border-color: var\(--accent\); \}/);
+  assert.match(css, /\.card\.drop-after \{ box-shadow: inset -4px -4px 0 var\(--accent\); border-color: var\(--accent\); \}/);
+  const block = css.slice(css.indexOf('.card.is-draggable'), css.indexOf('.card.drop-after'));
+  assert.doesNotMatch(block, /animation|transition/);
 });

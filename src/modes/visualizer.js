@@ -8,10 +8,12 @@
 
 import { getState, saveSettings, subscribe } from '../lib/state.js';
 import { getAudioSignal } from '../lib/player.js';
+import { claimVisualizer } from '../lib/visualizer-slot.js';
 
 const subs = [];
 let session = null;
 let loadToken = 0;
+let unclaim = null;
 
 /** Loads the visualizer module; replaceable in tests. */
 let loadVisualizer = () => import('../visualizer/visualizer.js');
@@ -23,6 +25,8 @@ export function setVisualizerLoaderForTests(loader) {
 function tearDown() {
   loadToken += 1;
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
+  unclaim?.();
+  unclaim = null;
   if (session) {
     const current = session;
     session = null;
@@ -43,6 +47,9 @@ export function renderVisualizer(host) {
   loadVisualizer().then(({ mountVisualizer }) => {
     if (token !== loadToken) return; // left the tab (or opened it again) meanwhile
     root.replaceChildren();
+    // The app's one Visualizer (lib/visualizer-slot.js): any other is gone
+    // before this one makes its context.
+    unclaim = claimVisualizer('tab', tearDown);
     session = mountVisualizer(root, {
       signal: getAudioSignal(),
       getSettings: () => getState().settings,
@@ -51,6 +58,10 @@ export function renderVisualizer(host) {
     });
   }).catch((error) => {
     if (token !== loadToken) return;
+    // A mount that threw has taken itself down (index.js); the slot is free
+    // again for the Tuner's background.
+    unclaim?.();
+    unclaim = null;
     console.error('visualizer failed to load:', error);
     root.innerHTML = '<div class="boot-state"><p>The visualizer could not be loaded.</p></div>';
   });

@@ -39,10 +39,10 @@ test('a dropped .xspf file is picked up like an .m3u', () => {
   assert.equal(pickPlaylistFile([{ name: 'radio.xspf.txt' }, { name: 'xspf' }, { name: 'radio.xspfx' }, { name: 'radio.xml' }]), null);
 });
 
-test('dropping an .xspf imports it; other files show the four accepted formats', async () => {
+test('dropping an .xspf imports it; other files show the accepted formats', async () => {
   const { fire, hint, imported, dispose } = dropHarness();
   fire('dragover', { types: ['Files'], files: [] });
-  assert.equal(hint.textContent, 'Drop a playlist file (.m3u, .m3u8, .pls or .xspf) to import it into My Playlists');
+  assert.equal(hint.textContent, 'Drop a playlist file (.m3u, .m3u8, .pls, .xspf, .json or .csv) to import it into My Playlists');
 
   const file = { name: 'radio.xspf' };
   assert.equal(fire('drop', { types: ['Files'], files: [file] }).prevented, true);
@@ -52,7 +52,7 @@ test('dropping an .xspf imports it; other files show the four accepted formats',
   assert.equal(fire('drop', { types: ['Files'], files: [{ name: 'radio.asx' }] }).prevented, true);
   await Promise.resolve();
   assert.equal(imported.length, 1);
-  assert.equal(hint.textContent, 'Only .m3u, .m3u8, .pls or .xspf playlist files can be dropped here.');
+  assert.equal(hint.textContent, 'Only .m3u, .m3u8, .pls, .xspf, .json or .csv playlist files can be dropped here.');
   assert.equal(hint.classList.contains('is-rejected'), true);
   dispose();
 });
@@ -69,16 +69,16 @@ test('Import playlist accepts an .xspf file and sends its text unchanged to the 
     + '<location>https://example.org/live</location><title>Caf\u00e9</title></track></trackList></playlist>\n';
   await client.importPlaylistFile(new File([text], 'radio.XSPF'), 'radio', request);
   assert.deepEqual(sent, { name: 'radio.XSPF', text, default_type: 'radio' });
-  await assert.rejects(client.importPlaylistFile(new File(['x'], 'radio.xml'), 'tv', request), /Choose an \.m3u, \.m3u8, \.pls or \.xspf file\./);
+  await assert.rejects(client.importPlaylistFile(new File(['x'], 'radio.xml'), 'tv', request), /Choose an \.m3u, \.m3u8, \.pls, \.xspf, \.json or \.csv file\./);
 });
 
-test('the file picker, button and link help name all four formats', async () => {
+test('the file picker, button and link help name every accepted format', async () => {
   const controls = await read('src/modes/library/personal-controls.js');
-  assert.match(controls, /accept: '\.m3u,\.m3u8,\.pls,\.xspf'/);
-  assert.match(controls, /title: 'Import a local \.m3u, \.m3u8, \.pls or \.xspf channel list\. A matching filename replaces that playlist; favorites are kept\. '/);
+  assert.match(controls, /accept: '\.m3u,\.m3u8,\.pls,\.xspf,\.json,\.csv'/);
+  assert.match(controls, /title: 'Import a local \.m3u, \.m3u8, \.pls, \.xspf, \.json or \.csv channel list\. A \.json or \.csv list needs a url for each station; name, logo, group and type are used when given\. A matching filename replaces that playlist; favorites are kept\. '/);
   // How to change the stations (issue 6): edit your own file and import it again.
   assert.match(controls, /'To change the stations, edit your own playlist file and import it again under the same file name; the copy the app keeps is not meant to be edited by hand\.'/);
-  assert.match(controls, /select Online playlist for an M3U, PLS or XSPF channel list\./);
+  assert.match(controls, /select Online playlist for an M3U, PLS, XSPF, JSON or CSV channel list\./);
   const drop = await read('src/lib/playlist-drop.js');
-  assert.match(drop, /const PLAYLIST_NAME = \/\\\.\(m3u8\?\|pls\|xspf\)\$\/i;/);
+  assert.match(drop, /const PLAYLIST_NAME = \/\\\.\(m3u8\?\|pls\|xspf\|json\|csv\)\$\/i;/);
 });

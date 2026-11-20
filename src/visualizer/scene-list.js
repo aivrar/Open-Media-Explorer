@@ -18,7 +18,7 @@
 /** A black star (written as an escape; source files stay ASCII). */
 export const STAR = String.fromCharCode(0x2605);
 /** The Favourites filter's tooltip: what it shows, and what picking does. */
-export const FAVOURITES_FILTER_TITLE = 'Show only favourite scenes; picking one brings back the effects and overlays starred with it';
+export const FAVOURITES_FILTER_TITLE = 'Show only favorite scenes; picking one brings back the effects and overlays starred with it';
 
 export const COST_LABELS = Object.freeze({ light: 'Light', medium: 'Medium', heavy: 'Heavy' });
 const COST_TITLES = Object.freeze({
@@ -74,7 +74,7 @@ export function createSceneList({ doc, scenes, onPick, listen }) {
   // Only the starred scenes.
   const favouritesOnly = el('button', 'viz-seg viz-fav-filter', {
     type: 'button', 'aria-pressed': 'false', title: FAVOURITES_FILTER_TITLE,
-  }, 'Favourites');
+  }, 'Favorites');
   const tools = el('div', 'viz-scene-tools');
   tools.append(search, favouritesOnly);
   // tabindex -1: the list scrolls and holds nothing focusable (the arrows
@@ -145,7 +145,7 @@ export function createSceneList({ doc, scenes, onPick, listen }) {
     for (const [id, node] of options) node.hidden = !visible.has(id);
     for (const group of groups) group.node.hidden = !group.ids.some((id) => visible.has(id));
     empty.hidden = shown.length > 0;
-    empty.textContent = onlyStarred && !starred.size ? 'No favourites yet: star a scene with the star button.' : 'No scene matches.';
+    empty.textContent = onlyStarred && !starred.size ? 'No favorites yet: star a scene with the star button.' : 'No scene matches.';
     const at = shown.findIndex((scene) => scene.id === current);
     setActive(at >= 0 ? at : 0);
   }
@@ -250,7 +250,7 @@ export function createSceneList({ doc, scenes, onPick, listen }) {
       starred = new Set(ids);
       for (const [id, node] of options) {
         marks.get(id).hidden = !starred.has(id);
-        node.setAttribute('aria-label', starred.has(id) ? `${names.get(id)}, favourite` : names.get(id));
+        node.setAttribute('aria-label', starred.has(id) ? `${names.get(id)}, favorite` : names.get(id));
       }
       if (!panel.hidden) applyFilter();
     },

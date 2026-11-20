@@ -13,8 +13,12 @@ export class FakeGL {
       VERTEX_SHADER: 0x8b31, FRAGMENT_SHADER: 0x8b30, COMPILE_STATUS: 0x8b81, LINK_STATUS: 0x8b82,
       MAX_VIEWPORT_DIMS: 0x0d3a, MAX_RENDERBUFFER_SIZE: 0x84e8, MAX_TEXTURE_SIZE: 0x0d33,
       TEXTURE_2D: 0x0de1, TEXTURE0: 0x84c0, TEXTURE1: 0x84c1, RGBA: 0x1908, UNSIGNED_BYTE: 0x1401, COLOR_ATTACHMENT0: 0x8ce0,
-      TEXTURE_MIN_FILTER: 0x2801, TEXTURE_MAG_FILTER: 0x2800, TEXTURE_WRAP_S: 0x2802, TEXTURE_WRAP_T: 0x2803, LINEAR: 0x2601, CLAMP_TO_EDGE: 0x812f,
+      TEXTURE_MIN_FILTER: 0x2801, TEXTURE_MAG_FILTER: 0x2800, TEXTURE_WRAP_S: 0x2802, TEXTURE_WRAP_T: 0x2803, LINEAR: 0x2601, CLAMP_TO_EDGE: 0x812f, REPEAT: 0x2901,
       UNPACK_PREMULTIPLY_ALPHA_WEBGL: 0x9241,
+      // What a WebGL 2 context also has, for the frame-feedback scenes'
+      // 8-bit buffers (slice 14; tests/helpers/sim-fakes.js has the rest).
+      RGBA8: 0x8058, NEAREST: 0x2600, MIRRORED_REPEAT: 0x8370, FRAMEBUFFER_COMPLETE: 0x8cd5,
+      COLOR_BUFFER_BIT: 0x4000, BLEND: 0x0be2, READ_FRAMEBUFFER: 0x8ca8, DRAW_FRAMEBUFFER: 0x8ca9,
     });
     // Canvas uploads (the blended overlay): how many, and the last source.
     this.uploads = 0;
@@ -91,13 +95,24 @@ export class FakeGL {
   getAttribLocation() { return 0; }
   enableVertexAttribArray() {}
   vertexAttribPointer() {}
-  bindFramebuffer(target, fb) { this.boundFramebuffer = fb || null; }
+  bindFramebuffer(target, fb) {
+    if (target !== this.DRAW_FRAMEBUFFER) this.readFramebuffer = fb || null;
+    if (target !== this.READ_FRAMEBUFFER) this.boundFramebuffer = fb || null;
+  }
+  /** Blits are recorded: { from, to, source: [w, h], dest: [w, h], filter }. */
+  blitFramebuffer(x0, y0, x1, y1, dx0, dy0, dx1, dy1, mask, filter) {
+    (this.blits ||= []).push({
+      from: this.readFramebuffer, to: this.boundFramebuffer, source: [x1 - x0, y1 - y0], dest: [dx1 - dx0, dy1 - dy0], filter,
+    });
+  }
   createTexture() { const texture = {}; this.textures.add(texture); return texture; }
   deleteTexture(texture) { this.textures.delete(texture); }
   texImage2D(...args) {
     // The 6-argument form uploads a canvas or image (the 9-argument one only
     // sizes a render target).
     if (args.length === 6) { this.uploads += 1; this.lastUpload = args[5]; }
+    // With data (a palette's look-up texture): kept for the tests.
+    if (args.length === 9 && args[8]) this.lastData = args[8];
   }
   pixelStorei(name, value) { this.pixelStore.set(name, value); }
   texParameteri() {}
@@ -118,6 +133,17 @@ export class FakeGL {
   uniform3fv(at, v) { this.uniforms.set(at.name, [...v]); }
   uniform4fv(at, v) { this.uniforms.set(at.name, [...v]); }
   drawArrays() { this.draws += 1; if (!this.boundFramebuffer) this.screenDraws += 1; }
+  checkFramebufferStatus() { return this.FRAMEBUFFER_COMPLETE; }
+  clearColor() {}
+  clear() {}
+  enable() {}
+  disable() {}
+  blendFunc() {}
+  isTexture(texture) { return this.textures.has(texture); }
+  isFramebuffer(fb) { return this.framebuffers.has(fb); }
+  isBuffer(buffer) { return this.buffers.has(buffer); }
+  uniform3f(at, a, b, c) { this.uniforms.set(at.name, [a, b, c]); }
+  uniform1fv(at, v) { this.uniforms.set(at.name, [...v]); }
 }
 
 /** A FakeGL that records every call made with a deleted object or with an

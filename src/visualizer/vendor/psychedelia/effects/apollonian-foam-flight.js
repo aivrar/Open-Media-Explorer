@@ -5,7 +5,10 @@
  * The text between the BEGIN and END lines is that file unchanged, except that
  * any non-ASCII character is written as a \u escape. It was a classic script;
  * here the Psychedelia modules it names come in through G.
- * BORROWED: distance functions sdBox, sdTorus, sdOctahedron (bound version) and the 2D box.
+ * PATCHED on import (scripts/import_psychedelia.mjs PATCHES): CAM_NEAR_IN, CAM_NEAR_OUT: where the picture fades as the camera nears the surface.
+ * PATCHED on import (scripts/import_psychedelia.mjs PATCHES): camNear: how near the camera is to the surface (1 at CAM_NEAR_IN or inside, 0 from CAM_NEAR_OUT).
+ * PATCHED on import (scripts/import_psychedelia.mjs PATCHES): the picture fades into the background as the camera nears the fractal (its distance estimate at the camera, FLIGHT_CAMERA_NEAR), so passing through the surface is no pop of light.
+ * BORROWED: distance functions sdBox, sdTorus, sdOctahedron (bound version), the 2D box, the capsule and the capped cylinder.
  *   Author: Inigo Quilez. Source: https://iquilezles.org/articles/distfunctions/.
  *   Licence: MIT for code snippets ("all technical code snippets you'll find are under the MIT license", https://iquilezles.org/articles/).
  * BORROWED: tetrahedron technique for numerical normals (calcNormal, estimateNormal), which he credits to Paulo Falcao and Paul Malin.
@@ -295,6 +298,8 @@ FoamHit foamDE(vec3 p) {
 // Clear bubble around the camera: the path can pass through the fractal,
 // and a ray starting inside it filled the screen with one flat colour.
 const float CAM_CLEAR = 0.05;
+const float CAM_NEAR_IN = 0.050;
+const float CAM_NEAR_OUT = 0.300;
 vec3 g_cam = vec3(1e5);
 float camClear(vec3 p) { return CAM_CLEAR - length(p - g_cam); }
 
@@ -389,6 +394,7 @@ void main() {
     vec3 rd = psyRayDirection(gl_FragCoord.xy, u_resolution, ro, target, fovBreath, rollValue);
 
     g_cam = ro;
+    float camNear = 1.0 - smoothstep(CAM_NEAR_IN, CAM_NEAR_OUT, foamDE(ro).dist);
     float total = 0.0;
     float hitT = -1.0;
     FoamHit hitInfo = FoamHit(0.0, 0.0, 0.0, 0.0, 0.0);
@@ -472,6 +478,7 @@ void main() {
         col += ribColor * windowRib * (0.060 + 0.030 * u_glow);
         col *= 0.94 + windowRib * 0.20;
     }
+    col = mix(col, background(rd, t), camNear);
     col = psyGamma(psyTonemap(col));
     FRAG_OUT = vec4(col, 1.0);
 }

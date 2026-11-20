@@ -514,7 +514,7 @@ test('live snapshot prefers native HLS, emits deterministic room IDs, and does n
   assert.equal(item._extra.downloadResolved, true);
   assert.equal(item._extra.resolutionStatus, 'playable');
   assert.equal(item._extra.snapshotItem, true);
-  assert.equal(first.refreshAfterMs, 60_000);
+  assert.equal(first.refreshAfterMs, 5 * 60_000);
   assert.match(first.snapshotId, /^media-ccc-v2:[0-9a-f]{8}$/);
   assert.deepEqual(validateItem(item), []);
 });
@@ -564,7 +564,7 @@ test('audio-only rooms become radio; valid empty is independent; malformed nonem
 
   const emptySource = adapter({ getJson: async () => structuredClone(fixture.liveEmpty) });
   assert.deepEqual(await emptySource.refreshSnapshot(), {
-    items: [], snapshotId: 'media-ccc-v2:empty', refreshAfterMs: 60_000,
+    items: [], snapshotId: 'media-ccc-v2:empty', refreshAfterMs: 5 * 60_000,
   });
 
   const malformed = adapter({ getJson: async () => [{ slug: 'schema-drift', groups: [] }] });

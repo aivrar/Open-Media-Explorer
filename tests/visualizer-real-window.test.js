@@ -131,7 +131,7 @@ test('a scene\'s own cap on the time surge: the limiter keeps to it, the tab set
   limiter.setSpeedCap(9);
   assert.equal(limiter.speedCap, FLASH_LIMITS.maxSpeed, 'never above the limiter\'s own');
   // The table: real scenes, caps between 1 and the limiter's 3, on the entries.
-  assert.deepEqual(Object.keys(SPEED_CAPS).sort(), ['aurora', 'endless_terrain', 'fractal_flame_volume_flight', 'infinite_lattice', 'lsystem_tube_flight', 'mandelbrot', 'polyfold_flight', 'schottky_inversion_flight', 'tricorn']);
+  assert.deepEqual(Object.keys(SPEED_CAPS).sort(), ['analytic_field_lab', 'apollonian_foam_flight', 'aurora', 'endless_terrain', 'folded_box_variants_flight', 'fractal_flame_volume_flight', 'infinite_lattice', 'lsystem_tube_flight', 'mandelbox_flight', 'mandelbrot', 'path_traced_fractal_flight', 'polyfold_flight', 'schottky_inversion_flight', 'strange_attractor_flight', 'tricorn', 'triplex_mutation_flight']);
   for (const [id, cap] of Object.entries(SPEED_CAPS)) {
     const entry = SCENES.find((scene) => scene.id === id);
     assert.ok(entry, id);

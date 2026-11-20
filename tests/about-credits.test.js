@@ -25,18 +25,19 @@ const ddAfter = (card, term) => {
 };
 
 test('visualizer credits: every borrowed row of the manifest appears (its piece, with its scene), with author, licence and source', () => {
-  assert.equal(manifest.borrowed.length, 55);
+  // (65: the cosine palette in GlowLines too, the line-drawing scenes' drawer.)
+  assert.equal(manifest.borrowed.length, 65);
   const section = build();
   for (const row of manifest.borrowed) {
     const card = cardOf(section, row.piece);
     assert.ok(card, `a card for ${row.piece}`);
     const place = row.scene === '*'
-      ? (/post-fx-library\.js$/.test(row.file) ? CREDIT_TEXT.postEffects : CREDIT_TEXT.everyScene)
+      ? (/(post-fx-library|palettes)\.js$/.test(row.file) ? CREDIT_TEXT.postEffects : CREDIT_TEXT.everyScene)
       : sceneName(row.scene);
     assert.ok(place, `${row.scene} is a scene of the build (shown or held)`);
     assert.ok(textOf(ddAfter(card, 'Scenes')).split(', ').includes(place), `${row.piece}: ${place}`);
     assert.equal(textOf(ddAfter(card, 'Author')), row.author);
-    assert.ok(textOf(ddAfter(card, 'Licence')).startsWith(row.licence), `${row.piece}: its licence as stated`);
+    assert.ok(textOf(ddAfter(card, 'License')).startsWith(row.licence), `${row.piece}: its licence as stated`);
     const source = ddAfter(card, 'Source');
     if (row.link) assert.equal(source.children[0].getAttribute('href'), row.link);
     else assert.equal(textOf(source), row.linkNote);
@@ -52,7 +53,7 @@ test('visualizer credits: every borrowed row of the manifest appears (its piece,
 test('visualizer credits: Psychedelia Studio first, with its licence as the manifest states it', () => {
   const section = build();
   const intro = section.children.find((n) => n.tagName === 'P');
-  assert.match(textOf(intro), /The Visualizer is ported from Psychedelia Studio, by the same author \(Copyright \(c\) 2026 aivrar\), under the MIT licence/);
+  assert.match(textOf(intro), /The Visualizer is ported from Psychedelia Studio, by the same author \(Copyright \(c\) 2026 aivrar\), under the MIT license/);
   assert.equal(manifest.license, 'MIT');
   assert.equal(intro.children.find((n) => n.tagName === 'A').getAttribute('href'), PSYCHEDELIA_URL);
   assert.equal(PSYCHEDELIA_URL, 'https://github.com/aivrar/psychedelia-studio');
@@ -65,19 +66,19 @@ test('visualizer credits: the share-alike piece carries its own licence label; t
   const apollonian = cardOf(section, 'iq-apollonian');
   const flag = apollonian.descendants().find((n) => n.getAttribute('data-flag') === 'share-alike');
   assert.equal(flag.textContent, 'CC BY-NC-SA 3.0');
-  assert.match(textOf(ddAfter(apollonian, 'Licence')), /This part stays under CC BY-NC-SA 3\.0\. It is not covered by the MIT licence above\./);
+  assert.match(textOf(ddAfter(apollonian, 'License')), /This part stays under CC BY-NC-SA 3\.0\. It is not covered by the MIT license above\./);
   assert.equal(cardOf(section, 'iq-normals').descendants().some((n) => n.getAttribute('data-flag')), false, 'no mark on an MIT piece');
   const unstated = manifest.borrowed.filter((row) => row.noLicenceStated);
   assert.deepEqual(unstated.map((row) => row.piece), ['knighty-pseudo-kleinian']);
   const knighty = cardOf(section, 'knighty-pseudo-kleinian');
-  assert.equal(knighty.descendants().find((n) => n.getAttribute('data-flag') === 'no-licence').textContent, 'No licence stated');
-  const licence = textOf(ddAfter(knighty, 'Licence'));
+  assert.equal(knighty.descendants().find((n) => n.getAttribute('data-flag') === 'no-licence').textContent, 'No license stated');
+  const licence = textOf(ddAfter(knighty, 'License'));
   assert.ok(licence.startsWith('no licence stated at the source'));
   assert.ok(licence.endsWith("Used with credit; it remains under its author's terms."));
   // The same words as the notices.
   const notices = read('public/THIRD_PARTY_NOTICES.txt').replace(/\s+/g, ' ');
   assert.ok(notices.includes("Used with credit; it remains under its author's terms."));
-  assert.ok(notices.includes('It is not covered by the MIT licence above.'));
+  assert.ok(notices.includes('It is not covered by the MIT license above.'));
   assert.equal(shareAlikeLabel('MIT'), null);
 });
 

@@ -909,11 +909,29 @@ test('the category styles: a wrapping chip row that scrolls, names cut with elli
   assert.match(rule('.category-chip-name'), /text-overflow: ellipsis; white-space: nowrap;/);
   assert.match(rule('.favorite-categories'), /flex-basis: 100%;/);
   assert.match(rule('.card-category'), /right: 40px;/);
-  assert.match(css, /\.card\.has-order-controls \.card-category \{ right: 66px; \}/);
-  assert.match(css, /\.card\.has-category-control\.has-order-controls \.card-body \{ padding-right: 96px; \}/);
+  assert.match(css, /\.card\.has-order-controls \.card-category \{ right: 96px; \}/);
+  assert.match(css, /\.card\.has-category-control\.has-order-controls \.card-body \{ padding-right: 126px; \}/);
   assert.match(rule('.category-menu'), /position: fixed;/);
   assert.match(rule('.category-menu'), /max-height: min\(360px, calc\(100vh - 16px\)\);/);
   assert.match(css, /\.category-tool\[hidden\], \.category-form\[hidden\] \{ display: none; \}/);
   // Earlier rules the move buttons rely on are unchanged.
-  assert.match(css, /\.library-root\.is-personal-view \.card\.has-order-controls \.card-body \{ padding-right: 72px; \}/);
+  assert.match(css, /\.library-root\.is-personal-view \.card\.has-order-controls \.card-body \{ padding-right: 100px; \}/);
+});
+
+test('compact cards with technical details on: the source badge gets the room there is, on one line; facts and a license wrap to the next line, and catalog cards keep their columns', async () => {
+  const css = await read('src/styles/library.css');
+  const on = ':root[data-tech-details="on"] .library-root.is-personal-view ';
+  const rule = (selector) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{[^}]*\\}`))?.[0] || '';
+  // A row that wraps, not the catalog's columns (kept even when empty).
+  assert.match(rule(`${on}.card-meta`), /display: flex;\s+flex-wrap: wrap;/);
+  assert.doesNotMatch(rule(`${on}.card-meta`), /grid-template-columns/);
+  assert.match(rule(`${on}.source-badge`), /display: block;[\s\S]*max-width: 100%;[\s\S]*white-space: nowrap;\s+text-overflow: ellipsis;/);
+  assert.match(rule(`${on}.card-license:not(.has-quality)`), /white-space: nowrap;\s+text-overflow: ellipsis;/);
+  // With the move buttons ("My order") the cards start wider, so the badge
+  // still fits whole: 318 px less the picture, the paddings and the buttons
+  // leaves 110 px, and "Internet Archive" needs 109.
+  assert.match(rule(`${on}.cards-grid:has(.card.has-order-controls)`), /grid-template-columns: repeat\(auto-fill, minmax\(318px, 1fr\)\);/);
+  assert.match(rule('.library-root.is-personal-view .cards-grid'), /minmax\(280px, 1fr\)/);
+  // The catalog cards' columns are as they were.
+  assert.match(rule('.card-meta'), /grid-template-columns: minmax\(0, 1fr\) 38px minmax\(62px, 0\.78fr\);/);
 });

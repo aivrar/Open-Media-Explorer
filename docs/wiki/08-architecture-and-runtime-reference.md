@@ -67,10 +67,46 @@ expired. `worldmedia_media.py` validates redirects, DNS/public addresses,
 content types, byte ranges, and manifest sizes. HLS/DASH manifests are rewritten
 to local opaque child resources.
 
+With **Pick the best stream** on **Listed streams** (the default) or **Auto
+(verified)**, `src/lib/best-stream.js` first ranks the listed streams by what
+the directory reports (TV by picture size, radio by bitrate up to 320 kbps,
+then format), and the best one gets a head start of six seconds
+(`BEST_STREAM_HEAD_START_MS`) before the next is probed beside it. With
+**Off** the first two candidates are probed together, as before 0.1.12. In
+every mode `src/lib/start-failover.js` hands a stream that connected but never
+began to the candidates not tried yet, at the latest after 30 seconds; a
+stream that has begun gets 10 seconds (`START_CONFIRM_MS`) from its first
+`playing` to play one full second.
+
 `src/lib/player.js` owns the single audio/video pair, ownership generations,
 rapid-switch cancellation, relay lifetime, HLS/DASH cleanup, Web Audio EQ,
 media-session controls, and the player bar. A failed media element is rebuilt on
-Play rather than repeatedly poked after an error.
+Play rather than repeatedly poked after an error, and so is one whose stream
+ended. A plain live stream (`stream_kind` audio or video) whose element ever
+reported an unbounded duration is marked `playSession.unbounded`; its `ended`
+event (the station closed the connection) is taken as a lost connection and
+reconnected by `src/lib/live-resume.js`, even though the element reports the
+time played as its duration just before the end.
+
+**Auto (verified).** `src/lib/best-stream-auto.js` runs the checks and
+`src/lib/stream-verify.js` holds the rules. Nothing is looked up before a
+start. After about 45 seconds of playing (`VERIFY_AFTER_MS`, counted from the
+first `playing`, again after a pause), it looks up other Radio Browser entries
+of the station (`src/lib/stream-lookups.js`, under the station's own name) and
+keeps those with the same name, homepage host and country, on the same stream
+site, plain audio, https when the station's stream is https, passing the
+directory's last check, unchanged for 30 days and with at least 3 votes or 20
+clicks, and better by the ranking. The local server then opens both streams
+for a short look (`POST /api/v1/streams/probe`, `worldmedia_stream_probe.py`:
+one pair at a time, one deadline for everything, only the content type,
+`icy-br`, `icy-name`, `icy-url`, the first song title, the byte count and the
+final scheme and host are returned). A first match is pending; a second match
+on a different song at least four minutes later (`MIN_MATCH_GAP_MS`) verifies
+it for seven days. At most two probes run per station a week. Pause, stop,
+another station or leaving Auto aborts a check, and its result is dropped.
+Results are kept in `worldmedia.streamverify.v1` and lookups in
+`worldmedia.streamlookups.v1` (caches, removed by Clear cache); the stations
+kept on their own stream are in `worldmedia.ownstream.v1`, a profile key.
 
 ## Sound meter
 
@@ -143,8 +179,20 @@ back. Leaving the tab calls it, so a closed tab costs nothing.
   look, effect and overlay is also checked by hand with the flash-check scripts
   (see the developer guide). A scene that fails is held back in
   `HELD_SCENES` (`scenes.js`) and is not offered.
-- **Drawing.** `scene-renderer.js` draws one scene at a time, as one shader pass
-  on a WebGL canvas, with the uniforms Psychedelia's own renderer feeds.
+- **Drawing.** `scene-renderer.js` draws one scene at a time on a WebGL
+  canvas, with the uniforms Psychedelia's own renderer feeds. Most scenes are
+  one shader pass. Since 0.1.12 some own their passes: the simulations and
+  Feedback Loop through `sim-host.js` (each offered only where the context can
+  make the render targets it needs), the line drawings through `line-host.js`,
+  and Buddhabrot Lab, which builds its picture in one worker
+  (`density-host.js`), with a bounded share of one core and the worker ended
+  when the picture is done or the scene goes. Each has limits per quality on
+  what it builds a frame, and everything a scene makes is freed when it
+  changes, the tab closes or the context is lost. World Media's own scenes are
+  in `src/visualizer/own/`. `drift.js`, `swell.js` and `overlay-motion.js` give
+  **Slow drift**, `mood.js` the mood (hits merged across bands, hi-hats at
+  half, tempo from 80 beats a minute), and `spelling.js` shows names from the
+  copied code in American spelling (saved values are unchanged).
   `fx-chain.js` runs the post effects over it and is bypassed while none are on.
   `overlay-layer.js` draws the Canvas 2D overlays on a second canvas laid over
   the picture. One overlay at a time can be uploaded and blended into the
@@ -159,14 +207,35 @@ back. Leaving the tab calls it, so a closed tab costs nothing.
   row below 80% of the chosen rate (or of the display's), it takes one notch:
   effects, then overlays, then quality, then frame rate. It belongs to the scene
   shown, and the saved settings are not touched.
+- **Processor use.** `src/lib/processor-budget.js` holds the level
+  (`processorUse`: `light`, shown as **Low**, the default; `balanced`; `high`)
+  and the limit (`processorLimit`, 2 to 80 in steps of 1; `null` means the
+  level's start, 40 or 60). At Low nothing is read and only the frame-time
+  step-down applies. At Balanced and High, while the Visualizer plays and the
+  tab shows, the page reads `GET /api/v1/system/processor-use` every 3 seconds
+  (`worldmedia_processor.py`: the processor time of the app's process tree,
+  the WebView2 processes included, as a share of all logical processors;
+  nothing runs between requests) and smooths it. Over the limit for 6 seconds
+  takes a notch off; under 0.6 of the limit for 30 seconds gives one back; no
+  decision follows for 8 seconds after a change, and a notch taken off within
+  60 seconds of a step-up stops further step-ups for that scene. The limit is
+  a target, not an operating-system cap, so the sound is never held back. The
+  higher levels also offer **Very high** (a 4.8 million pixel budget; heavy
+  scenes other than those in `VERY_HIGH_HEAVY_ALLOWED` draw at High's
+  budget), and High starts Curl-Noise Silk, Fluid Ink and Physarum one size up
+  (`SIM_SIZES_ABOVE_HIGH`). At most three effects and three overlays stay the
+  limit at every level.
 - **Choosing.** `shuffle.js` picks scenes (a bag, a recent list, category and
   mood rules, the cost filter), `fx-shuffle.js` and `overlay-shuffle.js` pick
   effects and overlays within a cost budget per quality, and `favourites.js`
   stores a star as a short string: the scene, `:look`, `|effects` and `/overlays`.
 - **Saved fields.** The choices are fields of the settings value
   (`worldmedia.settings.v1`), named `visualizer...` (see
-  `src/lib/visualizer-settings.js`), not new profile keys or files. `Ctrl+Shift+D`
-  shows a developer strip with the sound values the scenes get
+  `src/lib/visualizer-settings.js`), not new profile keys or files. Since
+  0.1.12 they include `visualizerDrift` (Slow drift), `visualizerOverlayStyles`
+  (a Style picked by hand, such as Strobe's) and `visualizerFolded` (the side
+  panel's folded sections: `scene`, `shuffle`, `fx`, `ov`, `picture`).
+  `Ctrl+Shift+D` shows a developer strip with the sound values the scenes get
   (`visualizerDebug`); it is off by default and costs nothing while off.
 - **Copied code.** `src/visualizer/vendor/psychedelia/` holds files copied from
   Psychedelia Studio by `scripts/import_psychedelia.mjs`, with a `manifest.json`
@@ -285,15 +354,24 @@ the data that version 0.1.9 added is kept apart:
 | File | Holds | Code |
 |---|---|---|
 | `state/profile-preferences.json` | The five keys every version knows: favorites, settings, volume, job history, EQ | `worldmedia_runtime.py` |
-| `state/profile-preferences-extra.json` | Newer keys: the favorites categories (`worldmedia.favgroups.v1`) | `worldmedia_runtime.py` |
+| `state/profile-preferences-extra.json` | Newer keys: the favorites categories (`worldmedia.favgroups.v1`), the names the user gave favorites (`worldmedia.favnames.v1`, since 0.1.12) and the stations kept on their own stream (`worldmedia.ownstream.v1`, since 0.1.12) | `worldmedia_runtime.py` |
 | `state/song-log.json` | The song log, at most 500 songs | `worldmedia_songlog.py` |
+| `state/starred-songs.json` | The starred songs, at most 2,000 (since 0.1.12) | `worldmedia_starred.py` |
 | `station-images/` | The user's own station pictures | `worldmedia_station_images.py` |
 
 The two settings added in 0.1.10, `tunerCardSize` and `soundMeter`, are fields
 inside the existing settings value (`worldmedia.settings.v1`), not new profile
 keys. Every release keeps settings fields it does not know, so going back to
 0.1.9 and returning keeps them. The Visualizer's fields added in 0.1.11 (all
-named `visualizer...`) are stored the same way.
+named `visualizer...`) are stored the same way, and so are the settings added
+in 0.1.12: `bestStreamMode` (`off`, `listed` or `auto`), `processorUse`,
+`processorLimit` and `visualizerQualityPicked`.
+
+A favorite's own record keeps the station's original name;
+`src/lib/favorite-names.js` lays the user's name over it when a list is shown
+(at most 5,000 names of up to 80 characters), and `underOwnName()` in
+`src/lib/other-streams.js` puts the original name back for directory lookups
+and the Auto checks.
 
 A profile save writes the main file first and then the extra file (or removes
 it when nothing is left for it). If the second write fails, favorites and
@@ -314,6 +392,19 @@ headers (an older client) is applied as it always was.
   before the first write that replaces it. **Save to file** writes
   `WorldMedia-song-log-<date>-<time>.csv` into `downloads` through a partial
   file. The server names the file; nothing in a request is a path.
+- **Starred songs** (`worldmedia_starred.py`): the same rules as the song log
+  (writes ordered by a revision, an unreadable file moved aside as
+  `starred-songs-unreadable-<date>-<time>.json`, the newest three kept). Text
+  with control, bidirectional or zero-width characters is refused. **Save as
+  text** and **Save as CSV** write `WorldMedia-starred-songs-<date>-<time>.txt`
+  or `.csv` into `downloads`. The file is separate from the song log, so
+  **Clear log**, the log's limit and an older release's rewrite of
+  `song-log.json` never touch it.
+- **JSON and CSV playlists** (`worldmedia_playlist_tables.py`): a JSON or CSV
+  list (at most 8 MiB and 50,000 entries) is turned into the same M3U text
+  every other playlist is stored as, so `playlists.json` keeps its format and
+  every entry goes through the same URL checks and **Add as** rules. The CSV
+  separator (comma, semicolon or tab) is worked out from the first records.
 - **Station images** (`worldmedia_station_images.py`): only ordinary files
   directly in the folder are listed; subfolders, links and junctions are not
   followed (at most 2,000 files of 2 MB). A picture is served only by an id
@@ -333,7 +424,9 @@ headers (an older client) is applied as it always was.
   as **Pictures to check**. The code only reads the folder, and makes it when
   the user asks to open it.
 - **Backup** (`worldmedia_backup.py`): reads only a fixed list of files (the
-  state files above and the station pictures), never a path from a request. The
+  state files above, starred songs included, and the station pictures), never
+  a path from a request. The favorites `.m3u8` files use the names the user
+  gave favorites. The
   ZIP is written to a partial file in `downloads` and renamed when complete,
   holds at most 192 MB before compression, and only one backup runs at a time.
   The `.m3u8` exports are rebuilt from the saved favorites and playlists and
@@ -349,12 +442,16 @@ These are local implementation routes, not a public API contract:
 | `GET /api/v1/session` | Obtain the current control-session token/origin |
 | `GET /api/v1/runtime` | Runtime roots, writability, current/next port |
 | `GET /api/v1/playlists` | Load locally saved channel lists |
-| `POST /api/v1/playlists/import` | Parse and save a local M3U/M3U8, PLS or XSPF list (PLS and XSPF are stored as M3U). The default type is `auto`, `tv` or `radio`; `auto` is saved as the type it chose |
+| `POST /api/v1/playlists/import` | Parse and save a local M3U/M3U8, PLS, XSPF, JSON or CSV list (all but M3U are stored as M3U). The default type is `auto`, `tv` or `radio`; `auto` is saved as the type it chose |
 | `POST /api/v1/playlists/link` | Save a direct link or safely fetch an online list (the same default types) |
 | `POST /api/v1/playlists/remove` | Remove a list, keeping favorites |
 | `GET` / `POST /api/v1/profile/preferences` | Bounded cross-port preference backup (two files; a write carries an order number) |
 | `GET` / `POST /api/v1/song-log` | Load the song log, or save it (writes are ordered by a revision) |
 | `POST /api/v1/song-log/export` | Write the song log as a CSV file in `downloads` |
+| `GET` / `POST /api/v1/starred-songs` | Load the starred songs, or save them (writes are ordered by a revision) |
+| `POST /api/v1/starred-songs/export` | Write the starred songs as a text or CSV file in `downloads` |
+| `POST /api/v1/streams/probe` | A short look at a station's own stream and another directory entry for **Auto (verified)**; one pair at a time |
+| `GET /api/v1/system/processor-use` | The app's share of the whole processor since the last reading (read only on request) |
 | `GET /api/v1/station-images` | List the user's station pictures (scans the folder) |
 | `GET /api/v1/station-images/{id}` | One station picture, by an id from the last listing |
 | `POST /api/v1/station-images/open-folder` | Make and open the `station-images` folder |

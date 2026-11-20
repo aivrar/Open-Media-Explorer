@@ -360,6 +360,14 @@ export function stationImageSourceFor(item) {
   if (index.byKey.size === 0 || !item || typeof item !== 'object' || item.__contentHidden === true) return '';
   const title = item.title;
   if (typeof title !== 'string' || !title) return '';
+  // A favorite the user renamed (favorite-names.js) keeps the picture named
+  // after the station; a picture named after the new name is used otherwise.
+  // A picture that will not load counts as none.
+  const own = item.__favoriteName === true && typeof item.originalTitle === 'string' ? item.originalTitle : '';
+  return (own && usablePictureFor(own)) || usablePictureFor(title);
+}
+
+function usablePictureFor(title) {
   const key = pictureKeyFor(title);
   const source = key ? index.byKey.get(key) : '';
   return source && !failed.has(source) ? source : '';

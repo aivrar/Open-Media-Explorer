@@ -26,6 +26,8 @@ PROFILE_TRANSFER_KEYS = frozenset({
     "worldmedia.jobs.v1",
     "worldmedia.eq.v1",
     "worldmedia.favgroups.v1",  # Favorites categories (src/lib/favorite-groups.js)
+    "worldmedia.favnames.v1",  # The user's names for favorites (src/lib/favorite-names.js)
+    "worldmedia.ownstream.v1",  # Stations kept on their own stream (src/lib/stream-verify.js)
 })
 # Releases up to 0.1.8 know only these keys, and they treat a profile file that
 # holds any other key as unreadable: the whole file, favorites included. So the

@@ -1,0 +1,390 @@
+function o(e){var a=e.EffectRegistry,t=e.FractalFlight;return a.register({name:"apollonian_foam_flight",label:"Apollonian Foam Flight",category:"Fractals",description:"Raymarched inversion-foam and pseudo-Kleinian fly-through structures with cell, chain, cathedral, and box-hybrid motion",fractalFlight:t.metadata({family:"Apollonian Foam",familyKey:"apollonian_foam",modeParam:"family",modes:["Knighty Foam","Apollonian Cell","Pseudo-Kleinian Cathedral","Sphere Chain","Kleinian Box Hybrid"],depthParams:["tunnel_depth"],requiredParams:["family","iterations","inversion_radius","foam_density","cell_scale","sphere_gap","fold_limit","bailout","detail","tunnel_depth","inversion_pulse","limit_twist","cell_breath"],animationParams:["flight_speed","tunnel_depth","orbit_radius","orbit_spin","motion_mode","motion_phase","inversion_pulse","limit_twist","cell_breath","roll","roll_speed","fov","color_speed"],smokePresets:[{name:"Knighty Foam Orbit",values:{family:0,iterations:11,inversion_radius:.94,foam_density:1.28,cell_scale:2.52,sphere_gap:.28,fold_limit:1.02,flight_speed:2.2,tunnel_depth:1.45,orbit_spin:1.52,motion_mode:0,motion_phase:.12,inversion_pulse:.78,limit_twist:.82,cell_breath:.74,roll_speed:1.42,color_speed:.76,palette:0,shade_mode:2,fog:.22,glow:1.8}},{name:"Apollonian Cell Tunnel",values:{family:1,iterations:11,inversion_radius:.9,foam_density:1.74,cell_scale:2.42,sphere_gap:.3,fold_limit:1.08,flight_speed:2.35,tunnel_depth:1.7,orbit_spin:1.64,motion_mode:2,motion_phase:.22,inversion_pulse:.84,limit_twist:.72,cell_breath:.9,roll_speed:1.56,color_speed:.82,palette:1,shade_mode:3,fog:.2,glow:1.85}},{name:"Cathedral Deep Push",values:{family:2,iterations:12,inversion_radius:.96,foam_density:1.52,cell_scale:2.5,sphere_gap:.26,fold_limit:1.1,flight_speed:2.45,tunnel_depth:1.78,orbit_spin:1.78,motion_mode:2,motion_phase:.31,inversion_pulse:.82,limit_twist:.94,cell_breath:.86,roll_speed:1.68,color_speed:.88,palette:2,shade_mode:3,fog:.22,glow:1.9}},{name:"Sphere Chain Glide",values:{family:3,iterations:11,inversion_radius:.86,foam_density:1.92,cell_scale:2.34,sphere_gap:.24,fold_limit:.96,flight_speed:2.3,tunnel_depth:1.88,orbit_spin:1.72,motion_mode:2,motion_phase:.41,inversion_pulse:.72,limit_twist:.88,cell_breath:.78,roll_speed:1.62,color_speed:.84,palette:1,shade_mode:2,fog:.18,glow:1.95}},{name:"Kleinian Box Graze",values:{family:4,iterations:12,inversion_radius:1,foam_density:1.34,cell_scale:2.24,sphere_gap:.3,fold_limit:.96,bailout:8.5,detail:1.16,flight_speed:2.34,tunnel_depth:1.28,orbit_radius:1.4,orbit_spin:1.72,motion_mode:2,motion_phase:.5,inversion_pulse:.82,limit_twist:.92,cell_breath:.78,roll_speed:1.62,color_speed:.86,palette:3,shade_mode:3,fog:.18,glow:2}}]}),params:[{name:"family",label:"Foam Mode",group:"Formula",type:"select",options:["Knighty Foam","Apollonian Cell","Pseudo-Kleinian Cathedral","Sphere Chain","Kleinian Box Hybrid"],default:1},{name:"iterations",label:"Foam Iterations",group:"Formula",min:3,max:22,default:10,step:1,type:"int"},{name:"inversion_radius",label:"Inversion Radius",group:"Formula",min:.25,max:1.8,default:.92,step:.02},{name:"foam_density",label:"Foam Density",group:"Formula",min:.4,max:3.2,default:1.42,step:.02},{name:"cell_scale",label:"Cell Scale",group:"Formula",min:1.35,max:4.2,default:2.35,step:.05},{name:"sphere_gap",label:"Sphere Gap",group:"Formula",min:.04,max:1.4,default:.34,step:.02},{name:"fold_limit",label:"Fold Limit",group:"Formula",min:.25,max:2.2,default:1.05,step:.02},{name:"bailout",label:"Bailout",group:"Formula",min:2,max:18,default:8.5,step:.25},{name:"detail",label:"Surface Detail",group:"Formula",min:.5,max:2.5,default:1.16,step:.05},{name:"flight_speed",label:"Flight Speed",group:"Flight",min:0,max:8,default:.74,step:.05},{name:"tunnel_depth",label:"Tunnel Depth",group:"Flight",min:0,max:4.4,default:.98,step:.05},{name:"orbit_radius",label:"Orbit Radius",group:"Flight",min:.2,max:5.8,default:1.18,step:.05},{name:"orbit_spin",label:"Orbit Spin Speed",group:"Flight",min:-5,max:5,default:.58,step:.05},{name:"motion_mode",label:"Motion Path",group:"Animation",type:"select",options:["Foam Orbit","Figure Eight","Cell Tunnel","Surface Graze"],default:2},{name:"motion_phase",label:"Motion Phase",group:"Animation",min:0,max:1,default:0,step:.01},{name:"inversion_pulse",label:"Inversion Pulse",group:"Animation",min:0,max:1.8,default:.52,step:.05},{name:"limit_twist",label:"Limit Twist",group:"Animation",min:-2,max:2,default:.58,step:.02},{name:"cell_breath",label:"Cell Breath",group:"Animation",min:0,max:1.8,default:.62,step:.05},{name:"roll",label:"Roll Drift",group:"Animation",min:-1.8,max:1.8,default:.24,step:.05},{name:"roll_speed",label:"Roll Speed",group:"Animation",min:0,max:6,default:.68,step:.05},{name:"fov",label:"Field of View",group:"Animation",min:.55,max:1.9,default:.98,step:.05},{name:"color_speed",label:"Color Speed",group:"Visual",min:0,max:8,default:.52,step:.05},{name:"palette",label:"Palette",group:"Visual",type:"select",palette:!0,options:["Ivory Foam","Emerald Glass","Magenta Plasma","Copper Void"],default:1},{name:"shade_mode",label:"Shade Mode",group:"Visual",type:"select",options:["Trap Glow","Normal Pearl","Inversion Bands","Cell Cavities"],default:0},{name:"fog",label:"Depth Fog",group:"Visual",min:0,max:1.5,default:.3,step:.05},{name:"glow",label:"Edge Glow",group:"Visual",min:0,max:3,default:1.55,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_family;
+uniform float u_iterations;
+uniform float u_inversion_radius;
+uniform float u_foam_density;
+uniform float u_cell_scale;
+uniform float u_sphere_gap;
+uniform float u_fold_limit;
+uniform float u_bailout;
+uniform float u_detail;
+uniform float u_flight_speed;
+uniform float u_tunnel_depth;
+uniform float u_orbit_radius;
+uniform float u_orbit_spin;
+uniform float u_motion_mode;
+uniform float u_motion_phase;
+uniform float u_inversion_pulse;
+uniform float u_limit_twist;
+uniform float u_cell_breath;
+uniform float u_roll;
+uniform float u_roll_speed;
+uniform float u_fov;
+uniform float u_color_speed;
+uniform float u_palette;
+uniform float u_shade_mode;
+uniform float u_fog;
+uniform float u_glow;
+
+struct FoamHit {
+    float dist;
+    float iter;
+    float trap;
+    float cell;
+    float inversions;
+};
+
+float phaseOffset() {
+    return u_motion_phase * 6.28318530718;
+}
+
+float familyMode() {
+    return clamp(floor(u_family + 0.5), 0.0, 4.0);
+}
+
+mat3 rotX3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c);
+}
+
+mat3 rotY3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
+}
+
+mat3 rotZ3(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0);
+}
+
+float sdBox(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+float sdOctahedron(vec3 p, float s) {
+    p = abs(p);
+    return (p.x + p.y + p.z - s) * 0.57735027;
+}
+
+float sdCross(vec3 p, float bar, float len) {
+    vec3 q = abs(p);
+    float xy = max(max(q.x, q.y) - bar, q.z - len);
+    float xz = max(max(q.x, q.z) - bar, q.y - len);
+    float yz = max(max(q.y, q.z) - bar, q.x - len);
+    return min(xy, min(xz, yz));
+}
+
+float sdTorus(vec3 p, vec2 t) {
+    vec2 q = vec2(length(p.xz) - t.x, p.y);
+    return length(q) - t.y;
+}
+
+vec3 sortFold(vec3 p) {
+    p = abs(p);
+    if (p.x < p.y) p.xy = p.yx;
+    if (p.x < p.z) p.xz = p.zx;
+    if (p.y < p.z) p.yz = p.zy;
+    return p;
+}
+
+vec3 tetraFold(vec3 p) {
+    if (p.x + p.y < 0.0) p.xy = -p.yx;
+    if (p.x + p.z < 0.0) p.xz = -p.zx;
+    if (p.y + p.z < 0.0) p.yz = -p.zy;
+    return abs(p);
+}
+
+vec3 boxFold(vec3 p, float limit) {
+    vec3 l = vec3(max(limit, 0.001));
+    return clamp(p, -l, l) * 2.0 - p;
+}
+
+vec3 repeatCell(vec3 p, float spacing) {
+    vec3 c = vec3(max(spacing, 0.001));
+    return mod(p + c * 0.5, c) - c * 0.5;
+}
+
+vec3 paletteFoam(float t, float paletteMode) {
+    t = fract(t);
+    if (paletteMode > 3.5) return psyLutLinear(t);
+    if (paletteMode < 0.5) {
+        return palette(t, vec3(0.30, 0.28, 0.24), vec3(0.52, 0.50, 0.42), vec3(0.90, 0.86, 0.72), vec3(0.05, 0.16, 0.32));
+    } else if (paletteMode < 1.5) {
+        return palette(t, vec3(0.06, 0.26, 0.21), vec3(0.20, 0.56, 0.46), vec3(0.42, 1.00, 0.82), vec3(0.08, 0.36, 0.60));
+    } else if (paletteMode < 2.5) {
+        return palette(t, vec3(0.34, 0.10, 0.36), vec3(0.56, 0.22, 0.62), vec3(1.00, 0.42, 0.86), vec3(0.00, 0.20, 0.44));
+    }
+    return palette(t, vec3(0.36, 0.18, 0.08), vec3(0.62, 0.34, 0.16), vec3(1.00, 0.58, 0.26), vec3(0.04, 0.18, 0.36));
+}
+
+// Established distance estimators (the previous ones were improvised,
+// clamped and boosted, so rays tunnelled through and rendered noise):
+// - Knighty's pseudo-Kleinian (box fold + sphere inversion, shell DE). The fold
+//   loop follows "Pseudo Kleinian" by Knighty (after Theli-at) in Fragmentarium:
+//   https://github.com/Syntopia/Fragmentarium/blob/master/Fragmentarium-Source/Examples/Knighty%20Collection/PseudoKleinian.frag
+// - iq's Apollonian sphere-packing lattice: the Shadertoy shader "Apollonian"
+//   (2013) by Inigo Quilez (fold with fract, invert, accumulate the scale).
+//   That shader is under CC BY-NC-SA 3.0 (the Shadertoy default), so the
+//   Apollonian branch below stays under CC BY-NC-SA 3.0, not this project's
+//   MIT licence: https://creativecommons.org/licenses/by-nc-sa/3.0/
+// Credits and the licences the sources state: THIRD_PARTY_NOTICES.md
+// All animation acts on the parameters uniformly in space, which keeps the
+// estimators valid.
+FoamHit foamDE(vec3 p) {
+    float mode = familyMode();
+    float phase = u_time * 0.18 + phaseOffset() + mode * 0.91 + seedPhase() * 0.10;
+    float pulse = sin(phase * 1.17) * u_inversion_pulse;
+    float breath = sin(phase * 0.83) * u_cell_breath;
+    float density = max(u_foam_density / 1.42, 0.2);
+    vec3 z = p * density;
+    z = rotY3(u_limit_twist * 0.35 + phase * 0.05 * u_limit_twist) * z;
+    float iterations = clamp(u_iterations, 3.0, 14.0);
+    float scaleAccum = 1.0;
+    float trap = 1000.0;
+    float cell = 0.0;
+    float inversions = 0.0;
+    float iter = 0.0;
+    float dist;
+
+    if (mode < 0.5 || (mode > 1.5 && mode < 2.5) || mode > 3.5) {
+        // Pseudo-Kleinian family.
+        vec3 csize = mode < 0.5 ? vec3(0.808, 0.808, 1.167) : (mode < 2.5 ? vec3(1.0, 1.0, 1.3) : vec3(0.92436, 0.90756, 0.92436));
+        csize *= u_fold_limit / 1.05 * (1.0 + breath * 0.03);
+        float size = (0.7 + u_inversion_radius * 0.32) * (1.0 + pulse * 0.04);
+        for (int i = 0; i < 14; i++) {
+            if (float(i) >= iterations) break;
+            if (mode > 3.5 && mod(float(i), 2.0) < 0.5) {
+                // Kleinian box hybrid: interleave a lattice wrap.
+                z = -1.0 + 2.0 * fract(0.5 * z + 0.5);
+            }
+            z = 2.0 * clamp(z, -csize, csize) - z;
+            float r2 = max(dot(z, z), 0.000001);
+            float k = max(size / r2, 1.0);
+            if (k > 1.0) inversions += 1.0;
+            z *= k;
+            scaleAccum *= k;
+            trap = min(trap, r2);
+            cell += abs(z.z) * 0.02;
+            iter = float(i) + 1.0;
+            if (r2 > u_bailout * u_bailout * 400.0) break;
+        }
+        float rxy = length(z.xy);
+        float thickness = 0.92784 - (u_sphere_gap - 0.34) * 0.35;
+        dist = max(rxy - thickness, abs(rxy * z.z) / max(length(z), 0.0001)) / scaleAccum;
+    } else {
+        // Apollonian packing; Sphere Chain stretches the lattice along z.
+        // Adapted from "Apollonian" by Inigo Quilez (CC BY-NC-SA 3.0).
+        float sApo = clamp(0.9 + (u_inversion_radius - 0.25) / 1.55 * 0.6, 0.9, 1.6) + pulse * 0.06;
+        float stretch = mode > 2.5 ? clamp(u_cell_scale / 1.6, 1.0, 2.6) : 1.0;
+        z.z /= stretch;
+        for (int i = 0; i < 14; i++) {
+            if (float(i) >= iterations) break;
+            z = -1.0 + 2.0 * fract(0.5 * z + 0.5);
+            float r2 = max(dot(z, z), 0.000001);
+            trap = min(trap, r2);
+            float k = sApo / r2;
+            if (k > 1.0) inversions += 1.0;
+            z *= k;
+            scaleAccum *= k;
+            cell += abs(z.y) * 0.02;
+            iter = float(i) + 1.0;
+            if (r2 > u_bailout * u_bailout * 400.0) break;
+        }
+        dist = 0.25 * abs(z.y) / scaleAccum;
+    }
+
+    dist /= density;
+    return FoamHit(max(dist, 0.000015), iter, sqrt(trap), cell, inversions);
+}
+
+// Clear bubble around the camera: the path can pass through the fractal,
+// and a ray starting inside it filled the screen with one flat colour.
+const float CAM_CLEAR = 0.05;
+const float CAM_NEAR_IN = 0.050;
+const float CAM_NEAR_OUT = 0.300;
+vec3 g_cam = vec3(1e5);
+float camClear(vec3 p) { return CAM_CLEAR - length(p - g_cam); }
+
+float mapScene(vec3 p) {
+    return max(foamDE(p).dist, camClear(p));
+}
+
+// Tetrahedral normal from a single mapScene() call site inside a loop.
+// Six separate calls inlined six copies of the whole distance estimator,
+// which made shader compiles take tens of seconds on Windows (D3D).
+vec3 estimateNormal(vec3 p, float eps) {
+    vec3 n = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        vec3 e = i == 0 ? vec3(1.0, -1.0, -1.0) :
+            (i == 1 ? vec3(-1.0, -1.0, 1.0) :
+            (i == 2 ? vec3(-1.0, 1.0, -1.0) : vec3(1.0)));
+        n += e * mapScene(p + e * eps);
+    }
+    return normalize(n);
+}
+
+float softShadow(vec3 ro, vec3 rd, float minT, float maxT) {
+    float result = 1.0;
+    float t = minT;
+    for (int i = 0; i < 34; i++) {
+        if (t >= maxT) break;
+        float h = max(mapScene(ro + rd * t), 0.001);
+        result = min(result, 9.0 * h / t);
+        t += clamp(h, 0.024, 0.22);
+    }
+    return clamp(result, 0.12, 1.0);
+}
+
+vec3 background(vec3 rd, float t) {
+    float halo = pow(max(0.0, 1.0 - abs(rd.x * 0.54 + rd.y * 0.22)), 8.0);
+    float tunnel = pow(max(0.0, 1.0 - length(rd.xy * vec2(0.84, 1.12))), 5.0);
+    vec3 base = mix(vec3(0.008, 0.011, 0.018), vec3(0.030, 0.044, 0.062), smoothstep(-0.60, 0.68, rd.y));
+    return base + paletteFoam(t * 0.026 + rd.z * 0.08, u_palette) * (halo * 0.054 + tunnel * 0.026);
+}
+
+void main() {
+    float mode = familyMode();
+    float t = u_time * u_flight_speed + phaseOffset() + seedPhase() * 0.12;
+    float motionMode = u_motion_mode;
+    float familyPhase = mode * 1.03;
+    float spinT = u_time * u_orbit_spin + phaseOffset() + familyPhase + seedPhase() * 0.09;
+    float rollT = u_time * u_roll_speed + phaseOffset() + familyPhase;
+    float tunnel = sin(t * 0.27 + familyPhase) * u_tunnel_depth;
+    float radius = u_orbit_radius * (1.0 + 0.10 * sin(spinT * 0.18 + familyPhase));
+
+    vec3 target = vec3(
+        0.14 * sin(spinT * 0.24 + familyPhase),
+        0.10 * cos(t * 0.28 + familyPhase),
+        0.11 * sin(spinT * 0.31 + mode)
+    );
+    target += vec3(
+        sin(spinT * 0.18 + familyPhase),
+        cos(t * 0.22 + 1.1),
+        sin(spinT * 0.33 + familyPhase * 0.7)
+    ) * (0.052 * (u_inversion_pulse + u_cell_breath));
+
+    vec3 orbitPath = vec3(
+        sin(spinT * 0.34 + familyPhase) * radius,
+        0.32 + cos(t * 0.24 + familyPhase) * 0.33,
+        2.88 - tunnel + cos(spinT * 0.34 + familyPhase) * radius * 0.35
+    );
+    vec3 figurePath = vec3(
+        sin(spinT * 0.41 + familyPhase) * radius * 0.94,
+        0.25 + sin(t * 0.76 + familyPhase) * 0.32,
+        2.64 - tunnel * 0.64 + sin(spinT * 0.41) * cos(spinT * 0.41) * radius * 0.78
+    );
+    vec3 tunnelPath = vec3(
+        sin(spinT * 0.23 + familyPhase) * radius * 0.48,
+        0.17 + cos(t * 0.33 + familyPhase) * 0.23,
+        2.20 - tunnel * 1.36 + cos(spinT * 0.23 + familyPhase) * radius * 0.20
+    );
+    vec3 grazePath = vec3(
+        sin(spinT * 0.29 + familyPhase) * radius * 0.66,
+        0.08 + cos(t * 0.48 + familyPhase) * 0.20,
+        1.94 - tunnel * 0.60 + cos(spinT * 0.29 + familyPhase) * radius * 0.24
+    );
+
+    vec3 ro = orbitPath;
+    if (motionMode >= 0.5 && motionMode < 1.5) ro = figurePath;
+    else if (motionMode >= 1.5 && motionMode < 2.5) ro = tunnelPath;
+    else if (motionMode >= 2.5) ro = grazePath;
+    if (mode >= 2.5 && mode < 3.5) ro = target + (ro - target) * 0.80;
+    ro.xz = rot2(familyPhase * 0.42 + spinT * 0.11 + sin(spinT * 0.12) * 0.15) * ro.xz;
+
+    float rollValue = u_roll * sin(rollT * (0.44 + motionMode * 0.05) + familyPhase) + u_global_rotation * 0.2;
+    float fovBreath = u_fov * (1.0 + 0.07 * sin(t * 0.21 + familyPhase) + 0.02 * u_cell_breath * sin(t * 0.57));
+    vec3 rd = psyRayDirection(gl_FragCoord.xy, u_resolution, ro, target, fovBreath, rollValue);
+
+    g_cam = ro;
+    float camNear = 1.0 - smoothstep(CAM_NEAR_IN, CAM_NEAR_OUT, foamDE(ro).dist);
+    float total = 0.0;
+    float hitT = -1.0;
+    FoamHit hitInfo = FoamHit(0.0, 0.0, 0.0, 0.0, 0.0);
+    float glowAccum = 0.0;
+    float epsBase = mix(0.0047, 0.00125, clamp(u_detail / 2.5, 0.0, 1.0));
+
+    for (int i = 0; i < 152; i++) {
+        if (float(i) >= 80.0 + u_detail * 27.0) break;
+        vec3 p = ro + rd * total;
+        FoamHit h = foamDE(p);
+        float dist = max(h.dist, camClear(p));
+        glowAccum += exp(-dist * 38.0) * 0.005;
+        if (dist < epsBase * max(1.0, total * 0.52)) {
+            hitT = total;
+            hitInfo = h;
+            break;
+        }
+        total += max(dist, epsBase * 1.32) * 0.68;
+        if (total > 10.2) break;
+    }
+
+    vec3 col = background(rd, t);
+    if (hitT >= 0.0) {
+        vec3 p = ro + rd * hitT;
+        vec3 n = estimateNormal(p, epsBase * 2.15);
+        vec3 lightDir = normalize(vec3(0.42, 0.78, 0.48));
+        vec3 fillDir = normalize(vec3(-0.62, 0.28, -0.22));
+        float diff = max(dot(n, lightDir), 0.0);
+        float fill = max(dot(n, fillDir), 0.0) * 0.36;
+        float rim = pow(max(0.0, 1.0 + dot(rd, n)), 2.08);
+        float shadow = softShadow(p + n * epsBase * 3.0, lightDir, 0.04, 3.6);
+        float iterTone = hitInfo.iter / max(u_iterations, 1.0);
+        float trapTone = -log(max(hitInfo.trap, 0.0001)) * 0.14;
+        float invTone = hitInfo.inversions * 0.035;
+        float cellTone = hitInfo.cell * 0.16;
+        float hue = trapTone + invTone + cellTone + iterTone * 0.46 + t * u_color_speed * 0.046 + mode * 0.10;
+        vec3 base = paletteFoam(hue, u_palette);
+        float cavity = clamp(1.18 - hitInfo.trap * 1.02 + hitInfo.inversions / max(u_iterations * 4.0, 1.0), 0.0, 1.0);
+        if (u_shade_mode >= 0.5 && u_shade_mode < 1.5) {
+            vec3 normalCol = n * 0.5 + 0.5;
+            base = mix(base, normalCol, 0.34 + rim * 0.22);
+        } else if (u_shade_mode >= 1.5 && u_shade_mode < 2.5) {
+            float bands = 0.5 + 0.5 * sin(iterTone * 42.0 + hitInfo.inversions * 0.72 + t * (0.58 + u_color_speed));
+            base *= 0.66 + bands * 0.68;
+        } else if (u_shade_mode >= 2.5) {
+            float cells = 0.5 + 0.5 * sin(hitInfo.cell * 2.4 + t * (0.46 + u_color_speed));
+            base = mix(base, paletteFoam(cells + trapTone + mode * 0.08, u_palette), 0.56);
+        }
+        float ao = 0.40 + 0.60 * smoothstep(0.0, 1.0, iterTone + cavity * 0.55);
+        vec3 light = base * (0.22 + diff * shadow * 1.52 + fill) * ao;
+        light += paletteFoam(hue + 0.20, u_palette) * rim * (0.36 + u_glow * 0.50);
+        light += vec3(0.82, 0.94, 1.0) * cavity * 0.20;
+        col = light;
+    }
+
+    col += paletteFoam(t * 0.035 + total * 0.034, u_palette) * glowAccum * u_glow;
+    vec2 screenUv = gl_FragCoord.xy / max(u_resolution, vec2(1.0));
+    float textureGate = 0.92;
+    if (mode >= 1.5 && mode < 2.5) textureGate = 0.06;
+    else if (mode >= 0.5 && mode < 1.5) textureGate = 0.36;
+    float weaveA = sin(screenUv.x * 36.0 + screenUv.y * 19.0 + t * 0.58 + mode);
+    float weaveB = sin(screenUv.y * 44.0 - screenUv.x * 15.0 - t * 0.46 + u_cell_scale);
+    float weave = smoothstep(0.15, 1.0, abs(weaveA * weaveB));
+    vec3 foamTexture = paletteFoam(t * 0.040 + weave * 0.24 + mode * 0.10, u_palette) *
+        weave * textureGate * (0.018 + 0.008 * u_glow);
+    col += foamTexture;
+    col *= 1.0 + (weave - 0.5) * textureGate * 0.11;
+    float fogAmount = 1.0 - exp(-total * (0.050 + u_fog * 0.080));
+    // Hits right at the bubble (camera grazing or inside the surface) fade
+    // into the fog instead of popping in as a flat full-screen colour.
+    if (hitT >= 0.0) fogAmount = max(fogAmount, 1.0 - smoothstep(CAM_CLEAR, 0.16, hitT));
+    col = mix(col, background(rd, t) + paletteFoam(t * 0.02, u_palette) * 0.048, fogAmount);
+    if (mode >= 1.5 && mode < 2.5) {
+        vec2 cathedralUv = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+        float arch = abs(length(cathedralUv * vec2(0.72, 1.32)) - (0.34 + 0.05 * sin(t * 0.23)));
+        float archLine = exp(-arch * 18.0);
+        float rib = 0.5 + 0.5 * sin(abs(cathedralUv.x) * 42.0 + cathedralUv.y * 9.0 + total * 0.8 + t * 0.34);
+        float windowRib = smoothstep(0.36, 1.0, rib * archLine);
+        vec3 ribColor = paletteFoam(t * 0.035 + rib * 0.25 + hitInfo.inversions * 0.03, u_palette);
+        col = mix(col, background(rd, t), 0.30);
+        col += ribColor * windowRib * (0.060 + 0.030 * u_glow);
+        col *= 0.94 + windowRib * 0.20;
+    }
+    col = mix(col, background(rd, t), camNear);
+    col = psyGamma(psyTonemap(col));
+    FRAG_OUT = vec4(col, 1.0);
+}
+`}),{}}export{o as default};

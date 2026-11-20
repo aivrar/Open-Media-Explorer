@@ -1,0 +1,351 @@
+function l(a){var o=a.EffectRegistry,e=a.FractalLab;return(function(){"use strict";var t=["Weierstrass Phase","Blaschke Rosette","Continued-Fraction Portal","Quasicrystal Wave","Cymatic Nodal","Pentagrid Loom","Cortical Tunnel","Gaussian Prime Halo","Quantum Orbital Beat","Vortex Lattice","Arnold Tongue Map","Modular Farey Field"];o.register({name:"analytic_field_lab",label:"Analytic Field Lab",category:"Fractals",description:"Animated complex phase, domain-coloring, quasicrystal, nodal, vortex, and number-field lab",fractalFlight:e.metadata({family:"Analytic Field Lab",familyKey:"analytic_field_lab",modeParam:"field_mode",modes:t,modeTokens:["MODE_ANALYTIC_WEIERSTRASS","MODE_ANALYTIC_BLASCHKE","MODE_ANALYTIC_CONTINUED_FRACTION","MODE_ANALYTIC_QUASICRYSTAL","MODE_ANALYTIC_CYMATIC","MODE_ANALYTIC_PENTAGRID","MODE_ANALYTIC_CORTICAL","MODE_ANALYTIC_GAUSSIAN_PRIME","MODE_ANALYTIC_QUANTUM_ORBITAL","MODE_ANALYTIC_VORTEX_LATTICE","MODE_ANALYTIC_ARNOLD_TONGUE","MODE_ANALYTIC_MODULAR_FAREY"],renderCost:"light",requiredGroups:["Formula","Animation","Domain","Color"],requiredParams:["field_mode","scale","detail","count","lattice","phase_speed","drift","color_mode","palette"],structuralParams:["field_mode","scale","detail","count","lattice"],animationParams:["phase","phase_speed","drift","drift_speed","symmetry_motion","domain_warp","domain_swirl","domain_tunnel","domain_noise","color_speed"],smokePresets:[e.preset("Weierstrass Lace",{field_mode:0,scale:2.45,detail:1.24,count:12,lattice:2,phase_speed:.72,drift:.34,domain_warp:.12,color_mode:0,palette:0,edge_gain:1.22,glow:.58}),e.preset("Blaschke Rose Window",{field_mode:1,scale:2.05,detail:1.38,count:9,lattice:1.42,phase_speed:.64,symmetry_motion:.72,domain_kaleido:.3,color_mode:3,palette:3,glow:.72}),e.preset("Continued Portal",{field_mode:2,scale:5.85,detail:1.3,count:18,lattice:3.2,phase_speed:.86,phase:.38,drift:.38,domain_tunnel:.04,domain_swirl:.28,color_mode:4,palette:1,edge_gain:1.72,glow:1.36,brightness:1.62,contrast:.96}),e.preset("Quasicrystal Loom",{field_mode:3,scale:2.85,detail:1.32,count:11,lattice:2.8,phase_speed:.82,symmetry_motion:.55,domain_warp:.14,color_mode:2,palette:2,edge_gain:1.34}),e.preset("Cymatic Gold Plate",{field_mode:4,scale:2.72,detail:1.42,count:10,lattice:3.2,phase_speed:.7,drift_speed:.38,domain_noise:.1,color_mode:2,palette:3,glow:.68}),e.preset("Cortical Tunnel Bloom",{field_mode:6,scale:2.38,detail:1.26,count:12,lattice:1.65,phase_speed:.92,domain_tunnel:.72,domain_swirl:.36,color_mode:4,palette:4,brightness:1.14}),e.preset("Gaussian Prime Halo",{field_mode:7,scale:2.12,detail:1.5,count:16,lattice:5.2,phase_speed:.62,drift:.3,domain_kaleido:.12,color_mode:3,palette:1,edge_gain:1.48}),e.preset("Quantum Orbital Beat",{field_mode:8,scale:2.05,detail:1.36,count:8,lattice:2.4,phase_speed:.82,symmetry_motion:.64,domain_warp:.18,color_mode:4,palette:0,glow:.92}),e.preset("Vortex Lattice Storm",{field_mode:9,scale:2.25,detail:1.3,count:13,lattice:3.2,phase_speed:.76,drift:.42,domain_swirl:.42,domain_noise:.18,color_mode:0,palette:2}),e.preset("Modular Farey Gate",{field_mode:11,scale:2.62,detail:1.44,count:15,lattice:2.8,phase_speed:.88,drift_speed:.52,domain_tunnel:.18,domain_kaleido:.24,color_mode:1,palette:3,contrast:1.22})]}),params:[{name:"field_mode",label:"Field Mode",group:"Formula",type:"select",options:t,default:3},{name:"scale",label:"Scale",group:"Formula",min:.25,max:8,default:2.35,step:.05},{name:"detail",label:"Detail",group:"Formula",min:.25,max:3,default:1.22,step:.05},{name:"count",label:"Count",group:"Formula",min:3,max:24,default:11,step:1,type:"int"},{name:"lattice",label:"Lattice",group:"Formula",min:.5,max:8,default:2.4,step:.05},{name:"phase",label:"Phase",group:"Animation",min:0,max:1,default:.18,step:.01},{name:"phase_speed",label:"Phase Speed",group:"Animation",min:-3,max:3,default:.74,step:.05},{name:"drift",label:"Drift",group:"Animation",min:0,max:2,default:.32,step:.05},{name:"drift_speed",label:"Drift Speed",group:"Animation",min:-3,max:3,default:.44,step:.05},{name:"symmetry_motion",label:"Symmetry Motion",group:"Animation",min:0,max:2,default:.42,step:.05},{name:"domain_warp",label:"Domain Warp",group:"Domain",min:0,max:1.5,default:.16,step:.02},{name:"domain_swirl",label:"Domain Swirl",group:"Domain",min:-1.5,max:1.5,default:.18,step:.02},{name:"domain_tunnel",label:"Domain Tunnel",group:"Domain",min:0,max:1.5,default:.12,step:.02},{name:"domain_kaleido",label:"Domain Kaleido",group:"Domain",min:0,max:1,default:.08,step:.02},{name:"domain_noise",label:"Domain Noise",group:"Domain",min:0,max:1,default:.1,step:.02},{name:"color_mode",label:"Color Mode",group:"Color",type:"select",options:["Phase","Magnitude","Contours","Edges","Hybrid"],default:4},{name:"palette",label:"Palette",group:"Color",type:"select",palette:!0,options:["Neon Phase","Amber Circuit","Ocean Rosette","Violet Gold","Aqua Coral"],default:0},{name:"color_speed",label:"Color Speed",group:"Color",min:0,max:8,default:.56,step:.05},{name:"edge_gain",label:"Edge Gain",group:"Color",min:.2,max:3,default:1.16,step:.05},{name:"glow",label:"Glow",group:"Color",min:0,max:2.5,default:.7,step:.05},{name:"brightness",label:"Brightness",group:"Color",min:.2,max:3,default:1.08,step:.05},{name:"contrast",label:"Contrast",group:"Color",min:.4,max:2.4,default:1.12,step:.05}],shader:`
+uniform float u_time;
+uniform vec2 u_resolution;
+uniform float u_field_mode;
+uniform float u_scale;
+uniform float u_detail;
+uniform float u_count;
+uniform float u_lattice;
+uniform float u_phase;
+uniform float u_phase_speed;
+uniform float u_drift;
+uniform float u_drift_speed;
+uniform float u_symmetry_motion;
+uniform float u_domain_warp;
+uniform float u_domain_swirl;
+uniform float u_domain_tunnel;
+uniform float u_domain_kaleido;
+uniform float u_domain_noise;
+uniform float u_color_mode;
+uniform float u_palette;
+uniform float u_color_speed;
+uniform float u_edge_gain;
+uniform float u_glow;
+uniform float u_brightness;
+uniform float u_contrast;
+
+// MODE_ANALYTIC_WEIERSTRASS MODE_ANALYTIC_BLASCHKE MODE_ANALYTIC_CONTINUED_FRACTION
+// MODE_ANALYTIC_QUASICRYSTAL MODE_ANALYTIC_CYMATIC MODE_ANALYTIC_PENTAGRID
+// MODE_ANALYTIC_CORTICAL MODE_ANALYTIC_GAUSSIAN_PRIME MODE_ANALYTIC_QUANTUM_ORBITAL
+// MODE_ANALYTIC_VORTEX_LATTICE MODE_ANALYTIC_ARNOLD_TONGUE MODE_ANALYTIC_MODULAR_FAREY
+
+struct FieldHit {
+    float value;
+    float phaseValue;
+    float magnitude;
+    float edge;
+};
+
+float tau() { return 6.28318530718; }
+
+float modeValue() {
+    return clamp(floor(u_field_mode + 0.5), 0.0, 11.0);
+}
+
+float localPhase() {
+    return u_phase * tau() + seedPhase() * 0.07;
+}
+
+vec2 cmul(vec2 a, vec2 b) {
+    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
+}
+
+vec2 cdiv(vec2 a, vec2 b) {
+    float d = max(dot(b, b), 0.000001);
+    return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / d;
+}
+
+vec2 cinv(vec2 z) {
+    return cdiv(vec2(1.0, 0.0), z);
+}
+
+vec3 labPalette(float x, float pal) {
+    x = fract(x);
+    if (pal > 4.5) return psyLutLinear(x);
+    if (pal < 0.5) return neon(x);
+    if (pal < 1.5) return palette(x, vec3(0.18,0.11,0.04), vec3(0.72,0.42,0.18), vec3(0.95,0.70,0.34), vec3(0.02,0.20,0.45));
+    if (pal < 2.5) return palette(x, vec3(0.04,0.17,0.25), vec3(0.24,0.62,0.70), vec3(0.45,0.86,1.00), vec3(0.52,0.18,0.08));
+    if (pal < 3.5) return palette(x, vec3(0.20,0.08,0.32), vec3(0.55,0.34,0.68), vec3(0.92,0.68,0.30), vec3(0.08,0.35,0.62));
+    return palette(x, vec3(0.06,0.20,0.22), vec3(0.28,0.76,0.70), vec3(1.00,0.45,0.36), vec3(0.10,0.38,0.62));
+}
+
+vec2 warpDomain(vec2 p, float t) {
+    float n = snoise(vec3(p * (1.4 + u_lattice * 0.16), t * 0.12));
+    p += u_domain_noise * 0.12 * vec2(n, snoise(vec3(p.yx * 1.7, t * 0.13 + 4.2)));
+
+    float r = length(p);
+    p = rot2(u_domain_swirl * sin(r * (2.0 + u_detail) - t * 0.45)) * p;
+
+    if (u_domain_tunnel > 0.001) {
+        vec2 polar = vec2(log(max(r, 0.0001)), atan(p.y, p.x));
+        polar += vec2(sin(t * 0.10), t * 0.035) * u_domain_tunnel;
+        vec2 tunnelP = vec2(cos(polar.y), sin(polar.y)) * exp(polar.x);
+        p = mix(p, tunnelP, clamp(u_domain_tunnel * 0.42, 0.0, 0.72));
+    }
+
+    if (u_domain_kaleido > 0.001) {
+        float sides = floor(3.0 + u_domain_kaleido * 9.0 + 0.5);
+        float sector = tau() / max(sides, 3.0);
+        float a = atan(p.y, p.x);
+        a = abs(mod(a + sector * 0.5, sector) - sector * 0.5);
+        vec2 folded = vec2(cos(a), sin(a)) * length(p);
+        p = mix(p, folded, clamp(u_domain_kaleido, 0.0, 1.0));
+    }
+
+    p += u_domain_warp * 0.10 * vec2(
+        sin(p.y * (2.0 + u_lattice) + t * 0.7),
+        cos(p.x * (1.8 + u_lattice * 0.7) - t * 0.63)
+    );
+    return p;
+}
+
+float contourEdge(float v, float freq) {
+    float c = abs(fract(v * freq) - 0.5);
+    return exp(-c * 10.0 * u_edge_gain);
+}
+
+FieldHit packField(float value, float phaseValue, float magnitude, float edge) {
+    return FieldHit(value, phaseValue, clamp(magnitude, 0.0, 40.0), clamp(edge, 0.0, 4.0));
+}
+
+FieldHit weierstrassField(vec2 p, float t) {
+    vec2 z = vec2(0.0);
+    float amp = 0.58;
+    float count = clamp(floor(u_count + 0.5), 3.0, 18.0);
+    for (int i = 0; i < 18; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        float k = pow(1.58 + u_detail * 0.24, fi);
+        float a = k * (p.x * cos(fi) + p.y * sin(fi * 1.7)) + t * (0.45 + fi * 0.06);
+        z += vec2(cos(a), sin(a * 1.13 + fi)) * amp;
+        amp *= 0.62;
+    }
+    float m = length(z);
+    float ph = atan(z.y, z.x);
+    return packField(m, ph, m, contourEdge(m + ph * 0.11, 5.0 + u_detail * 5.0));
+}
+
+FieldHit blaschkeField(vec2 p, float t) {
+    vec2 z = p * 0.52;
+    vec2 w = vec2(1.0, 0.0);
+    float count = clamp(floor(u_count + 0.5), 3.0, 14.0);
+    for (int i = 0; i < 14; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        float a = tau() * (fi / count) + t * (0.10 + 0.015 * fi) + localPhase();
+        float rad = 0.34 + 0.22 * sin(t * 0.17 + fi * 1.37 + u_lattice);
+        vec2 c = vec2(cos(a), sin(a)) * rad;
+        vec2 num = z - c;
+        vec2 den = vec2(1.0, 0.0) - cmul(vec2(c.x, -c.y), z);
+        w = cmul(w, cdiv(num, den));
+    }
+    float m = length(w);
+    float ph = atan(w.y, w.x);
+    return packField(m, ph, m, contourEdge(ph / tau() + m, 8.0 + count));
+}
+
+FieldHit continuedFractionField(vec2 p, float t) {
+    vec2 z = p;
+    float acc = 0.0;
+    float count = clamp(floor(u_count + 0.5), 4.0, 20.0);
+    for (int i = 0; i < 20; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        vec2 c = vec2(sin(t * 0.18 + fi), cos(t * 0.15 + fi * 1.31)) * (0.16 + 0.04 * u_detail);
+        z = cinv(z + c + vec2(0.45 + 0.04 * sin(fi + t), 0.24 * cos(fi * 0.8)));
+        z = clamp(z, vec2(-8.0), vec2(8.0));
+        acc += exp(-abs(length(z) - 0.74) * (2.0 + u_detail));
+    }
+    float m = length(z) + acc / count;
+    float ph = atan(z.y, z.x) + acc * 0.15;
+    return packField(acc, ph, m, contourEdge(m, 7.0 + u_lattice));
+}
+
+FieldHit quasicrystalField(vec2 p, float t) {
+    float count = clamp(floor(u_count + 0.5), 5.0, 18.0);
+    float sum = 0.0;
+    vec2 grad = vec2(0.0);
+    for (int i = 0; i < 18; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        float a = tau() * fi / count + sin(t * 0.08 + fi) * u_symmetry_motion * 0.18;
+        vec2 dir = vec2(cos(a), sin(a));
+        float wave = cos(dot(p, dir) * (u_lattice + u_detail * 1.4) + t * (0.55 + fi * 0.03));
+        sum += wave;
+        grad += dir * sin(dot(p, dir) * u_lattice + t) * 0.12;
+    }
+    float v = sum / count;
+    return packField(v, atan(grad.y, grad.x), abs(v), contourEdge(v, 5.0 + u_detail * 7.0));
+}
+
+FieldHit cymaticField(vec2 p, float t) {
+    float n = floor(2.0 + mod(u_count, 9.0));
+    float m = floor(3.0 + mod(u_lattice + u_detail * 2.0, 10.0));
+    float a = sin(p.x * n + t * 0.70) * sin(p.y * m - t * 0.42);
+    float b = sin(length(p) * (n + m) * 0.72 - t * 0.88);
+    float v = a + b * 0.55;
+    float edge = exp(-abs(v) * (4.5 + u_edge_gain * 2.0));
+    return packField(v, atan(a, b), abs(v), edge);
+}
+
+FieldHit pentagridField(vec2 p, float t) {
+    float sum = 0.0;
+    float edge = 0.0;
+    for (int i = 0; i < 5; i++) {
+        float fi = float(i);
+        float a = tau() * fi / 5.0 + u_symmetry_motion * 0.18 * sin(t * 0.18 + fi);
+        vec2 dir = vec2(cos(a), sin(a));
+        float stripe = dot(p, dir) * u_lattice + t * (0.18 + fi * 0.03);
+        float cell = abs(fract(stripe) - 0.5);
+        sum += sin(stripe * tau());
+        edge += exp(-cell * (14.0 + u_edge_gain * 5.0));
+    }
+    float v = sum / 5.0;
+    return packField(v, atan(p.y, p.x) + edge * 0.03, abs(v) + edge * 0.08, edge / 5.0);
+}
+
+FieldHit corticalField(vec2 p, float t) {
+    float r = max(length(p), 0.0001);
+    float a = atan(p.y, p.x);
+    vec2 q = vec2(log(r), a);
+    float rings = sin(q.x * (5.0 + u_lattice) - t * 0.72);
+    float spokes = sin(q.y * (4.0 + floor(u_count * 0.6)) + q.x * u_detail * 2.2 + t * 0.48);
+    float v = rings + spokes * 0.72 + sin((q.x + q.y) * 3.0 + t) * 0.28;
+    return packField(v, a, abs(v), contourEdge(v, 4.0 + u_detail * 8.0));
+}
+
+FieldHit gaussianPrimeField(vec2 p, float t) {
+    vec2 q = p * u_lattice;
+    vec2 g = floor(q + 0.5);
+    vec2 f = q - g;
+    float r2 = dot(g, g);
+    float axis = step(abs(g.x), 0.5) + step(abs(g.y), 0.5);
+    float primeWave = 0.5 + 0.5 * sin(r2 * 2.399 + g.x * 5.17 + g.y * 3.31);
+    float primeMask = smoothstep(0.54, 0.92, primeWave);
+    float axisMask = axis > 0.5 ? smoothstep(0.35, 0.92, 0.5 + 0.5 * sin((abs(g.x + g.y) + 1.0) * 4.91)) : primeMask;
+    float dotField = exp(-dot(f, f) * (9.0 + u_detail * 8.0)) * axisMask;
+    float halo = sin(sqrt(max(r2, 0.0)) * 2.2 - t * 0.55) * 0.5 + 0.5;
+    float v = dotField + halo * 0.25;
+    return packField(v, atan(g.y + f.y, g.x + f.x), v, dotField + contourEdge(halo, 6.0));
+}
+
+FieldHit quantumOrbitalField(vec2 p, float t) {
+    float r = length(p);
+    float a = atan(p.y, p.x);
+    float n = floor(2.0 + mod(u_count, 7.0));
+    float radial = exp(-r * (0.8 + u_detail * 0.3)) * abs(sin(r * (n + u_lattice) - t * 0.55));
+    float angular = abs(cos(a * n + t * (0.35 + u_symmetry_motion * 0.25)));
+    float beat = 0.5 + 0.5 * sin((p.x * p.x - p.y * p.y) * u_lattice + t * 0.72);
+    float v = radial * (0.35 + angular) + beat * 0.28;
+    return packField(v, a * n + t, v, contourEdge(v, 9.0 + u_detail * 3.0));
+}
+
+FieldHit vortexLatticeField(vec2 p, float t) {
+    float count = clamp(floor(u_count + 0.5), 5.0, 18.0);
+    float phaseSum = 0.0;
+    float mag = 0.0;
+    for (int i = 0; i < 18; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        vec2 cell = vec2(mod(fi, 6.0) - 2.5, floor(fi / 6.0) - 1.0) * (0.34 + 0.04 * u_lattice);
+        cell += vec2(sin(t * 0.22 + fi), cos(t * 0.19 + fi * 1.7)) * 0.10 * u_drift;
+        vec2 d = p - cell;
+        float inv = 1.0 / max(dot(d, d), 0.006);
+        phaseSum += atan(d.y, d.x) * (mod(fi, 2.0) < 0.5 ? 1.0 : -1.0);
+        mag += inv * 0.015;
+    }
+    float v = sin(phaseSum + t * 0.35);
+    return packField(v, phaseSum, mag, contourEdge(mag + v, 7.0 + u_detail * 4.0));
+}
+
+FieldHit arnoldTongueField(vec2 p, float t) {
+    float theta = p.x * 2.2 + localPhase();
+    float omega = p.y * u_lattice + sin(t * 0.25) * 0.4;
+    float k = 0.45 + u_detail * 0.35;
+    float count = clamp(floor(u_count + 0.5), 5.0, 18.0);
+    float lock = 0.0;
+    for (int i = 0; i < 18; i++) {
+        if (float(i) >= count) break;
+        theta += omega - k * sin(theta) + 0.04 * sin(t + float(i));
+        lock += cos(theta * (1.0 + mod(float(i), 3.0)));
+    }
+    float v = lock / count;
+    float edge = exp(-abs(sin(theta) - sin(omega)) * (3.0 + u_edge_gain * 4.0));
+    return packField(v, theta, abs(v), edge);
+}
+
+FieldHit modularFareyField(vec2 p, float t) {
+    vec2 z = p * 0.72 + vec2(0.18 * sin(t * 0.16), 0.18 * cos(t * 0.14));
+    float acc = 0.0;
+    float count = clamp(floor(u_count + 0.5), 5.0, 18.0);
+    for (int i = 0; i < 18; i++) {
+        if (float(i) >= count) break;
+        float fi = float(i);
+        z = abs(fract(z * (1.18 + 0.04 * u_lattice) + vec2(0.5)) - 0.5);
+        z = cinv(z + vec2(0.42 + 0.02 * fi, 0.28 + 0.03 * sin(t + fi)));
+        z = clamp(z, vec2(-8.0), vec2(8.0));
+        acc += exp(-abs(z.x - z.y) * (1.0 + u_detail));
+    }
+    float m = length(z) + acc / count;
+    float ph = atan(z.y, z.x);
+    return packField(acc / count, ph, m, contourEdge(m, 5.0 + u_lattice));
+}
+
+FieldHit fieldForMode(vec2 p, float t) {
+    float m = modeValue();
+    if (m < 0.5) return weierstrassField(p, t);
+    if (m < 1.5) return blaschkeField(p, t);
+    if (m < 2.5) return continuedFractionField(p, t);
+    if (m < 3.5) return quasicrystalField(p, t);
+    if (m < 4.5) return cymaticField(p, t);
+    if (m < 5.5) return pentagridField(p, t);
+    if (m < 6.5) return corticalField(p, t);
+    if (m < 7.5) return gaussianPrimeField(p, t);
+    if (m < 8.5) return quantumOrbitalField(p, t);
+    if (m < 9.5) return vortexLatticeField(p, t);
+    if (m < 10.5) return arnoldTongueField(p, t);
+    return modularFareyField(p, t);
+}
+
+vec3 colorize(FieldHit hit, vec2 p, float t) {
+    float mode = floor(u_color_mode + 0.5);
+    float phaseNorm = hit.phaseValue / tau();
+    float contour = contourEdge(hit.value + hit.magnitude * 0.13, 5.0 + u_detail * 5.0);
+    float colorValue = phaseNorm + hit.value * 0.16 + t * u_color_speed * 0.035;
+    if (mode < 0.5) {
+        colorValue = phaseNorm + t * u_color_speed * 0.04;
+    } else if (mode < 1.5) {
+        colorValue = log(1.0 + hit.magnitude) * 0.42 + t * u_color_speed * 0.03;
+    } else if (mode < 2.5) {
+        colorValue = contour * 0.6 + hit.value * 0.2 + t * u_color_speed * 0.035;
+    } else if (mode < 3.5) {
+        colorValue = hit.edge * 0.55 + phaseNorm * 0.45 + t * u_color_speed * 0.03;
+    } else {
+        colorValue = phaseNorm + hit.edge * 0.26 + log(1.0 + hit.magnitude) * 0.24 + t * u_color_speed * 0.035;
+    }
+    vec3 col = labPalette(colorValue, u_palette);
+    float line = clamp(max(hit.edge, contour) * u_edge_gain, 0.0, 1.6);
+    float shade = 0.42 + 0.45 * smoothstep(0.0, 1.6, hit.magnitude) + 0.35 * line;
+    col *= shade;
+    col += labPalette(colorValue + 0.18, u_palette) * line * u_glow * 0.36;
+    col += labPalette(length(p) * 0.18 - t * 0.02, u_palette) * u_glow * 0.05;
+    col = (col - 0.5) * u_contrast + 0.5;
+    col *= u_brightness;
+    return psyGamma(psyTonemap(col));
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - u_resolution * 0.5) / min(u_resolution.x, u_resolution.y);
+    float t = u_time * u_phase_speed + localPhase();
+    float viewZoom = psyViewZoom(u_time);
+    vec2 p = uv * max(u_scale, 0.05) / max(viewZoom, 0.05);
+    p = rot2(u_global_rotation + sin(t * 0.11) * u_symmetry_motion * 0.12) * p;
+    p += vec2(sin(u_time * u_drift_speed + localPhase()), cos(u_time * (u_drift_speed * 0.83) - localPhase())) * u_drift * 0.16;
+    p = warpDomain(p, t);
+
+    FieldHit hit = fieldForMode(p, t);
+    vec3 col = colorize(hit, p, t);
+    float vignette = smoothstep(1.72, 0.18, length(uv));
+    FRAG_OUT = vec4(col * (0.70 + 0.30 * vignette), 1.0);
+}
+`})})(),{}}export{l as default};

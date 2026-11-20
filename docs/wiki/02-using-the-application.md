@@ -9,7 +9,9 @@ quality, and **Back up my data** require v0.1.9 or newer. The sound meter in
 the player bar and the **Tuner card size** setting require v0.1.10 or newer.
 The **Visualizer** tab, **Add as: Auto**, **Move to bottom**, **Remove all
 favorites** and the list of pictures that were not used require v0.1.11 or
-newer.
+newer. Starred songs, **Rename** for favorites, dragging favorites in **My
+order**, `.json` and `.csv` import, **Pick the best stream** and **Processor
+use** require v0.1.12 or newer.
 
 ## Window layout
 
@@ -36,7 +38,8 @@ The speaker button shows a crossed-out speaker when the sound is muted or the
 volume is at zero. Point at the volume slider to see the volume as a
 percentage: it starts at 80%, and 100% is full volume (there is no boost).
 When a radio station sends the title of its current song, the bar shows it
-under the station name with a note sign; see **Song log** below.
+under the station name with a note sign, and a star beside it stars that song;
+see **Song log** below.
 
 The **sound meter** is a row of small LED-style bars beside **EQ** that move
 with the sound, so you can see that a station is really playing. It has 14 bars,
@@ -44,7 +47,7 @@ from the lows on the left (about 40 Hz) to the highs on the right (about
 16 kHz), and each bar keeps a falling peak segment. It only reads the sound and
 never changes what you hear. It rests, with flat bars, while playback is
 paused or stopped and while the sound is muted or the volume is at zero, and it
-slows to about one update a second while the window is minimised. In a wide window it sits at the start of the
+slows to about one update a second while the window is minimized. In a wide window it sits at the start of the
 progress row and is left out when that row is too short; in a window up to
 1000 px wide it sits at the end of the button row. Turn it off with **Settings >
 Appearance > Sound meter in the player bar**. It also stays off when Windows is
@@ -124,9 +127,12 @@ all enabled sources, so rapidly switching tabs cannot wipe the catalog.
 3. Click **Add link**, paste the URL, optionally enter a name, and click **Add**.
    Leave **Single channel** selected for a direct stream (including HLS `.m3u8`
    or DASH `.mpd`). Choose **Online playlist** to fetch a list of channels
-   (M3U, PLS or XSPF). To use a local file instead, click **Import playlist** and
-   select the file, or drop the `.m3u`, `.m3u8`, `.pls` or `.xspf` file anywhere
-   on the window. A drop opens My
+   (M3U, PLS, XSPF, JSON or CSV). To use a local file instead, click **Import playlist** and
+   select the file, or drop the `.m3u`, `.m3u8`, `.pls`, `.xspf`, `.json` or `.csv` file anywhere
+   on the window. A JSON or CSV list needs a `url` for each station (a CSV file
+   starts with a header row such as `name,url`); `name`, `logo`, `group` and
+   `type` (radio or tv) are used when given. A Radio Browser JSON export works
+   as it is. A drop opens My
    Playlists and shows the result; dropped on the Tuner, new channels are added
    as the band the dial is on.
 4. Choose that playlist (or **All playlists**), search titles/groups, or press
@@ -173,6 +179,25 @@ why. A wholly invalid list is rejected. Two entries with the same address and ty
 their names are the same too. With different names both are kept. Channel IDs
 stay stable when only their display names change.
 
+**JSON and CSV lists.** A JSON list is a list of stations, or an object that
+holds one under `stations` or `channels` (`items`, `entries`, `playlist`,
+`tracks` and `streams` work too). Each station is an object with at least a
+stream address (`url`; `url_resolved`, `stream_url` and similar names are read
+too), or just the address as text. A CSV list starts with a header row that
+names its columns, separated by commas, semicolons or tabs, and one column must
+be the stream address (`url`). Columns for the name (`name` or `title`), the
+picture (`logo`, `favicon` or `image`), the group (`group`, `category` or
+`genre`), the type (`type` with radio or tv, or `radio` with true or false),
+`country` and `language` are used when they are there. Capital letters do not
+matter, and a space in a column name counts as `_`, so `Stream URL` is read as
+`stream_url`. A CSV list without a header row is read too when its first row
+holds a web address: that column is the stream address and the first other
+column the name. Like PLS and XSPF, JSON and CSV lists are kept as M3U, so older
+versions of World Media can still read them. When a file cannot be read, the
+message says why and what to do (for example, that a CSV list has no column
+for the stream address and one column must be named `url`), and for a broken
+file near which line.
+
 Importing the same filename replaces that saved playlist after confirmation.
 A channel's ID is made from its type and address. So when you import a
 playlist again and a channel has changed between radio and TV (for example
@@ -204,8 +229,8 @@ channel list; use **Add link → Single channel** for its public URL. Logos and 
 use the same defended relays as built-in sources. Import does not grant any
 viewing or recording rights; provider terms and availability still apply.
 
-Files and online playlist responses are limited to 8 MiB and the saved playlist
-document to 64 MiB, with a
+Files and online playlist responses are limited to 8 MiB, a JSON or CSV list
+to 50,000 entries, and the saved playlist document to 64 MiB, with a
 visible error before saving if exceeded. These are input/storage safeguards,
 not limits on the continuously collected public catalog or mounted-card window.
 
@@ -227,7 +252,7 @@ including sessions well above 40,000 items.
 Each card can contain artwork, title, source, year/country, license, and a star.
 Artwork is lazy: the first visible/nearby cards are prioritized and off-screen
 cards wait for the viewport. An item without artwork shows its initials on a
-coloured square (the same colour every time); a logo that fails can be retried
+colored square (the same color every time); a logo that fails can be retried
 without affecting the catalog item. Source badges and license notes are shown
 when technical source details are switched on. Channels from your own
 playlists show no license note: the same "See provider terms" on every card
@@ -247,9 +272,13 @@ Radio Browser stations also show the stream format and bitrate the directory
 lists, for example "MP3 · 128 kbps": in the detail panel, on the card when
 technical source details are on, and in the player bar's tooltip. Their detail
 panel has an **Other streams** button that lists other Radio Browser entries for
-the same station (same name and same homepage) with a **Play** button each;
-nothing is switched for you, and a station without a homepage lists stations
-with the same name, which may be different stations. Items from your own
+the same station (same name and same homepage) with a **Play** button each.
+A station without a homepage lists stations with the same name, which may be
+different stations. **Pick the best stream** set to **Auto (verified)** (see
+Content below) uses one of these entries on its own only after it passed every
+check, which takes two checks a few minutes apart that each find both streams
+playing the same song (a different song each time), so it works only for a
+station that announces song titles; same-name-only entries are never used. Items from your own
 playlists have no station id, so the button is not offered for them.
 
 Click the star on a card, detail panel, or player bar to add/remove a favorite.
@@ -262,18 +291,49 @@ resolved again on a later launch.
 In **Favorites**, the **Sort** buttons choose how the list is shown.
 
 - **My order** is your own order. New favorites go to the top. Each card has
-  four small buttons: move to the top, move up, move down, and **Move to
-  bottom**. A button that cannot move the card, such as move up on the first
-  card, does nothing. When a type button, a category or the search box is
-  hiding some favorites, up and down swap the card with the next favorite you
-  can see, and the top and bottom buttons put the card before or after all the
-  others.
+  four small buttons in a 2 x 2 block: **Move to top**, **Move up**, **Move
+  down** and **Move to bottom**. A button that cannot move the card, such as
+  **Move up** on the first card, does nothing. When a type button, a category
+  or the search box is hiding some favorites, up and down swap the card with
+  the next favorite you can see, and the top and bottom buttons put the card
+  before or after all the others.
+- In **My order** you can also drag a card with the mouse and drop it on
+  another card: dropped toward its top left, it goes before that card; toward
+  its bottom right, after it. A colored edge on the top and left, or on the
+  bottom and right, of that card shows where it will go. With a type button,
+  a category or the search box hiding some favorites, only the cards you can
+  see change places; the hidden ones keep theirs.
+  Dragging a playlist file onto the window is never taken for a move. The
+  **Move** buttons do the same from the keyboard.
 - **A-Z** sorts by name, and numbers count as numbers, so "Radio 2" comes
   before "Radio 10". It only changes how the list is shown. Your own order is
   kept, and **My order** brings it back exactly.
 
 The Tuner's **★ My favorites** source and its category sources follow the same
 choice. It is saved with your settings.
+
+With **Settings > Appearance > Show technical source details** on, the cards
+in **My order** are a little wider, so the source badge fits whole beside the
+**Move** buttons.
+
+### Rename a station
+
+Open a favorite's detail panel and press **Rename** to give it a name of your
+own, up to 80 characters. Type the name and press **Save** (or Enter);
+**Cancel** or Escape closes the form without a change. Leaving the name empty
+brings back the original name, and so does **Use original name**, which the
+panel shows once a favorite has a name of your own. The panel also shows
+"Original name:" with the station's own name.
+
+The new name is shown everywhere that favorite is: the Library cards, the
+Tuner's dial and cards, the player bar, the song log and starred songs (for
+songs heard from then on), and the favorites `.m3u8` files in a backup.
+**A-Z** sorts by it, and the Favorites search finds a renamed favorite by
+either name. A station picture named after the station's own name still
+belongs to it; without one, a picture named after the new name is used.
+Lookups in the station directory, such as **Other streams**,
+always use the station's own name. Rename works for any favorite, radio or TV.
+Only favorites can be renamed; remove the favorite and its name goes too.
 
 ### Favorites categories
 
@@ -350,18 +410,19 @@ The dial shows the selected station's place in the current list ("12 of 80"),
 not a broadcast frequency. Starred stations are marked with ★ in the station
 strip and on the dial, and the strip keeps the current station in view. The
 strip can always scroll so that any station, including the first and the last,
-sits in the centre. When the mouse is over a dial that the wheel can turn, the
+sits in the center. When the mouse is over a dial that the wheel can turn, the
 dial glows softly; a dial with one station does not.
 The knob's marker rests at the same angle for the same station, with the first
 station at the top. With a single station on the dial, the dial does not turn.
 The knob shows only the station's name; its source (for example "My Playlist")
-is on the station's card in the strip below.
+is on the station's card in the strip below. A name too long for the knob is
+cut short with an ellipsis and shows in full when the pointer rests on it.
 
 **Settings > Appearance > Tuner card size** sets the size of the station cards
 in the strip: **Small** (the default, text only, as in earlier versions),
 **Medium** or **Large**. Medium and Large cards have bigger names and show the
 station's picture: your own station picture if you have one, otherwise the
-station's logo, otherwise its initials on a coloured square. Pictures load only
+station's logo, otherwise its initials on a colored square. Pictures load only
 for the cards you can see, and only after the strip has stopped moving, so
 turning the dial quickly through many stations asks for nothing until it
 rests. Bigger cards leave less room for the dial in a short window; when the
@@ -373,7 +434,10 @@ the first play. Before anything has played, the Tuner keeps the player bar's
 room free.
 Stations appear as each live source answers; a source
 that does not answer within 20 seconds is marked unavailable instead of holding
-the dial on "Loading". Tuner reuses the live adapter/snapshot lane and
+the dial on "Loading". If the dial stays empty because a source did not answer,
+it says "The stations could not be loaded. Press Radio or TV above to try
+again." (since v0.1.12; before, it said "No stations found for this
+country."). Tuner reuses the live adapter/snapshot lane and
 content-rating preference.
 
 ## Discovery
@@ -391,7 +455,7 @@ time; it is a fresh candidate selection from current provider data.
 ## Visualizer
 
 The Visualizer shows pictures that move with the sound of whatever is playing:
-71 scenes, post effects, overlays, a shuffle, and favourites of its own. It
+99 scenes, post effects, overlays, a shuffle, and favorites of its own. It
 shows moving, flashing pictures, so a notice about photosensitivity comes first.
 It loads only when you open the tab and costs nothing while the tab is closed.
 It has its own page: [Visualizer](09-visualizer.md).
@@ -400,9 +464,10 @@ It has its own page: [Visualizer](09-visualizer.md).
 
 About is a static reference page. It lists the ten sources, their media types,
 capabilities, home links, rights notes, privacy guarantees, app version, hls.js
-and dash.js notices, the **Visualizer credits** for the shader code the
-Visualizer borrows, and optional FFmpeg licensing information. The counts on
-About are descriptive; live counts belong to Library.
+and dash.js notices, a **Processor use** section that explains the levels of
+that setting (see **Processor use** below), the **Visualizer credits** for the
+shader code the Visualizer borrows, and optional FFmpeg licensing information.
+The counts on About are descriptive; live counts belong to Library.
 
 ## Settings
 
@@ -425,7 +490,7 @@ restart; the local server port is explicitly marked **for next launch**.
 
 The native title bar starts in the saved theme and follows theme changes
 immediately, including on Windows 10 (where only its dark/light mode can be
-set, not the exact palette colour).
+set, not the exact palette color).
 
 ### Content
 
@@ -435,6 +500,121 @@ does not relax URL validation, redirect checks, private-network blocking,
 malformed-schema rejection, or Owncast verification. Turning it off hides
 marked items everywhere while keeping saved favorites as non-revealing
 placeholders.
+
+**Pick the best stream** has three choices: **Off**, **Listed streams** (the
+default) and **Auto (verified)**. With **Listed streams**, when a station or channel lists
+several streams, the best listed one is tried first: for TV the largest picture
+size (1080p before 720p); for radio the highest bitrate up to 320 kbps, and at
+equal bitrate Opus or AAC before MP3. Lossless streams are tried last. If the
+best stream does not connect, the next one is tried, and the station's own
+stream always keeps a place in the list. The best stream gets six seconds on
+its own; if it has not started by then (or fails sooner), the next one is tried
+as well and whichever starts first plays. A stream can also connect and then
+never begin (its list of parts answers, its sound or picture does not): then
+the streams not tried yet get their turn, in the same order, as soon as the
+player gives up on it and at the latest 30 seconds after it connected. A stream
+that has begun (it started playing and moved on) is not cut off at 30 seconds:
+it gets 10 seconds from when it started to play one full second, and only if
+it does not is the next stream tried. Once it has played a full second, a later
+interruption is handled by the player's usual reconnecting, not by trying other
+streams.
+**Off** works as in earlier versions: the first two listed streams are tried
+together and the first to answer plays; the others are tried only if both fail.
+Playing never changes the address a favorite is saved with.
+
+**Auto (verified)** does the same and, for a Radio Browser station, may also
+use another directory entry of the same station, but only when there is
+evidence that it is the same station and really better. It never delays a
+start and never looks anything up before one. After a station has played for
+about 45 seconds (counted from when its sound starts, not from when it
+connected), a check runs in the background:
+
+- the entry must have the same name, the same homepage, the same country (both
+  must give one) and a stream address on the same site as the station's own
+  stream (on shared hosting such as github.io, the very same host). This only
+  narrows the choice; the content check below is what proves it is the same
+  program. An https station is never moved to plain http;
+- the directory's own last check of the entry must have passed, and the entry
+  must have been unchanged for at least 30 days, with some votes or plays;
+- both streams are then opened briefly (at most 8 seconds in all, a limited
+  amount of data, one check at a time). Both must say their format and
+  bitrate, the other stream's must be what the directory lists and better than
+  the station's own, neither may be redirected from https to plain http or off
+  the station's site, both must give the same station name, and both must be
+  playing the same song: a title of the form "Artist - Title" that is not the
+  station's name, an advert or a jingle.
+
+One match is not enough: a second check, a few minutes later in the same
+listening (or at a later play), must find both streams on the same song again,
+and a different song from the first time. Only then is the stream verified. At
+most two checks run per station a week. Pausing, changing station, or
+switching **Pick the best stream** to **Listed streams** or **Off** stops a
+check on its way, and nothing from it is kept; after a pause, the next check
+waits again for about 45 seconds of playing. If the station directory does not answer the lookup in
+time, that is not taken as a finding: the check is tried again after 30
+minutes.
+
+A station that does not announce song titles could not be verified and keeps
+its own stream. A verified stream is used from the next start of that station
+for a week; a failed check is not repeated for a day. Once a stream is
+verified, the station's detail panel says so at once, for example **Better
+stream: 320 kbps MP3, verified. It is used from the next start.**, and offers
+**Use the station's own stream**: choosing it then keeps the station on its own
+stream, and nothing restarts. While the verified stream plays, the player
+bar's tooltip and the detail panel say **Better stream: 320 kbps MP3,
+verified**, and the same button goes back to the station's own stream at once.
+The choice is remembered for that station (also in a backup). If the verified
+stream does not connect, or is redirected to plain http, the station's own
+stream plays at once and the verified one is not tried or checked again for a
+day; the same happens if it connects but does not play. **Clear cache**
+forgets all check results; the stations you keep on their own stream stay.
+
+With **Auto (verified)**, the detail panel of a Radio Browser station has one
+quiet line under the stream details that says what the checks know so far:
+**Better stream: checking...** (while this station plays and a check is
+planned), **one match so far, checking again later**, **none found**, **could
+not be verified (this station sends no song titles)**, **could not be
+verified**, or the verified stream. It changes as the checks go, also while
+the panel is open. With **Listed streams** or **Off** the line is not shown.
+
+### Processor use
+
+**Processor use** sets how much of the computer the Visualizer may use. It
+changes nothing while the Visualizer is not playing.
+
+- **Low (default):** the app works as it always has. The Visualizer lowers its
+  picture quality when the computer cannot keep up and does not raise it again
+  by itself, and the app does not check how busy the processor is. A picture
+  drawn without a graphics card starts at Low quality.
+- **Balanced** and **High:** the Visualizer may use more of the processor, up
+  to the **Limit**, a share of the whole processor (all cores together). The
+  limit starts at 40% for Balanced and 60% for High; you can set it from 2% to
+  80%. It is kept in whole percent, a number outside that range is set to the
+  nearest end, and "The limit is from 2% to 80%." shows under **Limit** for a few seconds.
+  Choosing a level puts the limit back to that level's start. While the
+  Visualizer plays, the app checks every few seconds how much of the
+  processor it and its window use. Over the limit for a few seconds,
+  the picture quality steps down; with plenty of room for a while, it steps back
+  up, slowly. Without a graphics card, pictures start at the quality you chose
+  instead of Low. In the Visualizer's shuffle, the default **Scenes** choice
+  takes heavy scenes too. The Visualizer's **Quality** offers **Very high**
+  too; it is sharper than High only where the picture is bigger than High
+  draws at every pixel (a little over a full 1920 x 1080 screen), such as on a
+  2560 x 1440 screen. At **High**, the simulations Curl-Noise Silk, Fluid Ink
+  and Physarum start at a larger size when **Quality** is High or Very high.
+  No level shows more effects or overlays at once: it stays at three of each.
+
+With a graphics card the Visualizer usually needs only a small share of the
+processor, so the limit matters most on computers without one or with few
+cores.
+
+The limit is a target the app steers by, not a hard cap: playing the sound is
+never held back to meet it. At the higher levels the computer may get warmer
+and its fans louder, a laptop's battery may last less, and other programs may
+slow down. The flash and brightness safety limits of the Visualizer are the
+same at every level. At **Low** the **Limit** box is off. **What this means**
+opens the same explanation on the About page. To go back, choose **Low**; it
+takes effect at once.
 
 ### Local server
 
@@ -484,8 +664,10 @@ The ZIP contains:
   each time you play them) cannot go in these files; the README says how many.
 - `WorldMediaWindows-data\state\`: a copy of `playlists.json` (your imported
   playlists) and `profile-preferences.json` (favorites, settings, volume and
-  equalizer curves). Old download history is left out of the copy. When you
-  have a song log, `song-log.json` is copied too.
+  equalizer curves). Old download history is left out of the copy.
+  `profile-preferences-extra.json` (your favorites categories, the names you
+  gave your favorites, and the stations you keep on their own stream),
+  `song-log.json` and `starred-songs.json` are copied too when you have them.
 - `WorldMediaWindows-data\station-images\`: your own station pictures (see
   below), when you have any. Only pictures World Media actually uses are
   copied. If they would push the backup over its 192 MB limit, the ones that
@@ -499,9 +681,9 @@ There is no restore button. To restore by hand, close World Media, copy the
 `WorldMediaWindows-data` folder from the ZIP (it holds `state` and, if you had
 pictures, `station-images`) into the folder that holds `WorldMediaWindows.exe`,
 let it replace files with the same names, and start World Media again. Imported
-playlists come back straight away. Favorites and settings are only taken from
-the backup by a copy of World Media that has none of its own yet, such as a new
-computer or a fresh copy of the app.
+playlists, the song log and starred songs come back straight away. Favorites
+and settings are only taken from the backup by a copy of World Media that has
+none of its own yet, such as a new computer or a fresh copy of the app.
 
 Playlist addresses can contain private links or account tokens, so share a
 backup only with people you trust.
@@ -543,7 +725,7 @@ line says how many pictures were found and why any were ignored, for example
   imported playlists, the detail panel, the player bar, Discovery and the
   Tuner (on Medium and Large cards). If a picture cannot be shown, the
   station's own logo (or its initials) is shown instead.
-- Your picture is always shown whole and centred, never cut off, so a picture
+- Your picture is always shown whole and centered, never cut off, so a picture
   that is not square (a wide logo, for example) keeps its sides. The space
   beside it stays plain.
 - Only plain files directly in the folder are used. Subfolders, shortcuts and
@@ -574,13 +756,15 @@ World Media lists the folder when it starts and again whenever you press
 #### Clear local cache
 
 **Clear local cache** is a reset, not a thumbnail-only cleanup. It removes
-favorites, favorites categories, preferences (the Visualizer's choices and
-favourites are part of them), volume, EQ, and job history from the browser
-profile, empties the song log, and clears catalog/artwork cache records. It
-keeps downloaded media, imported playlists, your station pictures,
-and managed FFmpeg tools. Back up the data directory before using it. If the
-saved copy in your data folder cannot be cleared, Settings stays open and says
-so; press **Clear cache** again before closing World Media.
+favorites, favorites categories, the names you gave your favorites, preferences
+(the Visualizer's choices and favorites are part of them), volume, EQ, job
+history and the results of **Auto (verified)** checks from the browser profile,
+empties the song log and your starred songs, and clears catalog/artwork cache
+records. It keeps downloaded media, imported playlists, your station pictures,
+the stations you keep on their own stream, and managed FFmpeg tools. Back up
+the data directory before using it. If the saved copy in your data folder
+cannot be cleared, Settings stays open and says so; press **Clear cache** again
+before closing World Media.
 
 ## Song log
 
@@ -601,6 +785,32 @@ cache**. Older versions of World Media ignore this file. If the saved log
 cannot be read, World Media starts a new one and keeps the old file in the same
 folder as `song-log-unreadable-<date>-<time>.json` (the newest three are kept;
 backups leave them out).
+
+### Starred songs
+
+Star a song you want to keep: press the star on its row in the **Song log**,
+or the star beside the song on the player bar while it plays. The player bar's
+star shows only while the station announces something that looks like a song;
+a line that is just the station's name, for example, cannot be starred, and
+the log's star for it cannot be pressed (pointing at it says why). Press a
+star again to unstar the song.
+
+The **Song log** and **Starred songs** buttons at the top of the panel switch
+between the two lists. **Starred songs** lists the songs you starred, newest
+first, with the station and the date and time you starred each. Each song has
+**Web** and **YouTube**, which search for it in your browser, **Copy** and
+**Unstar**. **Save as text** writes the list into the downloads folder as
+`WorldMedia-starred-songs-<date>-<time>.txt`, one song a line with its station
+and date; **Save as CSV** writes a spreadsheet file of the same name ending in
+`.csv`, with the columns Song, Station, Date starred and Time starred.
+
+Up to 2,000 songs are kept. Starring one more removes the oldest, and the panel
+says which. Starred songs are kept apart from the song log, in
+`starred-songs.json` in the `WorldMediaWindows-data\state` folder, so **Clear
+log** and the log's limit of 500 songs leave them, and they are included in
+backups. **Clear local cache** empties them. A starred song keeps the station
+name shown when you starred it. If the saved list cannot be read, World Media
+starts a new one, says so, and keeps the old file in the same folder.
 
 ## Sleep timer
 

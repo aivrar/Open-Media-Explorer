@@ -8,8 +8,11 @@ player:
 1. Resolves fresh metadata when a favorite contains an expired relay token.
 2. Refreshes bounded stream candidates when an adapter supports alternates.
 3. Registers the selected upstream through an opaque localhost media relay.
-4. Probes up to two candidates at once (maximum eight candidates per item) and
-   keeps the first working candidate.
+4. Probes the candidates (at most eight per item) and keeps the first working
+   one. How it starts depends on **Settings > Content > Pick the best stream**
+   (see below): with **Listed streams**, the default, the best listed stream
+   gets a head start of six seconds; with **Off**, the first two are tried
+   together.
 5. Attaches audio, direct video, HLS, or DASH to the native WebView media
    element.
 6. Applies the effective global/favorite EQ curve and starts playback.
@@ -21,7 +24,8 @@ API. Local relay IDs are short-lived and are removed from persisted favorites.
 
 - **Play/Pause** toggles the current media. If a stream entered a failed state,
   Play rebuilds the relay and HLS/DASH session instead of calling `play()` on a
-  poisoned element.
+  poisoned element. Since v0.1.12 it also connects again after a stream ended
+  by itself, instead of trying to play the stream that had ended.
 - **Stop** releases the relay, destroys HLS/DASH state, clears media elements,
   hides the player bar, and returns catalog/artwork priority to normal.
 - **Try next** appears for a broken live item when alternate candidates or a
@@ -73,6 +77,12 @@ without any error. If the sound or picture stands still for about 20 seconds
 while it should be playing, World Media treats that as a lost connection and
 reconnects in the same way.
 
+Since v0.1.12 the same is true when the station closes the connection of such
+a stream. Before, the player took that for the end of the stream and stopped,
+showing **Play**. Now it says "Connection lost. Retrying..." and reconnects to
+the same station. A file with a known length that plays to its end is not
+started again.
+
 ### Song title
 
 Many internet radio stations announce the song they are playing. When a
@@ -108,11 +118,41 @@ The detail panel of a Radio Browser station also has an **Other streams**
 button. It lists other Radio Browser entries for the same station (the same
 name, ignoring a trailing hint such as "128k" or "HD", and the same homepage),
 up to 20, each with a **Play** button and its own label. Entries the directory
-marks as broken are left out. Nothing is chosen or switched for you: pick one
-by hand when the first stream sounds poor or does not play. A station without a
-homepage lists stations with the same name, and the list says they may be
-different stations. Items from your own playlists have no **Other streams**
-button. A stream on the list can still be dead at its provider.
+marks as broken are left out. Pick one by hand when the first stream sounds
+poor or does not play. A station without a homepage lists stations with the
+same name, and the list says they may be different stations. Items from your
+own playlists have no **Other streams** button. A stream on the list can still
+be dead at its provider. Only **Pick the best stream** set to **Auto
+(verified)** ever moves a station to one of these entries by itself, as
+described below.
+
+### Pick the best stream
+
+**Settings > Content > Pick the best stream** decides which of a station's
+streams is tried first. It has three choices (the full rules are in [Using the
+application](02-using-the-application.md#content)):
+
+- **Listed streams** (the default): when a station or channel lists several
+  streams, the best one is tried first: for TV the largest picture, for radio
+  the highest bitrate up to 320 kbps, then the more efficient format. The best
+  stream gets six seconds on its own; then, or at once if it fails, the next
+  one is tried as well and whichever starts first plays. A stream that
+  connects but never begins hands over to the streams not tried yet, at the
+  latest 30 seconds after it connected. A stream that has begun gets 10 seconds
+  from when it started to play one full second; after that, an interruption is
+  handled by the reconnecting described above.
+- **Auto (verified):** as **Listed streams**, and for a Radio Browser station
+  also another directory entry of the same station, once background checks
+  have verified that it is the same station and better. Two checks a few
+  minutes apart must each find both streams playing the same song, a different
+  song each time, so only a station that announces song titles can be
+  verified; any other keeps its own stream. A verified stream is used from the
+  next start of that station, with the station's own stream behind it. If it
+  does not play, the station's own stream plays at once.
+- **Off:** as in earlier versions, the first two listed streams are tried
+  together and the first to answer plays.
+
+Playing never changes the address a favorite is saved with.
 
 ### Sound meter
 
@@ -130,7 +170,7 @@ that a quiet station still moves the bars.
   visible. It stops completely (no work at all) while playback is paused or
   stopped, while the sound is muted or the volume is at zero, and when it is
   switched off with **Settings > Appearance > Sound meter in the player bar**.
-  While the window is minimised it slows to about one update a second. It also stays still when
+  While the window is minimized it slows to about one update a second. It also stays still when
   Windows is set to show fewer animations.
 - It shows flat bars when the sound does not go through World Media's local
   relay and audio engine: when a stream has to be played directly because the

@@ -108,11 +108,6 @@ export function getFavoriteGroups() {
   return current().groups.map(({ id, name }) => ({ id, name }));
 }
 
-export function getFavoriteGroup(groupId) {
-  const found = current().groups.find((group) => group.id === groupId);
-  return found ? { id: found.id, name: found.name } : null;
-}
-
 /** The id of the category a favorite is in, or ''. */
 export function favoriteGroupOf(favoriteId) {
   return current().assign.get(favoriteId) || '';

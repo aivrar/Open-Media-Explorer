@@ -18,6 +18,7 @@
 import { emit, getState, normalizeFavoriteItem, STORAGE_KEYS } from './state.js';
 import { EQ_STORAGE_KEY, loadEqState, normalizeEqState } from './eq-store.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupsTextWithNewIds } from './favorite-groups.js';
+import { favoriteNamesTextWithNewIds } from './favorite-names.js';
 import { scheduleProfileHandoff } from './profile-transfer.js';
 import { clearPersistenceFailure } from './persistence-notice.js';
 
@@ -107,6 +108,11 @@ export function moveFavoritesToNewIds(moves, storage = globalThis.localStorage) 
   try { groupsRaw = storage.getItem(STORAGE_KEYS.favoriteGroups); } catch (_) { groupsRaw = null; }
   const groupsNext = favoriteGroupsTextWithNewIds(groupsRaw, ids);
   if (groupsNext !== groupsRaw) writes.push([STORAGE_KEYS.favoriteGroups, groupsNext]);
+  // The user's names for them move with them too.
+  let namesRaw = null;
+  try { namesRaw = storage.getItem(STORAGE_KEYS.favoriteNames); } catch (_) { namesRaw = null; }
+  const namesNext = favoriteNamesTextWithNewIds(namesRaw, ids);
+  if (namesNext !== namesRaw) writes.push([STORAGE_KEYS.favoriteNames, namesNext]);
 
   const currentId = state.currentItem?.id;
   const playingMoved = Boolean(currentId) && ids.has(currentId);

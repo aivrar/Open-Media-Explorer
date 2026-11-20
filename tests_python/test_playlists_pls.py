@@ -62,7 +62,7 @@ class PlsTests(unittest.TestCase):
                 self.assertEqual([item['stream_url'] for item in parse_playlist(as_m3u(m3u))['items']], ['https://example.org/live'])
 
     def test_empty_file_message_names_pls(self):
-        with self.assertRaisesRegex(ValueError, r'^Choose a non-empty M3U, M3U8, PLS or XSPF channel playlist\.$'):
+        with self.assertRaisesRegex(ValueError, r'^Choose a non-empty M3U, M3U8, PLS, XSPF, JSON or CSV channel playlist\.$'):
             parse_playlist('', 'tv')
 
     def test_mixed_case_keys(self):

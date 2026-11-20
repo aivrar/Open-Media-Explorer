@@ -26,7 +26,9 @@
  *                  per FX and the intensity's count in all, no duplicates,
  *                  only on the params fx-catalog.js marks, with the source
  *                  matched to the param (punch: kick or snare; size: bass or
- *                  loudness; detail: hats or treble), and every one has to
+ *                  loudness; detail: hats or treble; with slow drift on, size
+ *                  and detail may also breathe with the swell, swell.js), and
+ *                  every one has to
  *                  pass reactor.js linkRuleViolation (no light, rates, jumps
  *                  or clock-scaled params). Global reactions are a setting
  *                  of their own (fx-reactions.js), never switched on by this.
@@ -40,6 +42,7 @@
 import { FX_COSTS, FX_COST_UNITS, fxClash } from './fx-catalog.js';
 import { linkRuleViolation } from './reactor.js';
 import { seededRandom } from './shuffle.js';
+import { fxDriftPlan } from './drift.js';
 
 export const FX_INTENSITIES = Object.freeze(['subtle', 'normal', 'strong']);
 export const DEFAULT_FX_INTENSITY = 'normal';
@@ -75,6 +78,14 @@ export const FX_LINK_SOURCES = Object.freeze({
   punch: Object.freeze([['kick', 0.7], ['snare', 0.3]]),
   size: Object.freeze([['bass', 0.75], ['level', 0.25]]),
   detail: Object.freeze([['hat', 0.6], ['high', 0.4]]),
+});
+/** The same with slow drift on: a size or a fine detail may also breathe
+ *  with the swell (swell.js) instead of following each bass swing or hat;
+ *  a punchy param keeps its hits, where a hit reads well. */
+export const FX_LINK_SOURCES_SWELL = Object.freeze({
+  punch: FX_LINK_SOURCES.punch,
+  size: Object.freeze([['bass', 0.45], ['level', 0.15], ['bassSwell', 0.25], ['swell', 0.15]]),
+  detail: Object.freeze([['hat', 0.4], ['high', 0.3], ['swell', 0.3]]),
 });
 /** A link's amount (a share of its param's range per unit of source), before
  *  the intensity's scale. */
@@ -126,7 +137,7 @@ const pickWeighted = (pairs, random) => {
 };
 
 /** The [lo, hi] a link on `name` may push within (its curated range). */
-function rangeBounds(fx, name) {
+export function fxRangeBounds(fx, name) {
   const spec = fx.ranges[name];
   const p = fx.def.params[name];
   if (Array.isArray(spec)) return [spec[0], spec[1]];
@@ -159,7 +170,8 @@ export function fxValues(fx, random, strength = 1) {
 /** Links for a combination: `fxList` [{ fx, values }], at most `max`, one
  *  per FX, sources by kind; every one passes the link rule. Returns
  *  [{ fx: id, param, source, amount, min, max, span }]. */
-export function fxLinks(fxList, random, { max = 2, amountScale = 1 } = {}) {
+export function fxLinks(fxList, random, { max = 2, amountScale = 1, swell = false } = {}) {
+  const table = swell ? FX_LINK_SOURCES_SWELL : FX_LINK_SOURCES;
   const candidates = [];
   for (const { fx } of fxList) {
     const params = Object.keys(fx.links).filter((param) => !fxLinkViolation(fx, param));
@@ -177,16 +189,24 @@ export function fxLinks(fxList, random, { max = 2, amountScale = 1 } = {}) {
     const param = params[Math.floor(random() * params.length)];
     const kind = fx.links[param];
     // A different source from the links before where the kind has one.
-    const choices = FX_LINK_SOURCES[kind].filter(([source]) => !sourcesUsed.has(source));
-    const source = pickWeighted(choices.length ? choices : FX_LINK_SOURCES[kind], random);
+    const choices = table[kind].filter(([source]) => !sourcesUsed.has(source));
+    const source = pickWeighted(choices.length ? choices : table[kind], random);
     sourcesUsed.add(source);
-    const [lo, hi] = rangeBounds(fx, param);
+    const [lo, hi] = fxRangeBounds(fx, param);
     const [aLo, aHi] = FX_LINK_AMOUNT;
     links.push({
       fx: fx.id, param, source, amount: (aLo + random() * (aHi - aLo)) * amountScale, min: lo, max: hi, span: hi - lo,
     });
   }
   return links;
+}
+
+/** The slow drift of effect `fx` (drift.js fxDriftPlan): its params marked
+ *  linkable that pass the link rule, inside the ranges the shuffle draws
+ *  them from; everything from its id. */
+export function fxDriftFor(fx) {
+  const linkable = Object.keys(fx?.links || {}).filter((param) => !fxLinkViolation(fx, param));
+  return fxDriftPlan(fx, linkable, (name) => fxRangeBounds(fx, name));
 }
 
 /**
@@ -199,7 +219,9 @@ export function createFxShuffle({ catalog, random = seededRandom(Date.now()) } =
   const recentCombos = []; // keys, newest last
   const recentFx = []; // sets of ids, newest last
   let last = null; // the combination showing now (ids)
+  let lastKeyed = false; // recentCombos ends with the key of the one showing
   const stats = { rolls: 0, retries: 0, empty: 0 };
+  let swellLinks = false; // links may read the swell (slow drift on)
 
   function inRecentFx(id) {
     for (const set of recentFx) if (set.includes(id)) return true;
@@ -252,7 +274,7 @@ export function createFxShuffle({ catalog, random = seededRandom(Date.now()) } =
   function build(ids, intensity = DEFAULT_FX_INTENSITY, rnd = random) {
     const budget = FX_BUDGETS[normalizeFxIntensity(intensity)];
     const list = catalog.filter((fx) => ids.includes(fx.id)).map((fx) => ({ fx, values: fxValues(fx, rnd, budget.strength) }));
-    const links = fxLinks(list, rnd, { max: budget.links, amountScale: budget.amount });
+    const links = fxLinks(list, rnd, { max: budget.links, amountScale: budget.amount, swell: swellLinks });
     const weight = list.reduce((sum, item) => sum + item.fx.weight, 0);
     const cost = list.reduce((sum, item) => sum + FX_COST_UNITS[item.fx.cost], 0);
     return {
@@ -279,6 +301,12 @@ export function createFxShuffle({ catalog, random = seededRandom(Date.now()) } =
    */
   function next(context = {}) {
     stats.rolls += 1;
+    // Nothing may be drawn: the empty set, whatever showed before (an empty
+    // set twice running cannot be helped here; no retries).
+    if (context.maxCount !== undefined && context.maxCount !== null && !(context.maxCount > 0)) {
+      stats.empty += 1;
+      return build([], context.intensity);
+    }
     let ids = pickIds(context);
     for (let tries = 0; tries < 12; tries += 1) {
       const key = fxKey(ids);
@@ -295,6 +323,7 @@ export function createFxShuffle({ catalog, random = seededRandom(Date.now()) } =
   function shown(combo) {
     const ids = combo?.ids || [];
     last = ids.slice();
+    lastKeyed = ids.length > 0;
     if (ids.length) {
       recentCombos.push(fxKey(ids));
       if (recentCombos.length > FX_RECENT_COMBOS) recentCombos.shift();
@@ -303,11 +332,27 @@ export function createFxShuffle({ catalog, random = seededRandom(Date.now()) } =
     if (recentFx.length > FX_RECENT_FX) recentFx.shift();
   }
 
+  /** The combination showing was cut to `combo` (fewer, or none): the
+   *  history says what is shown, in place of what was rolled (no new entry),
+   *  so the repeat rules judge what was really on the screen. */
+  function cut(combo) {
+    const ids = combo?.ids || [];
+    last = ids.slice();
+    if (recentFx.length) recentFx[recentFx.length - 1] = ids.slice();
+    if (lastKeyed) recentCombos.pop();
+    lastKeyed = ids.length > 0;
+    if (lastKeyed) recentCombos.push(fxKey(ids));
+  }
+
   return {
     next,
     build,
     shown,
+    cut,
     byId,
+    /** Links made from now on may read the swell (slow drift on). */
+    setSwellLinks(on) { swellLinks = on === true; },
+    get swellLinks() { return swellLinks; },
     get last() { return last ? last.slice() : null; },
     get recent() { return recentCombos.slice(); },
     stats,

@@ -121,6 +121,40 @@
   padding: 3px 9px;
   font-size: 12px;
 }
+
+/* Song log | Starred songs. */
+.song-log-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 18px 0;
+}
+.song-log-view.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The star on a log row; filled while the song is starred. */
+.btn.song-star {
+  min-width: 28px;
+  min-height: 24px;
+  font-size: 14px;
+  line-height: 1;
+}
+.btn.song-star.is-starred { color: var(--accent); }
+
+/* Find (web and YouTube search links), Copy and Unstar wrap as one block. */
+.starred-row .song-log-row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.starred-find {
+  display: inline-flex;
+  gap: 6px;
+}
+a.starred-find-link {
+  text-decoration: none;
+}
 .song-log-modal .btn[disabled] {
   opacity: 0.5;
   cursor: default;

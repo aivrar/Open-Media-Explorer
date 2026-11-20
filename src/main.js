@@ -1,15 +1,19 @@
 import {
-  initState, getState, setMode as setStateMode, subscribe,
+  initState, getState, isFavorite, setMode as setStateMode, subscribe,
 } from './lib/state.js';
 import { catalogScheduler } from './lib/catalog-scheduler.js';
 import { setArtworkPlaybackPriority } from './lib/artwork.js';
 import { SOURCE_IDS } from './lib/sources.js';
-import { initPlayer, getCurrentItem, getAudioSignal } from './lib/player.js';
+import { initPlayer, getCurrentItem, getAudioSignal, getNowPlaying } from './lib/player.js';
 import { initPlayerMeter } from './lib/player-meter.js';
 import { startSongLog } from './lib/song-log.js';
 import { openSongLog } from './lib/song-log-panel.js';
+import { starredSongs } from './lib/starred-songs.js';
+import { bindSongStar } from './lib/song-star.js';
+import { favoriteNamesSnapshot, withFavoriteName } from './lib/favorite-names.js';
+import './lib/favorite-rename.js'; // drops names of favorites no longer saved
 import { initCaptureUi } from './lib/capture-ui.js';
-import { initSettings, openSettings } from './lib/settings.js';
+import { openSettings } from './lib/settings.js';
 import { initEqOverlay } from './lib/eq-overlay.js';
 import { initSleepTimer } from './lib/sleep-timer.js';
 import { initShutdownButton } from './lib/shutdown.js';
@@ -89,6 +93,13 @@ function escape(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/** The playing item under the name the user gave it, if it is a renamed
+ *  favorite (the song log and starred songs name the station this way). */
+function shownCurrentItem() {
+  const item = getCurrentItem();
+  return item && isFavorite(item.id) ? withFavoriteName(item, favoriteNamesSnapshot().names) : item;
+}
+
 function bindTopBar() {
   document.getElementById('modes-nav').addEventListener('click', (e) => {
     const btn = e.target.closest('.mode-btn');
@@ -111,11 +122,20 @@ async function boot() {
   });
   // The song log names the station from the item that is playing.
   startSongLog(subscribe, (itemId) => {
-    const item = getCurrentItem();
+    const item = shownCurrentItem();
     return item?.id === itemId ? item : null;
   });
+  // Starred songs (their list is in the Song log panel) and the player bar's
+  // star for the song playing now.
+  starredSongs.start();
+  bindSongStar({
+    button: document.getElementById('player-song-star'),
+    starred: starredSongs,
+    getNowPlaying,
+    getCurrentItem: shownCurrentItem,
+    subscribe,
+  });
   initCaptureUi();
-  initSettings();
   initEqOverlay();
   initSleepTimer();
   bindTopBar();

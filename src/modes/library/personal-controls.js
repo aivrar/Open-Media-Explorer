@@ -160,7 +160,7 @@ export function removeAllFavoritesAsked({ confirmImpl = (text) => globalThis.con
 // path, busy state and messages as the Import playlist button.
 let importLocal = null;
 
-/** Import a local .m3u/.m3u8/.pls/.xspf file into My Playlists. `type` ('tv' or 'radio')
+/** Import a local .m3u/.m3u8/.pls/.xspf/.json/.csv file into My Playlists. `type` ('tv' or 'radio')
  *  overrides the "Add as" choice. Resolves false if the Library is not open. */
 export function importLocalPlaylist(file, type = '') {
   return importLocal ? importLocal(file, type) : Promise.resolve(false);
@@ -230,11 +230,11 @@ export function buildPersonalControls() {
   });
   const defaultType = selectControl('Radio or TV, for channels the playlist does not mark. '
     + 'Auto uses what most channels in the same file say, else TV.', ADD_AS_CHOICES, () => {});
-  const file = el('input', { attrs: { type: 'file', accept: '.m3u,.m3u8,.pls,.xspf', 'aria-label': 'Choose channel playlist' }, style: { display: 'none' } });
+  const file = el('input', { attrs: { type: 'file', accept: '.m3u,.m3u8,.pls,.xspf,.json,.csv', 'aria-label': 'Choose channel playlist' }, style: { display: 'none' } });
   const message = el('span', { className: 'playlist-message', attrs: { role: 'status', 'aria-live': 'polite' } });
   ui.playlistMessage = message;
   const importButton = el('button', { className: 'btn', text: 'Import playlist',
-    attrs: { type: 'button', title: 'Import a local .m3u, .m3u8, .pls or .xspf channel list. A matching filename replaces that playlist; favorites are kept. '
+    attrs: { type: 'button', title: 'Import a local .m3u, .m3u8, .pls, .xspf, .json or .csv channel list. A .json or .csv list needs a url for each station; name, logo, group and type are used when given. A matching filename replaces that playlist; favorites are kept. '
       + 'To change the stations, edit your own playlist file and import it again under the same file name; the copy the app keeps is not meant to be edited by hand.' },
     on: { click: () => file.click() } });
   const linkForm = el('form', { className: 'playlist-link-form', attrs: { 'aria-label': 'Add a channel or playlist link' } });
@@ -254,7 +254,7 @@ export function buildPersonalControls() {
     on: { click: () => { linkForm.hidden = true; addLink.setAttribute('aria-expanded', 'false'); addLink.focus?.(); } } });
   linkForm.append(el('label', { text: 'Link' }, linkUrl), el('label', { text: 'Name (optional)' }, linkName),
     el('label', { text: 'Link contains' }, linkKind), saveLink, cancelLink,
-    el('p', { className: 'playlist-link-help', text: 'Paste a direct TV/radio stream, or select Online playlist for an M3U, PLS or XSPF channel list. Adding the same link updates it; favorites are kept. Website and login pages are not supported.' }));
+    el('p', { className: 'playlist-link-help', text: 'Paste a direct TV/radio stream, or select Online playlist for an M3U, PLS, XSPF, JSON or CSV channel list. Adding the same link updates it; favorites are kept. Website and login pages are not supported.' }));
   ui.playlistLinkForm = linkForm;
   const removeButton = el('button', { className: 'btn', text: 'Remove playlist', attrs: {
     type: 'button', title: 'Remove the playlist chosen in the list from My Playlists. Favorites and your own file are kept.',

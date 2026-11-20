@@ -114,6 +114,8 @@ export async function registerMedia(item, options = {}) {
       title: item.title,
       source: item.source,
       download_name: item.download_name || '',
+      // Only sent when set: a verified stream that must stay on https.
+      ...(item.require_https === true ? { require_https: true } : {}),
     },
   });
 }

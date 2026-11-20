@@ -35,7 +35,6 @@ function pickItem(pageId, page) {
   let year = null;
   const m = (date.match(/(\d{4})/) || [])[1];
   if (m) year = parseInt(m, 10);
-  const langs = []; // not generally available; leave empty
   const tags = [];
 
   return makeItem({

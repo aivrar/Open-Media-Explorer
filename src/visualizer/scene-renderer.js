@@ -10,11 +10,18 @@
  *     stand-in for the `Renderer` it asks for the context;
  *   - scenes register through Psychedelia's EffectRegistry; the 3D flights
  *     and endless scenes also get its flight helpers (FractalFlight: param
- *     builders and metadata only);
+ *     builders and metadata only), the labs its lab helpers (FractalLab, the
+ *     same kind);
+ *   - a scene's setUniforms hook that reads the Beat Reactor (Cymatics: the
+ *     strongest pitch picks its pattern) gets a stand-in over the reactor
+ *     the tab already runs (setAudioReactor): its clock, its last analysis
+ *     and whether music plays. Nothing is started for it: no audio context,
+ *     no analyser of its own, no timer;
  *   - the standard uniforms are fed as Psychedelia's renderer feeds them
  *     (renderer.js renderGPU): u_time, u_unwrapped_time, u_resolution,
  *     u_mouse, u_global_rotation, u_view_zoom*, u_seed, u_seed_vec, every
- *     param as u_<name> (pushed by the scene's parameter links), and
+ *     param as u_<name> (drifted slowly, drift.js, and pushed by the scene's
+ *     parameter links on top), and
  *     u_audio = (bass, mid, high, level), u_beat = (kick, snare, hat, beat
  *     clock).
  *
@@ -27,14 +34,22 @@
  * elsewhere it is compiled on the spot. The renderer holds one scene at a
  * time: installing the next deletes the previous scene's program and runs its
  * cleanup. Each mount makes fresh copies of the Psychedelia modules, so
- * nothing (programs, a context) outlives the tab. Only single-pass shader
- * scenes are supported so far; scenes with their own render() come later.
+ * nothing (programs, a context) outlives the tab.
+ *
+ * Scenes that own their passes (a render() of their own: the simulations
+ * and the frame-feedback scenes) are drawn through sim-host.js: they need no
+ * compile here (their programs are built by their own code on their first
+ * frame), their visit's targets and programs are freed when they go, and
+ * they are given at most a short step of time a frame.
  */
 
 import loadShaderManager from './vendor/psychedelia/engine/shader-manager.js';
 import loadRegistry from './vendor/psychedelia/effects/registry.js';
 import loadFlightHelpers from './vendor/psychedelia/effects/fractal-flight-common.js';
+import loadLabHelpers from './vendor/psychedelia/effects/fractal-lab-common.js';
 import { applyLinks } from './reactor.js';
+import { applyDrift } from './drift.js';
+import { createSimHost } from './sim-host.js';
 
 /** How often a background compile is checked, and how long it may take. */
 export const COMPILE_POLL_MS = 30;
@@ -98,8 +113,9 @@ export function contextLimits(gl) {
 export function loadPsychedelia(host) {
   const { ShaderManager } = loadShaderManager({ Renderer: host });
   const { FractalFlight } = loadFlightHelpers({});
-  const { EffectRegistry } = loadRegistry({ Renderer: host, ShaderManager, FractalFlight });
-  return { ShaderManager, EffectRegistry, FractalFlight };
+  const { FractalLab } = loadLabHelpers({});
+  const { EffectRegistry } = loadRegistry({ Renderer: host, ShaderManager, FractalFlight, FractalLab });
+  return { ShaderManager, EffectRegistry, FractalFlight, FractalLab };
 }
 
 /** A param's starting value exactly as Psychedelia's Controls gives it
@@ -140,10 +156,21 @@ export class SceneError extends Error {
   }
 }
 
-/** Can this renderer draw `def`? (A single-pass shader scene.) */
-export function drawable(def) {
-  return Boolean(def && typeof def.shader === 'string' && def.shader && !def.render);
+/** A scene that owns its passes: a render() of its own, no single shader
+ *  (drawn through sim-host.js). */
+export function ownsPasses(def) {
+  return Boolean(def && typeof def.render === 'function');
 }
+
+/** Can this renderer draw `def`? (A single-pass shader scene, or one that
+ *  owns its passes.) */
+export function drawable(def) {
+  return Boolean(def && ((typeof def.shader === 'string' && def.shader && !def.render) || ownsPasses(def)));
+}
+
+/** What a scene that owns its passes is "compiled" to: nothing (its own code
+ *  builds its programs on its first frame). */
+export const SIM_PROGRAM = Object.freeze({ sim: true });
 
 /**
  * The vertex and fragment text ShaderManager builds for `source` with the
@@ -250,8 +277,14 @@ function finishCompile(g, parts, label) {
  * @param {function} [options.capsFor]  (sceneId, quality) => { param: most }
  *   or null: the most some params may be at the quality drawn now
  *   (scenes.js sceneCaps), applied to what is drawn, not to the values
+ * @param {function} [options.driftFor]  (def) => the scene's slow drift plan
+ *   (drift.js sceneDriftPlan), asked once each time a scene is installed
+ * @param {function} [options.rateFor]  (sceneId) => steps a second for a
+ *   frame-feedback scene (scenes.js simRate), or null
  */
-export function createSceneRenderer({ canvas, gl, mode, random = Math.random, capsFor = null }) {
+export function createSceneRenderer({
+  canvas, gl, mode, random = Math.random, capsFor = null, driftFor = null, rateFor = null,
+}) {
   let context = gl;
   let quality = null; // the quality drawn now (setQuality), for capsFor
   const host = {
@@ -260,10 +293,32 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
     getMode: () => mode,
     isContextLost: () => !context || context.isContextLost?.() === true,
   };
-  const { ShaderManager, EffectRegistry, FractalFlight } = loadPsychedelia(host);
+  const { ShaderManager, EffectRegistry, FractalFlight, FractalLab } = loadPsychedelia(host);
+  // Scenes that own their passes: nothing made until one is installed.
+  const sim = createSimHost({
+    gl, canvas, mode, random,
+  });
+  // The Beat Reactor as scene hooks see it (Psychedelia's AudioReactor:
+  // getClock, getAnalysis, isLive), over the tab's own reactor once it is
+  // given (setAudioReactor); before that, the scene clock and no music.
+  let audioReactor = null;
+  let lastTime = 0;
+  let lastBeats = 0;
+  const sceneAudio = Object.freeze({
+    getClock: () => (audioReactor ? audioReactor.getClock() : lastTime),
+    getAnalysis: () => (audioReactor ? audioReactor.getAnalysis() : null),
+    isLive: () => Boolean(audioReactor && audioReactor.isLive()),
+    // Beats for the scenes that lock to bars (the line-drawing scenes): the
+    // drift clock's (state.drift.bars x 4: the music's tempo, folded into
+    // the range the flash check measured, eased, never jumping), else two a
+    // second of the scene clock.
+    getBeatClock: () => lastBeats,
+    // The beat sources a simulation reads (the flash limiter's output).
+    getSource: (id) => sim.getSource(id),
+  });
   let buffer = null;
   let parallel; // KHR_parallel_shader_compile, or null; asked once per context
-  let scene = null; // { def, prepared, program, links, seed, seedVec, position, locations, drawValues }
+  let scene = null; // { def, prepared, program, links, seed, seedVec, position, locations, drawValues, drift, driftValues }
   const stats = {
     draws: 0, builds: 0, installs: 0, compiles: 0, abandoned: 0, deleted: 0, buried: 0,
   };
@@ -330,7 +385,7 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
   }
 
   function deleteProgram(program) {
-    if (!program || !context || host.isContextLost()) return;
+    if (!program || program === SIM_PROGRAM || !context || host.isContextLost()) return;
     try { context.deleteProgram(program); stats.deleted += 1; } catch (_) {}
   }
 
@@ -356,17 +411,48 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
     }
   }
 
+  /** The slow drift plan for `def` ([] for none). */
+  function driftOf(def) {
+    if (!driftFor || !def) return [];
+    try { return driftFor(def) || []; } catch (_) { return []; }
+  }
+
   /** The caps for `def` at the quality drawn now, or null. */
   function capsOf(def) {
     if (!capsFor || !def) return null;
     try { return capsFor(def.name, quality) || null; } catch (_) { return null; }
   }
 
+  /** The scene's values this frame: drifted first (state.drift: { bars,
+   *  scale }), then the links on top; `capped`: a copy with the quality
+   *  caps applied (a simulation reads them as they are; a shader scene's
+   *  are capped as they are set). */
+  function valuesNow(state, capped) {
+    const drift = state.drift;
+    const base = drift && drift.scale > 0 && scene.drift.length
+      ? applyDrift(scene.prepared.values, scene.drift, drift.bars, drift.scale, scene.driftValues)
+      : scene.prepared.values;
+    const values = scene.links.length
+      ? applyLinks(base, scene.links, state.sources, scene.drawValues)
+      : base;
+    if (!capped || !scene.caps) return values;
+    const out = { ...values };
+    for (const [name, most] of Object.entries(scene.caps)) {
+      if (Number.isFinite(out[name]) && out[name] > most) out[name] = most;
+    }
+    return out;
+  }
+
   buildQuad();
 
   const renderer = {
     /** Psychedelia's ShaderManager, EffectRegistry and flight helpers for this mount. */
-    engine: { ShaderManager, EffectRegistry, FractalFlight },
+    engine: { ShaderManager, EffectRegistry, FractalFlight, FractalLab },
+    /** The reactor scene hooks read (reactor.js createReactorBridge's
+     *  `reactor`), or null. */
+    setAudioReactor(reactor) { audioReactor = reactor || null; },
+    /** What scene hooks are given as AudioReactor. */
+    sceneAudio,
     get width() { return canvas.width; },
     get height() { return canvas.height; },
     /** The scene being drawn (its definition), or null before the first. */
@@ -374,8 +460,12 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
     get program() { return scene?.program || null; },
     get values() { return scene?.prepared.values || null; },
     get links() { return scene?.links || []; },
+    /** The scene's slow drift plan (drift.js), [] for none. */
+    get drift() { return scene?.drift || []; },
     /** The scene being drawn can show the beat clock as a pulse. */
-    get readsBeatClock() { return scene ? readsBeatClock(scene.prepared.sources.frag) : false; },
+    get readsBeatClock() { return scene?.prepared.sources ? readsBeatClock(scene.prepared.sources.frag) : false; },
+    /** The host for scenes that own their passes (sim-host.js). */
+    sim,
     /** { maxWidth, maxHeight }: the drawing-buffer size this context allows. */
     get limits() { return limits; },
     get lost() { return host.isContextLost(); },
@@ -391,7 +481,12 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
     register(module, id) {
       let def = EffectRegistry.getDefinition(id);
       if (!def && typeof module?.default === 'function') {
-        module.default({ EffectRegistry, FractalFlight });
+        module.default({
+          EffectRegistry, FractalFlight, FractalLab, AudioReactor: sceneAudio, ...sim.globals,
+          // The quality drawn now (setQuality), for the line host
+          // (line-host.js: its persistence target and segment limit).
+          sceneQuality: () => quality,
+        });
         def = EffectRegistry.getDefinition(id);
       }
       return def || null;
@@ -402,6 +497,12 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
     prepare(def, overrides = null) {
       if (!drawable(def)) throw new SceneError(`Scene ${def?.name} cannot be drawn here.`, 'UNSUPPORTED');
       const values = sceneDefaults(def, overrides);
+      if (ownsPasses(def)) {
+        if (!sim.support().webgl2) throw new SceneError(`Scene ${def.name} needs WebGL 2.`, 'UNSUPPORTED');
+        return {
+          def, values, spec: null, sources: null, sim: true,
+        };
+      }
       const spec = EffectRegistry.specFor(def, values);
       const sources = captureSources(ShaderManager, host, context, def.shader, spec);
       if (!sources.vert || !sources.frag) throw new SceneError(`Scene ${def.name} has no shader.`, 'COMPILE');
@@ -411,6 +512,7 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
     /** Compile on the spot. Returns the program or null. */
     compileNow(prepared) {
       if (!context || host.isContextLost()) return null;
+      if (prepared.sim) return SIM_PROGRAM;
       stats.compiles += 1;
       return finishCompile(context, startCompile(context, prepared.sources), prepared.def.name);
     },
@@ -434,6 +536,7 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
       };
       const g = context;
       if (!g || host.isContextLost()) { done(null); return null; }
+      if (prepared.sim) { done(SIM_PROGRAM); return null; }
       const ext = parallelExtension();
       if (!ext) {
         // It will block: a moment first, for the note to be painted.
@@ -505,22 +608,30 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
         links,
         seed: random() * 1000,
         seedVec: [random(), random(), random(), random()],
-        position: g.getAttribLocation(program, 'a_position'),
+        position: program === SIM_PROGRAM ? -1 : g.getAttribLocation(program, 'a_position'),
         locations: new Map(),
         drawValues: { ...prepared.values },
         caps: capsOf(prepared.def),
+        // Its waves this visit (new offsets; under the change of scene).
+        drift: driftOf(prepared.def),
+        driftValues: { ...prepared.values },
       };
       if (previous) {
-        try { if (typeof previous.def.cleanup === 'function') previous.def.cleanup(g); } catch (_) {}
+        if (previous.program === SIM_PROGRAM) sim.end(); // its cleanup, then all it made
+        else { try { if (typeof previous.def.cleanup === 'function') previous.def.cleanup(g); } catch (_) {} }
         if (previous.program !== program) deleteProgram(previous.program);
       }
-      if (typeof prepared.def.init === 'function') prepared.def.init(g);
+      if (program === SIM_PROGRAM) {
+        let rate = null;
+        try { rate = rateFor ? rateFor(prepared.def.name) : null; } catch (_) {}
+        sim.start(prepared.def, rate);
+      } else if (typeof prepared.def.init === 'function') prepared.def.init(g);
       stats.installs += 1;
     },
 
     /** Delete a program that was compiled but is not wanted any more. */
     discard(program) {
-      if (program && program !== scene?.program) deleteProgram(program);
+      if (program && program !== SIM_PROGRAM && program !== scene?.program) deleteProgram(program);
     },
 
     /** Register (if needed), compile on the spot and install. Throws a
@@ -578,6 +689,13 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
       const g = context;
       if (!g || !scene || !scene.program || host.isContextLost()) return false;
       const { program, def } = scene;
+      if (program === SIM_PROGRAM) {
+        lastTime = state.time;
+        lastBeats = Number.isFinite(state.drift?.bars) ? state.drift.bars * 4 : state.time * 2;
+        if (!sim.draw(state, valuesNow(state, true), target)) return false;
+        stats.draws += 1;
+        return true;
+      }
       const w = canvas.width;
       const h = canvas.height;
       g.bindFramebuffer(g.FRAMEBUFFER, target);
@@ -608,14 +726,13 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
       if (beatAt !== null && beatAt !== undefined) {
         g.uniform4f(beatAt, beat.kick || 0, beat.snare || 0, beat.hat || 0, beat.clock || 0);
       }
-      const values = scene.links.length
-        ? applyLinks(scene.prepared.values, scene.links, state.sources, scene.drawValues)
-        : scene.prepared.values;
+      const values = valuesNow(state, false);
       const { caps } = scene;
       for (const name in values) {
         const most = caps ? caps[name] : undefined;
         setValue(name, most !== undefined && values[name] > most ? most : values[name]);
       }
+      lastTime = state.time;
       if (typeof def.setUniforms === 'function') def.setUniforms(g, program, values, (p, n) => location(n), state.time);
       g.bindBuffer(g.ARRAY_BUFFER, buffer);
       if (scene.position >= 0) {
@@ -629,7 +746,7 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
 
     /** On webglcontextlost: the programs waiting to be deleted went with the
      *  context, so their timer stops (nothing runs while lost). */
-    contextLost() { clearGraveyard(); },
+    contextLost() { clearGraveyard(); sim.lost(); },
 
     /** After webglcontextrestored: every old object belonged to the lost
      *  context. The scene being drawn went with it (nothing is drawn until a
@@ -639,6 +756,7 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
      *  null. */
     restore() {
       clearGraveyard(); // those belonged to the lost context
+      sim.restored();
       parallel = undefined;
       buffer = null;
       limits = contextLimits(context);
@@ -650,12 +768,15 @@ export function createSceneRenderer({ canvas, gl, mode, random = Math.random, ca
 
     /** Free everything and give the context back to the browser at once. */
     destroy() {
+      audioReactor = null;
       const g = context;
       if (!g) return;
       if (scene) {
-        try { if (typeof scene.def.cleanup === 'function') scene.def.cleanup(g); } catch (_) {}
+        if (scene.program === SIM_PROGRAM) sim.end();
+        else { try { if (typeof scene.def.cleanup === 'function') scene.def.cleanup(g); } catch (_) {} }
         deleteProgram(scene.program);
       }
+      sim.destroy();
       // Abandoned programs whose link has finished are deleted now (with
       // their shaders). Those still linking are not (a driver may still look
       // them up): losing the context below frees them with everything else.

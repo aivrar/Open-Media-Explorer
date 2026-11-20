@@ -11,7 +11,9 @@
  * data we have).
  */
 
-import { getState, isFavorite, addFavorite, removeFavorite, moveFavorite } from '../../lib/state.js';
+import {
+  getState, isFavorite, addFavorite, removeFavorite, moveFavorite, moveFavoriteTo,
+} from '../../lib/state.js';
 import { FAVORITES_SORT_MANUAL, normalizeFavoritesSort } from '../../lib/favorites-order.js';
 import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
 import { buildCategoryButton, closeDetachedCategoryMenu, updateCategoryButton } from './card-category.js';
@@ -33,7 +35,7 @@ import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
 import { getPlaylistItems } from '../../lib/playlists.js';
 import {
   getThumbnailHydrationSignal, insertThumbImage, requestThumbnailHydration,
-  resetThumbnailHydrationScope, resolveItemArtwork,
+  resetThumbnailHydrationScope,
   THUMBNAIL_EAGER_CARD_COUNT,
 } from './thumbnails.js';
 import { openDetail } from './detail.js';
@@ -245,7 +247,7 @@ function personalEmptyMessage() {
 /** What a card shows, apart from artwork (see artworkIdentity). */
 function cardContentKey(item) {
   return JSON.stringify([
-    item.title || '', item.source || '', item.type || '', item.year || '', item.country || '',
+    item.title || '', item.originalTitle || '', item.source || '', item.type || '', item.year || '', item.country || '',
     item.license || '', item.content_rating || '', item.__contentHidden === true, Number(item.__revision) || 0,
   ]);
 }
@@ -461,6 +463,120 @@ function setMoveEnabled(button, enabled) {
   else button.setAttribute('aria-disabled', 'true');
 }
 
+/* Dragging a card in "My order" puts it before or after the card it is
+   dropped on. Only the cards shown take part, so it works the same with a
+   type, search or category filter. The move buttons stay the keyboard way to
+   do the same. Listeners sit on the results host (bound once) and do work only
+   while a card is being dragged. */
+
+export const FAVORITE_DRAG_TYPE = 'application/x-worldmedia-favorite';
+const boundDragHosts = new WeakSet();
+let favoriteDrag = null; // { id, card, marked, place }
+
+/** Where a drop at (x, y) over `rect` goes: the top-left half of a card is
+ *  "before" it, the bottom-right half "after", which reads right in a grid
+ *  of several columns and in a single column alike. */
+export function favoriteDropPlace(rect, x, y) {
+  const width = rect?.width > 0 ? rect.width : 1;
+  const height = rect?.height > 0 ? rect.height : 1;
+  return (x - (rect?.left || 0)) / width + (y - (rect?.top || 0)) / height < 1 ? 'before' : 'after';
+}
+
+function dragCardOf(target) {
+  const card = target?.closest?.('.card[data-id]');
+  return card && ui.resultsHost?.contains?.(card) ? card : null;
+}
+
+function clearDropMark() {
+  const marked = favoriteDrag?.marked;
+  if (!marked) return;
+  marked.classList.remove('drop-before', 'drop-after');
+  favoriteDrag.marked = null;
+  favoriteDrag.place = '';
+}
+
+function endFavoriteDrag() {
+  if (!favoriteDrag) return;
+  clearDropMark();
+  favoriteDrag.card.classList.remove('is-dragging');
+  favoriteDrag = null;
+}
+
+function onFavoriteDragStart(event) {
+  const card = dragCardOf(event.target);
+  if (!card || card.getAttribute('draggable') !== 'true' || !favoritesManualOrder()) return;
+  const id = (card.__item?.id) || card.dataset.id;
+  endFavoriteDrag();
+  favoriteDrag = { id, card, marked: null, place: '' };
+  try {
+    event.dataTransfer.setData(FAVORITE_DRAG_TYPE, id);
+    event.dataTransfer.effectAllowed = 'move';
+  } catch (_) { /* the drag still works inside the page */ }
+  card.classList.add('is-dragging');
+}
+
+function onFavoriteDragOver(event) {
+  if (!favoriteDrag) return; // files and anything else: not a reorder
+  const card = dragCardOf(event.target);
+  if (!card || card === favoriteDrag.card || !favoritesManualOrder()) { clearDropMark(); return; }
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  const place = favoriteDropPlace(card.getBoundingClientRect?.(), event.clientX, event.clientY);
+  if (favoriteDrag.marked === card && favoriteDrag.place === place) return;
+  clearDropMark();
+  card.classList.add(place === 'before' ? 'drop-before' : 'drop-after');
+  favoriteDrag.marked = card;
+  favoriteDrag.place = place;
+}
+
+function onFavoriteDragLeave(event) {
+  if (!favoriteDrag) return;
+  if (event.relatedTarget && ui.resultsHost?.contains?.(event.relatedTarget)) return;
+  clearDropMark();
+}
+
+function onFavoriteDrop(event) {
+  if (!favoriteDrag) return;
+  const card = dragCardOf(event.target);
+  const { id } = favoriteDrag;
+  const dragged = favoriteDrag.card;
+  const place = card ? favoriteDropPlace(card.getBoundingClientRect?.(), event.clientX, event.clientY) : '';
+  endFavoriteDrag();
+  if (!card || card === dragged) return;
+  event.preventDefault();
+  onDropFavorite(id, (card.__item?.id) || card.dataset.id, place);
+}
+
+function bindFavoriteDrag(host) {
+  if (!host?.addEventListener || boundDragHosts.has(host)) return;
+  boundDragHosts.add(host);
+  host.addEventListener('dragstart', onFavoriteDragStart);
+  host.addEventListener('dragover', onFavoriteDragOver);
+  host.addEventListener('dragleave', onFavoriteDragLeave);
+  host.addEventListener('drop', onFavoriteDrop);
+  host.addEventListener('dragend', endFavoriteDrag);
+}
+
+/** A card was dropped on another: move it there in "My order". */
+export function onDropFavorite(itemId, targetId, place) {
+  if (!favoritesManualOrder()) return false;
+  const shown = new Set(filteredItemsForCurrentView(libraryPool()).map((item) => item.id));
+  if (!shown.has(itemId) || !shown.has(targetId)) return false;
+  // The Library re-renders on the favorites-change event this sends. Hidden
+  // favorites keep their places.
+  return moveFavoriteTo(itemId, targetId, place, shown);
+}
+
+function setCardDraggable(card, draggable) {
+  if (draggable) {
+    if (card.getAttribute('draggable') !== 'true') card.setAttribute('draggable', 'true');
+    card.classList.add('is-draggable');
+  } else if (card.hasAttribute?.('draggable')) {
+    card.removeAttribute('draggable');
+    card.classList.remove('is-draggable', 'is-dragging', 'drop-before', 'drop-after');
+  }
+}
+
 /** Add or remove each mounted card's move buttons for the current sort, and
  *  disable the ones that cannot move: up/top for the first item shown, down
  *  for the last. aria-disabled (not `disabled`) keeps a button focusable, so
@@ -471,9 +587,13 @@ function syncFavoriteOrderControls(filtered) {
   // for example in My Playlists) must lose its move buttons there.
   const manual = favoritesManualOrder();
   const positions = manual ? new Map(filtered.map((item, index) => [item.id, index])) : null;
+  if (manual) bindFavoriteDrag(ui.resultsHost);
+  else if (favoriteDrag) endFavoriteDrag();
   for (const card of ui.resultsHost.children) {
     const id = card.dataset?.id;
     if (!id) continue;
+    // Cards can be dragged into place in "My order" only.
+    if (typeof card.setAttribute === 'function') setCardDraggable(card, manual && positions.has(id));
     let controls = card.__orderControls || null;
     if (!manual) {
       if (controls) {

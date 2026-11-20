@@ -80,9 +80,10 @@
  *   bars(count, out, options)  N log-spaced bars 0..1 into `out` (see
  *               barsFromSpectrum); returns `out`
  *
- * Room left for later, deliberately not built now: beat detection (kick /
- * snare / hat onsets, tempo, beat phase). A consumer that needs it can run its
- * own detector on the float spectrum and reset it when `version` changes.
+ * Beat detection (kick / snare / hat onsets, tempo, beat phase) is not done
+ * here. A consumer that needs it runs its own detector on the float spectrum
+ * and resets it when `version` changes, as the Visualizer does
+ * (visualizer/reactor.js).
  *
  * Pure helpers (bin maths, band levels, auto-gain) are exported for tests.
  */

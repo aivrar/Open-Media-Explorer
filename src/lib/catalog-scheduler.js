@@ -315,7 +315,8 @@ export class CatalogScheduler {
     if (!retryableFailure(error)) return 0;
     const state = this._state(sourceId);
     state.failures += 1;
-    const retryAfter = Number(error?.retryAfterMs);
+    // No Retry-After is null, not 0 (Number(null) is 0: no cooldown at all).
+    const retryAfter = error?.retryAfterMs == null ? Number.NaN : Number(error.retryAfterMs);
     const fallback = Math.min(
       this.cooldownMaxMs,
       this.cooldownBaseMs * (2 ** Math.max(0, state.failures - 1)),

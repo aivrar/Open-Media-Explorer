@@ -6,9 +6,13 @@
    Overlays (run.overlays): the app's own overlay-layer.js with its flash gate
    on the same limiter; the top sheet is laid over the picture as the
    compositor does (source-over) before the luminance is measured, the blended
-   one goes through the chain. Cost runs (run.cost) time each frame instead. */
+   one goes through the chain. Cost runs (run.cost) time each frame instead.
+   run.motion: the sheets move (overlay-motion.js) at the drift check's depth,
+   the drift clock at the top of its range; the top sheet is laid over with
+   its CSS transform, as the compositor would. */
 
 import loadPostFx from '../../src/visualizer/vendor/psychedelia/engine/post-fx-library.js';
+import loadPalettes from '../../src/visualizer/vendor/psychedelia/engine/palettes.js';
 import { fxCatalog } from '../../src/visualizer/fx-catalog.js';
 import { createFxChain } from '../../src/visualizer/fx-chain.js';
 import { createGlobalReactions } from '../../src/visualizer/fx-reactions.js';
@@ -17,6 +21,10 @@ import { FLASH_LIMITS } from '../../src/visualizer/flash-limiter.js';
 import { createAudioSignal } from '../../src/lib/audio-signal.js';
 import { createVisualizerLoop } from '../../src/visualizer/loop.js';
 import { applyLinks, createReactorBridge } from '../../src/visualizer/reactor.js';
+import {
+  DRIFT_BPM_RANGE, applyDrift, createDriftClock, driftScale,
+} from '../../src/visualizer/drift.js';
+import { MOOD_STRENGTH } from '../../src/visualizer/mood.js';
 import { readsBeatClock } from '../../src/visualizer/scene-renderer.js';
 import { cappedValues } from '../../src/visualizer/scenes.js';
 import { createClockHarness, fakeVisibilityDoc } from './signal-harness.js';
@@ -24,6 +32,7 @@ import loadOverlays from '../../src/visualizer/vendor/psychedelia/engine/overlay
 import { createFlashGate, createOverlayLayer } from '../../src/visualizer/overlay-layer.js';
 import { overlayRow } from '../../src/visualizer/overlay-catalog.js';
 import { danceTrack, simulatedAnalyser } from './audio-sim.js';
+import './luma-meter.js';
 
 const canvas = document.createElement('canvas');
 document.body.append(canvas);
@@ -31,8 +40,18 @@ const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: false, antialias
 let syncTex = null; // cost runs: the top sheet copied here to wait for its drawing
 let topFull = null; // flash runs: the top sheet stretched to the picture's size
 let topFullCtx = null;
-const { PostFxLibrary } = loadPostFx({});
-const byId = new Map(fxCatalog(PostFxLibrary).map((fx) => [fx.id, fx]));
+// The mean luminance summed on the graphics card (luma-meter.js); the old
+// read-back path when window.lumaReadback is set or float targets are missing.
+let meterMade = null;
+const lumaMeter = () => {
+  if (window.lumaReadback) return null;
+  if (meterMade === null) meterMade = window.createLumaMeter(gl) || false;
+  return meterMade || null;
+};
+// The palettes as the tab gives them (the Palette Map pass).
+const { PsyPalettes } = loadPalettes({});
+const { PostFxLibrary } = loadPostFx({ PsyPalettes });
+const byId = new Map(fxCatalog(PostFxLibrary, PsyPalettes).map((fx) => [fx.id, fx]));
 const quad = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, quad);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -160,6 +179,15 @@ const upload = { count: 0, ms: 0 };
  *  light (envelope pulses, shown clock wraps, trigger firings) in a rolling
  *  second. */
 window.runOne = async (run, clip, W, H) => {
+  // Overlays that place things at random (Bokeh, Particles, ...) draw the
+  // same in every run: Math.random seeded afresh for each one.
+  let seed = 0x2f6b1a3d;
+  Math.random = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
   canvas.width = W;
   canvas.height = H;
   const scene = scenes[run.scene];
@@ -234,7 +262,8 @@ window.runOne = async (run, clip, W, H) => {
   let uncounted = 0; // luminance steps over 0.10 on frames with no charged change
   const px1 = new Uint8Array(4);
   const reactions = createGlobalReactions();
-  const px = new Uint8Array(W * H * 4);
+  const meter = run.cost ? null : lumaMeter();
+  const px = meter ? null : new Uint8Array(W * H * 4);
   const lumas = [];
   const changes = [];
   const armed = {};
@@ -242,6 +271,15 @@ window.runOne = async (run, clip, W, H) => {
   for (const name of Object.keys(FAMILY)) armed[name] = true;
   let lastClock = Number.NaN;
   const scratch = {};
+  // Slow drift (run.drift): at its deepest, its clock at its fastest; the
+  // chain reads state.drift, the scene's values are drifted here, and links
+  // get the whole swell (as in the tab with drift faded in).
+  const driftClock = createDriftClock({ idleBpm: DRIFT_BPM_RANGE[1] });
+  bridge.setSwellShare(run.drift ? 1 : 0);
+  const drift = { bars: 0, scale: run.drift ? driftScale(1, Math.max(...Object.values(MOOD_STRENGTH))) : 0 };
+  const motionDepth = run.motion ? driftScale(1, Math.max(...Object.values(MOOD_STRENGTH))) : 0;
+  let motionClock = 0;
+  const drifted = {};
   const from = WARM_UP_MS + (run.from * 1000) / FPS;
   let drawMs = 0;
   // Envelope pulses: the limiter's limited output, as the picture gets it (a
@@ -268,6 +306,9 @@ window.runOne = async (run, clip, W, H) => {
     fps: FPS,
     react: bridge.react,
     draw: (state) => {
+      if (run.drift || run.motion) motionClock = driftClock.step(state.dt, 0);
+      if (run.drift) drift.bars = motionClock;
+      state.drift = drift;
       if (h.now < from || lumas.length >= clip) { pulseSeen = false; return true; }
       const t = h.now / 1000;
       let changed = pulseSeen;
@@ -282,6 +323,8 @@ window.runOne = async (run, clip, W, H) => {
         lastSources = state.sources;
         const o0 = performance.now();
         layer.render(t, state.dt, state.sources);
+        // The sheets' motion, as the tab moves them after drawing (index.js).
+        layer.move(motionClock, motionDepth);
         if (run.cost && top.width) {
           // Its drawing done, read without getImageData (Chrome moves a 2D
           // canvas read back often off the graphics card, which the tab never
@@ -306,7 +349,8 @@ window.runOne = async (run, clip, W, H) => {
       // As scene-renderer.js draw: the values with the sound's links, then
       // the caps of the quality drawn last (scenes.js cappedValues), so a
       // linked value never draws more detail than the app would.
-      const linked = scene.links.length ? applyLinks(scene.values, scene.links, state.sources, scratch) : scene.values;
+      const base = run.drift && scene.drift?.length ? applyDrift(scene.values, scene.drift, drift.bars, drift.scale, drifted) : scene.values;
+      const linked = scene.links.length ? applyLinks(base, scene.links, state.sources, scratch) : base;
       const frame = {
         t: state.time,
         audio: [state.audio.bass, state.audio.mid, state.audio.high, state.audio.level],
@@ -329,43 +373,66 @@ window.runOne = async (run, clip, W, H) => {
         lumas.push(0);
         return true;
       }
-      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
-      drawMs += performance.now() - t0;
-      if (firedSeen) changed = true;
-      firedSeen = false;
-      if (changed) changes.push(t);
-      let s = 0;
+      // The top sheet over the picture, as the compositor lays it
+      // (source-over, its opacity the layer's fade), at the picture's size
+      // as the browser stretches it (it may be drawn smaller:
+      // OVERLAY_TOP_MAX_PIXELS), with its CSS transform when it moves.
+      let sheet = null;
+      let k = 1;
       if (layer && !top.hidden && top.width) {
-        // The top sheet over the picture, as the compositor lays it
-        // (source-over, its opacity the layer's fade); its rows top first.
-        // At the picture's size, as the browser stretches it (it may be
-        // drawn smaller: OVERLAY_TOP_MAX_PIXELS).
-        let over;
-        if (top.width === W && top.height === H) over = topCtx.getImageData(0, 0, W, H).data;
+        const m = layer.motion;
+        k = Math.max(0, Math.min(1, Number(top.style.opacity === '' ? 1 : top.style.opacity)));
+        if (top.width === W && top.height === H && !m.moving) sheet = top;
         else {
-          if (!topFull) { topFull = document.createElement('canvas'); topFullCtx = topFull.getContext('2d', { willReadFrequently: true }); }
+          // Read back only on the old path (getImageData); kept on the
+          // graphics card otherwise.
+          if (!topFull) { topFull = document.createElement('canvas'); topFullCtx = topFull.getContext('2d', meter ? {} : { willReadFrequently: true }); }
           if (topFull.width !== W || topFull.height !== H) { topFull.width = W; topFull.height = H; }
           topFullCtx.clearRect(0, 0, W, H);
           topFullCtx.imageSmoothingEnabled = true;
-          topFullCtx.drawImage(top, 0, 0, W, H);
-          over = topFullCtx.getImageData(0, 0, W, H).data;
+          if (m.moving) {
+            // As the CSS transform lays it: about the centre, moved, turned, scaled.
+            topFullCtx.translate(W / 2 + m.dx * W, H / 2 + m.dy * H);
+            topFullCtx.rotate(m.angle);
+            topFullCtx.scale(m.scale, m.scale);
+            topFullCtx.drawImage(top, -W / 2, -H / 2, W, H);
+            topFullCtx.setTransform(1, 0, 0, 1, 0, 0);
+          } else topFullCtx.drawImage(top, 0, 0, W, H);
+          sheet = topFull;
         }
-        const k = Math.max(0, Math.min(1, Number(top.style.opacity === '' ? 1 : top.style.opacity)));
-        for (let y = 0; y < H; y += 1) {
-          for (let x = 0; x < W; x += 1) {
-            const i = (y * W + x) * 4;
-            const j = ((H - 1 - y) * W + x) * 4;
-            const a = (over[j + 3] / 255) * k;
-            const r = px[i] * (1 - a) + over[j] * a;
-            const g = px[i + 1] * (1 - a) + over[j + 1] * a;
-            const b = px[i + 2] * (1 - a) + over[j + 2] * a;
-            s += 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          }
-        }
-      } else {
-        for (let i = 0; i < px.length; i += 4) s += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
       }
-      const luma = s / (W * H * 255);
+      let luma;
+      if (meter) {
+        // Summed on the graphics card; a small float target read back.
+        luma = meter.measure(W, H, sheet, k);
+        drawMs += performance.now() - t0;
+      } else {
+        // The old path (window.lumaReadback): every pixel read back and
+        // added up here.
+        gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        drawMs += performance.now() - t0;
+        let s = 0;
+        if (sheet) {
+          const over = (sheet === top ? topCtx : topFullCtx).getImageData(0, 0, W, H).data;
+          for (let y = 0; y < H; y += 1) {
+            for (let x = 0; x < W; x += 1) {
+              const i = (y * W + x) * 4;
+              const j = ((H - 1 - y) * W + x) * 4;
+              const a = (over[j + 3] / 255) * k;
+              const r = px[i] * (1 - a) + over[j] * a;
+              const g = px[i + 1] * (1 - a) + over[j + 1] * a;
+              const b = px[i + 2] * (1 - a) + over[j + 2] * a;
+              s += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            }
+          }
+        } else {
+          for (let i = 0; i < px.length; i += 4) s += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+        }
+        luma = s / (W * H * 255);
+      }
+      if (firedSeen) changed = true;
+      firedSeen = false;
+      if (changed) changes.push(t);
       if (lumas.length && Math.abs(luma - lumas[lumas.length - 1]) > 0.10 && !changed) uncounted += 1;
       lumas.push(luma);
       return true;

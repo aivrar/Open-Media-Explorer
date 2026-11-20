@@ -15,14 +15,14 @@
 export const NOTICE = Object.freeze({
   title: 'Before the picture moves',
   text: [
-    'The Visualizer shows moving, pulsing and colour-changing patterns that follow the music.',
+    'The Visualizer shows moving, pulsing and color-changing patterns that follow the music.',
     'If you, or anyone watching, may be sensitive to flashing lights or patterns (photosensitive epilepsy), please use discretion.',
     'A flash limiter is always on: it keeps light pulses to at most three a second and fades between scenes, but it cannot rule out every risk.',
   ],
   continue: 'Continue',
   notNow: 'Not now',
   still: 'The picture is still.',
-  start: 'Start the visualizer',
+  start: 'Start the Visualizer',
   again: 'About flashing and photosensitivity',
 });
 

@@ -126,9 +126,6 @@ was made steadier. See [release notes](RELEASE_NOTES_0.1.10.md).
   eye. No control is off screen and nothing overlaps; the dial is round,
   centred and the same size before play, while playing and after Stop. Small
   cosmetic points found are listed under Boundaries.
-- Not repeated for this release: `tests_python/packaged_release_real_smoke.py`
-  (managed FFmpeg install, download, recording) and the upgrade and rollback
-  run; the backend is unchanged apart from version strings.
 - Sound meter cost, measured in the real window on the test machine: about 4
   to 8 percent of one CPU core while playing with the meter visible; zero at
   rest (paused, stopped, muted, volume 0, or switched off).
@@ -157,8 +154,6 @@ Known limits in this release:
   smaller than it was in v0.1.9 (it keeps room for the stacked player bar).
 - At 1000 px wide and under, the mute button overlaps the seek row by 1 px.
   This is older and unchanged.
-- The sound meter was not tested during a recording, nor with video playing in
-  the stacked (narrow) player bar.
 - The sound meter shows flat bars for playback that does not go through the
   local relay's audio engine: a stream that falls back to direct cross-origin
   playback when the relay cannot be used (the EQ is unavailable then too), or

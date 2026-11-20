@@ -30,19 +30,22 @@
  * first: u_audio, u_beat (with the beat clock), the parameter links (our
  * own table per scene in scenes.js, moving size, shape or colour; else
  * Psychedelia's conservative suggestions), the time surge and the zoom
- * punch.
+ * punch. The swell links may read (swell.js) is made from the limiter's
+ * output, low-passed: slower and smaller than what it lets through.
  */
 
 import loadAudioSignal from './vendor/psychedelia/engine/audio-signal.js';
 import loadAudioReactor from './vendor/psychedelia/engine/audio-reactor.js';
 import { createFlashLimiter } from './flash-limiter.js';
+import { createSwell } from './swell.js';
 
 /** What Psychedelia's own analyser reports (audio-analysis.js). */
 export const PSYCHEDELIA_DB = Object.freeze({ min: -100, max: -30 });
 /** The reactor's clock pace with no tempo (its fallback without Studio Music). */
 export const IDLE_BPM = 120;
-/** Link sources the limiter gives values for. */
-const LINK_SOURCES = new Set(['kick', 'snare', 'hat', 'beat', 'bass', 'mid', 'high', 'level']);
+/** Link sources the limiter gives values for, and the swell made from its
+ *  output (swell.js: level and bass, low-passed). */
+export const LINK_SOURCES = Object.freeze(new Set(['kick', 'snare', 'hat', 'beat', 'bass', 'mid', 'high', 'level', 'swell', 'bassSwell']));
 
 const EMPTY_SPECTRUM = new Uint8Array(0);
 
@@ -141,6 +144,13 @@ export function createAudioAdapter() {
     setFrame(next) { frame = next && next.active === true ? next : null; },
     /** dB being added back for the volume on the current frame. */
     get gainDb() { return frame ? volumeGainDb(frame.volume) : 0; },
+    /** The sound's level on the current frame before any auto-gain: dBFS of
+     *  the rms the signal already measured, the volume made up; -Infinity
+     *  with nothing to hear. Computes nothing new. */
+    get levelDb() {
+      if (!frame || !(frame.rms > 0)) return Number.NEGATIVE_INFINITY;
+      return 20 * Math.log10(frame.rms) + volumeGainDb(frame.volume);
+    },
     getAnalysis(options) {
       stats.readings += 1;
       const time = Number(options?.time);
@@ -301,6 +311,13 @@ export function createReactorBridge({ EffectRegistry = null, ledger = null, limi
     kick: 0, snare: 0, hat: 0, beat: 0, flash: 0, bass: 0, mid: 0, high: 0, level: 0, speed: 1,
   };
   const stats = { steps: 0, silent: 0 };
+  // What links read: the limiter's output and the swell made from it (one
+  // object, filled in again each step).
+  const swell = createSwell();
+  const sources = { swell: 0, bassSwell: 0 };
+  // How much of the swell links get (slow drift's fade: 0 when it is off,
+  // so a link that reads the swell then reads nothing).
+  let swellShare = 0;
   // The mood's reaction strength (mood.js): the hits and the time surge are
   // scaled by it before the limiter, which caps them whatever it is.
   let strength = 1;
@@ -347,7 +364,11 @@ export function createReactorBridge({ EffectRegistry = null, ledger = null, limi
     state.beat.clock = limiter.beatClock(AudioReactor.getBeatClock(), AudioReactor.isLive() && st.bpm > 0 ? st.bpm : IDLE_BPM);
     state.speed = out.speed;
     state.zoom = out.zoom;
-    state.sources = out;
+    swell.step(dt, out);
+    for (const key in out) sources[key] = out[key];
+    sources.swell = swell.level * swellShare;
+    sources.bassSwell = swell.bass * swellShare;
+    state.sources = sources;
   }
 
   /** Beat-clock cycles a second the scene gets now. */
@@ -385,6 +406,16 @@ export function createReactorBridge({ EffectRegistry = null, ledger = null, limi
       return sceneLinks(def, Array.isArray(entry) ? { links: entry } : entry);
     },
     clockRate,
+    /** The swell (swell.js): its level and bass, slow. */
+    swell,
+    /** The share of the swell links read (0..1; slow drift's fade), from
+     *  now on, the values already given too. */
+    setSwellShare(share) {
+      swellShare = share > 0 ? (share < 1 ? share : 1) : 0;
+      sources.swell = swell.level * swellShare;
+      sources.bassSwell = swell.bass * swellShare;
+    },
+    get swellShare() { return swellShare; },
     /** The reaction strength (mood.js MOOD_STRENGTH; 1 = as the reactor gives it). */
     setStrength(value) { strength = Number.isFinite(value) && value > 0 ? value : 1; },
     get strength() { return strength; },

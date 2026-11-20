@@ -33,8 +33,9 @@ const NEW_IDS = [
   'lsystem_tube_flight', 'path_traced_fractal_flight', 'menger_citadel', 'recursive_cathedral', 'fractal_canyon',
   'infinite_lattice', 'crystal_geode', 'golden_hour_clouds', 'planet_sunrise',
 ];
-const HELD_IDS = ['apollonian_foam_flight', 'hypercomplex_slice_flight', 'difs_tunnel_flight', 'mandelbox_flight', 'path_traced_fractal_flight',
-  'triplex_mutation_flight', 'folded_box_variants_flight', 'quaternion_julia_flight'];
+// (Five more came back in slice 12: tests/visualizer-slice12.test.js.)
+const HELD_IDS = ['hypercomplex_slice_flight', 'difs_tunnel_flight', 'quaternion_julia_flight'];
+const BACK_IN_SLICE12 = ['apollonian_foam_flight', 'folded_box_variants_flight', 'mandelbox_flight', 'triplex_mutation_flight', 'path_traced_fractal_flight'];
 /** Offered or held: every ported entry. */
 const entryOf = (id) => sceneById(id) || HELD_SCENE_ENTRIES.find((entry) => entry.id === id) || null;
 const OFFERED_IDS = NEW_IDS.filter((id) => !HELD_IDS.includes(id));
@@ -50,8 +51,9 @@ test('slice 7: the fifteen 3D flights and seven endless scenes are scenes like t
   assert.deepEqual(SCENES.filter((scene) => scene.file === 'effects/endless-scenes.js').map((scene) => scene.id), ['menger_citadel', 'recursive_cathedral', 'fractal_canyon', 'infinite_lattice']);
   assert.deepEqual(SCENES.filter((scene) => scene.file === 'effects/endless-sky-crystal.js').map((scene) => scene.id), ['crystal_geode', 'golden_hour_clouds', 'planet_sunrise']);
   assert.deepEqual(ENDLESS_FILES, ['endless-scenes', 'endless-sky-crystal']);
-  assert.deepEqual(HELPER_FILES, ['fractal-flight-common']);
-  assert.deepEqual(SCENE_GLOBALS, ['EffectRegistry', 'FractalFlight', 'EndlessScenes']);
+  // (Slice 13 added the lab helpers: tests/visualizer-slice13.test.js.)
+  assert.deepEqual(HELPER_FILES, ['fractal-flight-common', 'fractal-lab-common']);
+  assert.deepEqual(SCENE_GLOBALS, ['EffectRegistry', 'FractalFlight', 'FractalLab', 'EndlessScenes']);
   for (const name of [...ALL_SCENE_FILES, ...HELPER_FILES]) assert.ok(FILES.some((file) => file.source === `src/effects/${name}.js`), name);
   for (const id of NEW_IDS) {
     const scene = entryOf(id);
@@ -86,18 +88,23 @@ test('flights and endless scenes take their looks from their own presets (the fl
   const looks = sceneLooks(def);
   assert.equal(looks.length, 1 + def.fractalFlight.smokePresets.length - PRESETS_LEFT_OUT.strange_attractor_flight.length);
   assert.equal(looks[0].name, 'Default');
-  assert.equal(looks[1].name, def.fractalFlight.smokePresets[0].name);
+  assert.equal(looks[1].name, def.fractalFlight.smokePresets[1].name);
   // A flight without presets falls back to its palette list (a plain uniform).
   const bulb = renderer.register(await sceneById('mandelbulb_flight').load(), 'mandelbulb_flight');
   assert.ok(sceneLooks(bulb).length > 1);
   assert.ok(sceneLooks(bulb).every((look) => Object.keys(look.values).every((name) => name === 'palette')));
   const geode = renderer.register(await sceneById('crystal_geode').load(), 'crystal_geode');
   assert.equal(sceneLooks(geode).length, 7);
-  // A preset that fails the flash check is left out (PRESETS_LEFT_OUT).
-  assert.deepEqual(PRESETS_LEFT_OUT, { strange_attractor_flight: ['Aizawa Bloom Tunnel'] });
-  assert.ok(def.fractalFlight.smokePresets.some((preset) => preset.name === 'Aizawa Bloom Tunnel'), 'Psychedelia has it');
-  assert.ok(!looks.some((look) => look.name === 'Aizawa Bloom Tunnel'));
-  assert.ok(sceneLooks(def, { all: true }).some((look) => look.name === 'Aizawa Bloom Tunnel'), 'the flash check can still look at it');
+  // Presets that fail the flash check are left out (PRESETS_LEFT_OUT): three
+  // of Strange Attractor Flight's four, so it offers Default and Thomas Knot Orbit.
+  const leftOut = ['Lorenz Wing Dive', 'Aizawa Bloom Tunnel', 'Rossler Spiral Graze'];
+  assert.deepEqual(PRESETS_LEFT_OUT.strange_attractor_flight, leftOut);
+  assert.deepEqual(looks.map((look) => look.name), ['Default', 'Thomas Knot Orbit']);
+  for (const name of leftOut) {
+    assert.ok(def.fractalFlight.smokePresets.some((preset) => preset.name === name), `Psychedelia has ${name}`);
+    assert.ok(!looks.some((look) => look.name === name), `${name} not offered`);
+    assert.ok(sceneLooks(def, { all: true }).some((look) => look.name === name), `the flash check can still look at ${name}`);
+  }
   // L-System's Crystal Fern Cathedral is back (Psychedelia 0a4fdc1).
   const tube = renderer.register(await sceneById('lsystem_tube_flight').load(), 'lsystem_tube_flight');
   assert.ok(sceneLooks(tube).some((look) => look.name === 'Crystal Fern Cathedral'));
@@ -129,14 +136,14 @@ test('held scenes: ported, credited and in the manifest, but not offered by the 
   assert.deepEqual(Object.keys(HELD_SCENES).sort(), [...HELD_IDS].sort());
   assert.deepEqual(HELD_SCENE_ENTRIES.map((entry) => entry.id).sort(), [...HELD_IDS].sort());
   for (const id of HELD_IDS) {
-    assert.match(HELD_SCENES[id], /camera .*(surface|sphere|volume): step 0\.\d+ at 1x/, `${id}: the reason and the measure`);
+    assert.match(HELD_SCENES[id], /0\.\d+ at 1x over 360 s/, `${id}: the reason and the measure`);
     assert.equal(sceneById(id), null, `${id} not offered`);
     assert.ok(!SCENES.some((scene) => scene.id === id));
     assert.ok(!orderedScenes().some((scene) => scene.id === id));
     assert.ok(FILES.some((file) => file.target === entryOf(id).file), `${id}: still imported`);
     assert.ok(manifest.files.some((file) => file.target === entryOf(id).file), `${id}: still in the manifest`);
   }
-  assert.ok(manifest.borrowed.some((row) => row.scene === 'apollonian_foam_flight'), 'its borrowed rows stay');
+  assert.ok(manifest.borrowed.some((row) => row.scene === 'difs_tunnel_flight'), 'its borrowed rows stay');
   // Previous / next go round the offered scenes only.
   const ordered = orderedScenes();
   for (let i = 0, id = ordered[0].id; i < ordered.length; i += 1, id = stepScene(id, 1, ordered)) assert.ok(!HELD_IDS.includes(id));
@@ -149,10 +156,10 @@ test('held scenes: ported, credited and in the manifest, but not offered by the 
 
 test('held scenes in the tab: a saved scene or old favourite of one falls back to the default and is never shown', async () => {
   const m = await mount({
-    visualizerScene: 'mandelbox_flight',
+    visualizerScene: 'difs_tunnel_flight',
     visualizerShuffle: true,
     visualizerShufflePool: 'favourites',
-    visualizerFavourites: ['mandelbox_flight', 'apollonian_foam_flight:2', 'kifs_flight', 'tunnel'],
+    visualizerFavourites: ['difs_tunnel_flight', 'hypercomplex_slice_flight:2', 'kifs_flight', 'tunnel'],
   });
   assert.equal(m.session.switcher.current, DEFAULT_SCENE, 'the saved held scene: the default instead');
   for (const id of HELD_IDS) assert.ok(!m.session.sceneList.shown.includes(id), `${id} not in the list`);
@@ -164,7 +171,7 @@ test('held scenes in the tab: a saved scene or old favourite of one falls back t
   }
   for (const id of HELD_IDS) assert.ok(!shown.has(id), `${id} never picked`);
   // The favourites are kept as saved (they come back when the scene does).
-  assert.ok(m.settings.visualizerFavourites.includes('mandelbox_flight'));
+  assert.ok(m.settings.visualizerFavourites.includes('difs_tunnel_flight'));
   m.session.destroy();
 });
 
@@ -175,19 +182,21 @@ test("a look's number is its place in Psychedelia's list: leaving one out renumb
   const attractor = renderer.register(await sceneById('strange_attractor_flight').load(), 'strange_attractor_flight');
   const presets = attractor.fractalFlight.smokePresets.map((preset) => preset.name);
   const looks = sceneLooks(attractor);
-  // Default is 0, preset i is i + 1; Aizawa Bloom Tunnel (3) is not offered.
-  assert.equal(presets[2], 'Aizawa Bloom Tunnel');
-  assert.deepEqual(looks.map((look) => look.number), [0, 1, 2, 4]);
+  // Default is 0, preset i is i + 1; Lorenz Wing Dive (1), Aizawa Bloom
+  // Tunnel (3) and Rossler Spiral Graze (4) are not offered.
+  assert.deepEqual(presets, ['Lorenz Wing Dive', 'Thomas Knot Orbit', 'Aizawa Bloom Tunnel', 'Rossler Spiral Graze']);
+  assert.deepEqual(looks.map((look) => look.number), [0, 2]);
   for (const look of looks.slice(1)) assert.equal(look.name, presets[look.number - 1]);
   const entry = sceneById('strange_attractor_flight');
-  const rossler = attractor.fractalFlight.smokePresets[3];
-  assert.equal(rossler.name, 'Rossler Spiral Graze');
-  assert.equal(lookOverrides(entry, attractor, 4).curve_scale, rossler.values.curve_scale, 'saved 4 is Rossler Spiral Graze');
-  assert.equal(lookOverrides(entry, attractor, 3), entry.defaults, 'saved 3 (left out): the start, no look values');
+  const thomas = attractor.fractalFlight.smokePresets[1];
+  assert.equal(lookOverrides(entry, attractor, 2).curve_scale, thomas.values.curve_scale, 'saved 2 is Thomas Knot Orbit');
   const start = startLook(looks, sceneDefaults(attractor));
   assert.equal(start, 0);
-  assert.equal(currentLook(looks, 3, start), start);
-  assert.equal(currentLook(looks, 4, start), 4);
+  for (const left of [1, 3, 4]) {
+    assert.equal(lookOverrides(entry, attractor, left), entry.defaults, `saved ${left} (left out): the start, no look values`);
+    assert.equal(currentLook(looks, left, start), start);
+  }
+  assert.equal(currentLook(looks, 2, start), 2);
   // Mandelbrot's palette looks keep the palette's own index (Neon 1 and
   // Ocean 3 left out): Rainbow 0, Fire 2, Psychedelic 4.
   const mandel = renderer.register(await sceneById('mandelbrot').load(), 'mandelbrot');
@@ -198,49 +207,82 @@ test("a look's number is its place in Psychedelia's list: leaving one out renumb
   // The look shuffle picks numbers offered only.
   const shuffle = createShuffle({ scenes: SCENES, random: seededRandom(4) });
   const numbers = looks.map((look) => look.number);
-  for (let i = 0; i < 60; i += 1) assert.notEqual(shuffle.look('strange_attractor_flight', numbers), 3);
-  assert.equal(shuffle.look('strange_attractor_flight', numbers, [3, 4]), 4, 'a favourite of a left-out look is not picked');
+  for (let i = 0; i < 60; i += 1) assert.ok([0, 2].includes(shuffle.look('strange_attractor_flight', numbers)));
+  for (let i = 0; i < 20; i += 1) {
+    assert.equal(shuffle.look('strange_attractor_flight', numbers, [1, 3, 4, 2]), 2, 'a favourite of a left-out look is not picked');
+  }
   renderer.destroy();
 });
 
 test('in the tab: a saved look shows the same preset, and a saved left-out look shows the start look; stepping skips it', async () => {
-  const rossler = await mount({ visualizerScene: 'strange_attractor_flight', visualizerLooks: { strange_attractor_flight: 4 } });
-  assert.equal(rossler.session.switcher.current, 'strange_attractor_flight');
-  const presets = rossler.session.renderer.definition.fractalFlight.smokePresets;
-  assert.equal(rossler.session.renderer.values.curve_scale, presets[3].values.curve_scale, 'Rossler Spiral Graze');
-  rossler.session.destroy();
-  const out = await mount({ visualizerScene: 'strange_attractor_flight', visualizerLooks: { strange_attractor_flight: 3 } });
-  const start = sceneDefaults(out.session.renderer.definition);
-  assert.equal(out.session.renderer.values.curve_scale, start.curve_scale, 'the start look, not Aizawa Bloom Tunnel');
-  assert.notEqual(out.session.renderer.values.curve_scale, presets[2].values.curve_scale);
-  out.session.destroy();
+  const thomas = await mount({ visualizerScene: 'strange_attractor_flight', visualizerLooks: { strange_attractor_flight: 2 } });
+  assert.equal(thomas.session.switcher.current, 'strange_attractor_flight');
+  const presets = thomas.session.renderer.definition.fractalFlight.smokePresets;
+  assert.equal(thomas.session.renderer.values.curve_scale, presets[1].values.curve_scale, 'Thomas Knot Orbit');
+  thomas.session.destroy();
+  // Saved (or a favourite of) Lorenz Wing Dive, Aizawa Bloom Tunnel or
+  // Rossler Spiral Graze: the start look, as for any left-out look.
+  for (const number of [1, 3, 4]) {
+    const out = await mount({ visualizerScene: 'strange_attractor_flight', visualizerLooks: { strange_attractor_flight: number } });
+    const start = sceneDefaults(out.session.renderer.definition);
+    assert.equal(out.session.renderer.values.curve_scale, start.curve_scale, `the start look, not ${presets[number - 1].name}`);
+    assert.notEqual(out.session.renderer.values.curve_scale, presets[number - 1].values.curve_scale);
+    // The look buttons go round Default and Thomas Knot Orbit only.
+    const seen = [];
+    for (let i = 0; i < 4; i += 1) {
+      out.session.controls[i % 2 ? 'lookPrev' : 'lookNext'].dispatchEvent(new Event('click'));
+      seen.push(out.settings.visualizerLooks.strange_attractor_flight ?? 0);
+    }
+    assert.deepEqual(seen, [2, 0, 2, 0]);
+    out.session.destroy();
+    // A favourite of it, picked from the favourites in the scene list: the
+    // scene at its start look.
+    const fav = await mount({ visualizerScene: 'plasma', visualizerFavourites: [`strange_attractor_flight:${number}`] });
+    fav.session.sceneList.favouritesOnly.dispatchEvent(new Event('click'));
+    fav.session.sceneList.pick('strange_attractor_flight');
+    for (let round = 0; round < 400 && fav.session.switcher.current !== 'strange_attractor_flight'; round += 1) {
+      await settle(() => fav.session.switcher.current === 'strange_attractor_flight', 20);
+      fav.h.run(COMPILE_POLL_MS);
+    }
+    assert.equal(fav.session.switcher.current, 'strange_attractor_flight');
+    assert.equal(fav.session.renderer.values.curve_scale, start.curve_scale, `favourite ${number}: the start look`);
+    fav.session.destroy();
+  }
 });
 
 /* ---------------- Flash: speed caps and class ---------------- */
 
-test('flash: the offered slice 7 scenes get their measured speed caps; the two back from the held list are calm, the others normal', () => {
+test('flash: the offered slice 7 scenes get their measured speed caps; the two back from the held list and Strange Attractor Flight are calm (the two with no effects), the others normal', () => {
   // From the 120-s flash check with the surge held at its most, over the
   // same stretch of each scene's clock as 3x (scenes.js SPEED_CAPS).
-  const caps = Object.fromEntries(OFFERED_IDS.map((id) => [id, sceneById(id).maxSpeed ?? null]));
+  // (The flights back in slice 12: tests/visualizer-slice12.test.js.)
+  const offered = OFFERED_IDS.filter((id) => !BACK_IN_SLICE12.includes(id));
+  const caps = Object.fromEntries(offered.map((id) => [id, sceneById(id).maxSpeed ?? null]));
   assert.deepEqual(caps, {
-    mandelbulb_flight: null, kifs_flight: null, strange_attractor_flight: null, lsystem_tube_flight: 1,
+    mandelbulb_flight: null, kifs_flight: null, strange_attractor_flight: 1.5, lsystem_tube_flight: 1,
     polyfold_flight: 2, fractal_flame_volume_flight: 2, schottky_inversion_flight: 1.5,
     menger_citadel: null, recursive_cathedral: null, fractal_canyon: null, infinite_lattice: 1.5,
     crystal_geode: null, golden_hour_clouds: null, planet_sunrise: null,
   });
-  for (const id of OFFERED_IDS) {
+  for (const id of offered) {
     if (SPEED_CAPS[id]) assert.equal(sceneById(id).maxSpeed, SPEED_CAPS[id]);
-    const calm = ['polyfold_flight', 'fractal_flame_volume_flight'].includes(id);
+    const calm = ['polyfold_flight', 'fractal_flame_volume_flight', 'strange_attractor_flight'].includes(id);
     assert.equal(FX_CALM_SCENES.has(id), calm, id);
-    assert.equal(FX_NONE_SCENES.has(id), false, id);
+    // The two back from the held list reach 0.085 on a look: no effects at all.
+    const none = ['polyfold_flight', 'fractal_flame_volume_flight'].includes(id);
+    assert.equal(FX_NONE_SCENES.has(id), none, id);
     assert.equal(sceneById(id).fxCalm, calm);
+    assert.equal(sceneById(id).fxNone, none);
   }
 });
 
 /* ---------------- Cost: caps per quality ---------------- */
 
 test('quality caps: the heaviest scenes\' own detail is lowered at Low and Medium (and High where needed), on what is drawn only', () => {
-  assert.deepEqual(Object.keys(SCENE_QUALITY_CAPS).sort(), ['fractal_flame_volume_flight', 'golden_hour_clouds', 'lsystem_tube_flight', 'strange_attractor_flight']);
+  // (Slice 14's simulations: their own size, tests/visualizer-slice14.test.js.)
+  assert.deepEqual(Object.keys(SCENE_QUALITY_CAPS).sort(), [
+    'curl_silk', 'fluid_ink', 'fractal_flame_volume_flight', 'golden_hour_clouds', 'lenia', 'lsystem_tube_flight', 'physarum', 'strange_attractor_flight',
+  ]);
   // Strange Attractor and L-System: one cap at every quality, so each draws
   // in about 28 ms or less at High (the step-down keeps a scene at High down
   // to 24 frames a second, step-down.js).
@@ -269,7 +311,14 @@ test('the renderer draws the caps for the quality drawn now; the scene\'s values
       for (const [param, most] of Object.entries(caps[quality] || {})) {
         const row = own.params.find((p) => p.name === param);
         assert.ok(row, `${name}.${param}`);
-        assert.ok(most >= row.min && most < defaults[param], `${name}.${param} at ${quality}: ${most} inside ${row.min}..${defaults[param]}`);
+        if (row.type === 'select' || row.type === 'int') {
+          // A size choice (a simulation's): at most its start, so a larger
+          // one picked by hand is lowered too.
+          const least = row.type === 'select' ? 0 : row.min;
+          assert.ok(Number.isInteger(most) && most >= least && most <= defaults[param], `${name}.${param} at ${quality}: ${most} inside ${least}..${defaults[param]}`);
+        } else {
+          assert.ok(most >= row.min && most < defaults[param], `${name}.${param} at ${quality}: ${most} inside ${row.min}..${defaults[param]}`);
+        }
         assert.ok(!(own.specialize || []).includes(param), `${name}.${param} is a plain uniform`);
       }
     }
@@ -443,5 +492,5 @@ test('borrowed code: one entry per piece in CREDITS.md and the notices; the shar
     assert.match(text, /Apollonian Foam Flight/);
   }
   assert.match(credits, /It is not under MIT\./);
-  assert.match(notices, /It is not covered by the MIT licence above\./);
+  assert.match(notices, /It is not covered by the MIT license above\./);
 });

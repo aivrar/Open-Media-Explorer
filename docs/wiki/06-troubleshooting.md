@@ -10,8 +10,9 @@
 4. Retry the smallest affected operation: source **Retry now**, player **Play**,
    capture **Retry**, or FFmpeg **Repair**.
 
-Do not clear the cache first. It deletes favorites, favorites categories,
-preferences, EQ, the song log, and job history.
+Do not clear the cache first. It deletes favorites, favorites categories, the
+names you gave your favorites, preferences, EQ, the song log, starred songs,
+and job history.
 
 ## App will not start
 
@@ -82,6 +83,14 @@ and keep their place, category and equalizer. If a favorite stays behind, check
 that the channel's name did not change, and that the new channel is not already
 a favorite.
 
+## The Tuner says the stations could not be loaded
+
+A live source did not answer within 20 seconds; the Tuner's status line counts
+it as unavailable. Press **Radio** or **TV** above the dial to load the list
+again. Public directories are slow at times, so wait a moment between tries.
+"No stations found for this country." means the sources answered and have no
+station for the chosen country; choose **All countries** or another one.
+
 ## My Playlists is empty or shows an error
 
 If the saved playlists could not be read when the app started, for example
@@ -96,6 +105,29 @@ An import can also skip entries on purpose. The result says how many entries
 were skipped because they point at this computer or a private network address,
 and why, and counts unsupported entries and duplicates.
 
+## A JSON or CSV playlist is not imported
+
+Since v0.1.12 **My Playlists** reads `.json` and `.csv` channel lists. When one
+cannot be read, the message says why. The usual causes:
+
+- "This JSON playlist could not be read. The file is not valid JSON (line ...,
+  column ...)." The file has a typing error near that place, such as a missing
+  comma or quotation mark. Open it in a text editor and fix it there.
+- "This JSON file has no list of stations." The file must be a list of
+  entries, or an object with a `stations` or `channels` list, and each entry
+  needs a `url`.
+- "No entry in this JSON playlist has a stream address." The entries have no
+  `url` (or a similar name such as `stream_url`).
+- "This CSV playlist has no column for the stream address." The first row must
+  name the columns, and one of them must be `url`.
+- "Near line ..., a value in quotation marks is never closed." A CSV value that
+  starts with a quotation mark must end with one.
+- A file over 8 MiB or with more than 50,000 entries is refused; split it into
+  smaller files.
+
+[Using the application](02-using-the-application.md#import-your-own-channel-playlists)
+says what a JSON and a CSV list must look like.
+
 ## Catalog stopped, counts vanished, or a source says Wait
 
 The labels are state, not final failure:
@@ -106,8 +138,10 @@ The labels are state, not final failure:
 - **Stale** means a prior live snapshot is still being used.
 - **Done** means only that the finite cursor reached its end.
 
-Use **Retry now** for waiting sources. Use **Check again** after all finite
-sources show Done. Scroll near the bottom or press **Load more** when the
+Since v0.1.12 a source whose page fails twice in a row, without the provider
+saying when to try again, stops loading by itself and shows the error. Use
+**Retry now** for waiting or stopped sources. Use **Check again** after all
+finite sources show Done. Scroll near the bottom or press **Load more** when the
 rendered window is ahead of the active fetch. Disable a provider in Settings if
 it is persistently rate-limited, then re-enable it later.
 
@@ -187,10 +221,48 @@ unavailable even when the metadata card is valid.
 
 **Other streams** (in the detail panel of a Radio Browser station) lists other
 directory entries with the same station name and homepage. World Media does
-not test them first, and it never switches to one for you. An entry can be dead
-at its provider like any other station. Try another entry in the list, or go
-back to the first stream. One station name can also cover different channels,
-so an entry may be a different mix of the same station.
+not test them before it lists them, and only **Pick the best stream** set to
+**Auto (verified)** switches to one for you, after its checks. An entry can be
+dead at its provider like any other station. Try another entry in the list, or
+go back to the first stream. One station name can also cover different
+channels, so an entry may be a different mix of the same station.
+
+## Auto (verified) never finds a better stream
+
+**Pick the best stream: Auto (verified)** moves a radio station to another
+directory entry only when two checks a few minutes apart each found both
+streams playing the same song, a different song each time. Read the line under
+the stream details in the station's detail panel:
+
+- **Better stream: could not be verified (this station sends no song titles)**:
+  only a station that announces song titles can be verified. Any other keeps
+  its own stream, and nothing is wrong.
+- **Better stream: none found**: the directory has no other entry of the same
+  station (same name, homepage, country and stream site) that is better and
+  has been in the directory, unchanged, long enough.
+- **Better stream: one match so far, checking again later**: the second check
+  comes a few minutes later, while you listen or at a later play.
+- **Better stream: could not be verified**: a check failed, for example
+  because the other stream did not answer, played another song, or said a
+  different station name. It is tried again after a day.
+
+The first check waits for about 45 seconds of playing, counted from when the
+sound starts. Pausing, changing station or choosing another setting stops a
+check on its way. A verified stream is used from the next start of the station,
+not while it plays. Only Radio Browser stations are checked; items from your own
+playlists keep their own stream.
+
+## A station plays another station's program
+
+If a station plays what sounds like another station, for example a news
+service, while its card shows the right name and picture, check the station's
+own schedule first. Many stations carry another broadcaster's program at some
+hours, such as a world news service overnight, and they send it on their own
+stream. World Media plays the streams the station's directory entry or your
+playlist entry gives. Only with **Pick the best stream** on **Auto
+(verified)** can another directory entry of the same station play instead;
+the detail panel then says **Better stream: ..., verified**, and **Use the
+station's own stream** goes back to the station's own stream.
 
 ## Playback is jumpy or stops after starting
 
@@ -220,6 +292,8 @@ itself, for up to ten minutes. The player bar says:
 
 A station that never started playing is not retried. It shows the usual error.
 A stream that freezes without any error is restarted after about 20 seconds.
+Since v0.1.12 a live station whose connection is closed by the station is
+retried in the same way; before, it stopped and showed **Play**.
 
 ## No song title appears
 
@@ -262,7 +336,7 @@ See [Visualizer](09-visualizer.md) for every control. Common causes:
   so if the meter is flat, the picture has no sound to follow either (see the
   section above). With no sound it moves slowly for about 20 seconds and then
   holds still. It is also still until you press **Continue** on the notice (or
-  **Start the visualizer** after **Not now**), and when Windows is set to show
+  **Start the Visualizer** after **Not now**), and when Windows is set to show
   fewer animations ("Windows is set to reduce animations, so the picture stays
   still.").
 - **"The visualizer needs WebGL graphics, which are not available on this
@@ -274,10 +348,21 @@ See [Visualizer](09-visualizer.md) for every control. Common causes:
   the Visualizer again.
 - **The picture is jumpy or the computer is busy.** Set **Quality** to Low and
   **Frame rate** to 15 or 30, choose Light scenes (or set the shuffle's
-  **Scenes** to **Light only**), and turn effects and overlays off. Turn on
-  **Show measured fps** to see the rate it gets. The automatic step-down does
-  part of this for you when a scene cannot keep up, and says so at the bottom
-  right.
+  **Scenes** to **Light only**), and turn effects and overlays off. Keep
+  **Settings > Processor use** at **Low**. Turn on **Show measured fps** to see
+  the rate it gets. The automatic step-down does part of this for you when a
+  scene cannot keep up, and says so at the bottom right.
+- **The computer runs warmer or louder with the Visualizer.** At **Processor
+  use** **Balanced** or **High** the Visualizer may use more of the processor
+  and draw sharper pictures, so the computer may get warmer and its fans
+  louder, and a laptop's battery may last less. Lower the **Limit**, or choose
+  **Low** in **Settings > Processor use**; it takes effect at once. At
+  Balanced and High the shuffle also takes heavy scenes, unless you chose
+  **Scenes** by hand.
+- **Very high is not in the Quality list.** It is offered only with
+  **Processor use** at **Balanced** or **High**. At **Low** a saved Very high
+  draws as High and is kept for later. A heavy scene can still draw at High
+  while Very high is chosen; the line "This scene draws at High" says so.
 - **You want it to stop using the computer.** Open another tab. Leaving the
   Visualizer stops all its work and gives the graphics back, so it costs
   nothing while it is closed.

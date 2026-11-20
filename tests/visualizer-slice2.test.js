@@ -17,9 +17,8 @@ import { LOOP_MODES, MIN_REACT_FPS, createVisualizerLoop } from '../src/visualiz
 import {
   COMPILE_LIMIT_MS, COMPILE_POLL_MS, createSceneRenderer, readsBeatClock,
 } from '../src/visualizer/scene-renderer.js';
-import { createSceneSwitcher } from '../src/visualizer/scene-switcher.js';
 import {
-  COST_CLASSES, DEFAULT_SCENE, HELD_SCENE_ENTRIES, SCENES, orderedScenes, sceneById, stepScene,
+  ACCUMULATING_SCENE_ENTRIES, COST_CLASSES, DEFAULT_SCENE, HELD_SCENE_ENTRIES, LINE_SCENE_ENTRIES, OWN_SCENE_ENTRIES, SCENES, drawableScenes, orderedScenes, sceneById, stepScene,
 } from '../src/visualizer/scenes.js';
 import {
   FLASH_LIMITS, LEVEL_CHANNELS, PULSE_CHANNELS, createFlashLimiter,
@@ -31,7 +30,9 @@ import {
 import {
   DEBUG_INTERVAL_MS, MESSAGES, debugText, isDebugKey, mountVisualizer,
 } from '../src/visualizer/index.js';
-import { ALL_SCENE_FILES, ENDLESS_FILES, FILES, VENDOR_DIR } from '../scripts/import_psychedelia.mjs';
+import {
+  ALL_SCENE_FILES, ENDLESS_FILES, FILES, HOOK_GLOBALS, VENDOR_DIR,
+} from '../scripts/import_psychedelia.mjs';
 import { createClockHarness, fakeAnalyser, fakeVisibilityDoc } from './helpers/signal-harness.js';
 import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle,
@@ -335,7 +336,7 @@ test('flash limiter: one channel held high cannot hide another channel\'s pulses
   const hats = counter.seen.filter((pulse) => pulse.name === 'hat').map((pulse) => pulse.time);
   const all = counter.seen.map((pulse) => pulse.time);
   assert.ok(hats.length >= 1, 'hat pulses are seen at all');
-  // Codex's case: five hat pulses in the first half second got through before.
+  // A review case: five hat pulses in the first half second got through before.
   // Now three (the first one rises with the kick: one flash), then none until
   // the second is over.
   assert.equal(hats.filter((time) => time < 0.5).length, 3);
@@ -517,7 +518,12 @@ test('fed from the shared signal, the reactor finds the beat and the bass, limit
     assert.ok(Math.abs(frames[index].speed - frames[index - 1].speed) <= FLASH_LIMITS.maxSpeedSlew * dt + 1e-9, 'the surge is slew-limited');
   }
   assert.ok(bridge.limiter.stats.slewed > 0, 'the reactor\'s own surge is faster than that');
-  assert.equal(frames.at(-1).sources, bridge.limiter.out, 'links read the limited values');
+  // Links read the limited values (and the swell made from them).
+  const read = frames.at(-1).sources;
+  for (const [name, value] of Object.entries(bridge.limiter.out)) assert.equal(read[name], value, `links read the limited ${name}`);
+  assert.equal(read.swell, 0, 'none of the swell until slow drift gives links a share');
+  bridge.setSwellShare(1);
+  assert.equal(read.swell, bridge.swell.level);
   const last = frames.slice(-30);
   near((last.at(-1).clock - last[0].clock) / ((last.at(-1).now - last[0].now) / 1000), 2, 0.1, 'beat clock at 2 a second');
   // The sound stops: the loop goes idle and the reactor hears silence.
@@ -599,36 +605,55 @@ test('the link rule names what each refused param is', () => {
 /* ---------------- Scenes ---------------- */
 
 test('every scene is a lazily loaded vendored file that registers under its id, compiles and draws; old programs are freed', async () => {
-  // 79 ported; eight 3D flights held (scenes.js HELD_SCENES).
-  assert.equal(SCENES.length, 71);
-  assert.equal(HELD_SCENE_ENTRIES.length, 8);
+  // 91 ported; three 3D flights held (scenes.js HELD_SCENES). Six of
+  // them (slice 14) own their passes: tests/visualizer-slice14.test.js.
+  // Five of the seven line-drawing scenes (slice 15) offered too:
+  // tests/visualizer-lines.test.js. And World Media's own five:
+  // tests/visualizer-own-scenes.test.js. And Buddhabrot Lab, the first
+  // accumulating lab released: tests/visualizer-accumulating.test.js.
+  assert.equal(SCENES.length, 99);
+  assert.equal(HELD_SCENE_ENTRIES.length, 3);
   assert.equal(SCENES[0].id, 'plasma');
   assert.equal(new Set(SCENES.map((scene) => scene.id)).size, SCENES.length);
   const scenesJs = readFileSync(join(REPO, 'src', 'visualizer', 'scenes.js'), 'utf8');
   const imports = [...scenesJs.matchAll(/import\('\.\/vendor\/psychedelia\/(effects\/[a-z-]+\.js)'\)/g)].map((match) => match[1]);
   // One literal import per scene file (one chunk each); the endless scenes
   // share theirs (endless-scenes.js four, endless-sky-crystal.js three).
-  const files = [...new Set([...SCENES, ...HELD_SCENE_ENTRIES].map((scene) => scene.file))];
+  // (The line-drawing scenes are imported in line-scenes.js, from their own list.)
+  const files = [...new Set([...SCENES, ...HELD_SCENE_ENTRIES].filter((scene) => !LINE_SCENE_ENTRIES.includes(scene) && !OWN_SCENE_ENTRIES.includes(scene)
+    && !ACCUMULATING_SCENE_ENTRIES.includes(scene)).map((scene) => scene.file))];
   assert.deepEqual([...imports].sort(), [...files].sort(), 'one literal import per scene file: one chunk each');
   assert.deepEqual(ALL_SCENE_FILES.map((name) => `effects/${name}.js`).sort(), [...files].sort(), 'the import script vendors exactly these');
   const shared = SCENES.filter((scene) => SCENES.some((other) => other !== scene && other.file === scene.file)).map((scene) => scene.file);
   assert.deepEqual([...new Set(shared)], ENDLESS_FILES.map((name) => `effects/${name}.js`), 'only the endless scenes share a file');
-  for (const scene of SCENES) {
+  for (const scene of SCENES.filter((entry) => !OWN_SCENE_ENTRIES.includes(entry))) {
     assert.ok(FILES.some((file) => file.target === scene.file), `${scene.file} in the manifest`);
     assert.ok(existsSync(join(VENDOR_DIR, ...scene.file.split('/'))), `${scene.file} vendored`);
     assert.ok(COST_CLASSES.includes(scene.cost), `${scene.id}: ${scene.cost}`);
     assert.ok(['links', 'shader', 'motion'].includes(scene.audio));
     assert.equal(typeof scene.category, 'string');
     assert.equal(sceneById(scene.id), scene);
-    // Only the registry and the flight helpers (and EndlessScenes, from
-    // endless-scenes.js): no scene file may need the renderer, the reactor
-    // or Studio.
+    // Those that own their passes take the host's globals (slice 14).
+    if (scene.needs) continue;
+    // Only the registry and the flight and lab helpers (and EndlessScenes,
+    // from endless-scenes.js): no scene file may need the renderer, the
+    // reactor or Studio to register or draw. Cymatics' hook alone reads the
+    // reactor while it draws (the renderer's stand-in, HOOK_GLOBALS; it
+    // falls back to Renderer only without one). "Music" is a word in a label
+    // of two of them (the wrapper names it; nothing reads it).
     const text = readFileSync(join(VENDOR_DIR, ...scene.file.split('/')), 'utf8');
     const needs = [...text.matchAll(/^var (\w+) = G\.\1;$/gm)].map((match) => match[1]);
-    assert.ok(needs.length && needs.every((name) => ['EffectRegistry', 'FractalFlight', 'EndlessScenes'].includes(name)), `${scene.id} needs ${needs.join(', ')}`);
+    const allowed = ['EffectRegistry', 'FractalFlight', 'FractalLab', 'EndlessScenes', 'Music', ...(scene.id === 'cymatics' ? HOOK_GLOBALS : [])];
+    assert.ok(needs.length && needs.every((name) => allowed.includes(name)), `${scene.id} needs ${needs.join(', ')}`);
+    if (needs.includes('Music')) assert.doesNotMatch(text, /[^\w$.]Music\s*[.([]/, `${scene.id}: Music is only a word`);
   }
-  const leftOut = ['cymatics', 'feedback-loop', 'escape-time-lab', 'fractal-flame-lab', 'physarum', 'lissajous'];
-  assert.ok(!SCENES.some((scene) => leftOut.some((name) => scene.file === `effects/${name}.js`)), 'left-out scenes stay out');
+  // (Lissajous, left out with the other line-drawing scenes before, is drawn
+  // by the line host since slice 15: tests/visualizer-lines.test.js.)
+  // (Buddhabrot Lab is offered through the density host since its release:
+  // tests/visualizer-accumulating.test.js; as a scene file it stays left out.)
+  const leftOut = ['buddhabrot-lab', 'ifs-lsystem-lab'];
+  assert.ok(!SCENES.some((scene) => !ACCUMULATING_SCENE_ENTRIES.includes(scene) && leftOut.some((name) => scene.file === `effects/${name}.js`)), 'left-out scenes stay out');
+  assert.ok(!SCENES.some((scene) => scene.file === 'effects/ifs-lsystem-lab.js'), 'IFS / L-System Lab held');
   assert.equal(sceneById('nope'), null);
   assert.equal(stepScene('plasma', -1), SCENES.at(-1).id, 'previous wraps round');
   assert.equal(stepScene(SCENES.at(-1).id, 1), 'plasma', 'next wraps round');
@@ -636,7 +661,8 @@ test('every scene is a lazily loaded vendored file that registers under its id, 
   // Compile and draw every one through one renderer, one context.
   const gl = new FakeGL();
   const renderer = createSceneRenderer({ canvas: { width: 64, height: 36 }, gl, mode: 'webgl2' });
-  for (const scene of SCENES) {
+  const single = SCENES.filter((scene) => !scene.needs);
+  for (const scene of single) {
     const def = renderer.register(await scene.load(), scene.id);
     assert.ok(def, `${scene.id} registers under its id`);
     assert.equal(def.name, scene.id);
@@ -646,7 +672,7 @@ test('every scene is a lazily loaded vendored file that registers under its id, 
     if (scene.audio === 'shader') assert.match(gl.current.fragment, /u_audio|u_beat/, `${scene.id} reads the sound itself`);
     assert.equal(gl.programs.size, 1, `${scene.id}: the old program was deleted`);
   }
-  assert.equal(renderer.stats.deleted, SCENES.length - 1);
+  assert.equal(renderer.stats.deleted, single.length - 1);
   // The endless engine's own scenes are registered too when a sky scene is
   // loaded first (endless-sky-crystal.js loads it on the same registry).
   renderer.destroy();
@@ -786,8 +812,9 @@ async function mount({
 }
 
 /** The list's order (category, then name), and the scene `step` places
- *  after `id` in it. */
-const ORDER = orderedScenes(SCENES).map((scene) => scene.id);
+ *  after `id` in it. The fake context offers no float render targets, so
+ *  the scenes that need them are not listed (slice 14). */
+const ORDER = orderedScenes(drawableScenes(SCENES, { webgl2: true, float: false, half: false })).map((scene) => scene.id);
 const after = (id, step) => ORDER[(((ORDER.indexOf(id) + step) % ORDER.length) + ORDER.length) % ORDER.length];
 
 test('the scene chooser: list, previous and next, remembered in the settings', async () => {

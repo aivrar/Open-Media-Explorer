@@ -32,12 +32,24 @@
  * Changes: a new set fades the old one out (OVERLAY_FADE_OUT_S) and the new
  * one in (OVERLAY_FADE_IN_S), in real time; the top sheet by its CSS opacity
  * (the compositor's, nothing redrawn), the blend sheet by its pass's gain.
+ *
+ * Motion (overlay-motion.js, move()): each sheet turns, breathes and sways
+ * slowly with slow drift, unless it holds an overlay anchored to the screen;
+ * the top sheet by a CSS transform (will-change only while it moves), the
+ * blend sheet by its texture coordinates (blendSheet.move). Removed when the
+ * sheet empties or everything is let go.
  */
 
 import {
-  OVERLAY_BLEND_MAX_PIXELS, OVERLAY_BLEND_SCALE, OVERLAY_HALO, OVERLAY_HALO_IDS, OVERLAY_LINE_PARAMS, OVERLAY_QUALITY_LIMITS, OVERLAY_TOP_MAX_PIXELS, OVERLAY_GLOW_PARAMS, OVERLAY_GLOW_SCALE, OVERLAY_IDS, isBlendIn, overlayRow,
+  OVERLAY_BLEND_MAX_PIXELS, OVERLAY_BLEND_SCALE, OVERLAY_HALO, OVERLAY_HALO_IDS, OVERLAY_QUALITY_LIMITS, OVERLAY_TOP_MAX_PIXELS, OVERLAY_GLOW_PARAMS, OVERLAY_GLOW_SCALE, OVERLAY_IDS, isBlendIn, overlayRow, overlaysMove,
+  OVERLAY_EXTRA_GLOW, extraGlowShare, overlaySizeUnit, overlaySizedParams,
 } from './overlay-catalog.js';
 import { OVERLAY_PATTERNS, patternValues } from './overlay-patterns.js';
+import { applyDrift } from './drift.js';
+import { overlayDriftPlan, overlayDriftScale } from './overlay-drift.js';
+import {
+  motionUv, overlayMotion, quantiseMotion,
+} from './overlay-motion.js';
 
 export const OVERLAY_FADE_OUT_S = 0.25;
 export const OVERLAY_FADE_IN_S = 0.4;
@@ -276,6 +288,10 @@ export function createOverlayLayer({
   let gain = 1;
   let lastTime = Number.NaN;
   let freed = false;
+  // "Extra glow" (held: overlay-catalog.js OVERLAY_EXTRA_GLOW): off unless
+  // the tab turns it on.
+  let extraGlow = false;
+  let drifted = false; // the values were last drifted (not as chosen)
   // Overlays that threw while drawing here: not drawn again (failedIds).
   const broken = new Set();
   const stats = {
@@ -291,6 +307,80 @@ export function createOverlayLayer({
   }
   const top = newSheet(topCanvas, true);
   let blend = null; // made when a blend-in is drawn
+  // The sheets' motion now (one of each, filled in again).
+  const motion = {
+    angle: 0, scale: 1, dx: 0, dy: 0, moving: false,
+  };
+  const blendUvOut = { m: [1, 0, 0, 1], off: [0, 0] };
+  let blendUv = null;
+  // The top sheet's transform as shown (rounded: quantiseMotion), and the
+  // one wanted now; it is written only when the two differ, so a sheet that
+  // is still or barely moving writes nothing.
+  const shown = {
+    tx: 0, ty: 0, deg: 0, scale: 1,
+  };
+  const wanted = {
+    tx: 0, ty: 0, deg: 0, scale: 1,
+  };
+  let topMoving = false;
+  let topWrites = 0;
+  // CSS Typed OM (WebView2 has it): one transform value made once, its
+  // numbers changed in place; without it, a string.
+  let typed;
+  function typedTransform() {
+    if (typed !== undefined) return typed;
+    typed = null;
+    try {
+      const g = globalThis;
+      if (top.canvas.attributeStyleMap && g.CSS?.percent && typeof g.CSSTransformValue === 'function') {
+        const tx = g.CSS.percent(0);
+        const ty = g.CSS.percent(0);
+        const deg = g.CSS.deg(0);
+        const sc = g.CSS.number(1);
+        typed = {
+          tx, ty, deg, sc,
+          value: new g.CSSTransformValue([new g.CSSTranslate(tx, ty), new g.CSSRotate(deg), new g.CSSScale(sc, sc)]),
+        };
+      }
+    } catch (_) {
+      typed = null;
+    }
+    return typed;
+  }
+  const cssText = (q) => `translate(${q.tx.toFixed(4)}%,${q.ty.toFixed(4)}%) rotate(${q.deg.toFixed(2)}deg) scale(${q.scale.toFixed(5)})`;
+  /** Show `m` (a motion) on the top sheet, or none (null): removed, and
+   *  will-change with it. */
+  function setTopMotion(m) {
+    const style = top.canvas.style;
+    if (!m) {
+      if (!topMoving) return;
+      topMoving = false;
+      if (!style) return;
+      try { top.canvas.attributeStyleMap?.delete?.('transform'); } catch (_) { /* the string below */ }
+      style.transform = '';
+      style.willChange = '';
+      return;
+    }
+    quantiseMotion(m, width, height, wanted);
+    if (topMoving && wanted.tx === shown.tx && wanted.ty === shown.ty && wanted.deg === shown.deg && wanted.scale === shown.scale) return;
+    shown.tx = wanted.tx; shown.ty = wanted.ty; shown.deg = wanted.deg; shown.scale = wanted.scale;
+    const first = !topMoving;
+    topMoving = true;
+    if (!style) return;
+    if (first) style.willChange = 'transform';
+    topWrites += 1;
+    const t2 = typedTransform();
+    if (t2) {
+      try {
+        t2.tx.value = shown.tx; t2.ty.value = shown.ty; t2.deg.value = shown.deg; t2.sc.value = shown.scale;
+        top.canvas.attributeStyleMap.set('transform', t2.value);
+        return;
+      } catch (_) {
+        typed = null; // the string from now on
+      }
+    }
+    style.transform = cssText(shown);
+  }
 
   const isPsy = (id) => overlayRow(id)?.source === 'psychedelia';
   const context = (sheet) => {
@@ -350,7 +440,7 @@ export function createOverlayLayer({
         for (const [name, value] of Object.entries(item.values || {})) psy.setParam(name, value);
         for (const [name, value] of Object.entries(row.pins || {})) psy.setParam(name, value);
         const chosen = {};
-        for (const name of [...Object.keys(OVERLAY_QUALITY_LIMITS[item.id] || {}), ...(OVERLAY_LINE_PARAMS[item.id] || [])]) {
+        for (const name of [...Object.keys(OVERLAY_QUALITY_LIMITS[item.id] || {}), ...overlaySizedParams(item.id)]) {
           chosen[name] = psy.getParam(name);
         }
         sheet.chosen[item.id] = chosen;
@@ -364,12 +454,13 @@ export function createOverlayLayer({
   /** Each overlay's settings as the quality and the sheet's size allow: its
    *  glow (OVERLAY_GLOW_SCALE, unless its row pins it), its limits
    *  (OVERLAY_QUALITY_LIMITS) and its line widths in canvas pixels scaled by
-   *  the sheet's share of the picture (OVERLAY_LINE_PARAMS). Always from the
+   *  the sheet's share of the picture (OVERLAY_LINE_PARAMS; overlay-catalog.js
+   *  overlaySizeUnit, OVERLAY_SIZE_720_RELEASED). Always from the
    *  values as chosen, so a change of quality or size can be undone. */
   function tune(sheet) {
     if (!sheet?.psy) return;
     const scale = OVERLAY_GLOW_SCALE[quality] ?? 0;
-    const lineScale = sheetScale(sheet);
+    const lineScale = overlaySizeUnit(sheet.canvas.height, height);
     for (const id of sheet.psyIds) {
       const glow = OVERLAY_GLOW_PARAMS[id];
       if (glow && !Object.prototype.hasOwnProperty.call(overlayRow(id).pins || {}, glow)) {
@@ -377,7 +468,7 @@ export function createOverlayLayer({
       }
       const chosen = sheet.chosen[id] || {};
       const limits = OVERLAY_QUALITY_LIMITS[id] || {};
-      const lines = OVERLAY_LINE_PARAMS[id] || [];
+      const lines = overlaySizedParams(id);
       for (const name of Object.keys(chosen)) {
         let value = Number(chosen[name]);
         const limit = limits[name];
@@ -389,12 +480,6 @@ export function createOverlayLayer({
     }
   }
 
-  /** The sheet's height as a share of the picture's (1 at the picture's own
-   *  size, less when its pixels are capped). */
-  function sheetScale(sheet) {
-    return height > 0 && sheet.canvas.height > 0 ? Math.min(1, sheet.canvas.height / height) : 1;
-  }
-
   function fill(sheet, items) {
     sheet.items = items;
     if (!items.some((item) => OVERLAY_HALO_IDS.has(item.id))) dropHalo(sheet);
@@ -402,9 +487,11 @@ export function createOverlayLayer({
     const keep = new Map();
     for (const item of ours) {
       const old = sheet.patterns.get(item.id);
+      const values = patternValues(item.id, item.values);
       keep.set(item.id, {
         state: old ? old.state : OVERLAY_PATTERNS[item.id].create(),
-        values: patternValues(item.id, item.values),
+        values,
+        base: { ...values }, // as chosen (value drift moves `values` around it)
       });
     }
     sheet.patterns = keep;
@@ -434,6 +521,8 @@ export function createOverlayLayer({
 
   function emptySheet(sheet) {
     if (!sheet) return;
+    if (sheet === top) setTopMotion(null);
+    else blendUv = null;
     sheet.psy = null;
     sheet.psyIds = [];
     sheet.patterns = new Map();
@@ -521,8 +610,12 @@ export function createOverlayLayer({
    *  (about 0.2 ms here, so as few as this): no blur filter, no shadow, no
    *  wide line. */
   function halo(sheet, ctx) {
-    const look = halos[quality];
-    if (!look || !sheet.items.some((item) => OVERLAY_HALO_IDS.has(item.id) && !broken.has(item.id))) return;
+    // A line overlay's halo as measured; else, with Extra glow on, the same
+    // pass at OVERLAY_EXTRA_GLOW, the sheet faded by the glow's share first.
+    const lines = Boolean(halos[quality]) && sheet.items.some((item) => OVERLAY_HALO_IDS.has(item.id) && !broken.has(item.id));
+    const extra = !lines && extraGlow && sheet.items.length ? OVERLAY_EXTRA_GLOW[quality] || null : null;
+    const look = lines ? halos[quality] : extra;
+    if (!look) return;
     const w = sheet.canvas.width;
     const h = sheet.canvas.height;
     if (!sheet.halo) sheet.halo = [makeCanvas(), makeCanvas(), makeCanvas()].map((canvas) => ({ canvas, ctx: null }));
@@ -563,6 +656,16 @@ export function createOverlayLayer({
       q.globalAlpha = look.wide;
       q.drawImage(eighth.canvas, 0, 0, quarter.canvas.width, quarter.canvas.height);
     }
+    if (extra) {
+      // The sheet gives up the light the glow takes (its share of the sheet's
+      // own: near, with the wide glow's part of it), so the mean stays.
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.globalAlpha = Math.min(1, extraGlowShare(extra));
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    }
     // Stretched over the sheet twice, half a quarter's pixel each way (each
     // at half strength): the two copies soften it.
     const ox = 0.5 * (w / quarter.canvas.width);
@@ -575,6 +678,27 @@ export function createOverlayLayer({
     ctx.drawImage(quarter.canvas, ox, oy, w, h);
     ctx.restore();
     stats.halos += 1;
+  }
+  /** Overlay value drift (held: overlay-drift.js) on one sheet: each
+   *  overlay's planned settings moved around their chosen values, into the
+   *  values it draws with (ours) or its Psychedelia instance. Nothing made
+   *  per frame. */
+  function driftSheet(sheet, bars, scale) {
+    if (!sheet?.items?.length) return;
+    for (const item of sheet.items) {
+      const plan = overlayDriftPlan(item.id);
+      if (!plan.length) continue;
+      const pattern = sheet.patterns.get(item.id);
+      if (pattern) {
+        applyDrift(pattern.base, plan, bars, scale, pattern.values);
+        continue;
+      }
+      if (!sheet.psy || !sheet.psyIds.includes(item.id) || !item.values) continue;
+      sheet.driftOut ||= {};
+      const out = (sheet.driftOut[item.id] ||= {});
+      applyDrift(item.values, plan, bars, scale, out);
+      for (const wave of plan) if (typeof out[wave.name] === 'number') sheet.psy.setParam(wave.name, out[wave.name]);
+    }
   }
   /** The halo canvases let go (no line overlay on the sheet, or emptied). */
   function dropHalo(sheet) {
@@ -611,7 +735,8 @@ export function createOverlayLayer({
       if (!blend || !blend.items?.length) return null;
       const item = blend.items[0];
       return {
-        canvas: blend.canvas, version: blend.version, blend: item.blend, gain, id: item.id,
+        canvas: blend.canvas, version: blend.version, blend: item.blend, gain, id: item.id, move: blendUv,
+        tintFloor: overlayRow(item.id)?.tintFloor || 0,
       };
     },
     get top() { return top; },
@@ -697,8 +822,42 @@ export function createOverlayLayer({
       return true;
     },
 
+    /** The sheets' motion at drift clock `bars` and drift depth `depth`
+     *  (drift.js; 0: none): a sheet holding an anchored overlay, or none,
+     *  is held still. Called every drawn frame (a still picture's clock and
+     *  depth do not move, so neither does the sheet). True: one moves. */
+    move(bars, depth) {
+      if (freed) return false;
+      const aspect = width > 0 && height > 0 ? width / height : 1;
+      const topMoves = Boolean(top.items?.length) && overlaysMove(top.items);
+      const blendMoves = Boolean(blend?.items?.length) && overlaysMove(blend.items);
+      overlayMotion(bars, topMoves || blendMoves ? depth : 0, aspect, motion);
+      setTopMotion(topMoves && motion.moving ? motion : null);
+      blendUv = blendMoves ? motionUv(motion, aspect, blendUvOut) : null;
+      return motion.moving;
+    },
+    get motion() { return motion; },
+    /** The top sheet's transform as shown ('' none), and how often it was
+     *  written. */
+    get topTransform() { return topMoving ? cssText(shown) : ''; },
+    get topWrites() { return topWrites; },
+
     /** The quality changed (step-down or by hand). */
     setQuality(next) { layer.resize(width, height, next); },
+    /** "Extra glow" on or off (held: the tab calls it only once released). */
+    setExtraGlow(on) { extraGlow = on === true; },
+    get extraGlow() { return extraGlow; },
+    /** Overlay value drift (held: overlay-drift.js) at drift clock `bars`
+     *  and drift depth `depth` (0: the values as chosen). Called every drawn
+     *  frame by the tab once released. */
+    drift(bars, depth) {
+      if (freed) return;
+      const scale = overlayDriftScale(depth);
+      if (!(scale > 0) && !drifted) return;
+      drifted = scale > 0;
+      driftSheet(top, bars, scale);
+      driftSheet(blend, bars, scale);
+    },
     /** Seeded colour start (tests and the checks). */
     setHue(value) { hue = Number(value) || 0; },
 

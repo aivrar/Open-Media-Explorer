@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.11` behavior in this repository: how to
+It describes the shipped `0.1.12` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -19,10 +19,42 @@ providers at run time and can change without an app update.
 
 ![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
 
+## New in 0.1.12
+
+- **Starred songs:** star a song in the **Song log**, or the song playing now
+  with the star beside it on the player bar. **Starred songs** in the Song log
+  lists them, and **Save as text** or **Save as CSV** writes them to a file.
+  **Clear log** leaves them. See [Using the
+  application](02-using-the-application.md#song-log).
+- Favorites: **Rename** in a favorite's details gives a station a name of your
+  own, shown everywhere that favorite is. In **My order** you can drag a card
+  to a new place. **My Playlists** also imports `.json` and `.csv` channel
+  lists. See [Using the application](02-using-the-application.md).
+- **Settings > Content > Pick the best stream:** when a station lists several
+  streams, the best one is tried first. **Auto (verified)** can also move a
+  radio station to a better directory entry of the same station, but only
+  after two checks found both playing the same song. A live station whose
+  connection closes now reconnects by itself. See [Playback, EQ, downloads, and
+  recording](04-playback-eq-downloads-recording.md).
+- **Settings > Processor use:** **Low** (the default), **Balanced** or
+  **High**, with a limit you set. Balanced and High let the Visualizer use
+  more of the processor and offer a **Very high** picture quality. See [Using
+  the application](02-using-the-application.md#processor-use).
+- The Visualizer has 28 more scenes (99 in all), 28 more looks for three of its
+  labs, the **Palette Map** effect, the **Strobe** overlay, **Slow drift**, a
+  more careful reading of the music's mood, and a side panel whose sections
+  fold and say what is set. See [Visualizer](09-visualizer.md).
+- Fixes: a Library source whose pages keep failing now waits longer each time
+  and stops after two failures in a row until you press **Retry now**;
+  **Play** after a stream ended by itself connects again; with technical
+  details on, Favorites cards in **My order** are wide enough for their whole
+  source badge; and a long station name on the Tuner dial shows in full when
+  the pointer rests on it.
+
 ## New in 0.1.11
 
 - A new **Visualizer** tab shows pictures that move with the sound of whatever
-  is playing: 71 scenes, post effects, overlays, a shuffle, favourites, and an
+  is playing: 71 scenes, post effects, overlays, a shuffle, favorites, and an
   automatic step-down for weak computers. It shows moving, flashing pictures, so
   a notice about photosensitivity comes first. Work on it continues. See
   [Visualizer](09-visualizer.md).
@@ -107,7 +139,8 @@ providers at run time and can change without an app update.
    server-port handoff, FFmpeg, downloads, and cache controls.
 7. Bring your own channels with **Library → My Playlists → Add link / Import playlist**.
    In Favorites, press All, Radio, TV, Audio, or Video, search your saved items,
-   sort them **My order** or **A-Z**, and group them in your own categories.
+   sort them **My order** or **A-Z** (drag cards to reorder them in **My
+   order**), and group them in your own categories.
 8. Open **Settings → Storage** to back up your data with **Back up my data** or
    to open the folder for your own station pictures.
 

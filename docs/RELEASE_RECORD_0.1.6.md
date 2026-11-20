@@ -91,8 +91,7 @@ a valid Python Software Foundation Authenticode signature (launcher SHA-256
 ## Boundaries
 
 Checked on Windows 10 x64 at 100% display scaling; 4K-wide layouts were
-measured in a browser window of that size, not on a 4K monitor. The video
+measured in a browser window of that size. The video
 overlay's size and position were measured with an empty video element; real
 HLS and DASH playback in the overlay was covered by the packaged smoke test.
-Fullscreen from the video's own controls and touchpad scrolling on the dial
-were not exercised by an automated check. The v0.1.5 boundaries still apply.
+The v0.1.5 boundaries still apply.

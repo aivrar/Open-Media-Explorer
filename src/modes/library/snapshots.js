@@ -21,6 +21,15 @@ function refreshDelay(value) {
   return Math.max(SNAPSHOT_REFRESH_MIN_MS, Math.min(SNAPSHOT_REFRESH_MAX_MS, number));
 }
 
+/** A source's own shortest wait between asks (its adapter's
+ *  `snapshotRetryMinMs`), or 0. Also kept for its failures and stale
+ *  answers, so a failing source is not asked again sooner than a healthy
+ *  one. */
+function ownMinimum(adapter) {
+  const number = Number(adapter?.snapshotRetryMinMs);
+  return Number.isFinite(number) && number > 0 ? Math.min(SNAPSHOT_REFRESH_MAX_MS, number) : 0;
+}
+
 export function createSnapshotManager(options) {
   const scheduler = options.scheduler;
   const loadAdapter = options.loadAdapter;
@@ -37,6 +46,9 @@ export function createSnapshotManager(options) {
   const filterItems = options.filterItems || ((items) => items);
   const onState = options.onState || (() => {});
   const onItemsChanged = options.onItemsChanged || (() => {});
+  // A live list is refreshed on its timer only while it is on screen; while
+  // it is not, the refresh waits and runs when it is shown again (if due).
+  const isVisible = options.isVisible || (() => true);
   const states = store.snapshotState || (store.snapshotState = new Map());
   const timers = new Map();
   const generations = new Map();
@@ -45,6 +57,9 @@ export function createSnapshotManager(options) {
   const supported = new Set();
   const unsupported = new Set();
   const attempted = new Set();
+  // Each source's own minimum wait (ownMinimum), once its adapter is loaded.
+  const minimums = new Map();
+  const notSooner = (sourceId, delay) => Math.max(delay, minimums.get(sourceId) || 0);
   let active = true;
 
   const generation = (sourceId) => generations.get(sourceId) || 0;
@@ -72,12 +87,13 @@ export function createSnapshotManager(options) {
 
   function scheduleRefresh(sourceId, delayMs, scheduleOptions = {}) {
     clearRefreshTimer(sourceId);
-    if (!active || !isSourceEnabled(sourceId) || unsupported.has(sourceId)) return;
+    if (!active || !isSourceEnabled(sourceId) || unsupported.has(sourceId) || !isVisible(sourceId)) return;
     const delay = scheduleOptions.exact === true
       ? Math.max(0, Number(delayMs) || 0)
       : refreshDelay(delayMs);
     timers.set(sourceId, setTimer(() => {
       timers.delete(sourceId);
+      if (!isVisible(sourceId)) return; // due; runs when shown again (syncVisibility)
       refresh(sourceId, { force: true }).catch(() => {});
     }, delay));
   }
@@ -111,6 +127,7 @@ export function createSnapshotManager(options) {
         task: async ({ signal }) => {
           const adapter = await loadAdapter(sourceId);
           if (typeof adapter.refreshSnapshot !== 'function') return { supported: false };
+          minimums.set(sourceId, ownMinimum(adapter));
           supported.add(sourceId);
           const value = await adapter.refreshSnapshot({
             signal,
@@ -159,7 +176,7 @@ export function createSnapshotManager(options) {
       const previous = states.get(sourceId) || {};
       const observedAt = now();
       const retryAfterMs = result.stale
-        ? result.retryAfterMs
+        ? notSooner(sourceId, result.retryAfterMs)
         : result.refreshAfterMs;
       const next = publish(sourceId, result.stale ? {
         state: 'stale',
@@ -196,7 +213,7 @@ export function createSnapshotManager(options) {
       const requestedDelay = Number.isFinite(error?.retryAfterMs)
         ? error.retryAfterMs
         : Math.min(SNAPSHOT_REFRESH_MAX_MS, 1_500 * (2 ** Math.max(0, failures - 1)));
-      const retryAfterMs = refreshDelay(requestedDelay);
+      const retryAfterMs = notSooner(sourceId, refreshDelay(requestedDelay));
       const hasLastGood = Boolean(previous.lastGoodAt)
         || (store.snapshotIdsBySource.get(sourceId)?.size || 0) > 0;
       publish(sourceId, {
@@ -258,24 +275,37 @@ export function createSnapshotManager(options) {
     inFlight.clear();
   }
 
+  /** Plan the next refresh of a known source from its last one: at its due
+   *  time, or now when that has passed. Nothing while it is not on screen. */
+  function wake(sourceId) {
+    if (unsupported.has(sourceId) || !isSourceEnabled(sourceId) || !isVisible(sourceId)) return;
+    const state = states.get(sourceId) || {};
+    const refreshDueAt = state.lastGoodAt != null && state.refreshAfterMs != null
+      ? Number(state.lastGoodAt) + Number(state.refreshAfterMs)
+      : 0;
+    // A stale/retrying snapshot intentionally retries sooner than its normal
+    // healthy cadence. Pausing the Library must preserve that retry deadline
+    // rather than stretching it back out to the two-minute live interval.
+    const dueAt = Number(state.retryAt) > 0
+      ? Number(state.retryAt)
+      : refreshDueAt;
+    if (dueAt > now()) scheduleRefresh(sourceId, dueAt - now(), { exact: true });
+    else refresh(sourceId, { force: true }).catch(() => {});
+  }
+
   function resume() {
     if (active) return;
     active = true;
+    for (const sourceId of new Set([...supported, ...attempted])) wake(sourceId);
+  }
+
+  /** What is on screen changed (another view, the window hidden or shown):
+   *  hidden lists stop their timers; shown ones refresh when due. */
+  function syncVisibility() {
+    if (!active) return;
     for (const sourceId of new Set([...supported, ...attempted])) {
-      if (unsupported.has(sourceId)) continue;
-      if (!isSourceEnabled(sourceId)) continue;
-      const state = states.get(sourceId) || {};
-      const refreshDueAt = state.lastGoodAt != null && state.refreshAfterMs != null
-        ? Number(state.lastGoodAt) + Number(state.refreshAfterMs)
-        : 0;
-      // A stale/retrying snapshot intentionally retries sooner than its normal
-      // healthy cadence. Pausing the Library must preserve that retry deadline
-      // rather than stretching it back out to the two-minute live interval.
-      const dueAt = Number(state.retryAt) > 0
-        ? Number(state.retryAt)
-        : refreshDueAt;
-      if (dueAt > now()) scheduleRefresh(sourceId, dueAt - now(), { exact: true });
-      else refresh(sourceId, { force: true }).catch(() => {});
+      if (!isVisible(sourceId)) clearRefreshTimer(sourceId);
+      else if (!timers.has(sourceId) && !inFlight.has(sourceId)) wake(sourceId);
     }
   }
 
@@ -293,6 +323,7 @@ export function createSnapshotManager(options) {
     enableSource,
     pause,
     resume,
+    syncVisibility,
     destroy,
     state: (sourceId) => states.get(sourceId) || null,
     hasDiscovered: (sourceId) => supported.has(sourceId) || unsupported.has(sourceId)

@@ -23,7 +23,9 @@ import { createTunerCardArt } from '../lib/tuner-card-art.js';
 import { onStationImagesChange } from '../lib/station-images.js';
 import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
 import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorites-order.js';
+import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
+import { attachTunerBackground } from './tuner-background.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -365,6 +367,7 @@ function updateFrequencyDisplay() {
     ui.freqNum.textContent = '—';
     ui.freqUnit.textContent = '';
     ui.stationName.textContent = state.loading ? 'Loading…' : 'No station';
+    ui.stationName.removeAttribute('title');
     return;
   }
   ui.freqNum.textContent = String(state.index + 1);
@@ -373,6 +376,8 @@ function updateFrequencyDisplay() {
   // station's card in the strip below: its second line (so also the card's
   // accessible name) and its tooltip.
   ui.stationName.textContent = `${isFavorite(s.id) ? '\u2605 ' : ''}${s.title}`;
+  // A long name ends in an ellipsis on the dial; the whole name on hover.
+  ui.stationName.setAttribute('title', s.title || '');
 }
 
 function liveSources() {
@@ -531,7 +536,19 @@ export function favoriteStations(favorites, { band, country = '', settings = {},
     && (!groups || groups.groupOf(item.id) === groupId)
     && !seen.has(item.id) && seen.add(item.id)
   ));
-  return filterContentItems(matches, settings);
+  // A renamed favorite is shown on the dial and the cards under its new name.
+  const { names } = favoriteNamesSnapshot();
+  return filterContentItems(matches, settings).map((item) => withFavoriteName(item, names));
+}
+
+/** What the empty strip says for the live sources: a source that did not
+ *  answer is not "no stations". */
+export function emptyLiveText(loading, sourceStates) {
+  if (loading) return 'Loading stations…';
+  const failed = [...(sourceStates?.values?.() || [])].some((status) => status?.state === 'error');
+  return failed
+    ? 'The stations could not be loaded. Press Radio or TV above to try again.'
+    : 'No stations found for this country.';
 }
 
 /** The favorites the dial leaves out because they are saved as the other
@@ -593,6 +610,7 @@ async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
   }
   applyRotation();
   ui.stationName.textContent = 'Loading…';
+  ui.stationName.removeAttribute('title');
   renderStrip();
   rebuildSourceSelect();
   if (!preserve) state.sourceStates = new Map();
@@ -708,7 +726,7 @@ function renderStrip() {
   ui.strip.innerHTML = '';
   if (state.stations.length === 0) {
     if (pictures) cardArt.commit();
-    let text = state.loading ? 'Loading stations…' : 'No stations found for this country.';
+    let text = emptyLiveText(state.loading, state.sourceStates);
     const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
     if (groupName) {
       const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
@@ -807,6 +825,8 @@ export function renderTuner(host) {
   state.cardSize = normalizeTunerCardSize(getState().settings.tunerCardSize);
   const root = buildShell();
   host.appendChild(root);
+  // The dimmed Visualizer behind it, when asked for (held: nothing at all).
+  subs.push(attachTunerBackground(root));
   state.enabledSignature = enabledSignature();
   state.contentPreference = getState().settings.showExplicitContent === true;
   state.favoritesSort = normalizeFavoritesSort(getState().settings.favoritesSort);

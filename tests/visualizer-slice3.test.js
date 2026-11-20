@@ -14,7 +14,7 @@ import {
   BLOCKING_COMPILE_DELAY_MS, COMPILE_POLL_MS, createSceneRenderer, sceneDefaults,
 } from '../src/visualizer/scene-renderer.js';
 import {
-  COST_CLASSES, HELD_SCENE_ENTRIES, SCENES, orderedScenes, sceneById,
+  ACCUMULATING_SCENE_ENTRIES, COST_CLASSES, HELD_SCENE_ENTRIES, LINE_SCENE_ENTRIES, OWN_SCENE_ENTRIES, SCENES, drawableScenes, orderedScenes, sceneById,
 } from '../src/visualizer/scenes.js';
 import { COST_LABELS, filterScenes } from '../src/visualizer/scene-list.js';
 import {
@@ -27,7 +27,9 @@ import {
   CROSSFADE_SLOW_MS, NOTES, PREPARING_DELAY_MS, mountVisualizer,
 } from '../src/visualizer/index.js';
 import { createFlashLimiter } from '../src/visualizer/flash-limiter.js';
-import { ALL_SCENE_FILES, FLIGHT_FILES, HELPER_FILES, SCENE_FILES } from '../scripts/import_psychedelia.mjs';
+import {
+  ACCUMULATING_FILES, ALL_SCENE_FILES, FLIGHT_FILES, HELPER_FILES, LINE_FILES, SCENE_FILES,
+} from '../scripts/import_psychedelia.mjs';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
 import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle,
@@ -44,19 +46,27 @@ const LAYOUT = { width: 1280, height: 720 };
 
 test('the scene set: one vendored file per scene file, every scene of each in scenes.js (new upstream scene files are found by import_psychedelia.mjs --check-drift)', () => {
   const vendored = readdirSync(join('src', 'visualizer', 'vendor', 'psychedelia', 'effects')).filter((file) => file !== 'registry.js').map((file) => file.replace(/[.]js$/, ''));
-  assert.deepEqual(vendored.sort(), [...ALL_SCENE_FILES, ...HELPER_FILES].sort());
-  assert.deepEqual([...new Set([...SCENES, ...HELD_SCENE_ENTRIES].map((scene) => scene.file.replace(/^effects[/]/, '').replace(/[.]js$/, '')))].sort(), [...ALL_SCENE_FILES].sort());
+  // (The line-drawing scenes, LINE_FILES, and the accumulating labs,
+  // ACCUMULATING_FILES, are listed apart: line-scenes.js,
+  // accumulating-scenes.js.)
+  assert.deepEqual(vendored.sort(), [...ALL_SCENE_FILES, ...LINE_FILES, ...ACCUMULATING_FILES, ...HELPER_FILES].sort());
+  assert.deepEqual([...new Set([...SCENES, ...HELD_SCENE_ENTRIES].filter((scene) => !LINE_SCENE_ENTRIES.includes(scene) && !OWN_SCENE_ENTRIES.includes(scene)
+    && !ACCUMULATING_SCENE_ENTRIES.includes(scene)).map((scene) => scene.file.replace(/^effects[/]/, '').replace(/[.]js$/, '')))].sort(), [...ALL_SCENE_FILES].sort());
   assert.equal(SCENE_FILES.length, 57);
   // Slice 7: the fifteen 3D flights and the seven endless scenes (two files).
   assert.equal(FLIGHT_FILES.length, 15);
-  assert.equal(ALL_SCENE_FILES.length, 74);
-  assert.equal(SCENES.filter((scene) => scene.category === 'Endless Scenes').length, 7);
+  // Slice 13: the four labs, Robot Foundry and Cymatics; slice 14: the four
+  // simulations and two frame-feedback scenes.
+  assert.equal(ALL_SCENE_FILES.length, 86);
+  assert.equal(SCENES.filter((scene) => scene.category === 'Endless Scenes').length, 8);
   assert.equal(SCENES.filter((scene) => /_flight$/.test(scene.id)).length + HELD_SCENE_ENTRIES.length, 15);
 });
 
 test('every scene has a cost class; the counts are as measured', () => {
   const count = Object.fromEntries(COST_CLASSES.map((cost) => [cost, SCENES.filter((scene) => scene.cost === cost).length]));
-  assert.deepEqual(count, { light: 26, medium: 21, heavy: 24 });
+  // (Five of them the line-drawing scenes, slice 15; five World Media's own;
+  // Buddhabrot Lab heavy.)
+  assert.deepEqual(count, { light: 32, medium: 23, heavy: 44 });
   for (const id of ['black_hole', 'nebula', 'endless_terrain', 'mandelbrot_deep', 'orbit_trap', 'seascape', 'gyroid_tunnels', 'liquid_chrome']) {
     assert.equal(sceneById(id).cost, 'heavy', id);
   }
@@ -71,7 +81,7 @@ test('the list order: by category, then by name; search by name, category or cos
     const b = ordered[at];
     assert.ok(a.category < b.category || (a.category === b.category && a.name.localeCompare(b.name) <= 0), `${a.id} before ${b.id}`);
   }
-  assert.deepEqual(filterScenes(ordered, 'mandel').map((s) => s.id), ['mandelbrot', 'mandelbrot_deep', 'mandelbulb_flight', 'mandelbulb_slice']);
+  assert.deepEqual(filterScenes(ordered, 'mandel').map((s) => s.id), ['mandelbox_flight', 'mandelbrot', 'mandelbrot_deep', 'mandelbulb_flight', 'mandelbulb_slice']);
   assert.deepEqual(filterScenes(ordered, 'HEAVY').map((s) => s.id), ordered.filter((s) => s.cost === 'heavy').map((s) => s.id));
   assert.deepEqual(filterScenes(ordered, 'cosmic light').map((s) => s.id), ['spiral_galaxy']);
   assert.deepEqual(filterScenes(ordered, '  ').length, ordered.length);
@@ -150,7 +160,9 @@ test('the scene list: a button with the name and cost badge opens a searchable, 
   const list = session.sceneList;
   // Grouped: one heading per category, in order, each scene with its badge.
   const groups = controls.sceneOptions.children;
-  const categories = [...new Set(orderedScenes(SCENES).map((s) => s.category))];
+  // (The fake context has WebGL 2 but no float targets: the scenes that
+  // need them are not listed.)
+  const categories = [...new Set(orderedScenes(drawableScenes(SCENES, { webgl2: true, float: false, half: false })).map((s) => s.category))];
   assert.deepEqual(groups.map((group) => group.getAttribute('aria-label')), categories);
   const heavy = list.options.get('nebula');
   assert.equal(heavy.getAttribute('role'), 'option');
@@ -402,7 +414,7 @@ test('step-down in the tab: measured from live frames only, applied to size and 
   controls.qualitySelect.value = 'medium';
   controls.qualitySelect.dispatchEvent(new Event('change'));
   assert.equal(session.stepDown.lowered, false);
-  assert.deepEqual(m.saved.at(-1), { visualizerQuality: 'medium' });
+  assert.deepEqual(m.saved.at(-1), { visualizerQuality: 'medium', visualizerQualityPicked: true });
   assert.deepEqual([canvas.width, canvas.height], [1200, 675]);
   session.destroy();
   assert.equal(h.pending(), 0);
@@ -597,7 +609,7 @@ test('a look that changes a compiled-in param prepares the scene again (the old 
   session.destroy();
 });
 
-/* ---------------- Review fixes (Codex, slice 3) ---------------- */
+/* ---------------- Review fixes (slice 3) ---------------- */
 
 test('flash limiter: only edges in one frame, or a follow-on of the same family within 50 ms of a charged edge, are one pulse', () => {
   const limiter = createFlashLimiter();
