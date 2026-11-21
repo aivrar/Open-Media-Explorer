@@ -33,7 +33,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.13"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.14"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096
@@ -111,11 +111,12 @@ class MediaError(ApiError):
 class MediaProtocolError(MediaError):
     """MEDIA_CONNECT_FAILED where a server took the request but gave no valid HTTP reply.
 
-    For example an old Shoutcast server's "ICY 200 OK" status line, which
-    http.client rejects as BadStatusLine, or a connection reset or closed
-    after the request was sent and before any reply. Never a DNS, connect or
-    timeout failure. Same status, code and message as the plain error, so
-    callers that do not care see no difference.
+    For example a first line that is neither "HTTP/..." nor an old Shoutcast
+    server's "ICY ..." (see _IcyStatusLineReader), which http.client rejects
+    as BadStatusLine, or a connection reset or closed after the request was
+    sent and before any reply. Never a DNS, connect or timeout failure. Same
+    status, code and message as the plain error, so callers that do not care
+    see no difference.
     """
 
 
@@ -232,7 +233,43 @@ def resolve_target(
     )
 
 
+class _IcyStatusLineReader:
+    """The reply's reader, with a first line of "ICY ..." read as "HTTP/1.0 ...".
+
+    An old Shoutcast server (version 1) answers a player with "ICY 200 OK"
+    where a web server says "HTTP/1.0 200 OK"; the header lines and the sound
+    after it are the same. Only the reply's first line is looked at, and only
+    that exact word at its start is replaced. Every other call goes to the
+    real reader unchanged.
+    """
+
+    def __init__(self, reader) -> None:
+        self._reader = reader
+        self._first_line = True
+
+    def readline(self, *args):
+        line = self._reader.readline(*args)
+        if self._first_line:
+            self._first_line = False
+            if line.startswith(b"ICY "):
+                return b"HTTP/1.0 " + line[4:]
+        return line
+
+    def __getattr__(self, name: str):
+        return getattr(self._reader, name)
+
+
+class _RelayResponse(http.client.HTTPResponse):
+    """http.client's reply that also takes an old Shoutcast "ICY 200 OK" first line."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fp = _IcyStatusLineReader(self.fp)
+
+
 class _PinnedHTTPConnection(http.client.HTTPConnection):
+    response_class = _RelayResponse
+
     def __init__(self, target: ResolvedTarget, timeout: float) -> None:
         super().__init__(target.host, target.port, timeout=timeout)
         self._selected_ip = target.ip

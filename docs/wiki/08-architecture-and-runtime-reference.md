@@ -288,11 +288,15 @@ same as without titles. That reply has no `Content-Length`, `Content-Range`, or
 plain line of at most 200 characters (at most 256 tokens are remembered).
 Nothing named in the metadata is ever fetched.
 
-If a server answers with something that is not HTTP, resets the connection, or
-rejects the header with a client error (400, 406, 412, 415 or 431), the relay
-repeats the request once without the header. A host where that repeat works is
-not asked again for an hour. An old Shoutcast server that only answers
-"ICY 200 OK" still cannot be played.
+An old Shoutcast server (version 1) starts its reply with "ICY 200 OK" where a
+web server says "HTTP/1.0 200 OK". Every outbound connection reads that first
+line as HTTP/1.0, so such a station plays, records and is checked like any
+other, with its titles.
+
+If a server answers with something that is neither of those, resets the
+connection, or rejects the header with a client error (400, 406, 412, 415 or
+431), the relay repeats the request once without the header. A host where that
+repeat works is not asked again for an hour.
 
 The page polls `GET /api/v1/media/{id}/now-playing` about every five seconds
 while it plays that token (`src/lib/now-playing.js`) and shows the title in the

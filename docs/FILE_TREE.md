@@ -31,6 +31,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.11.md
 |   |-- RELEASE_NOTES_0.1.12.md
 |   |-- RELEASE_NOTES_0.1.13.md
+|   |-- RELEASE_NOTES_0.1.14.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -42,6 +43,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.11.md
 |   |-- RELEASE_RECORD_0.1.12.md
 |   |-- RELEASE_RECORD_0.1.13.md
+|   |-- RELEASE_RECORD_0.1.14.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -245,3 +247,5 @@ WorldMediaWindows/
 | `docs/RELEASE_RECORD_0.1.12.md` | What was checked for v0.1.12, with artifact hashes and limits. |
 | `docs/RELEASE_NOTES_0.1.13.md` | GitHub release notes for the `v0.1.13` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.13.md` | What was checked for v0.1.13, with artifact hashes and limits. |
+| `docs/RELEASE_NOTES_0.1.14.md` | GitHub release notes for the `v0.1.14` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.14.md` | What was checked for v0.1.14, with artifact hashes and limits. |

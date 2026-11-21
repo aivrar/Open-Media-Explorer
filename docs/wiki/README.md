@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.13` behavior in this repository: how to
+It describes the shipped `0.1.14` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -18,6 +18,12 @@ providers at run time and can change without an app update.
 | ![World Media Tuner](<../../screenshots/updated screenshots/tuner.PNG>) | ![World Media Discovery](<../../screenshots/updated screenshots/discovery.PNG>) |
 
 ![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
+
+## New in 0.1.14
+
+- Stations on an old Shoutcast server (version 1), which did not play although
+  their address worked in a browser or another player, now play, show their
+  song titles and can be recorded.
 
 ## New in 0.1.13
 

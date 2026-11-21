@@ -17,6 +17,10 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
+**New in v0.1.14:** stations on an old Shoutcast server, which did not play
+although their address worked in a browser, now play, with their song titles.
+Reported in [issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6).
+
 **New in v0.1.13:** a **Now Playing** tab shows the station, the song and the
 stream details large, over a blurred copy of its picture, with a large sound
 meter. Live radio and TV no longer show a seek bar, the song on the player bar
@@ -107,7 +111,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.13-portable.zip
+WorldMediaWindows-0.1.14-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -408,7 +412,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.13-portable.zip
+dist\WorldMediaWindows-0.1.14-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

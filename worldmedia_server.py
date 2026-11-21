@@ -104,7 +104,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.13 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.14 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -268,9 +268,9 @@ def _open_relay_upstream(
     Without ask_icy this is exactly the request the relay always made. With
     it, the station is asked for metadata, and its reply is used as is unless:
     - it carries blocks this relay will not strip (see _strippable_metaint);
-    - the server answered with something that is not HTTP (an old Shoutcast
-      "ICY 200 OK"), or reset or closed the connection after the request was
-      sent and before any reply (MediaProtocolError);
+    - the server answered with something that is neither HTTP nor an old
+      Shoutcast "ICY 200 OK", or reset or closed the connection after the
+      request was sent and before any reply (MediaProtocolError);
     - it answered one of ICY_REJECTION_STATUSES.
     Then the request is repeated once, exactly as before, and that host is not
     asked again for a while, but only if that repeat succeeded (so a dead

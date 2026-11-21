@@ -1,4 +1,4 @@
-import{F as ge,L as me,N as _e,P as ye,dt as K,ft as ee,i as we,lt as ve,ut as Ee}from"./index-DqE0TC3P.js";var O="media-ccc",sr="media.ccc.de",ar=["video","audio","tv","radio"],F=Object.freeze({maxConcurrent:2,minIntervalMs:500}),be="https://api.media.ccc.de/public/events/recent",re="https://api.media.ccc.de/public/events",Ae="https://media.ccc.de/graphql",xe="https://streaming.media.ccc.de/streams/v2.json",Ce=`
+import{F as ge,L as me,N as _e,P as ye,dt as K,ft as ee,i as we,lt as ve,ut as Ee}from"./index-Bue3-gKk.js";var O="media-ccc",sr="media.ccc.de",ar=["video","audio","tv","radio"],F=Object.freeze({maxConcurrent:2,minIntervalMs:500}),be="https://api.media.ccc.de/public/events/recent",re="https://api.media.ccc.de/public/events",Ae="https://media.ccc.de/graphql",xe="https://streaming.media.ccc.de/streams/v2.json",Ce=`
 query WorldMediaLectureSearch($query: String!, $page: Int!) {
   lectureSearch(query: $query, page: $page) {
     guid

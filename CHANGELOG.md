@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.14 - 2026-11-21
+
+One fix for a report in issue #6: stations on an old Shoutcast server did not
+play.
+
+- **Old Shoutcast stations play:** an old Shoutcast server (version 1) starts
+  its answer to a player with "ICY 200 OK" where a web server says
+  "HTTP/1.0 200 OK". The app refused that first line, so such a station failed
+  every time, whatever **Pick the best stream** was set to, although its
+  address worked in a browser or another player. The app now reads that answer
+  like any other: the station plays, shows its song titles, and can be
+  recorded. Reported with Radio Caprice - Trip Hop.
+
 ## 0.1.13 - 2026-11-21
 
 Five requests from discussion #8 (a Now Playing tab, a mark on stations that did

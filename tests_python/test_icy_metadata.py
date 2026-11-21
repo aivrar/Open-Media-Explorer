@@ -539,31 +539,65 @@ class IcyRelayTests(RelayTestBase):
                 self.assertEqual(self.request("GET", media["relay_url"])[1], AUDIO)
                 self.assertEqual(self.station.asked(target), [True, False, False])
 
-    def test_icy_status_line_falls_back_once_and_host_is_remembered(self) -> None:
-        self.station.routes["/old"] = lambda method, headers: (
-            reply(b"ICY 200 OK", {"Content-Type": "audio/mpeg", "icy-metaint": "256"}, ICY_BODY, method)
-            if headers.get("icy-metadata") == "1"
-            else reply(b"HTTP/1.0 200 OK", {"Content-Type": "audio/mpeg"}, AUDIO, method)
-        )
-        media = self.register(f"{self.station.base_url}/old")
-        self.assertEqual(self.request("GET", media["relay_url"]), (200, AUDIO, mock.ANY))
-        self.assertEqual(self.station.asked("/old"), [True, False])
-        again = self.register(f"{self.station.base_url}/old")
-        self.assertEqual(self.request("GET", again["relay_url"])[1], AUDIO)
-        self.assertEqual(self.station.asked("/old"), [True, False, False])
+    def test_an_old_shoutcast_icy_status_line_plays_with_its_song(self) -> None:
+        # Shoutcast version 1: "ICY 200 OK" for every request, header names in
+        # small letters with no space after the colon, no length.
+        def old_shoutcast(method, headers):
+            lines = [b"ICY 200 OK", b"icy-notice1:<BR>This stream requires Winamp<BR>", b"icy-name:",
+                     b"content-type:audio/aacp", b"icy-pub:0"]
+            if headers.get("icy-metadata") == "1":
+                return b"\r\n".join(lines + [b"icy-metaint:%d" % METAINT, b"icy-br:320"]) + b"\r\n\r\n" + ICY_BODY
+            return b"\r\n".join(lines + [b"icy-br:320"]) + b"\r\n\r\n" + AUDIO
 
-    def test_icy_status_line_for_every_request_fails_as_it_does_today(self) -> None:
-        self.station.routes["/icy-only"] = lambda method, headers: reply(
-            b"ICY 200 OK", {"Content-Type": "audio/mpeg"}, AUDIO, method,
+        self.station.routes["/old"] = old_shoutcast
+        media = self.register(f"{self.station.base_url}/old")
+        status, body, headers = self.request("GET", media["relay_url"], headers={"Range": "bytes=0-"})
+        self.assertEqual((status, body), (200, AUDIO))
+        self.assertEqual(headers["content-type"], "audio/aacp")
+        self.assertNotIn("icy-metaint", headers)
+        self.assertEqual(self.station.asked("/old"), [True])  # one request, no repeat
+        self.assertEqual(self.now_playing(media["media_id"])[1]["data"]["title"], "Don't Stop; Believin'")
+        # Not put on the do-not-ask list: the next playback asks for the song again.
+        self.assertTrue(worldmedia_server.ICY_REFUSED_HOSTS.should_ask(f"{self.station.base_url}/old"))
+        # A request that does not ask (not from the start) gets the plain sound.
+        status, body, _headers = self.request("GET", media["relay_url"], headers={"Range": "bytes=100-"})
+        self.assertEqual((status, body), (200, AUDIO))
+        self.assertEqual(self.station.asked("/old"), [True, False])
+
+    def test_an_icy_status_line_keeps_its_status(self) -> None:
+        self.station.routes["/icy-gone"] = lambda method, headers: (
+            b"ICY 404 Resource Not Found\r\nicy-notice2:The resource requested was not found<BR>\r\n\r\n"
         )
-        media = self.register(f"{self.station.base_url}/icy-only")
-        status, payload, _headers = self.request("GET", media["relay_url"])
-        self.assertEqual(status, 502)
-        self.assertEqual(payload["error"]["code"], "MEDIA_CONNECT_FAILED")
-        self.assertEqual(self.station.asked("/icy-only"), [True, False])
-        # The repeat failed too, so the host is not put on the do-not-ask list.
-        self.assertEqual(self.request("GET", media["relay_url"])[0], 502)
-        self.assertEqual(self.station.asked("/icy-only"), [True, False, True, False])
+        media = self.register(f"{self.station.base_url}/icy-gone")
+        self.assertEqual(self.request("GET", media["relay_url"])[0], 404)
+        self.assertEqual(self.station.asked("/icy-gone"), [True])
+
+    def test_only_a_first_line_that_starts_with_icy_and_a_space_is_taken(self) -> None:
+        # "ICY" is read as "HTTP/1.0" only at the very start of the reply; any
+        # other first line is still no HTTP reply, asked again once without the
+        # header and, when that fails too, reported as before.
+        for index, first_line in enumerate((b"ICYX 200 OK", b"icy 200 OK", b" ICY 200 OK", b"NOPE 200 OK", b"ICY")):
+            target = f"/not-http{index}"
+            self.station.routes[target] = lambda method, headers, first_line=first_line: reply(
+                first_line, {"Content-Type": "audio/mpeg"}, AUDIO, method,
+            )
+            with self.subTest(first_line=first_line):
+                media = self.register(f"{self.station.base_url}{target}")
+                status, payload, _headers = self.request("GET", media["relay_url"])
+                self.assertEqual(status, 502)
+                self.assertEqual(payload["error"]["code"], "MEDIA_CONNECT_FAILED")
+                self.assertEqual(self.station.asked(target), [True, False])
+                # The repeat failed too, so the host is not put on the do-not-ask list.
+                self.assertEqual(self.request("GET", media["relay_url"])[0], 502)
+                self.assertEqual(self.station.asked(target), [True, False, True, False])
+
+    def test_a_later_line_that_starts_with_icy_is_left_alone(self) -> None:
+        body = b"ICY 200 OK\r\n" + AUDIO
+        self.station.routes["/icy-in-body"] = lambda method, headers: reply(
+            b"HTTP/1.0 200 OK", {"Content-Type": "audio/mpeg", "Content-Length": str(len(body))}, body, method,
+        )
+        media = self.register(f"{self.station.base_url}/icy-in-body")
+        self.assertEqual(self.request("GET", media["relay_url"])[:2], (200, body))
 
     def test_a_finite_file_with_an_interval_keeps_its_length_and_seeking(self) -> None:
         cases = {

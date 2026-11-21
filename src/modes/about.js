@@ -9,7 +9,7 @@
 import { SOURCES, getSourceColor } from '../lib/sources.js';
 import { PROCESSOR_EXTRAS_RELEASED } from '../lib/processor-budget.js';
 
-const VERSION = '0.1.13';
+const VERSION = '0.1.14';
 const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {

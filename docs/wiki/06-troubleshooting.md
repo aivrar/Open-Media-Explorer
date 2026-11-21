@@ -307,8 +307,6 @@ reasons for none:
 - The station sends a jingle name, an advertisement or filler text instead of
   the song. World Media shows what the station sends.
 - A title can take a few seconds to appear, and again to change.
-- An old Shoutcast server that answers "ICY 200 OK" instead of a normal web
-  reply does not play in World Media at all.
 
 ## The sound meter does not move
 
@@ -428,7 +426,8 @@ Never delete `WorldMediaWindows-data` to solve a shutdown delay.
 
 - **Radio Browser:** the app probes a public mirror and retries once with a new
   mirror if it dies. Individual station URLs remain community-maintained. An
-  old Shoutcast server that answers "ICY 200 OK" does not play.
+  old Shoutcast server that answers "ICY 200 OK" instead of a normal web reply
+  plays like any other station.
 - **iptv-org:** try next candidate; logos and streams are separate data lanes.
 - **Internet Archive:** metadata is rate-gated; retrying the same cursor is
   expected during an Archive brownout.
