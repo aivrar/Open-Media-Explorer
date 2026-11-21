@@ -37,7 +37,8 @@ test('the knob shows the station name only, never its source', async () => {
   assert.doesNotMatch(display, /getSourceLabel|\u00b7|\\u00b7/);
   // The source is still on every card: its second line and its tooltip.
   const strip = tuner.match(/function renderStrip\(\) \{[\s\S]*?\n\}/)[0];
-  assert.match(strip, /title: `\$\{saved \? '\u2605 Favorite \u00b7 ' : ''\}\$\{s\.title\} \u00b7 \$\{getSourceLabel\(s\.source\)\}`/);
+  const tooltip = tuner.match(/function setPillTrouble\(pill\) \{[\s\S]*?\n\}/)[0];
+  assert.match(tooltip, /`\$\{pill\.__saved \? '\u2605 Favorite \u00b7 ' : ''\}\$\{s\.title\} \u00b7 \$\{getSourceLabel\(s\.source\)\}\$\{trouble \? `\\n\$\{trouble\}` : ''\}`/);
   assert.match(strip, /el\('small', \{ text: getSourceLabel\(s\.source\) \}\)/);
 });
 
@@ -220,7 +221,10 @@ test('Small stays exactly as it was: text-only cards, 39 px, strip 70 px (66 nar
     '.station-pill.is-active',
     // A long name ends in an ellipsis at every size (the height is unchanged).
     '.station-pill > span:not(.content-rating-badge):not(.pill-art)',
+    // "Did not play last time": laid over the corner, so the size is unchanged.
+    '.station-pill.has-trouble', '.station-pill > .pill-trouble',
   ]);
+  assert.match(rule(css, '.station-pill > .pill-trouble'), /position: absolute;/);
   const selectors = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+\{/g)
     .flatMap((raw) => raw.slice(0, -1).split(',').map((part) => part.trim()));
   assert.ok(selectors.includes('.station-pill.has-art'));
@@ -233,6 +237,7 @@ test('Small stays exactly as it was: text-only cards, 39 px, strip 70 px (66 nar
   // Small: no picture element (so no image request) and no extra class.
   assert.match(strip, /const pictures = cardPictures\(\);/);
   assert.match(strip, /\+ \(pictures \? ' has-art' : ''\),/);
+  assert.match(tuner, /pill\.classList\.toggle\('has-trouble', Boolean\(trouble\)\);/);
   assert.match(strip, /pictures \? cardArt\.box\(s\) : null,\s+el\('span', \{ text: saved \? `\u2605 \$\{s\.title\}` : s\.title \}\),/);
   assert.match(strip, /if \(pictures\) cardArt\.commit\(\);\s+\}$/);
   assert.match(tuner, /function cardPictures\(\) \{\s+return tunerCardsShowPictures\(state\.cardSize\);\s+\}/);

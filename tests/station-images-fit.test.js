@@ -46,6 +46,8 @@ test('every view shows a station picture whole and centred, and remote artwork a
   assert.match(rule(library, '.card-thumb img.logo-art'), /object-fit: contain;\s+padding: 28px;/);
   assert.match(library, /\.library-root\.is-personal-view \.card-thumb img\.logo-art \{ padding: 6px; \}/);
   assert.match(rule(library, '.detail-thumb'), /aspect-ratio: 16 \/ 9;\s+object-fit: cover;/);
+  // A station's logo is shown whole in the details panel, as on the cards.
+  assert.match(rule(library, '.detail-thumb.logo-art'), /object-fit: contain;/);
   assert.match(rule(discovery, '.discovery-now img'), /object-fit: cover;/);
   // The Grid's logo box already shows any picture whole, on its own surface.
   assert.match(rule(grid, '.channel-tile .channel-logo'), /background: var\(--bg-elev-3\);\s+object-fit: contain;/);
@@ -405,10 +407,11 @@ async function playerRig(t, pictures) {
   player = await import(`../src/lib/player.js?stationImageFit=${Date.now()}-${Math.random()}`);
   player.initPlayer();
   await settle();
-  const play = async (title, thumbnail = '') => {
+  const play = async (title, thumbnail = '', type = 'radio') => {
     await player.playItem({
-      id: `fit:${title}`, title, description: '', source: 'radio-browser', type: 'radio',
-      stream_kind: 'audio', stream_url: `https://radio.example/${title.replace(/\W/g, '')}`, delivery: 'live',
+      id: `fit:${title}`, title, description: '', source: 'radio-browser', type,
+      stream_kind: 'audio', stream_url: `https://radio.example/${title.replace(/\W/g, '')}`,
+      delivery: type === 'radio' || type === 'tv' ? 'live' : 'on-demand',
       capture_headers: {}, thumbnail, country: '', language: '', _extra: { streamCandidates: [] },
     });
     await settle();
@@ -422,11 +425,11 @@ async function playerRig(t, pictures) {
 
 const jpeg = () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'image/jpeg' } });
 
-test('player bar: a station picture is shown whole, remote artwork fills the square, on every change', async (t) => {
+test('player bar: a station picture is shown whole, remote artwork keeps its own fit, on every change', async (t) => {
   const bar = await playerRig(t, jpeg);
   await bar.play('DKFM', RELAY);
   assert.equal(bar.src, RELAY);
-  assert.equal(bar.whole(), false, 'remote artwork keeps filling the square');
+  assert.equal(bar.whole(), false, 'remote artwork keeps its own fit');
 
   // Refresh finds DKFM.jpg: shown whole.
   applyStationImageList({ images: [picture('dkfm', '1')] });
@@ -434,7 +437,7 @@ test('player bar: a station picture is shown whole, remote artwork fills the squ
   assert.match(bar.src, /^blob:/);
   assert.equal(bar.whole(), true);
 
-  // Removed again: the station's own artwork, filling the square.
+  // Removed again: the station's own artwork, with its own fit.
   applyStationImageList({ images: [] });
   await settle();
   assert.equal(bar.src, RELAY);
@@ -448,6 +451,31 @@ test('player bar: a station picture is shown whole, remote artwork fills the squ
   await settle();
   assert.equal(bar.src, RELAY);
   assert.equal(bar.whole(), false);
+});
+
+test('player bar: a radio or TV logo is shown whole in the square, other artwork fills it', async (t) => {
+  const base = await read('src/styles/base.css');
+  const logo = rule(base, '#player-art.is-logo');
+  assert.match(logo, /object-fit: contain;/);
+  // On the plain surface #player-art already has: no other colour, no padding.
+  assert.doesNotMatch(logo, /background|padding|object-position/);
+  assert.match(rule(base, '#player-art'), /background: var\(--bg-elev-3\);/);
+  // The station-picture rule follows it, so a station picture keeps its own surface.
+  assert.ok(base.indexOf('#player-art.is-logo') > base.indexOf('#player-art {'));
+  assert.ok(base.indexOf('#player-art.is-station-image') > base.indexOf('#player-art.is-logo'));
+
+  const bar = await playerRig(t, jpeg);
+  const isLogo = () => bar.art.classList.contains('is-logo');
+  await bar.play('Almere TV', RELAY, 'tv');
+  assert.equal(bar.src, RELAY);
+  assert.equal(isLogo(), true, 'a TV channel logo is shown whole');
+  await bar.play('Golf FM', RELAY, 'radio');
+  assert.equal(isLogo(), true, 'a radio logo is shown whole');
+  await bar.play('A Film', RELAY, 'video');
+  assert.equal(bar.src, RELAY);
+  assert.equal(isLogo(), false, 'film artwork fills the square as before');
+  await bar.play('An Episode', RELAY, 'audio');
+  assert.equal(isLogo(), false, 'episode artwork fills the square as before');
 });
 
 test('player bar: the station-picture class follows what is on screen while stations change', async (t) => {
@@ -489,7 +517,7 @@ test('player bar: the station-picture class follows what is on screen while stat
   assert.equal(bar.initials.hidden, false);
   assert.equal(bar.initials.textContent, 'CF');
 
-  // A station with remote artwork: unmarked, the artwork fills the square.
+  // A station with remote artwork: unmarked, the artwork has its own fit.
   await bar.play('Delta FM', relay);
   assert.equal(bar.src, relay);
   assert.equal(bar.whole(), false);

@@ -12,9 +12,9 @@
  */
 
 import {
-  VISUALIZER_FAVOURITES_MAX, normalizeVisualizerFavourites, parseVisualizerFavourite,
+  VISUALIZER_FAVOURITES_MAX, normalizeVisualizerFavourites, olderReleaseReadsFavourite, parseVisualizerFavourite,
 } from '../lib/visualizer-settings.js';
-import { overlayToken, parseOverlayToken } from './overlay-catalog.js';
+import { overlayToken, readOverlayToken } from './overlay-catalog.js';
 
 const tokenOf = (item) => (typeof item === 'string' ? item : overlayToken(item));
 
@@ -29,11 +29,13 @@ export function favouriteKey(scene, look, fx = null, overlays = null) {
 }
 
 /** [{ scene, look, fx, overlays }] of the setting's strings (shape-checked;
- *  overlays as [{ id, blend }]). */
+ *  overlays as [{ id, blend }]: a blend-in this build does not know is read
+ *  as plain, overlay-catalog.js readOverlayToken). The whole list
+ *  (visualizerFavouritesAll), newer favourites with the rest. */
 export function favouriteEntries(list) {
   return normalizeVisualizerFavourites(list).map((item) => {
     const entry = parseVisualizerFavourite(item);
-    return { ...entry, overlays: entry.overlays.map(parseOverlayToken) };
+    return { ...entry, overlays: entry.overlays.map((token) => readOverlayToken(token)) };
   });
 }
 
@@ -87,6 +89,49 @@ export function favouritesAsDrawn(list, drawnFor, overlaysFor = null) {
     if (!out.includes(key)) out.push(key);
   }
   return out;
+}
+
+/** The whole list of favourites from the two saved fields
+ *  (lib/visualizer-settings.js): `older` (visualizerFavourites, the ones
+ *  release 0.1.12 reads, as it last left them) and `all`
+ *  (visualizerFavouritesAll, the whole list as this build last saved it;
+ *  not a list: `older` is the whole list), each favourite in the form it is
+ *  drawn (favouritesAsDrawn, with the same `drawnFor` and `overlaysFor`).
+ *  0.1.12's tab rewrites a favourite it reads into that same form, so the
+ *  two are compared in it:
+ *  - one of `all` that 0.1.12 reads (it was in its field) stays only while
+ *    its drawn form is in `older`: when it is not, it was taken off there;
+ *  - one that 0.1.12 does not read is kept (it never saw it);
+ *  - two that come to the same form are one favourite, in the earlier one's
+ *    place (as 0.1.12's tab merges them);
+ *  - one of `older` found nowhere in `all` was starred there: it goes after
+ *    the one before it in `older` and any newer ones that follow that one
+ *    (0.1.12 adds a new star at the end).
+ *  At most VISUALIZER_FAVOURITES_MAX, both kinds counted; when stars added
+ *  in 0.1.12 make it longer, the oldest go. */
+export function favouritesFromSaved(older, all, drawnFor, overlaysFor = null) {
+  const kept = favouritesAsDrawn(older, drawnFor, overlaysFor);
+  if (!Array.isArray(all)) return kept;
+  const there = new Set(kept);
+  const out = [];
+  for (const item of normalizeVisualizerFavourites(all)) {
+    const drawn = favouritesAsDrawn([item], drawnFor, overlaysFor)[0];
+    if (out.includes(drawn)) continue;
+    if (olderReleaseReadsFavourite(item) && !there.has(drawn)) continue;
+    out.push(drawn);
+  }
+  let at = 0;
+  for (const item of kept) {
+    const found = out.indexOf(item);
+    if (found >= 0) {
+      at = found + 1;
+      continue;
+    }
+    while (at < out.length && !there.has(out[at])) at += 1;
+    out.splice(at, 0, item);
+    at += 1;
+  }
+  return out.length > VISUALIZER_FAVOURITES_MAX ? out.slice(out.length - VISUALIZER_FAVOURITES_MAX) : out;
 }
 
 /** `list` with scene + look + effects + overlays starred (`on` true) or not.

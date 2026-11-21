@@ -33,6 +33,8 @@ import {
 import { filterItems } from './filter.js';
 import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
 import { getPlaylistItems } from '../../lib/playlists.js';
+import { carriesFiles } from '../../lib/playlist-drop.js';
+import { didNotPlayNote } from '../../lib/did-not-play-view.js';
 import {
   getThumbnailHydrationSignal, insertThumbImage, requestThumbnailHydration,
   resetThumbnailHydrationScope,
@@ -230,7 +232,57 @@ export function renderResults() {
   if (frag.childNodes.length > 0) ui.resultsHost.appendChild(frag);
   syncFavoriteCategoryControls();
   syncFavoriteOrderControls(filtered);
+  syncDidNotPlayMarks();
   refocus?.();
+}
+
+/* ============ "Did not play last time" mark ============ */
+
+let troubleMarkCount = 0;
+
+/** Give a card the small "Did not play last time" mark when its station is
+ *  one of the user's own (did-not-play-view.js) and its last start did not
+ *  play, or take it off. The mark sits on the picture, inside the card's
+ *  button, so a click on it plays the station as always; its sentence is the
+ *  tooltip and the button's accessible description. */
+function setCardTroubleMark(card) {
+  const item = card?.__item;
+  if (!item || !card.__thumb) return;
+  const text = didNotPlayNote(item);
+  let mark = card.__trouble || null;
+  if (!text) {
+    if (!mark) return;
+    mark.remove();
+    card.__trouble = null;
+    card.__open?.removeAttribute?.('aria-describedby');
+    card.classList?.remove?.('has-trouble');
+    return;
+  }
+  if (!mark) {
+    troubleMarkCount += 1;
+    mark = el('span', {
+      className: 'card-trouble',
+      text: '!',
+      attrs: { role: 'img', id: `card-trouble-${troubleMarkCount}` },
+    });
+    card.__thumb.appendChild(mark);
+    card.__trouble = mark;
+    card.classList?.add?.('has-trouble');
+  }
+  if (mark.getAttribute('aria-label') !== text) {
+    mark.setAttribute('aria-label', text);
+    mark.setAttribute('title', text);
+  }
+  card.__open?.setAttribute?.('aria-describedby', mark.getAttribute('id'));
+}
+
+/** Bring the marks of every mounted card in line with the stored results.
+ *  Only the marks change; the cards and their pictures are left alone. */
+export function syncDidNotPlayMarks() {
+  if (!ui.resultsHost?.children) return;
+  for (const card of ui.resultsHost.children) {
+    if (card.dataset?.id) setCardTroubleMark(card);
+  }
 }
 
 /** What an empty Favorites or My Playlists view says. */
@@ -463,28 +515,38 @@ function setMoveEnabled(button, enabled) {
   else button.setAttribute('aria-disabled', 'true');
 }
 
-/* Dragging a card in "My order" puts it before or after the card it is
-   dropped on. Only the cards shown take part, so it works the same with a
-   type, search or category filter. The move buttons stay the keyboard way to
-   do the same. Listeners sit on the results host (bound once) and do work only
-   while a card is being dragged. */
+/* Dragging a card in "My order" onto another card puts it in that card's
+   place, wherever on the card it is dropped. Only the cards shown take part,
+   so it works the same with a type, search or category filter. The move
+   buttons stay the keyboard way to do the same. Listeners sit on the results
+   host (bound once) and do work only while a card is being dragged. */
 
 export const FAVORITE_DRAG_TYPE = 'application/x-worldmedia-favorite';
 const boundDragHosts = new WeakSet();
 let favoriteDrag = null; // { id, card, marked, place }
+let shownFavoritePositions = new Map(); // id -> place in the shown order
 
-/** Where a drop at (x, y) over `rect` goes: the top-left half of a card is
- *  "before" it, the bottom-right half "after", which reads right in a grid
- *  of several columns and in a single column alike. */
-export function favoriteDropPlace(rect, x, y) {
-  const width = rect?.width > 0 ? rect.width : 1;
-  const height = rect?.height > 0 ? rect.height : 1;
-  return (x - (rect?.left || 0)) / width + (y - (rect?.top || 0)) / height < 1 ? 'before' : 'after';
+/** Where a card dropped on another goes so that it takes the target's place
+ *  in the shown order (`order`: ids in shown order, or a Map id -> index):
+ *  coming from later in the order it goes before the target, coming from
+ *  earlier it goes after it. '' when either is not shown or they are one. */
+export function favoriteDropPlace(order, draggedId, targetId) {
+  const positions = order instanceof Map ? order : new Map((order || []).map((id, index) => [id, index]));
+  const from = positions.get(draggedId);
+  const to = positions.get(targetId);
+  if (from === undefined || to === undefined || from === to) return '';
+  return from > to ? 'before' : 'after';
 }
 
 function dragCardOf(target) {
   const card = target?.closest?.('.card[data-id]');
   return card && ui.resultsHost?.contains?.(card) ? card : null;
+}
+
+/** True while one of this page's favorite cards is being dragged. A drag
+ *  that carries files (a playlist dropped on the window) never is. */
+function isFavoriteDrag(event) {
+  return Boolean(favoriteDrag) && !carriesFiles(event?.dataTransfer);
 }
 
 function clearDropMark() {
@@ -515,13 +577,21 @@ function onFavoriteDragStart(event) {
   card.classList.add('is-dragging');
 }
 
+/* `dragenter` and `dragover` are handled alike: a drop is refused until one
+   of them is cancelled, so cancelling only `dragover` showed the "no entry"
+   cursor for a moment on every element entered (the picture, the tag and
+   move buttons). While a favorite is dragged the whole results area accepts
+   it, gaps and the dragged card included; only a drop on another card
+   changes the order. */
 function onFavoriteDragOver(event) {
-  if (!favoriteDrag) return; // files and anything else: not a reorder
-  const card = dragCardOf(event.target);
-  if (!card || card === favoriteDrag.card || !favoritesManualOrder()) { clearDropMark(); return; }
+  if (!isFavoriteDrag(event)) return; // files and anything else: not a reorder
+  if (!favoritesManualOrder()) { clearDropMark(); return; }
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  const place = favoriteDropPlace(card.getBoundingClientRect?.(), event.clientX, event.clientY);
+  const card = dragCardOf(event.target);
+  const targetId = card && card !== favoriteDrag.card ? ((card.__item?.id) || card.dataset.id) : '';
+  const place = targetId ? favoriteDropPlace(shownFavoritePositions, favoriteDrag.id, targetId) : '';
+  if (!place) { clearDropMark(); return; }
   if (favoriteDrag.marked === card && favoriteDrag.place === place) return;
   clearDropMark();
   card.classList.add(place === 'before' ? 'drop-before' : 'drop-after');
@@ -536,35 +606,40 @@ function onFavoriteDragLeave(event) {
 }
 
 function onFavoriteDrop(event) {
-  if (!favoriteDrag) return;
+  if (!isFavoriteDrag(event)) return;
   const card = dragCardOf(event.target);
   const { id } = favoriteDrag;
   const dragged = favoriteDrag.card;
-  const place = card ? favoriteDropPlace(card.getBoundingClientRect?.(), event.clientX, event.clientY) : '';
   endFavoriteDrag();
-  if (!card || card === dragged) return;
+  // Taken in, so the browser does nothing of its own with it.
   event.preventDefault();
-  onDropFavorite(id, (card.__item?.id) || card.dataset.id, place);
+  if (!card || card === dragged) return;
+  onDropFavorite(id, (card.__item?.id) || card.dataset.id);
 }
 
 function bindFavoriteDrag(host) {
   if (!host?.addEventListener || boundDragHosts.has(host)) return;
   boundDragHosts.add(host);
   host.addEventListener('dragstart', onFavoriteDragStart);
+  host.addEventListener('dragenter', onFavoriteDragOver);
   host.addEventListener('dragover', onFavoriteDragOver);
   host.addEventListener('dragleave', onFavoriteDragLeave);
   host.addEventListener('drop', onFavoriteDrop);
   host.addEventListener('dragend', endFavoriteDrag);
 }
 
-/** A card was dropped on another: move it there in "My order". */
-export function onDropFavorite(itemId, targetId, place) {
+/** A card was dropped on another: it takes that card's place in "My order"
+ *  (see favoriteDropPlace). `place` ('before' or 'after') overrides that. */
+export function onDropFavorite(itemId, targetId, place = '') {
   if (!favoritesManualOrder()) return false;
-  const shown = new Set(filteredItemsForCurrentView(libraryPool()).map((item) => item.id));
+  const order = filteredItemsForCurrentView(libraryPool()).map((item) => item.id);
+  const shown = new Set(order);
   if (!shown.has(itemId) || !shown.has(targetId)) return false;
+  const where = place || favoriteDropPlace(order, itemId, targetId);
+  if (!where) return false;
   // The Library re-renders on the favorites-change event this sends. Hidden
   // favorites keep their places.
-  return moveFavoriteTo(itemId, targetId, place, shown);
+  return moveFavoriteTo(itemId, targetId, where, shown);
 }
 
 function setCardDraggable(card, draggable) {
@@ -587,6 +662,8 @@ function syncFavoriteOrderControls(filtered) {
   // for example in My Playlists) must lose its move buttons there.
   const manual = favoritesManualOrder();
   const positions = manual ? new Map(filtered.map((item, index) => [item.id, index])) : null;
+  // The shown order the drag marks use (a drop works it out again).
+  shownFavoritePositions = positions || new Map();
   if (manual) bindFavoriteDrag(ui.resultsHost);
   else if (favoriteDrag) endFavoriteDrag();
   for (const card of ui.resultsHost.children) {
@@ -704,6 +781,9 @@ function renderCard(item, opts = {}) {
     attrs: {
       type: 'button',
       'aria-label': `Open ${item.title || 'Untitled'} from ${sourceLabel}`,
+      // The whole name on hover anywhere on the card; on the card itself it
+      // may end in an ellipsis.
+      title: item.title || 'Untitled',
     },
     // card.__item, not `item`: a reused card is handed the current object.
     on: { click: () => onCardClick(card.__item || item) },
@@ -793,6 +873,8 @@ function renderCard(item, opts = {}) {
   // syncFavoriteOrderControls), so the tab order matches what is seen.
   card.__star = star;
   card.__thumb = thumb;
+  card.__open = openButton;
+  setCardTroubleMark(card);
   rememberShown(card, item);
   return card;
 }

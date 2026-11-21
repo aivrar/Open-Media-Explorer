@@ -17,6 +17,17 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
+**New in v0.1.13:** a **Now Playing** tab shows the station, the song and the
+stream details large, over a blurred copy of its picture, with a large sound
+meter. Live radio and TV no longer show a seek bar, the song on the player bar
+is larger, a small red **!** marks a station that did not play last time, and
+a station can get a picture from a file or by dropping one on its card. The
+Visualizer has 103 scenes, three new overlays, two new blends and an **Extra
+glow** switch, and can be shown faintly behind the Tuner. Dragging Favorites
+into order is fixed. Reported in
+[issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
+and requested in [discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8).
+
 **New in v0.1.12:** star the songs you like, give a station a name of your
 own, drag Favorites into order, import `.json` and `.csv` playlists, and let
 the app pick a station's best stream. A **Processor use** setting lets the
@@ -96,7 +107,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.12-portable.zip
+WorldMediaWindows-0.1.13-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -125,8 +136,8 @@ The full end-to-end user and developer wiki is in
 
 ## What You Get
 
-Six tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**,
-**Visualizer**, and **About**.
+Seven tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**,
+**Now Playing**, **Visualizer**, and **About**.
 
 **Library** - search and browse everything. Left sidebar groups results by type
 and source: Radio Browser, iptv-org, Internet Archive, NASA, Wikimedia Commons,
@@ -153,8 +164,13 @@ play it.
 
 **Discovery** - random open media from the enabled sources.
 
+**Now Playing** - whatever plays now, shown large: the station or item picture
+over a blurred copy of it, its name, the song a radio station announces (with
+a star and **Copy**), the stream details, how long it has played, and a large
+sound meter.
+
 **Visualizer** - pictures that move with the sound of whatever is playing. It
-has 99 scenes (flat patterns, 3D scenes, simulations and line drawings), a
+has 103 scenes (flat patterns, 3D scenes, simulations and line drawings), a
 **Look** choice for the scenes that have ready-made looks, a scene shuffle you
 can limit to **Light only**, **Light and medium**, or all scenes (heavy too),
 post effects and overlays (off until you turn them on), a slow drift in time
@@ -392,7 +408,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.12-portable.zip
+dist\WorldMediaWindows-0.1.13-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

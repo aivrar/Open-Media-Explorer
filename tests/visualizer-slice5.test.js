@@ -751,7 +751,7 @@ test('scenes with no room left get no effects at all: the ones whose own steps r
 
 test('a calm scene may leave out single effects (FX_LEFT_OUT): Plasma never gets Bloom or Watercolour, Nebula never Bloom, from the shuffle, by hand or in the tab', async () => {
   assert.deepEqual(FX_LEFT_OUT, {
-    plasma: ['bloom', 'watercolour'], nebula: ['bloom'], aurora: ['palette_map'], sierpinski: ['palette_map'],
+    plasma: ['bloom', 'watercolour'], nebula: ['bloom'], aurora: ['palette_map'], sierpinski: ['palette_map'], voronoi: ['mirror'],
   });
   const nebula = SCENES.find((scene) => scene.id === 'nebula');
   assert.deepEqual(nebula.fxLeftOut, ['bloom']);
@@ -773,6 +773,12 @@ test('a calm scene may leave out single effects (FX_LEFT_OUT): Plasma never gets
   assert.ok(!allowed.has('bloom') && !allowed.has('watercolour') && allowed.has('wave'));
   assert.equal(fxShuffleAllowed(fire, CATALOG, calmIds), calmIds, 'a calm scene without any: the calm set');
   assert.equal(fxShuffleAllowed(SCENES.find((scene) => scene.id === 'tunnel'), CATALOG, calmIds), null, 'not calm: any');
+  // Not calm but leaving one out (Voronoi Cells, Mirror): every effect but that one.
+  const voronoi = SCENES.find((scene) => scene.id === 'voronoi');
+  const voronoiAllowed = fxShuffleAllowed(voronoi, CATALOG, calmIds);
+  assert.equal(voronoiAllowed.size, CATALOG.length - 1);
+  assert.ok(!voronoiAllowed.has('mirror') && voronoiAllowed.has('swirl'));
+  assert.deepEqual(fxDrawnFor(voronoi, ['mirror', 'swirl']), ['swirl']);
   // A scene that is not calm but leaves one out: everything else.
   const notCalm = fxShuffleAllowed({ fxLeftOut: ['bloom'] }, CATALOG, calmIds);
   assert.equal(notCalm.size, CATALOG.length - 1);
@@ -1792,27 +1798,27 @@ test('a calm scene coming in under effect shuffle (bar timing) judges the latest
 });
 
 test('favourites shuffle: a favourite whose only look is left out now shows the start look, not the look picked by hand', async () => {
-  // Mandelbrot's colour scheme 1 is left out (looks.js LOOKS_LEFT_OUT); its
-  // scheme 2 was picked by hand (visualizerLooks).
+  // Mandelbulb Slice's colour scheme 5 is left out (looks.js
+  // LOOKS_LEFT_OUT); its scheme 3 was picked by hand (visualizerLooks).
   const m = await mount({
     settings: {
       visualizerScene: 'tunnel', visualizerShuffle: true, visualizerShufflePool: 'favourites', visualizerShuffleBars: 8,
-      visualizerFavourites: ['tunnel', 'mandelbrot:1'], visualizerLooks: { mandelbrot: 2 },
+      visualizerFavourites: ['tunnel', 'mandelbulb_slice:5'], visualizerLooks: { mandelbulb_slice: 3 },
     },
   });
   const { session } = m;
   m.start();
-  for (let round = 0; round < 30 && session.switcher.current !== 'mandelbrot'; round += 1) await m.play(5000);
-  assert.equal(session.switcher.current, 'mandelbrot', 'shuffled to it');
+  for (let round = 0; round < 30 && session.switcher.current !== 'mandelbulb_slice'; round += 1) await m.play(5000);
+  assert.equal(session.switcher.current, 'mandelbulb_slice', 'shuffled to it');
   await m.play(CROSSFADE_SLOW_MS + 200);
   const def = session.renderer.definition;
   const offered = sceneLooks(def);
-  assert.ok(!offered.some((look) => look.number === 1), 'look 1 left out');
-  const handPicked = offered.find((look) => look.number === 2);
+  assert.ok(!offered.some((look) => look.number === 5), 'look 5 left out');
+  const handPicked = offered.find((look) => look.number === 3);
   const [name] = Object.keys(handPicked.values);
-  const start = sceneDefaults(def, sceneById('mandelbrot').defaults || null)[name];
+  const start = sceneDefaults(def, sceneById('mandelbulb_slice').defaults || null)[name];
   assert.notEqual(handPicked.values[name], start);
   assert.equal(session.renderer.values[name], start, 'the start look');
-  assert.equal(session.looks.mandelbrot, 2, 'the look picked by hand stays saved');
+  assert.equal(session.looks.mandelbulb_slice, 3, 'the look picked by hand stays saved');
   session.destroy();
 });

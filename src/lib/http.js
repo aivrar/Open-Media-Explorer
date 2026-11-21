@@ -6,6 +6,8 @@
  * JSON can never quietly become a successful empty adapter response.
  */
 
+import { noteOutsideAnswer } from './connection-evidence.js';
+
 function rewriteForProxy(url) {
   const prefix = (typeof window !== 'undefined' && window.WORLDMEDIA_PROXY) || '';
   if (!prefix) return null;
@@ -13,7 +15,7 @@ function rewriteForProxy(url) {
 }
 
 const DEFAULT_HEADERS = {
-  'User-Agent': 'WorldMediaWindows/0.1.12',
+  'User-Agent': 'WorldMediaWindows/0.1.13',
   Accept: 'application/json, text/plain, */*',
 };
 
@@ -229,6 +231,8 @@ async function request(url, options = {}, responseKind = 'json') {
       });
       const contentType = contentTypeOf(response);
       const retryAfterMs = parseRetryAfter(headerOf(response, 'retry-after'), (options.now || Date.now)());
+      // An outside server answered: the connection works (connection-evidence.js).
+      if (response.ok) noteOutsideAnswer();
       if (!response.ok) {
         const statusError = new HttpError(`HTTP ${response.status} ${response.statusText || ''} for ${url}`.trim(), {
           status: response.status,

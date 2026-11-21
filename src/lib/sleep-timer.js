@@ -23,6 +23,11 @@ let endsAt = null;
 let host = null;
 let select = null;
 let display = null;
+// The option that shows a running custom timer ("45 min"); hidden otherwise.
+let customOption = null;
+// The choice the menu shows: the running timer's ('custom' for a custom one),
+// '0' (Off) when none runs.
+let runningChoice = '0';
 
 function fmt(ms) {
   if (ms <= 0) return '0:00';
@@ -42,28 +47,57 @@ function render() {
     </label>
     <select id="sleep-select" data-role="select">
       ${PRESETS.map((p, i) => `<option value="${i}">${p.label}</option>`).join('')}
+      <option value="custom" data-role="custom-running" hidden></option>
     </select>
   `;
   select = host.querySelector('[data-role="select"]');
   display = host.querySelector('[data-role="display"]');
-  select.addEventListener('change', () => onPresetChange(+select.value));
+  customOption = host.querySelector('[data-role="custom-running"]');
+  select.addEventListener('change', () => onPresetChange(select.value));
 }
 
-function onPresetChange(idx) {
-  const p = PRESETS[idx];
+/** Minutes typed for a custom timer (up to 720), or null when nothing usable
+ *  was typed (empty, not a number, 0 or less) or the prompt was cancelled. */
+export function customSleepMinutes(raw) {
+  if (raw == null) return null;
+  const text = String(raw).trim().replace(',', '.');
+  if (!/^\d+(?:\.\d+)?$|^\.\d+$/.test(text)) return null;
+  const mins = Number(text);
+  if (!(mins > 0)) return null;
+  // To a tenth of a minute, so the menu's label is the time that runs.
+  return Math.max(0.1, Math.min(720, Math.round(mins * 10) / 10));
+}
+
+function minutesLabel(mins) {
+  return `${Number.isInteger(mins) ? mins : Number(mins.toFixed(1))} min`;
+}
+
+/** The menu shows the running timer's choice, or Off when none runs. */
+function showChoice() {
+  if (!select) return;
+  const custom = Boolean(endsAt) && runningChoice === 'custom';
+  if (customOption) customOption.hidden = !custom;
+  select.value = endsAt ? runningChoice : '0';
+}
+
+function onPresetChange(value) {
+  const p = PRESETS[+value];
   if (!p) return;
   if (p.ms === -1) {
-    const raw = window.prompt('Set custom sleep timer (minutes):', '45');
-    if (raw == null) { select.value = '0'; return; }
-    const mins = Math.max(0.1, Math.min(720, parseFloat(raw) || 0));
-    if (mins <= 0) { setSleep(0); return; }
-    setSleep(mins * 60 * 1000);
+    const mins = customSleepMinutes(window.prompt('Set custom sleep timer (minutes):', '45'));
+    // Nothing usable typed: nothing starts, and a running timer keeps going.
+    if (mins === null) { showChoice(); return; }
+    const ms = Math.round(mins * 60 * 1000);
+    // A typed time that is one of the listed choices is shown as that choice.
+    const listed = PRESETS.findIndex((preset) => preset.ms > 0 && preset.ms === ms);
+    if (listed >= 0) setSleep(ms, { choice: String(listed) });
+    else setSleep(ms, { custom: mins });
     return;
   }
-  setSleep(p.ms);
+  setSleep(p.ms, { choice: String(value) });
 }
 
-function setSleep(ms) {
+function setSleep(ms, { choice = '0', custom = 0 } = {}) {
   cancel();
   if (!ms || ms <= 0) {
     if (display) display.textContent = 'Sleep';
@@ -71,6 +105,9 @@ function setSleep(ms) {
   }
   endsAt = Date.now() + ms;
   getState().sleepTimer.until = endsAt;
+  runningChoice = custom ? 'custom' : choice;
+  if (custom && customOption) customOption.textContent = minutesLabel(custom);
+  showChoice();
   scheduleFire(ms);
   startCountdown();
 }
@@ -139,7 +176,8 @@ function cancel() {
   if (audio?.dataset.preFadeVol) { audio.volume = +audio.dataset.preFadeVol; delete audio.dataset.preFadeVol; }
   if (video?.dataset.preFadeVol) { video.volume = +video.dataset.preFadeVol; delete video.dataset.preFadeVol; }
   if (display) display.textContent = 'Sleep';
-  if (select) select.value = '0';
+  runningChoice = '0';
+  showChoice();
 }
 
 export function initSleepTimer() {

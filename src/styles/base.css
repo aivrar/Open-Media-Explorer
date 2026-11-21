@@ -333,6 +333,8 @@ html, body {
   padding: 7px 14px;
   border-radius: 6px;
   cursor: pointer;
+  /* A tab's name never wraps ("Now Playing" is the two-word one). */
+  white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
@@ -347,6 +349,24 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Seven tabs on one row from 1001 px: up to 1240 px a little less room
+   around them, so they fit beside the brand and the tools, also while the
+   sleep timer counts down (about 985 px needed with "Sleep 720:00"). Should
+   they still not fit (another font), the row is held to its column and
+   scrolls sideways, as in the two-row bar below, instead of running under
+   the tools; a tab reached with the keyboard is scrolled into view. */
+@media (min-width: 1001px) and (max-width: 1240px) {
+  .topbar { gap: 12px; padding: 0 12px; }
+  .mode-btn { padding: 7px 8px; }
+  .modes {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .modes::-webkit-scrollbar { display: none; }
 }
 
 .icon-btn {
@@ -500,9 +520,14 @@ html, body {
 
 /* ============ Player bar ============ */
 
+/* The name and song column: its share of the room (1.1 to the seek bar's
+   1.5), and on wide windows at least 75vw - 760px (680 px at 1920 px wide,
+   1160 px at 2560 px, at most 1400 px), so a long song is not cut short
+   while the bar has room. Below about 1500 px the share is the larger, so
+   nothing changes there. */
 .player-bar {
   display: grid;
-  grid-template-columns: minmax(190px, 1.1fr) auto auto minmax(180px, 1.5fr) auto;
+  grid-template-columns: minmax(clamp(190px, 75vw - 760px, 1400px), 1.1fr) auto auto minmax(180px, 1.5fr) auto;
   grid-template-areas:
     "meta controls actions progress volume"
     "meta controls status status volume";
@@ -540,6 +565,16 @@ html, body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* A plain surface under the picture (shown only with it: the picture is
+     invisible until it has loaded), so the initials behind it do not show
+     through the clear parts of a logo, as on the Library and Tuner cards. */
+  background: var(--bg-elev-3);
+}
+/* A radio or TV station's own artwork (its logo, often a wide wordmark):
+   whole and centred on that plain surface, as on the Library and Tuner
+   cards. A square picture fills the square as before. */
+#player-art.is-logo {
+  object-fit: contain;
 }
 /* The user's own station picture: whole and centred, never cropped. While it
    is shown, the box and the initials behind it step aside, so the sides of a
@@ -603,7 +638,14 @@ html, body {
   fill: var(--accent);
 }
 
+/* The station's name and the song grow with the window on large screens:
+   14 px in a window up to 1000 px (song) or 1200 px (name) wide, then with
+   the width, up to 22 px (song) and 18 px (name) from about 2800 px wide.
+   Both fit the bar's fixed height. A long text still ends in an ellipsis;
+   the whole of it is on hover. */
 .player-title {
+  font-size: clamp(14px, 0.25vw + 11px, 18px);
+  line-height: 1.3;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -616,6 +658,14 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* The song the station announces: what is looked at most, so it is larger,
+   bolder and in the full text color, not the dim source line. */
+.player-source.is-song {
+  font-size: clamp(14px, 0.45vw + 9.5px, 22px);
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--text);
 }
 
 /* The song line and, while a song is announced, its star right after it. */
@@ -1009,6 +1059,29 @@ html, body {
   cursor: pointer;
 }
 .player-seek:disabled { opacity: 0.5; cursor: default; }
+/* A live stream has no length to move along (lib/player.js): the seek bar
+   and the length are not shown, but keep their space so the bar stays put. */
+.player-seek.is-no-length, .player-time.is-no-length { visibility: hidden; }
+/* Wide bar, live media (no seek bar from the press of Play on; lib/player.js
+   marks the seek bar is-live): the progress cell keeps only the sound meter
+   and the time played, and the name column takes the rest, so a long song
+   title has room. The layout stays the same while the item plays; with a
+   seek bar the bar is laid out as before. */
+@media (min-width: 1001px) {
+  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) {
+    grid-template-columns: minmax(clamp(190px, 75vw - 760px, 1400px), 1.1fr) auto auto auto auto;
+  }
+  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) .player-progress {
+    container-type: normal;
+  }
+  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) #player-meter {
+    display: block;
+    flex: none;
+  }
+  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) .player-time { flex-shrink: 0; }
+  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) #player-seek,
+  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) #player-dur { display: none; }
+}
 
 .player-volume {
   grid-area: volume;
@@ -1240,6 +1313,13 @@ html, body {
 .row > select { max-width: 45%; }
 .row label { color: var(--text); }
 .row .description { font-size: 12px; color: var(--text-dim); display: block; margin-top: 2px; }
+/* A link in a setting's description ("What this means") in the app's link
+   color, like the links under Recording tools. */
+.modal-body .description a { color: var(--accent); }
+/* A description line of its own under a row (the local port status) in the
+   same size and color as the descriptions in the rows. */
+.modal-body p.description { font-size: 12px; color: var(--text-dim); }
+.modal-body p.description[data-state="error"] { color: var(--danger); }
 /* The Processor use limit's hint and, in its place for a moment, the range
    (settings.js bindProcessorUse): one grid cell, so the row keeps the
    height of the longer one and nothing jumps. */
@@ -1512,6 +1592,7 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   }
   .player-title { font-size: 13px; }
   .player-source { font-size: 11px; }
+  .player-source.is-song { font-size: 13px; }
   #player-volume { width: 88px; }
   .player-actions { justify-content: stretch; }
   .player-action { flex: 1 1 auto; min-width: 40px; }

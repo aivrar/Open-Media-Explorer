@@ -55,8 +55,12 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   let actionGeneration = 0;
   let observedItemId = currentItem()?.id || '';
   // Play of this item failed before any playable stream: nothing is being
-  // checked any more. Cleared when the next Play of an item starts.
+  // checked any more, and there is nothing to record. Cleared when the next
+  // Play of an item starts.
   let unplayableItemId = '';
+  // The item the player bar treats as a recording, not live (player.js
+  // 'media-timeline', the seek bar's decision).
+  let recordingItemId = '';
   let lastAnnouncementKey = '';
   let eqEngineStatus = { state: 'idle', reason: '' };
   let eqPreview = null;
@@ -102,10 +106,14 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   function viewForCurrent() {
     const item = currentItem();
     let capability = resolveMediaAction(item);
-    if (capability === 'checking' && item?.id && item.id === unplayableItemId) {
+    const unplayable = Boolean(item?.id && item.id === unplayableItemId);
+    if (capability === 'checking' && unplayable) {
       capability = 'unavailable';
     }
-    let view = deriveCaptureView({ item, capability, jobs, toolState, transient, ignoredJobIds });
+    const recording = Boolean(item?.id && item.id === recordingItemId);
+    let view = deriveCaptureView({
+      item, capability, jobs, toolState, transient, ignoredJobIds, recording, unplayable,
+    });
     const activeRecording = jobs.some(
       (job) => job.kind?.startsWith('record-') && ACTIVE_JOB_STATES.has(job.state),
     );
@@ -462,6 +470,12 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   unsubscribers.push(subscribe('media-unplayable', ({ itemId = '' } = {}) => {
     if (!itemId || itemId !== currentItem()?.id) return;
     unplayableItemId = itemId;
+    render();
+  }));
+  unsubscribers.push(subscribe('media-timeline', ({ itemId = '', recording = false } = {}) => {
+    const next = recording === true ? itemId : '';
+    if (next === recordingItemId) return;
+    recordingItemId = next;
     render();
   }));
   unsubscribers.push(subscribe('current-item', (nextItem) => {

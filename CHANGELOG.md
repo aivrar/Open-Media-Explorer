@@ -1,5 +1,156 @@
 # Changelog
 
+## 0.1.13 - 2026-11-21
+
+Five requests from discussion #8 (a Now Playing tab, a mark on stations that did
+not play last time, station pictures from a file or a drop, a larger song
+title, and no seek bar on live radio and TV), three fixes for dragging
+favorites reported in issue #6, four more Visualizer scenes (103 in all) with
+new overlays and blends, and other fixes.
+
+- **Now Playing:** a new tab between **Discovery** and **Visualizer** shows what
+  plays now, large: its picture (your own station picture if you have one, else
+  its artwork, else its initials) over a blurred, dimmed copy of the picture,
+  its name (your own name for a renamed favorite, with the original name under
+  it) and, for a favorite, its category. A star beside the name adds it to or
+  removes it from your favorites. For radio and other live audio, the song the
+  station announces is shown in large type, with a star and **Copy**, or a line
+  says that the station is not announcing a song title. **Stream details**
+  lists the source, the type, the format and bitrate of the stream that plays,
+  the country and language when known, the **Better stream** line when **Pick
+  the best stream** is on **Auto (verified)**, and **Playing for**, the time it
+  has played (only time with sound counts). Below the song, a large copy of
+  the sound meter moves with the sound; **Sound meter in the player bar**
+  switches only the small one. With nothing playing, the tab says so and offers
+  **Open the Library** and **Open the Tuner**. Play, pause and stop stay in the
+  player bar, and nothing in the tab runs while it is closed (discussion #8).
+- **No seek bar on live radio and TV:** internet radio showed a seek bar that
+  did nothing. A live station or channel now shows no seek bar and no length,
+  and the time label shows how long it has played, starting at 0:00 (no dimmed
+  bar with "--:--" first). A film, a podcast episode or a file keeps both, and
+  so does an entry in your own playlist that turns out to be a file with a set
+  length. A recording has its seek bar from the press of **Play**, dimmed until
+  its length is known (discussion #8).
+- **Larger song title:** on the player bar the song is larger, bolder and
+  brighter than the rest of the line, and the song and the station name grow
+  with the window (the song from 14 px in a 1024 px wide window to 22 px in one
+  about 2,800 px wide or wider). The Tuner dial's station name grows too. On
+  windows wider than 1000 px, a live station's song and name also take the room
+  the seek bar had, and their column is wider on wide windows, so a long title
+  is cut short less often (discussion #8).
+- **Did not play last time:** a station of yours that did not play when you
+  last tried it gets a small red **!** on its card in Favorites, My Playlists
+  and the Tuner, and a line in its details. Pointing at the mark reads "Did not
+  play last time (date). It is tried again when you play it." The mark never
+  stops you from pressing Play, and it goes as soon as the station plays. Only
+  favorites and My Playlists stations are marked. A failure caused by your
+  connection, not the station, is not marked: nothing is marked while Windows
+  reports no connection or when the station's address could not be looked up,
+  and a station that could not be reached is marked only if something on the
+  internet answered within the last minute or a small check (one short request
+  to Radio Browser, at most once every 30 seconds) gets an answer. Stopping a
+  station, or choosing another before it starts, is not a failure. The marks
+  are kept only on this computer (at most 2,000) and are not in backups, and
+  **Clear local cache** removes them (discussion #8).
+- **Station pictures from a file or a drop:** **Choose picture...** in the
+  details of a favorite or a My Playlists station, or dropping one picture file
+  on its card in Favorites or My Playlists, gives the station a picture of your
+  own. It takes PNG, JPG, WebP or GIF up to 2 MB and checks the file as it
+  checks the `station-images` folder (an SVG or a file that is not really a
+  picture is refused, with the reason), then saves a copy in that folder, named
+  after the station. If a file is already there, you are asked before it is
+  replaced, and the question names it. **Remove picture**, shown while the
+  station has a picture of its own, asks first, names the file or files, and
+  deletes only those. A picture dropped anywhere else changes nothing, and a
+  message says where to drop it (discussion #8).
+- **Dragging favorites** in **My order** (issue #6): a drag worked only about
+  half the time unless the card was dropped picture onto picture, a "no entry"
+  cursor flickered over the tag and **Move** buttons while dragging, and a card
+  dropped on another landed one place too low. A drop anywhere on another card
+  now puts the dragged card in that card's place and moves the cards between by
+  one. The "no entry" cursor is gone, and a drop in a gap or on the card itself
+  changes nothing.
+- **Visualizer behind the Tuner:** **Settings > Appearance > Show the
+  Visualizer behind the Tuner**, off by default, draws the Visualizer faintly
+  behind the Tuner while sound plays. It starts only after the notice about
+  flashing has been accepted in the Visualizer tab, draws light scenes only
+  with no overlays or effects, and stops a few seconds after the sound stops
+  and when you leave the Tuner. The flash limiter still applies.
+- Visualizer: four more scenes, 103 in all (32 Light, 23 Medium, 48 Heavy): the
+  3D flights DIFS Tunnel Flight and Quaternion Julia Flight, and the line
+  drawings Fourier Epicycles and 4D Polytopes. Mandelbrot has two more looks,
+  Neon and Ocean, with slower color cycling.
+- Visualizer overlays: three new calm overlays, **Ripples**, **Fireflies** and
+  **Orbits** (29 overlays in all).
+- Visualizer blends: two more ways to blend an overlay into the scene.
+  **Lighten** keeps whichever is brighter, the scene or the overlay. **Color**
+  puts the overlay's color on the scene without changing how bright it is.
+- Visualizer: **Extra glow (Medium and High quality)**, a switch under
+  **Shuffle overlays**, off by default, spreads some of the overlays' light
+  into a soft glow around them. It does nothing at Low quality.
+- Visualizer: with **Slow drift** on, the size or spread of some overlays also
+  drifts gently. Their colors and brightness never drift.
+- Player bar: a station's logo is shown whole in the square and in the details
+  panel (a wide logo used to be cut to its middle), and a logo with transparent
+  parts no longer shows the station's initials behind it.
+- Player bar: after a station failed to start, the record button is grayed out
+  and the status line says "Recording is available once this item plays." A
+  file in your own playlist is no longer called live in that line once its
+  length is known: it says "This stream can be recorded."
+- Player bar: a station whose address does not exist says "This station's
+  address does not exist. Press Play to retry." An address that could not be
+  looked up says "This stream's address could not be looked up. Check your
+  internet connection, then press Play to retry." After a station failed to
+  start, **Play** stays in the player bar and tries the station again.
+- Sleep timer: the menu shows the choice that is running (a custom time too,
+  such as "45 min") and goes back to **Off** when the timer ends or is
+  cancelled. An empty or non-numeric custom answer starts nothing (it used to
+  start a 6-second timer).
+- Tuner and Grid: a refresh that fails keeps the stations a source had already
+  listed, and the status line says that source could not be refreshed. When a
+  failed source leaves the view empty, it tries again by itself, after about
+  8 seconds and once more about 20 seconds after that, and says so.
+- Visualizer: the **Music:** line (calm, steady or energetic) is read from the
+  sound's spectrum instead of counting drum hits. It does not depend on how
+  loud the sound is and changes little with the frame rate (at 15 frames a
+  second a very fast, dense beat can read as steady).
+- Visualizer: overlay lines and particles are drawn at the same size on the
+  screen at every quality whose picture is at least 720 pixels tall. Lines are
+  thicker at Medium and High than before.
+- Visualizer: Fireworks, Lasers, Stage Lights, Lightning and Spectrum can no
+  longer go under the effects (they still work over them), and the grayed
+  **Under the effects** box says "Not available for this overlay." A line by
+  the **Blend** choice says "Only one overlay can be blended in at a time."
+  when choosing a blend sets another overlay back to plain.
+- Visualizer: Voronoi Cells no longer takes the **Mirror** effect, the effect
+  **Heat Haze & Caustic Light** is named **Heat Haze**, and the side panel is
+  nearly opaque, so a bright scene does not show through behind its text.
+- Favorites and My Playlists cards show a long name on two lines, and the whole
+  name on hover. The empty star on a card now shows on light themes (it was
+  white on a light card). With **Show technical source details** on, the Library
+  sidebar puts each source's status label under its count, so a long source
+  name has more room.
+- Links on the About page and **What this means** in Settings use the app's
+  link color, and the local port line in Settings uses the same small
+  description text as the other settings.
+- Library: **Retry now** asks a podcast feed that is waiting after a failure
+  again at once. A feed the app refuses because of what the publisher sends
+  (too large, too complex or unsafe) is otherwise asked about once in six
+  hours.
+- The names you gave stations that are no longer favorites, and the categories
+  they were in, are cleared at start-up, so a station you star again shows its
+  own name.
+- Settings and playback: saving your favorites and settings no longer waits
+  behind slow catalog loading. A save uses a connection of its own, and slow
+  catalog lookups hold at most three connections at once, so a first start with
+  a large catalog load is less likely to show "The portable profile backup
+  could not be updated". Pressing **Play** no longer waits behind slow catalog
+  loading to start the stream either.
+- Artwork: a picture the app refuses because of its address is remembered, and
+  not asked for again on every visit to the Grid.
+- Tuner and Grid: one source is written in the singular ("Loading 1 live
+  source..."), and the status line never says "from 0 sources".
+
 ## 0.1.12 - 2026-11-20
 
 The five requests promised in discussion #8 (starred songs, your own station

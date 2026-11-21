@@ -212,12 +212,12 @@ class ControlApiTests(unittest.TestCase):
 
     def test_profile_handoff_routes_are_authenticated_and_strict(self) -> None:
         values = {"worldmedia.favorites.v1": '[{"id":"saved:1"}]'}
-        with mock.patch("worldmedia_server.load_profile_transfer", return_value=values) as load:
+        with mock.patch("worldmedia_server.load_profile_transfer_report", return_value=(values, [])) as load:
             response, payload = self.request(
                 "GET", "/api/v1/profile/preferences", headers={"X-WorldMedia-Token": self.token}
             )
         self.assertEqual(response.status, 200)
-        self.assertEqual(payload["data"], {"values": values})
+        self.assertEqual(payload["data"], {"values": values, "copied": []})
         load.assert_called_once_with(worldmedia_server.RUNTIME_PATHS)
 
         with mock.patch("worldmedia_server.save_profile_transfer", return_value=values) as save:

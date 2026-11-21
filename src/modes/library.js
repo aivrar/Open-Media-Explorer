@@ -2,3 +2,4 @@
 // See ./library/index.js for the module map.
 export { renderLibrary, showMyPlaylists } from './library/index.js';
 export { importLocalPlaylist } from './library/personal-controls.js';
+export { dropStationPicture, pictureDropText } from './library/picture-drop.js';

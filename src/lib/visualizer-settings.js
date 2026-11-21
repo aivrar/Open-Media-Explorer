@@ -142,9 +142,15 @@ export const VISUALIZER_FX_MAX = 3;
 export const VISUALIZER_OVERLAY_MAX = 3;
 const FX_ID = '[a-z][a-z0-9_]{0,23}';
 /** An overlay as saved: its id, then "~" and its blend-in when it has one
- *  (visualizer/overlay-catalog.js overlayToken). */
-const OVERLAY = '[a-z][a-z0-9_]{0,23}(?:~[asmod]u?[bk]?t?n?)?';
-const FAVOURITE = new RegExp(`^([a-z][a-z0-9_]{0,47})(?::([0-9]{1,2}))?(?:[|](${FX_ID}(?:[+]${FX_ID}){0,${VISUALIZER_FX_MAX - 1}}))?(?:[/](${OVERLAY}(?:[+]${OVERLAY}){0,${VISUALIZER_OVERLAY_MAX - 1}}))?$`);
+ *  (visualizer/overlay-catalog.js overlayToken). Only the shape is checked
+ *  here: any letters after the "~" are kept, so a blend-in this build does
+ *  not know (from a later one) costs only that blend-in, never the overlay
+ *  set or the favourite: the Visualizer reads such an overlay as drawn
+ *  plain, and drops an overlay whose id it does not have
+ *  (overlay-catalog.js readOverlayToken, overlaysDrawnFor). */
+const OVERLAY = '[a-z][a-z0-9_]{0,23}(?:~[a-z0-9]{1,8})?';
+const favouritePattern = (overlay) => new RegExp(`^([a-z][a-z0-9_]{0,47})(?::([0-9]{1,2}))?(?:[|](${FX_ID}(?:[+]${FX_ID}){0,${VISUALIZER_FX_MAX - 1}}))?(?:[/](${overlay}(?:[+]${overlay}){0,${VISUALIZER_OVERLAY_MAX - 1}}))?$`);
+const FAVOURITE = favouritePattern(OVERLAY);
 const overlayIdOf = (token) => token.split('~')[0];
 
 /** { scene, look, fx, overlays } of a favourite's string, or null (look:
@@ -216,6 +222,104 @@ export function normalizeVisualizerOverlaySet(value) {
   return out;
 }
 
+/* ---- A visit to release 0.1.12 and back ----
+   Release 0.1.12 reads `visualizerFavourites` and `visualizerOverlaySet`
+   more strictly than this build. A blend-in letter other than a, s, m, o or
+   d (Lighten "l" and Color "c" are newer) makes it drop the whole favourite,
+   and that overlay of the set, the next time it saves any setting; an
+   overlay it does not have (Ripples, Fireflies, Orbits) is taken out of a
+   favourite when its Visualizer tab opens, which saves the changed list at
+   once. So those two fields hold only what 0.1.12 reads as it is, and the
+   whole of each is kept beside them in a field of its own, which 0.1.12
+   keeps untouched (its normalizeSettings keeps every field it does not
+   know; none of these is a storage or profile key):
+     visualizerFavouritesAll   every favourite, in the user's order
+     visualizerOverlaySetAll   the whole overlay set
+   Here (normalizeVisualizerExtras, with no list of scenes or overlays)
+   only the split is kept: the favourites field holds only those 0.1.12
+   reads, and a newer one found in it goes to the copy. The two lists are
+   put together by the Visualizer when it opens (visualizer/favourites.js
+   favouritesFromSaved): 0.1.12's tab rewrites a favourite it reads into the
+   form it draws (overlays in the table's order, a blend-in the scene or
+   overlay does not allow left out, two that become the same merged), so
+   they are compared in that form, which this build's tab gives every
+   favourite 0.1.12 reads in the same way. The whole overlay set is used
+   only while the field still holds the part of it this build wrote beside
+   it, so a set chosen in 0.1.12 wins over the copy (0.1.12 does not
+   rewrite the set when its tab opens). Extra glow
+   (visualizerOverlayGlow) and drift (visualizerDrift) are plain switches
+   that 0.1.12 keeps as they are, and the three newer overlays have no Style
+   (visualizerOverlayStyles), so nothing else needs a copy. */
+
+/** The overlays release 0.1.12 has (its overlay-catalog.js OVERLAY_IDS). */
+const RELEASE_0_1_12_OVERLAY_IDS = Object.freeze(new Set([
+  'lasers', 'spotlights', 'lightning', 'fireworks', 'laser_room', 'figures', 'rings', 'plexus', 'hexgrid', 'sacred',
+  'frame', 'particles', 'bokeh', 'matrix', 'vignette', 'scanlines', 'cinematic', 'spectrum', 'petals', 'ribbons',
+  'dot_spiral', 'contours', 'starburst', 'tri_grid', 'harmonograph', 'color_strobe',
+]));
+/** An overlay token as release 0.1.12 checks it (its five blend letters). */
+const RELEASE_0_1_12_OVERLAY = '[a-z][a-z0-9_]{0,23}(?:~[asmod]u?[bk]?t?n?)?';
+const RELEASE_0_1_12_TOKEN = new RegExp(`^${RELEASE_0_1_12_OVERLAY}$`);
+const RELEASE_0_1_12_FAVOURITE = favouritePattern(RELEASE_0_1_12_OVERLAY);
+
+/** Release 0.1.12 reads overlay token `token` as it is (its form, one of its
+ *  overlays) and keeps it. */
+export function olderReleaseReadsOverlay(token) {
+  return typeof token === 'string' && RELEASE_0_1_12_TOKEN.test(token) && RELEASE_0_1_12_OVERLAY_IDS.has(overlayIdOf(token));
+}
+
+/** Release 0.1.12 keeps favourite `value` (its form, only its overlays and
+ *  blend-ins). Its Visualizer tab may still rewrite it into the form it
+ *  draws, which is the form this build's tab gives it too (the same scene,
+ *  effect and overlay rules for everything 0.1.12 has). */
+export function olderReleaseReadsFavourite(value) {
+  const entry = parseVisualizerFavourite(value);
+  return Boolean(entry) && RELEASE_0_1_12_FAVOURITE.test(value) && entry.overlays.every(olderReleaseReadsOverlay);
+}
+
+/** The two saved favourites fields, split (see above): `older`
+ *  (visualizerFavourites) keeps only those 0.1.12 reads; `all`
+ *  (visualizerFavouritesAll) is the copy, or `older` itself when there is
+ *  none, with any newer favourite found in `older` added at its end (at
+ *  most VISUALIZER_FAVOURITES_MAX, the oldest going). Nothing is taken off
+ *  here: what 0.1.12 changed is worked out when the Visualizer opens. */
+export function visualizerFavouriteFields(older, all) {
+  const kept = normalizeVisualizerFavourites(older);
+  const whole = Array.isArray(all) ? normalizeVisualizerFavourites(all) : kept.slice();
+  for (const item of kept) {
+    if (!olderReleaseReadsFavourite(item) && !whole.includes(item)) whole.push(item);
+  }
+  return {
+    visualizerFavourites: kept.filter(olderReleaseReadsFavourite),
+    visualizerFavouritesAll: whole.length > VISUALIZER_FAVOURITES_MAX ? whole.slice(whole.length - VISUALIZER_FAVOURITES_MAX) : whole,
+  };
+}
+
+/** The whole overlay set from the two saved fields: `all`
+ *  (visualizerOverlaySetAll) while `older` (visualizerOverlaySet) still
+ *  holds the part of it 0.1.12 reads, else `older`. */
+export function mergedVisualizerOverlaySet(older, all) {
+  const kept = normalizeVisualizerOverlaySet(older);
+  if (!Array.isArray(all)) return kept;
+  const whole = normalizeVisualizerOverlaySet(all);
+  const part = whole.filter(olderReleaseReadsOverlay);
+  return part.length === kept.length && part.every((token, index) => token === kept[index]) ? whole : kept;
+}
+
+/** The settings that save favourites `list` (the whole list, in order):
+ *  the part 0.1.12 reads in its field, the whole list beside it. */
+export function visualizerFavouritesToSave(list) {
+  const all = normalizeVisualizerFavourites(list);
+  return { visualizerFavourites: all.filter(olderReleaseReadsFavourite), visualizerFavouritesAll: all };
+}
+
+/** The settings that save the overlay set `set` (saved tokens): as for
+ *  favourites. */
+export function visualizerOverlaySetToSave(set) {
+  const all = normalizeVisualizerOverlaySet(set);
+  return { visualizerOverlaySet: all.filter(olderReleaseReadsOverlay), visualizerOverlaySetAll: all };
+}
+
 /** Most overlays with a Style picked by hand that are kept, and the most
  *  styles an overlay may have. */
 export const VISUALIZER_OVERLAY_STYLES_MAX = 32;
@@ -262,7 +366,11 @@ function normalizeFxTiming(value) {
  *    visualizerShufflePool    'all' | 'favourites'
  *    visualizerShuffleCost    'light' | 'medium' (light and medium) | 'all'
  *    visualizerShuffleBars    8 | 16 | 32 bars between changes
- *    visualizerFavourites     see normalizeVisualizerFavourites
+ *    visualizerFavourites     see normalizeVisualizerFavourites; only the
+ *                             ones release 0.1.12 reads as they are
+ *    visualizerFavouritesAll  every favourite, in order, as this build
+ *                             last saved them (with the field above:
+ *                             visualizer/favourites.js favouritesFromSaved)
  *    visualizerNoticeSeen     the photosensitivity notice was accepted
  *    visualizerFx             post effects on (default off)
  *    visualizerFxShuffle      the FX shuffle picks them (default on)
@@ -272,17 +380,23 @@ function normalizeFxTiming(value) {
  *    visualizerFxSet          the effects chosen by hand (ids)
  *    visualizerOverlays       overlays on (default off)
  *    visualizerOverlayShuffle the overlay shuffle picks them (default on)
- *    visualizerOverlaySet     the overlays chosen by hand (saved tokens)
- *    visualizerOverlayGlow    "Extra glow" on the overlays (held; default off)
+ *    visualizerOverlaySet     the overlays chosen by hand (saved tokens) that
+ *                             release 0.1.12 reads as they are
+ *    visualizerOverlaySetAll  the whole set chosen by hand
+ *                             (mergedVisualizerOverlaySet)
+ *    visualizerOverlayGlow    "Extra glow" on the overlays (default off)
  *    visualizerOverlayStyles  the overlays' Style picked by hand
  *                             ({ id: index }; none: Any)
- *    visualizerDrift          slow drift of scene and effect settings
- *                             (drift.js; default on)
+ *    visualizerDrift          slow drift of the scene's, the effects' and
+ *                             the overlays' settings (drift.js,
+ *                             overlay-drift.js; default on)
  *    visualizerFolded         the side panel's folded sections (default
  *                             none: every section open) */
 export function normalizeVisualizerExtras(source = {}) {
   const value = source || {};
   const bars = Number(value.visualizerShuffleBars);
+  const favourites = visualizerFavouriteFields(value.visualizerFavourites, value.visualizerFavouritesAll);
+  const overlaySet = visualizerOverlaySetToSave(mergedVisualizerOverlaySet(value.visualizerOverlaySet, value.visualizerOverlaySetAll));
   return {
     visualizerPanelOpen: value.visualizerPanelOpen === true,
     visualizerShuffle: value.visualizerShuffle === true,
@@ -290,7 +404,7 @@ export function normalizeVisualizerExtras(source = {}) {
     visualizerShuffleCost: VISUALIZER_SHUFFLE_COSTS.includes(value.visualizerShuffleCost)
       ? value.visualizerShuffleCost : DEFAULT_VISUALIZER_SHUFFLE_COST,
     visualizerShuffleBars: VISUALIZER_SHUFFLE_BARS.includes(bars) ? bars : DEFAULT_VISUALIZER_SHUFFLE_BARS,
-    visualizerFavourites: normalizeVisualizerFavourites(value.visualizerFavourites),
+    ...favourites,
     visualizerNoticeSeen: value.visualizerNoticeSeen === true,
     visualizerFx: value.visualizerFx === true,
     visualizerFxShuffle: value.visualizerFxShuffle !== false,
@@ -301,7 +415,7 @@ export function normalizeVisualizerExtras(source = {}) {
     visualizerFxSet: normalizeVisualizerFxSet(value.visualizerFxSet),
     visualizerOverlays: value.visualizerOverlays === true,
     visualizerOverlayShuffle: value.visualizerOverlayShuffle !== false,
-    visualizerOverlaySet: normalizeVisualizerOverlaySet(value.visualizerOverlaySet),
+    ...overlaySet,
     visualizerOverlayGlow: value.visualizerOverlayGlow === true,
     visualizerOverlayStyles: normalizeVisualizerOverlayStyles(value.visualizerOverlayStyles),
     // Only an explicit false turns it off.

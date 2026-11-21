@@ -1032,7 +1032,7 @@ test('player wiring: failures, cancellation and lifecycle hooks go through the r
   assert.match(source, /failPlayback\('Playback error'\);/);
   assert.match(source, /Events\.LEVEL_LOADED/);
   assert.match(source, /export function stop\(\) \{\s+cancelReconnect\(\);/);
-  assert.match(source, /export async function playItem\(item\) \{[\s\S]*?cancelReconnect\(\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item\);/);
+  assert.match(source, /export async function playItem\(item\) \{[\s\S]*?cancelReconnect\(\);\s+(?:\/\/[^\n]*\n\s+)?startOutcome\.begin\(item\?\.id\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item\);/);
   assert.match(source, /subscribe\('sleep-fired', \(\) => \{ stopReconnecting\(\); \}\)/);
   assert.match(source, /addEventListener\('online', \(\) => \{ liveResume\.networkBack\(\); \}\)/);
   assert.match(source, /addEventListener\('pagehide'/);

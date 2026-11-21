@@ -1,0 +1,326 @@
+/* Now Playing tab (modes/now-playing.js).
+
+   Sizes follow the room the tab has (container units of .np-root), so the
+   picture and the text grow from a 1024 x 640 window up to a 4K screen and
+   shrink again in a small one. Nothing here animates. */
+
+.np-root {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  isolation: isolate;
+  container: np / size;
+  /* Stars and pressed controls: the accent, a deeper one on light themes
+     (set below) so they keep 3:1 against the light scrim. */
+  --np-accent: var(--accent);
+  /* The small grey texts (labels, the facts' names, the original name).
+     Thin dark letters on a light ground are drawn lighter than their
+     colour: at the theme's own dim text (4.9 to 5.3:1 over the scrim) they
+     measured 3.3 to 3.9:1 in the app window. Light themes use a deeper grey
+     that keeps 7:1 over any picture. */
+  --np-dim: var(--text-dim);
+}
+:root[data-theme='light'] .np-root { --np-accent: var(--accent-strong); --np-dim: #33363d; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .np-root { --np-accent: var(--accent-strong); --np-dim: #33363d; }
+}
+
+/* The background: a blurred copy of the same picture, drawn once (CSS only),
+   under a scrim of the theme's own background colour, so text reads the same
+   over any picture in a dark or a light theme. Without a picture neither is
+   shown and the app's plain background stays. */
+.np-backdrop,
+.np-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.np-backdrop { overflow: hidden; }
+.np-backdrop-img {
+  position: absolute;
+  inset: -10%;
+  width: 120%;
+  height: 120%;
+  object-fit: cover;
+  filter: blur(56px) saturate(1.25);
+}
+.np-scrim {
+  display: none;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+}
+.np-root.has-picture .np-scrim { display: block; }
+
+.np-scroll {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  overflow: auto;
+}
+
+/* ---- Nothing playing ---- */
+.np-empty {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(8px, 1.6cqmin, 28px);
+  padding: clamp(24px, 6cqmin, 120px);
+  text-align: center;
+  color: var(--np-dim);
+  font-size: clamp(14px, 1.9cqmin, 32px);
+}
+.np-empty-title {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(20px, 3.6cqmin, 64px);
+  font-weight: 600;
+}
+.np-empty-text {
+  margin: 0;
+  max-width: 36em;
+  line-height: 1.5;
+}
+.np-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75em;
+  margin-top: 0.6em;
+}
+.np-empty-btn {
+  font-size: clamp(13px, 1.7cqmin, 28px);
+  padding: 0.55em 1.1em;
+}
+
+/* ---- Something playing ---- */
+.np-layout {
+  min-height: 100%;
+  max-width: 2600px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  align-content: center;
+  gap: clamp(20px, 5cqmin, 112px);
+  padding: clamp(16px, 5cqmin, 112px);
+  color: var(--text);
+  font-size: clamp(13px, 1.8cqmin, 32px);
+}
+/* The floating video sits over the bottom right: the details can scroll
+   clear of it. */
+#app.has-video .np-layout { padding-bottom: calc(var(--video-clearance) + 16px); }
+
+.np-art {
+  position: relative;
+  width: clamp(150px, min(42cqw, 68cqh), 1280px);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: clamp(10px, 1.6cqmin, 28px);
+  background: hsl(var(--ph-hue, 200) 42% 38%);
+  box-shadow: var(--shadow-2);
+  container-type: inline-size;
+}
+/* The same initials tile as the cards, as large as the picture. */
+.np-art-initials {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 30cqi;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.np-art-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  /* A plain surface under a loaded picture, so the initials do not show
+     through its clear parts (a logo gets its own surface below). */
+  background: var(--bg-elev-3);
+}
+.np-art-img.loaded { opacity: 1; }
+/* A station logo is shown whole on a quiet surface, as on the Library cards. */
+.np-art.is-logo .np-art-img.loaded:not(.is-station-image) {
+  object-fit: contain;
+  padding: 9%;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.04), transparent 62%),
+    linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
+}
+/* The user's own station picture: whole and centred, never cropped, with no
+   initials colour at its sides or corners (as everywhere else). */
+.np-art-img.is-station-image {
+  object-fit: contain;
+  background: transparent;
+}
+.np-art:has(> .np-art-img.is-station-image.loaded) {
+  background: transparent;
+  box-shadow: none;
+}
+.np-art:has(> .np-art-img.is-station-image.loaded) > .np-art-initials { visibility: hidden; }
+
+.np-info {
+  min-width: 0;
+  max-width: 1500px;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 2.2cqmin, 40px);
+}
+.np-kind,
+.np-label {
+  margin: 0;
+  color: var(--np-dim);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.np-label { margin-bottom: 0.4em; }
+.np-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+}
+.np-title {
+  margin: 0;
+  min-width: 0;
+  font-size: clamp(22px, 4.6cqmin, 88px);
+  font-weight: 700;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+.np-original,
+.np-category {
+  margin: -0.4em 0 0;
+  color: var(--np-dim);
+}
+
+.np-fav,
+.np-song-star {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--np-dim);
+  cursor: pointer;
+  font: inherit;
+}
+.np-fav {
+  flex: 0 0 auto;
+  width: clamp(36px, 5.4cqmin, 80px);
+  height: clamp(36px, 5.4cqmin, 80px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.np-fav svg {
+  width: 62%;
+  height: 62%;
+}
+.np-fav:hover,
+.np-song-star:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+.np-fav.is-fav,
+.np-song-star.is-starred { color: var(--np-accent); }
+.np-fav.is-fav svg,
+.np-song-star.is-starred svg { fill: currentColor; }
+
+.np-song-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 1em;
+}
+.np-song-title {
+  margin: 0;
+  min-width: 0;
+  font-size: clamp(18px, 3.3cqmin, 64px);
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.np-song-title.is-none {
+  font-size: 1em;
+  font-weight: 400;
+  color: var(--np-dim);
+}
+.np-song-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
+}
+.np-song-star {
+  gap: 0.4em;
+  padding: 0.35em 0.8em;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  font-size: 0.9em;
+}
+.np-song-star svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+.np-song-star .np-when-on,
+.np-song-star.is-starred .np-when-off { display: none; }
+.np-song-star.is-starred .np-when-on { display: inline; }
+.np-copy {
+  font-size: 0.9em;
+  padding: 0.35em 0.8em;
+}
+.np-copy-status {
+  color: var(--np-dim);
+  font-size: 0.85em;
+}
+
+/* The large sound meter: the player bar's meter (its colours come from
+   .player-meter-canvas in base.css), only bigger. */
+.np-meter { max-width: clamp(300px, 52cqw, 1200px); }
+.np-meter .np-meter-canvas {
+  width: 100%;
+  height: clamp(56px, 13cqmin, 300px);
+}
+
+.np-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35em 1.2em;
+  line-height: 1.4;
+}
+.np-fact { display: contents; }
+.np-fact dt { color: var(--np-dim); }
+.np-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.np-best:empty { display: none; }
+.np-best { margin-top: 0.6em; }
+.np-best .detail-best-stream-line {
+  margin: 0;
+  color: var(--np-dim);
+  font-size: 1em;
+}
+
+/* Little width, or a tall room: the picture goes above the text. */
+@container np (max-width: 760px) {
+  .np-layout {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    align-content: start;
+  }
+  .np-art { width: clamp(140px, min(64cqw, 42cqh), 520px); }
+  .np-info { width: 100%; }
+}

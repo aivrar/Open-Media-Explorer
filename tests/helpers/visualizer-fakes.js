@@ -258,6 +258,7 @@ export class FakeNodeEl extends EventTarget {
   removeEventListener(name, fn, options) { this.listenerCount -= 1; super.removeEventListener(name, fn, options); }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
+  removeAttribute(name) { this.attributes.delete(name); }
   getBoundingClientRect() { return this.rect || { width: 0, height: 0 }; }
   /** A canvas's 2D context (Fake2D, one per canvas); nothing else. */
   getContext(kind) {

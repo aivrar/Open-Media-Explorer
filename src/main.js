@@ -4,7 +4,7 @@ import {
 import { catalogScheduler } from './lib/catalog-scheduler.js';
 import { setArtworkPlaybackPriority } from './lib/artwork.js';
 import { SOURCE_IDS } from './lib/sources.js';
-import { initPlayer, getCurrentItem, getAudioSignal, getNowPlaying } from './lib/player.js';
+import { initPlayer, getCurrentItem, getAudioSignal, getNowPlaying, isMediaAdvancing } from './lib/player.js';
 import { initPlayerMeter } from './lib/player-meter.js';
 import { startSongLog } from './lib/song-log.js';
 import { openSongLog } from './lib/song-log-panel.js';
@@ -17,12 +17,16 @@ import { openSettings } from './lib/settings.js';
 import { initEqOverlay } from './lib/eq-overlay.js';
 import { initSleepTimer } from './lib/sleep-timer.js';
 import { initShutdownButton } from './lib/shutdown.js';
-import { renderLibrary, showMyPlaylists, importLocalPlaylist } from './modes/library.js';
+import {
+  renderLibrary, showMyPlaylists, importLocalPlaylist, dropStationPicture, pictureDropText,
+} from './modes/library.js';
 import { renderTuner, tunerBand } from './modes/tuner.js';
 import { renderGrid } from './modes/grid.js';
 import { renderDiscovery } from './modes/discovery.js';
 import { renderAbout } from './modes/about.js';
+import { renderNowPlaying } from './modes/now-playing.js';
 import { renderVisualizer } from './modes/visualizer.js';
+import { playClock } from './lib/play-clock.js';
 import { initPersistenceNotice } from './lib/persistence-notice.js';
 import { initPlaylistDrop } from './lib/playlist-drop.js';
 import { loadStationImages } from './lib/station-images.js';
@@ -32,6 +36,7 @@ const MODES = {
   tuner: renderTuner,
   grid: renderGrid,
   discovery: renderDiscovery,
+  'now-playing': renderNowPlaying,
   // A thin shell; the visualizer itself is a separate chunk loaded on first open.
   visualizer: renderVisualizer,
   about: renderAbout,
@@ -114,6 +119,9 @@ async function boot() {
   initPersistenceNotice();
   await initState();
   initPlayer();
+  // How long the loaded item has played, for the Now Playing tab (two
+  // numbers kept on the player's events; nothing runs on its own).
+  playClock.start(subscribe, getCurrentItem, isMediaAdvancing);
   // The LED sound meter after EQ; Settings > Appearance switches it.
   initPlayerMeter({
     signal: getAudioSignal(),
@@ -139,7 +147,11 @@ async function boot() {
   initEqOverlay();
   initSleepTimer();
   bindTopBar();
-  initPlaylistDrop({ onPlaylist: importDroppedPlaylist });
+  // A playlist file anywhere is imported; a picture on a station's card in the
+  // Library becomes its picture (modes/library/picture-drop.js).
+  initPlaylistDrop({
+    onPlaylist: importDroppedPlaylist, onPicture: dropStationPicture, describePictureDrop: pictureDropText,
+  });
   // The user's own station pictures: listed once now, again on Refresh in Settings.
   loadStationImages().catch(() => {});
   const state = getState();

@@ -33,7 +33,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.12"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.13"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096
@@ -148,6 +148,16 @@ class ResolvedTarget:
     addresses: tuple[str, ...] = ()
 
 
+# getaddrinfo's answers for "this name does not exist" and "this name has no
+# address" (EAI_NONAME, EAI_NODATA; on Windows WSAHOST_NOT_FOUND, WSANO_DATA).
+# Anything else (EAI_AGAIN, EAI_FAIL...) means the lookup could not be done.
+_NO_SUCH_NAME = frozenset(
+    value for value in (
+        getattr(socket, "EAI_NONAME", None), getattr(socket, "EAI_NODATA", None), 11001, 11004,
+    ) if isinstance(value, int)
+)
+
+
 def _default_resolver(host: str, port: int) -> Iterable[tuple]:
     return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
 
@@ -190,7 +200,16 @@ def resolve_target(
     port = port or (443 if scheme == "https" else 80)
     try:
         answers = list(resolver(ascii_host, port))
-    except (OSError, socket.gaierror):
+    except socket.gaierror as error:
+        # The name server answered that the name does not exist (the station's
+        # address is wrong), or the lookup itself could not be carried out
+        # (no connection, no name server): the page tells these apart.
+        if error.errno in _NO_SUCH_NAME:
+            raise _media_error(
+                HTTPStatus.BAD_GATEWAY, "MEDIA_HOST_NOT_FOUND", "Media host name does not exist.", True
+            ) from None
+        raise _media_error(HTTPStatus.BAD_GATEWAY, "MEDIA_DNS_FAILED", "Media host could not be resolved.", True) from None
+    except OSError:
         raise _media_error(HTTPStatus.BAD_GATEWAY, "MEDIA_DNS_FAILED", "Media host could not be resolved.", True) from None
     addresses: list[str] = []
     for answer in answers:

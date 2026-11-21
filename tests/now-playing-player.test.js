@@ -7,6 +7,7 @@ import { FAVORITE_NAMES_KEY } from '../src/lib/favorite-names.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import { RECONNECTING_TEXT } from '../src/lib/live-resume.js';
 import { NOW_PLAYING_EVENT, NOW_PLAYING_FIRST_POLL_MS, NOW_PLAYING_POLL_MS } from '../src/lib/now-playing.js';
+import { MEDIA_ADVANCING_EVENT, createPlayClock } from '../src/lib/play-clock.js';
 
 const TEST_TIMEOUT_MS = 20_000;
 const NOTE = '\u266A';
@@ -350,4 +351,62 @@ test('station text is shown as plain text only', { timeout: TEST_TIMEOUT_MS }, a
     assert.equal(Object.hasOwn(element, 'outerHTML'), false);
   }
   player.stop();
+});
+
+test('the Now Playing clock counts only while the media advances: not between play and playing, not while buffering', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, audio } = await setup(t);
+  let now = 0;
+  const clock = createPlayClock({ now: () => now });
+  const advancing = [];
+  const stopWatch = subscribe(MEDIA_ADVANCING_EVENT, (value) => advancing.push(value));
+  const stopClock = clock.start(subscribe, player.getCurrentItem, player.isMediaAdvancing);
+  t.after(() => { stopWatch(); stopClock(); });
+  const item = liveItem('clock');
+  // The element's events come one by one, as from a real stream.
+  audio.autoEvents = false;
+  await player.playItem(item);
+  await settle();
+  audio.emit('play');
+  await settle();
+  assert.equal(getState().isPlaying, true, 'the controls show playing from `play`');
+  assert.equal(player.isMediaAdvancing(), false);
+  now += 120_000; // two minutes connecting: no sound yet
+  assert.equal(clock.played(item.id), null, 'connecting is not playing');
+  audio.emit('waiting');
+  now += 30_000;
+  assert.equal(clock.played(item.id), null);
+
+  audio.emit('playing');
+  assert.equal(player.isMediaAdvancing(), true);
+  now += 60_000;
+  assert.equal(clock.played(item.id), 60_000);
+  // Buffering for two minutes: `waiting` leaves isPlaying true but stops the clock.
+  audio.emit('waiting');
+  assert.equal(getState().isPlaying, true);
+  assert.equal(player.isMediaAdvancing(), false);
+  now += 120_000;
+  assert.equal(clock.played(item.id), 60_000, 'buffering adds nothing');
+  // `stalled` alone (fetching paused, buffered sound still playing) does not stop it.
+  audio.emit('playing');
+  audio.emit('stalled');
+  now += 30_000;
+  assert.equal(clock.played(item.id), 90_000);
+  // A pause stops it; Play continues from the same time.
+  audio.pause();
+  audio.emit('pause');
+  now += 600_000;
+  assert.equal(clock.played(item.id), 90_000);
+  await player.togglePlay();
+  await settle();
+  audio.emit('play');
+  audio.emit('playing');
+  now += 10_000;
+  assert.equal(clock.played(item.id), 100_000);
+  // Stop: the item is gone and nothing counts.
+  player.stop();
+  await settle();
+  assert.equal(player.isMediaAdvancing(), false);
+  assert.equal(clock.running, false);
+  assert.equal(clock.played(item.id), null);
+  assert.deepEqual(advancing, [true, false, true, false, true, false]);
 });

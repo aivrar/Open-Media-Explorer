@@ -450,6 +450,14 @@ export function paletteLut(palettes, index) {
 }
 export const PALETTE_LUT_SIZE = 256;
 
+/** Names the app shows instead of the library's, where it draws only part of
+ *  what that name says. Heat Haze is pinned to its heat-haze mode (mode 0 in
+ *  FX_TABLE), so the caustic light the library's name also lists is never
+ *  drawn; the shorter name also fits on one line of the effects list. */
+export const FX_LABELS = Object.freeze({
+  heat_haze: 'Heat Haze',
+});
+
 /** The FX the app offers, in the library's own order (the chain's order):
  *  [{ id, label, category, cost, weight, tags, groups, ranges, links, def,
  *  lut }] from the loaded library (`PostFxLibrary`). A pass that samples a
@@ -466,7 +474,7 @@ export function fxCatalog(library, palettes = null) {
     list.push(Object.freeze({
       id: def.name,
       // Shown in American spelling (Watercolor, Acid Colors, Color).
-      label: americanText(def.label),
+      label: FX_LABELS[def.name] || americanText(def.label),
       category: americanText(def.category),
       cost: row.cost,
       weight: row.weight,

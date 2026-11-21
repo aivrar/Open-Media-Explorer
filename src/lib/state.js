@@ -3,7 +3,7 @@
  *
  * State shape:
  * {
- *   mode: 'library' | 'tuner' | 'grid' | 'discovery' | 'visualizer' | 'about',
+ *   mode: 'library' | 'tuner' | 'grid' | 'discovery' | 'now-playing' | 'visualizer' | 'about',
  *   currentItem: Item | null,
  *   isPlaying: bool,
  *   favorites: Item[],
@@ -45,6 +45,7 @@ import { clearStreamLookups } from './stream-lookups.js';
 import { DEFAULT_BEST_STREAM_MODE, bestStreamMode } from './best-stream.js';
 import { DEFAULT_PROCESSOR_USE, normalizeProcessorLimit, normalizeProcessorUse } from './processor-budget.js';
 import { clearStreamVerifications } from './stream-verify.js';
+import { clearDidNotPlayCache } from './did-not-play.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
   addFavoritesEq, saveEqState,
@@ -62,12 +63,13 @@ import {
 } from './visualizer-settings.js';
 import { songLog } from './song-log.js';
 import { FAVORITE_NAMES_KEY, withoutFavoriteName } from './favorite-names.js';
+import { tidyStorageAtStart } from './startup-tidy.js';
 import { starredSongs } from './starred-songs.js';
 import { STREAM_QUALITY_FIELDS } from './stream-quality.js';
 import {
   cancelScheduledProfileHandoff,
   clearProfileHandoff,
-  restoreProfileHandoff,
+  restoreProfileHandoffOutcome,
   scheduleProfileHandoff,
 } from './profile-transfer.js';
 
@@ -542,18 +544,22 @@ function persistFavorites(favorites = state.favorites) {
   }
 }
 
+/** True when the saved favorites are known (read, or none saved); false
+ *  when they could not be read. */
 function loadFavorites() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.favorites);
-    if (!raw) return;
+    if (!raw) return true;
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       state.favorites = parsed.map((item) => normalizeFavoriteItem(item, { restart: true })).filter(Boolean);
       // Persist normalized capability fields so a migrated favorite stays
       // repaired on later launches instead of depending on runtime inference.
       persistFavorites();
+      return true;
     }
   } catch (e) { console.warn('Could not load favorites:', e); }
+  return false;
 }
 
 /* ============ Settings ============ */
@@ -612,9 +618,19 @@ function loadSettings() {
 export async function initState() {
   // A localhost port is part of the browser origin. Restore a saved handoff
   // before reading any local keys when Settings deliberately changed that port.
-  await restoreProfileHandoff();
-  loadFavorites();
+  const restore = await restoreProfileHandoffOutcome();
+  const favoritesKnown = loadFavorites();
   loadSettings();
+  // After the restore (names and categories may just have come from the
+  // data folder) and before the first save. Never when the favorites could
+  // not be read, or when the restore failed (this page may then hold names
+  // without the favorites they belong to): every name would look like a
+  // leftover, and the next save would write that loss.
+  if (favoritesKnown && restore !== 'failed') {
+    try {
+      tidyStorageAtStart(localStorage, state.favorites.map((favorite) => favorite?.id));
+    } catch (_) { /* storage unavailable */ }
+  }
   applyTheme(state.settings.theme);
   scheduleProfileHandoff();
 }
@@ -634,6 +650,7 @@ export function clearCache() {
     localStorage.removeItem(STORAGE_KEYS.favoriteNames);
     clearStreamLookups();
     clearStreamVerifications();
+    clearDidNotPlayCache(); // "Did not play last time" marks (a cache)
     clearEqState(localStorage);
   } catch (_) {}
   cancelScheduledProfileHandoff();

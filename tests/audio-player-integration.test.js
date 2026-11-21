@@ -72,11 +72,11 @@ const envelope = (status, data, error = null) => ({
   json: async () => ({ ok: !error, data, error }),
 });
 
-function item(id, streamKind, type = 'audio') {
+function item(id, streamKind, type = 'audio', delivery = 'live') {
   return {
     id: `engine:${id}`, title: id, description: '', source: 'radio-browser', type,
     stream_kind: streamKind, stream_url: `https://media.example/${id}`,
-    delivery: 'live', capture_headers: {}, thumbnail: '', country: '', language: '',
+    delivery, capture_headers: {}, thumbnail: '', country: '', language: '',
   };
 }
 
@@ -155,7 +155,9 @@ test('player routes relayed audio/video/HLS through one engine without breaking 
     await player.togglePlay();
     assert.equal(elements['audio-el'].paused, false);
 
-    await player.playItem(item('movie.mp4', 'video', 'video'));
+    // A film listed as on demand: its seek bar and position (one listed as
+    // live would stay live with any length).
+    await player.playItem(item('movie.mp4', 'video', 'video', 'on-demand'));
     assert.equal(player.getAudioEngineStatus().sourceCount, 2);
     assert.equal(elements['video-el'].paused, false);
     elements['video-el'].duration = 120;

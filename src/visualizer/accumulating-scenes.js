@@ -30,7 +30,12 @@ import { createDensityRenderer } from './density-host.js';
 /** The accumulating labs offered (scenes.js SCENES), each released on its
  *  own once measured. Buddhabrot Lab: every look's cold start stayed out of
  *  near black, its worker took 13 to 32% of one core by quality, and it
- *  ended with the scene and on a lost context. */
+ *  ended with the scene and on a lost context. Still held, each over every
+ *  look from a cold start and through the fade from a dark scene
+ *  (30 s at Medium, paced): FLAM3 Density Lab's own look under 0.05 for
+ *  5.0 s at a time cold and 4.3 s through the fade; IFS / L-System Lab's
+ *  own look under 0.05 throughout (mean 0.042); Attractor Density Lab's
+ *  own look 2.5 s cold. */
 export const ACCUMULATING_RELEASED_IDS = Object.freeze(['buddhabrot_lab']);
 
 /** The labs drawn on the density host: their picture builds up from black,
@@ -165,8 +170,13 @@ const lab = (id, name, base, mood, hue, load, density, defaults = null) => Objec
 
 /** Every accumulating lab, in the shape of scenes.js entries. */
 export const ACCUMULATING_SCENE_ENTRIES = Object.freeze([
+  // Its density curve lifted for every look (its own 0.72; no look sets
+  // it): its sparse first points show brighter, so its picture is there
+  // sooner. Its own look through the fade from a dark scene: under 0.05 for
+  // 2.7 s at a time at its own curve, 1.2 s at 0.45; from a cold start still
+  // 2.5 s at 0.45, so it stays held (ACCUMULATING_RELEASED_IDS).
   lab('attractor_density_lab', 'Attractor Density Lab', 'attractor-density-lab', 'calm', 'rainbow',
-    () => import('./vendor/psychedelia/effects/attractor-density-lab.js'), true),
+    () => import('./vendor/psychedelia/effects/attractor-density-lab.js'), true, Object.freeze({ attractor_density_curve: 0.45 })),
   lab('buddhabrot_lab', 'Buddhabrot Lab', 'buddhabrot-lab', 'calm', 'cool',
     () => import('./vendor/psychedelia/effects/buddhabrot-lab.js'), true),
   // Its gamma lifted for every look (its own 0.9; no look sets it): twelve

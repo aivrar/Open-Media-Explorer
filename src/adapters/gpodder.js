@@ -32,6 +32,12 @@ const PARTIAL_SEARCH_TTL_MS = 60 * 1000;
 const FEED_CACHE_TTL_MS = 30 * 60 * 1000;
 const DEAD_FEED_COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_DEAD_FEED_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+// Codes with which the app refuses a feed for what the publisher sent
+// (worldmedia_catalog.py), not for a passing network failure; such a feed
+// keeps the long cooldown (feedFailureDelay).
+const FEED_REFUSED_AS_SENT = new Set([
+  'CATALOG_BODY_TOO_LARGE', 'CATALOG_DECODED_TOO_LARGE', 'FEED_XML_TOO_COMPLEX', 'FEED_XML_UNSAFE',
+]);
 const MAX_FEED_CACHE = 256;
 const MAX_FEED_ALIASES = 1_024;
 const MAX_SNAPSHOTS = 3;
@@ -792,6 +798,9 @@ function feedFailureDelay(error) {
   if (error?.code === 'CATALOG_UPSTREAM_STATUS' && error?.retryable !== true) {
     return MAX_DEAD_FEED_COOLDOWN_MS;
   }
+  // The feed came in whole and is beyond what the app reads (too large, too
+  // deeply nested, unsafe XML): asking again soon gets the same answer.
+  if (FEED_REFUSED_AS_SENT.has(error?.code)) return MAX_DEAD_FEED_COOLDOWN_MS;
   if (status === 404 || status === 410) return MAX_DEAD_FEED_COOLDOWN_MS;
   return DEAD_FEED_COOLDOWN_MS;
 }
@@ -1007,14 +1016,19 @@ export function createGpodderAdapter(dependencies = {}) {
     const lookup = feedEntryFor(show.feedUrl);
     let entry = lookup.entry;
     if (entry?.value && entry.expiresAt > now()) return entry.value;
-    if (entry?.deadUntil > now()) {
+    // A load the user asked for (`force`: Retry in the Library, a forced
+    // resolve) asks a feed in its wait again; its outcome sets the next wait.
+    // Automatic loads keep to the wait.
+    if (entry?.deadUntil > now() && opts.force !== true) {
       if (entry.value) return staleFeedValue(entry.value);
       const error = new ProviderError('Podcast feed is cooling down', {
         code: 'PODCAST_FEED_COOLDOWN', retryAfterMs: entry.deadUntil - now(),
       });
       throw error;
     }
-    if (entry?.promise && entry.signal === opts.signal) return entry.promise;
+    const forPlayback = opts.forPlayback === true;
+    // A load for Play never waits on a browse lookup that may still be queued.
+    if (entry?.promise && entry.signal === opts.signal && (!forPlayback || entry.forPlayback)) return entry.promise;
     const key = lookup.key;
     const previous = entry;
     entry = {
@@ -1023,14 +1037,22 @@ export function createGpodderAdapter(dependencies = {}) {
       deadUntil: previous?.deadUntil || 0,
       promise: null,
       signal: opts.signal,
+      forPlayback,
     };
-    entry.promise = feedScheduler.run(show.host, async (signal) => {
+    const resolveFeed = async (signal) => {
       // Keep refreshing through the original cache key after a redirect move.
       // The native resolver associates the prior feed identity with that key,
       // which prevents episode/favorite IDs from changing across later moves.
-      const payload = await resolveFeedImpl(key, { signal });
+      const payload = await resolveFeedImpl(key, forPlayback ? { signal, forPlayback: true } : { signal });
       return normalizeFeedPayload(payload, show);
-    }, opts.signal).then((feed) => {
+    };
+    // A load for Play (resolveStream) is the one request the user waits for:
+    // sent at once, not queued behind browse lookups here or in the
+    // catalogue client (catalog-client.js).
+    const running = forPlayback
+      ? Promise.resolve().then(() => resolveFeed(opts.signal))
+      : feedScheduler.run(show.host, resolveFeed, opts.signal);
+    entry.promise = running.then((feed) => {
       entry.value = feed;
       entry.expiresAt = now() + (dependencies.feedCacheTtlMs ?? FEED_CACHE_TTL_MS);
       entry.deadUntil = 0;
@@ -1400,7 +1422,7 @@ export function createGpodderAdapter(dependencies = {}) {
       const cached = feedEntryFor(show.feedUrl).entry;
       if (cached && !cached.promise) cached.expiresAt = 0;
     }
-    const feed = await loadFeed(show, opts);
+    const feed = await loadFeed(show, { ...opts, forPlayback: true });
     const resolved = feed.items.find((candidate) => candidate.id === item.id);
     if (!resolved || resolved.delivery === 'live'
         && !isPodcastLiveNow(resolved._extra, now())) {

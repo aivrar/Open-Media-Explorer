@@ -3,10 +3,11 @@
 Record date, commit, operator, commands, result, artifact SHA-256, and any
 expected upstream outage for every checked release.
 
-## Current release: v0.1.12 (2026-11-20)
+## Current release: v0.1.13 (2026-11-21)
 
-See [the v0.1.12 release record](RELEASE_RECORD_0.1.12.md) for the current
+See [the v0.1.13 release record](RELEASE_RECORD_0.1.13.md) for the current
 checks, artifact hashes, and explicit verification limitations. The previous
+[v0.1.12](RELEASE_RECORD_0.1.12.md),
 [v0.1.11](RELEASE_RECORD_0.1.11.md), [v0.1.10](RELEASE_RECORD_0.1.10.md),
 [v0.1.9](RELEASE_RECORD_0.1.9.md),
 [v0.1.8](RELEASE_RECORD_0.1.8.md), [v0.1.7](RELEASE_RECORD_0.1.7.md),

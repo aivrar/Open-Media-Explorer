@@ -79,7 +79,11 @@ The browser profile stores:
 - with **Auto (verified)**, the results of its checks
   (`worldmedia.streamverify.v1`) and its directory lookups
   (`worldmedia.streamlookups.v1`). These two are a cache: they are not copied
-  to the data folder or into backups.
+  to the data folder or into backups;
+- which stations did not play the last time you tried them
+  (`worldmedia.didnotplay.v1`, at most 2,000). This is a cache too: it is not
+  copied to the data folder or into backups, and **Clear local cache** removes
+  it.
 
 Short-lived artwork and playback relay IDs are not persisted as usable URLs.
 They are re-resolved from stable adapter metadata at the next launch. Live
@@ -158,9 +162,13 @@ The `station-images` folder inside `WorldMediaWindows-data` holds your own
 pictures for stations. **Settings → Station images → Open folder** makes the
 folder and opens it. A picture named like a station, for example
 `Radio Paradise.png`, replaces that station's artwork after you press
-**Refresh**. PNG, JPG, WebP or GIF, up to 2 MB each. World Media only reads
-this folder. Because it is part of the data folder, it moves with the portable
-folder, and the backup ZIP includes it. **Clear local cache** leaves it alone.
+**Refresh**. PNG, JPG, WebP or GIF, up to 2 MB each. World Media writes to this
+folder only when you choose or drop a picture for a favorite or My Playlists
+station (it saves a checked copy, named after the station) or press **Remove
+picture** (it deletes that station's picture file); it never replaces a
+picture without asking you first. Because it is part of the data folder, it
+moves with the portable folder, and the backup ZIP includes it. **Clear local
+cache** leaves it alone.
 [Using the application](02-using-the-application.md) has the matching rules,
 including how a station whose name has a character a file name cannot have
 (such as "/") finds its picture, and the **Pictures to check** list in Settings

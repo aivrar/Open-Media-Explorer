@@ -78,10 +78,13 @@ test('all interactive catalog modes share the scheduler and cancel on mode chang
     assert.match(source, /signal:\s*(?:controller|deadline)\.signal/);
     assert.match(source, /subscribe\(['"]mode-change['"]/);
   }
+  // The Grid and the Tuner give each source its own deadline through runLiveLoad.
   for (const source of [grid, tuner]) {
-    assert.match(source, /const deadline = sourceDeadline\(controller\.signal\)/);
-    assert.match(source, /\.finally\(\(\) => deadline\.done\(\)\)/);
+    assert.match(source, /await runLiveLoad\(\{\s*candidates,\s*signal: controller\.signal,/);
   }
+  const liveLoad = (await readFile(new URL('../src/lib/live-load.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  assert.match(liveLoad, /const deadline = sourceDeadline\(signal, timeoutMs, timers\);/);
+  assert.match(liveLoad, /\.finally\(\(\) => deadline\.done\(\)\)/);
   assert.match(discovery, /key:\s*`discovery:\$\{requestGen\}`/);
   assert.match(discovery, /DISCOVERY_ATTEMPT_DEADLINE_MS/);
   assert.match(discovery, /withDiscoveryAttemptDeadline\(signal/);

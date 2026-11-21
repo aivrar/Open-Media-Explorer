@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.12` behavior in this repository: how to
+It describes the shipped `0.1.13` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -18,6 +18,38 @@ providers at run time and can change without an app update.
 | ![World Media Tuner](<../../screenshots/updated screenshots/tuner.PNG>) | ![World Media Discovery](<../../screenshots/updated screenshots/discovery.PNG>) |
 
 ![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
+
+## New in 0.1.13
+
+- **Now Playing:** a new tab between **Discovery** and **Visualizer** shows what
+  plays now, large: its picture over a blurred copy, its name and category, the
+  song a radio station announces (with a star and **Copy**), **Stream details**
+  and a large sound meter. See [Using the
+  application](02-using-the-application.md#now-playing).
+- Live radio and TV no longer show a seek bar or a length; the time shows how
+  long the station has played. The song on the player bar is larger, bolder and
+  brighter, and it and the station name grow with the window. See [Playback,
+  EQ, downloads, and
+  recording](04-playback-eq-downloads-recording.md#player-controls) and [Using
+  the application](02-using-the-application.md#window-layout).
+- A small red **!** marks a favorite or a My Playlists station that did not play
+  the last time you tried it, and goes when the station plays. See [Using the
+  application](02-using-the-application.md#did-not-play-last-time).
+- **Choose picture...** in a station's details, or dropping a picture file on
+  its card, gives a favorite or a My Playlists station a picture of your own.
+  See [Using the
+  application](02-using-the-application.md#station-images) and [Data, cache,
+  and portability](05-data-cache-and-portability.md#station-images).
+- In **My order**, a card dropped anywhere on another card takes that card's
+  place. See [Using the
+  application](02-using-the-application.md#favorites-order).
+- **Settings > Appearance > Show the Visualizer behind the Tuner** (off by
+  default) draws light scenes faintly behind the Tuner while sound plays. See
+  [Visualizer](09-visualizer.md#the-visualizer-behind-the-tuner).
+- The Visualizer has four more scenes (103 in all), the overlays **Ripples**,
+  **Fireflies** and **Orbits**, the **Lighten** and **Color** blends, an
+  **Extra glow** switch, overlays that drift with **Slow drift**, and a mood
+  line read from the sound's spectrum. See [Visualizer](09-visualizer.md).
 
 ## New in 0.1.12
 
@@ -110,7 +142,7 @@ providers at run time and can change without an app update.
 | If you want to… | Read |
 |---|---|
 | Install the EXE or move it to another drive | [Installation and portable data](01-installation-and-portable-data.md) |
-| Learn the six tabs, sidebar, filters, and settings | [Using the application](02-using-the-application.md) |
+| Learn the seven tabs, sidebar, filters, and settings | [Using the application](02-using-the-application.md) |
 | Use the Visualizer, keep it light on a weak computer, or read about its flashing notice | [Visualizer](09-visualizer.md) |
 | Understand every source and its channel/catalog behavior | [Sources and channels](03-sources-and-channels.md) |
 | Play a stream, fix a broken stream, use EQ, download, or record | [Playback, EQ, downloads, and recording](04-playback-eq-downloads-recording.md) |

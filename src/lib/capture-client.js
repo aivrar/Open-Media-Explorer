@@ -59,14 +59,28 @@ export function listCaptureJobs(options = {}) {
   return controlRequest('/api/v1/jobs', options).then((data) => data?.jobs || []);
 }
 
+/*
+ * The browser opens at most six connections to the local server at a time
+ * and queues every further request behind them, with no regard for what it
+ * is. On a first catalogue load those six can all be held for many seconds
+ * (podcast feeds, catalogue pages, artwork), so a small request that must not
+ * wait (a profile save, which gives up after 10 s) could time out while it
+ * was still in that queue, never having reached the app. A request sent
+ * without credentials uses a separate set of connections; the control routes
+ * never use cookies (the session token is a header), so `ownConnection: true`
+ * sends it that way and it no longer waits behind the catalogue.
+ */
 export async function controlRequest(path, {
   method = 'GET', body, fetchImpl = fetch, signal, keepalive = false, headers: extraHeaders = null,
+  ownConnection = false,
 } = {}) {
   const session = await getControlSession({ fetchImpl, signal });
   // Extra headers (the profile write order, see profile-transfer.js) never
   // replace the session token.
   const headers = { ...(extraHeaders || {}), 'X-WorldMedia-Token': session.token };
-  const options = { method, headers, credentials: 'same-origin', cache: 'no-store' };
+  const options = {
+    method, headers, credentials: ownConnection === true ? 'omit' : 'same-origin', cache: 'no-store',
+  };
   if (signal) options.signal = signal;
   // Lets a small request outlive the page (release on pagehide).
   if (keepalive === true) options.keepalive = true;
@@ -103,6 +117,9 @@ export async function registerMedia(item, options = {}) {
   if (!item?.id || !item?.stream_url) throw new ControlApiError('INVALID_MEDIA_ITEM', 'Media is unresolved.');
   return controlRequest('/api/v1/media/register', {
     ...options,
+    // Play was pressed and the user waits for this: it does not queue behind
+    // catalogue pages and artwork for a free connection (controlRequest).
+    ownConnection: true,
     method: 'POST',
     body: {
       item_id: item.id,

@@ -860,7 +860,7 @@ test('nothing of the visualizer is in the main bundle\'s static graph; the tab l
   const main = await read('src/main.js');
   assert.match(main, /visualizer: renderVisualizer,/);
   const html = await read('src/index.html');
-  assert.match(html, /data-mode="discovery">Discovery<\/button>\s+<button class="mode-btn" data-mode="visualizer">Visualizer<\/button>\s+<button class="mode-btn" data-mode="about">/);
+  assert.match(html, /data-mode="discovery">Discovery<\/button>\s+<button class="mode-btn" data-mode="now-playing">Now Playing<\/button>\s+<button class="mode-btn" data-mode="visualizer">Visualizer<\/button>\s+<button class="mode-btn" data-mode="about">/);
   // Its styles come with the chunk, not the page.
   assert.doesNotMatch(html, /visualizer\.css/);
   assert.match(await read('src/visualizer/visualizer.js'), /^import '\.\/visualizer\.css';/m);

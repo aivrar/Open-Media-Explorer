@@ -345,6 +345,18 @@ def windows(lumas, fps):
     return out
 
 
+def paced_late(starts, fps):
+    """Frames drawn at their own time (paced): how late each frame's start
+    was against the first frame's plus one frame time a frame, in ms: the
+    most, at the end, and the share of frames more than one frame late."""
+    if len(starts) < 2:
+        return None
+    frame = 1000 / fps
+    late = [s - starts[0] - i * frame for i, s in enumerate(starts)]
+    return {'most': round(max(late), 1), 'end': round(late[-1], 1),
+            'over_one_frame': round(sum(1 for v in late if v > frame) / len(late), 4)}
+
+
 def evenness(result):
     """Paced on animation frames: frames drawn a second, the share of gaps
     between frames over 50 ms and the longest, and the mean time to submit
@@ -479,6 +491,11 @@ def main():
                 # From a cold start: the seconds until the picture first
                 # reaches 0.05.
                 'start_under_005': round(next((i for i, v in enumerate(lumas) if v >= 0.05), len(lumas)) / scene['fps'], 2),
+                # A paced run (scene.paced): how far behind its due time a
+                # frame was drawn, so the frame clock (1 / fps a frame) kept
+                # to real time; a late frame gives a scene with a clock of
+                # its own more time than the frame clock says.
+                **({'paced_late_ms': paced_late(result.get('starts') or [], scene['fps'])} if scene.get('paced') is True else {}),
                 **({
                     'seconds': round(seconds, 1),
                     'windows_over_10': sum(1 for w in per_window if w['steps_over_10']),

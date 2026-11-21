@@ -2,72 +2,66 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { createMoodTracker, moodEnergy } from '../src/visualizer/mood.js';
+import { MOOD_ENERGETIC_ABOVE, createMoodTracker, moodEnergy } from '../src/visualizer/mood.js';
 import {
   MOOD_TONE_RELEASED, TONE_EVERY_S, createToneTracker, measureTone,
 } from '../src/visualizer/tone.js';
 import { TONE_WEIGHT, createShuffle, seededRandom, toneWeight } from '../src/visualizer/shuffle.js';
+import {
+  beatTrack, hatStroke, kickStroke, listen, snareStroke,
+} from './helpers/mood-sim.js';
 
-/* The mood's fault on a slow beat, and the tone beside it. */
+/* The mood's fault on a slow beat, and the tone beside it. The music is
+   synthetic, put through a software analyser as the page's tap reads it
+   (helpers/mood-sim.js). */
 
-/** Play a pattern through a tracker at 60 frames a second: `hits(t)` gives
- *  the channels struck in the frame at t (a stroke lasts 30 ms). */
-function play(tracker, seconds, { bpm, confidence = 0.9, strokes }) {
-  const sound = { kick: 0, snare: 0, hat: 0, level: 0.5, confidence, bpm };
-  const hits = strokes(bpm);
-  for (let frame = 0; frame <= seconds * 60; frame += 1) {
-    const t = frame / 60;
-    for (const name of ['kick', 'snare', 'hat']) {
-      sound[name] = hits[name].some((at) => t >= at && t < at + 0.03) ? 1 : 0;
-    }
-    tracker.step(t, sound);
-  }
-  return tracker;
+/** The tracker after `seconds` of `track`, and its highest energy over the
+ *  second half. */
+function play(track, seconds) {
+  const tracker = createMoodTracker();
+  let highest = 0;
+  listen(tracker, track, seconds, { each: (now, m) => { if (now >= seconds / 2) highest = Math.max(highest, m.energy); } });
+  return { tracker, highest };
 }
 
-/** A steady beat: kicks on 1 and 3, snares on 2 and 4, hats `per` to the
- *  beat; every kick and snare also crosses the hat band (broadband). */
-const beat = (seconds, per) => (bpm) => {
-  const step = 60 / bpm;
-  const kick = [];
-  const snare = [];
-  const hat = [];
-  for (let b = 0; b * step < seconds; b += 1) {
-    (b % 2 === 0 ? kick : snare).push(b * step);
-    for (let s = 0; s < per; s += 1) hat.push(b * step + (s * step) / per);
-  }
-  // Broadband: the kick also lights the snare band.
-  return { kick, snare: [...snare, ...kick], hat };
-};
-
 test('a slow steady beat reads calm or steady, not energetic (it used to)', () => {
-  for (const per of [2, 4]) {
-    for (const bpm of [60, 120]) { // 120: a reactor that heard double time
-      const tracker = play(createMoodTracker(), 60, { bpm: 60, strokes: beat(60, per) });
-      if (bpm === 120) play(tracker, 30, { bpm, strokes: beat(30, per) });
-      assert.notEqual(tracker.mood, 'energetic', `hats ${per} a beat, bpm read ${bpm}: ${tracker.energy}`);
-    }
+  // 60 bpm, kick and snare in turn, hats on the sixteenths or the eighths:
+  // the hats subdivide the beat, they do not make it fast.
+  for (const hats of [4, 2]) {
+    const { tracker, highest } = play(beatTrack({ bpm: 60, hats }), 40);
+    assert.notEqual(tracker.mood, 'energetic', `hats ${hats} a beat: ${tracker.energy}`);
+    assert.ok(highest <= MOOD_ENERGETIC_ABOVE, `hats ${hats} a beat: up to ${highest}`);
   }
-  const sparse = play(createMoodTracker(), 60, { bpm: 60, strokes: beat(60, 2) });
-  assert.equal(sparse.mood, 'calm', String(sparse.energy));
 });
 
-test('a fast busy beat still reads energetic', () => {
-  const tracker = play(createMoodTracker(), 60, { bpm: 128, strokes: beat(60, 4) });
-  assert.equal(tracker.mood, 'energetic', String(tracker.energy));
-  assert.ok(moodEnergy(6, 0.9, 128) > 0.65);
-  assert.ok(moodEnergy(1, 1, 60) < 0.05, 'one hit a second at 60 bpm adds nothing');
+test('a fast busy beat still reads energetic: four to the floor at 128 and 140 bpm, a breakbeat at 174', () => {
+  // Four to the floor with hats on the sixteenths, at a house tempo (128)
+  // and faster (140), and a breakbeat with hats on the sixteenths.
+  for (const bpm of [128, 140]) {
+    const dance = play(beatTrack({ bpm, hats: 4, kicks: [0, 1, 2, 3] }), 40).tracker;
+    assert.equal(dance.mood, 'energetic', `${bpm} bpm: ${dance.energy}`);
+  }
+  const breaks = play(beatTrack({ bpm: 174, hats: 4, kicks: [0, 2.5] }), 40).tracker;
+  assert.equal(breaks.mood, 'energetic', String(breaks.energy));
+  assert.ok(moodEnergy({ onset: 4, busy: 9, pulse: 0.6, bright: -57, sway: 11 }) > MOOD_ENERGETIC_ABOVE);
+  assert.ok(moodEnergy({ onset: 0, busy: 0, pulse: 0 }) === 0, 'nothing starting: no energy');
 });
 
-test('one broadband stroke is one hit', () => {
-  const all = (seconds) => () => {
-    const times = Array.from({ length: seconds }, (_, i) => i);
-    return { kick: times, snare: times, hat: times };
+test('one broadband stroke is one busy onset', () => {
+  // Once a second, a stroke on every band at once (kick, snare and hat
+  // together): one onset in the high bands a second, not three.
+  let state = 9;
+  let last = 0;
+  const stroke = (t) => {
+    state = (state * 1103515245 + 12345) % 2147483648;
+    const noise = state / 1073741824 - 1;
+    const bright = noise - last;
+    last = noise;
+    const age = t % 1;
+    return 0.6 * (kickStroke(age) + snareStroke(age, bright) + hatStroke(age, bright) + 0.12 * Math.sin(2 * Math.PI * 55 * t));
   };
-  const kickOnly = (seconds) => () => ({ kick: Array.from({ length: seconds }, (_, i) => i), snare: [], hat: [] });
-  const a = play(createMoodTracker(), 20, { bpm: 60, strokes: all(20) });
-  const b = play(createMoodTracker(), 20, { bpm: 60, strokes: kickOnly(20) });
-  assert.equal(a.energy, b.energy);
+  const { tracker } = play(stroke, 20);
+  assert.ok(Math.abs(tracker.reading.busy - 1) < 0.3, String(tracker.reading.busy));
 });
 
 /* ---- Tone ---- */

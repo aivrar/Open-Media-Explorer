@@ -455,6 +455,8 @@ These are local implementation routes, not a public API contract:
 | `GET /api/v1/station-images` | List the user's station pictures (scans the folder) |
 | `GET /api/v1/station-images/{id}` | One station picture, by an id from the last listing |
 | `POST /api/v1/station-images/open-folder` | Make and open the `station-images` folder |
+| `POST /api/v1/station-images/save` | Save a picture for a station: the station's name and the picture as base64; checked like the folder scan, file name made from the name. First `{station, preview: true}` returns the full names of the files a new picture would replace, for the question; a save with `replace: true` carries exactly those names in `files`, and is refused if the folder holds others for the station by then. Without `replace` it never replaces a file (409, naming every file; names only, never a path). More than 20 such files are refused, so the user is never asked about only some of them. Only a file the folder lists under that very name is replaced, never another file's short (8.3) name or a link |
+| `POST /api/v1/station-images/remove` | Delete the files of one station picture, by an id from the last listing: first `{id, preview: true}` returns the full file names for the question (more than 20 are refused), then `{id, files}` deletes only those that still make up that picture |
 | `POST /api/v1/backup/create` | Write the backup ZIP into `downloads` |
 | `GET /api/v1/jobs` | Capture job snapshots |
 | `GET /api/v1/ffmpeg/status` | Toolchain status |

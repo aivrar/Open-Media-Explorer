@@ -40,9 +40,10 @@ import { SimGL, withWebgl2Global } from './helpers/sim-fakes.js';
 
 const manifest = JSON.parse(readFileSync(join(VENDOR_DIR, 'manifest.json'), 'utf8'));
 const IDS = Object.freeze(['epicycles', 'hopf', 'knots', 'lissajous', 'lorenz', 'polytopes', 'spirograph']);
-// Offered since slice 15; the other two held (near black).
-const RELEASED = Object.freeze(['hopf', 'knots', 'lissajous', 'lorenz', 'spirograph']);
-const HELD = Object.freeze(['epicycles', 'polytopes']);
+// All seven offered: Fourier Epicycles and 4D Polytopes on new start
+// values (near black before).
+const RELEASED = Object.freeze(['epicycles', 'hopf', 'knots', 'lissajous', 'lorenz', 'polytopes', 'spirograph']);
+const HELD = Object.freeze([]);
 const SOURCES = Object.freeze({
   kick: 0.4, snare: 0.2, hat: 0.3, beat: 0.4, bass: 0.6, mid: 0.4, high: 0.2, level: 0.5, swell: 0.5,
 });
@@ -157,7 +158,7 @@ test('GlowLines is patched only on import: its persistence target sized by the h
 
 /* ---------------- Held out of the tab ---------------- */
 
-test('released: five offered with their measured settings; Fourier Epicycles and 4D Polytopes held (near black), offered nowhere', () => {
+test('released: all seven offered with their measured settings, none held', () => {
   assert.equal(LINE_SCENES_RELEASED, true);
   assert.deepEqual(OFFERED_LINE_SCENES.map((entry) => entry.id), RELEASED);
   assert.deepEqual(Object.keys(LINE_SCENES_HELD).sort(), HELD);
@@ -200,7 +201,7 @@ test('released: five offered with their measured settings; Fourier Epicycles and
   assert.equal(lineEntry('polytopes').defaults.rotation_style, 0);
 });
 
-test('in the tab: a saved held line scene opens another; the list and the shuffle reach the released ones, never the held', async () => {
+test('in the tab: a saved line scene opens; the list and the shuffle reach all seven', async () => {
   await withWebgl2Global(async () => {
     const h = createClockHarness();
     const vis = fakeDocWithElements({});
@@ -234,7 +235,7 @@ test('in the tab: a saved held line scene opens another; the list and the shuffl
       h.run(COMPILE_POLL_MS);
     }
     assert.ok(session.switcher.current, 'a scene is shown');
-    assert.ok(!HELD.includes(session.switcher.current), session.switcher.current);
+    assert.equal(session.switcher.current, 'epicycles');
     const listed = session.sceneList.shown;
     assert.ok(listed.length > 70, 'the list is shown');
     for (const id of HELD) assert.ok(!listed.includes(id), `${id}: not listed`);

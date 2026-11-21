@@ -536,8 +536,9 @@ class BackupSafetyTests(BackupTestCase):
              mock.patch.object(PlaylistStore, "_read", side_effect=AssertionError("path read again")):
             _, archive = self.backup()
         # Each allow-listed state file is looked at once (a missing one too).
-        self.assertEqual(sorted(reads), ["playlists.json", "profile-preferences-extra.json",
-                                         "profile-preferences.json", "song-log.json", "starred-songs.json"])
+        self.assertEqual(sorted(reads), ["playlists.json", "profile-preferences-extra-copy.json",
+                                         "profile-preferences-extra.json", "profile-preferences.json",
+                                         "song-log.json", "starred-songs.json"])
         self.assertEqual(sorted(name for name in archive.namelist() if name.startswith("exports/")),
                          ["exports/Before.m3u8", "exports/favorites-radio.m3u8"])
         self.assertIn("before.m3u8", self.text(archive, "exports/Before.m3u8"))

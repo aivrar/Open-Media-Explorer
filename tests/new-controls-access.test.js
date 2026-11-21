@@ -82,6 +82,59 @@ test('"Use the station\'s own stream": its button goes away and focus moves to t
   }
 });
 
+test('"Use the station\'s own stream" outside the Library: focus moves to the control the caller names', () => {
+  const previous = globalThis.document;
+  globalThis.document = {
+    activeElement: null,
+    createElement: (tag) => new Node(tag),
+    createTextNode: (text) => Object.assign(new Node('#text'), { textContent: text }),
+  };
+  try {
+    const item = { id: 'radio-browser:abc', source: 'radio-browser', title: 'Radio One' };
+    const make = (focusAfterUse) => createBestStreamStatus(item, {
+      settings: () => ({ bestStreamMode: 'auto' }),
+      verified: () => ({ itemId: item.id, url: 'https://example.org/a', bitrate: 320, codec: 'MP3' }),
+      checking: () => false,
+      keepOwn: () => {},
+      current: () => null,
+      play: () => Promise.resolve(),
+      onAutoChange: () => () => {},
+      on: () => () => {},
+      ...(focusAfterUse === undefined ? {} : { focusAfterUse }),
+    });
+    const press = (status) => {
+      const use = status.node.all().find((node) => node.tagName === 'BUTTON');
+      use.focus();
+      use.dispatchEvent(new Event('click'));
+      return use;
+    };
+    // The Now Playing tab: no details panel, the favorite star is named.
+    const host = new Node('section');
+    const star = new Node('button');
+    host.appendChild(star);
+    const inTab = make(() => star);
+    host.appendChild(inTab.node);
+    press(inTab);
+    assert.equal(globalThis.document.activeElement, star, 'focus on the named control');
+    // Named but gone (returns nothing): the Library's own rule still applies.
+    const panel = new Node('aside');
+    const actions = Object.assign(new Node('div'), { className: 'detail-actions' });
+    const playButton = actions.appendChild(new Node('button'));
+    panel.appendChild(actions);
+    const fallback = make(() => null);
+    panel.appendChild(fallback.node);
+    press(fallback);
+    assert.equal(globalThis.document.activeElement, playButton);
+    // The Library passes nothing: unchanged (the test above).
+    const source = read('src/modes/library/detail.js');
+    assert.match(source, /detailBestStream = createBestStreamStatus\(item\);/);
+    // The tab passes its favorite star.
+    assert.match(read('src/modes/now-playing.js'), /deps\.bestStream\(item, \{ focusAfterUse: \(\) => fav \}\)/);
+  } finally {
+    globalThis.document = previous;
+  }
+});
+
 test('Settings: the best stream choice and the processor limit are described by their lines; the limit is a real disabled input at Light', () => {
   const settings = read('src/lib/settings.js');
   assert.match(settings, /<span class="description" id="settings-best-stream-hint">Listed streams:/);

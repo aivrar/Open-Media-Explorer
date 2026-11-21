@@ -103,7 +103,7 @@ function jobStatus(job, currentItemId) {
 
 export function deriveCaptureView({
   item = null, capability = 'unavailable', jobs = [], toolState = null,
-  transient = null, ignoredJobIds = new Set(),
+  transient = null, ignoredJobIds = new Set(), recording = false, unplayable = false,
 } = {}) {
   const visibleJobs = Array.isArray(jobs)
     ? jobs.filter((job) => job && !ignoredJobIds.has(job.id))
@@ -138,9 +138,19 @@ export function deriveCaptureView({
     view = base('download', 'Download', {
       action: 'download', status: 'Original media can be downloaded.',
     });
-  } else if (capability === 'record-audio' || capability === 'record-video') {
+  } else if ((capability === 'record-audio' || capability === 'record-video') && unplayable) {
+    // `unplayable`: the start of this item failed before any stream was
+    // attached (its address does not exist, for example), so there is nothing
+    // to record until it plays.
     view = base('record', capability === 'record-video' ? 'Record video' : 'Record audio', {
-      action: 'record', status: 'Live media can be recorded.',
+      disabled: true, disabledReason: 'This item is not playing.',
+      status: 'Recording is available once this item plays.',
+    });
+  } else if (capability === 'record-audio' || capability === 'record-video') {
+    // `recording`: the player found the media to be a recording with a set
+    // length (a playlist entry that points at an MP3), so it is not called live.
+    view = base('record', capability === 'record-video' ? 'Record video' : 'Record audio', {
+      action: 'record', status: recording ? 'This stream can be recorded.' : 'Live media can be recorded.',
     });
   } else if (capability === 'checking') {
     view = base('checking', 'Checking…', {

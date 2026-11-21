@@ -605,14 +605,14 @@ test('the link rule names what each refused param is', () => {
 /* ---------------- Scenes ---------------- */
 
 test('every scene is a lazily loaded vendored file that registers under its id, compiles and draws; old programs are freed', async () => {
-  // 91 ported; three 3D flights held (scenes.js HELD_SCENES). Six of
+  // 91 ported; one 3D flight held (scenes.js HELD_SCENES). Six of
   // them (slice 14) own their passes: tests/visualizer-slice14.test.js.
-  // Five of the seven line-drawing scenes (slice 15) offered too:
+  // The seven line-drawing scenes offered too:
   // tests/visualizer-lines.test.js. And World Media's own five:
   // tests/visualizer-own-scenes.test.js. And Buddhabrot Lab, the first
   // accumulating lab released: tests/visualizer-accumulating.test.js.
-  assert.equal(SCENES.length, 99);
-  assert.equal(HELD_SCENE_ENTRIES.length, 3);
+  assert.equal(SCENES.length, 103);
+  assert.equal(HELD_SCENE_ENTRIES.length, 1);
   assert.equal(SCENES[0].id, 'plasma');
   assert.equal(new Set(SCENES.map((scene) => scene.id)).size, SCENES.length);
   const scenesJs = readFileSync(join(REPO, 'src', 'visualizer', 'scenes.js'), 'utf8');

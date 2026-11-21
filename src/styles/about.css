@@ -73,6 +73,9 @@
   color: var(--text);
 }
 .about-section p:last-child { margin-bottom: 0; }
+/* A link in the text (the Psychedelia Studio line) in the app's link color,
+   like the source links below. */
+.about-section p a { color: var(--accent); }
 .about-section-intro {
   font-size: 13px !important;
   color: var(--text-dim) !important;

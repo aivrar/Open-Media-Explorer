@@ -35,10 +35,10 @@ export const DEFAULT_LOOK_NAME = 'Default';
 /** Colour schemes left out of a scene's looks (by option index), because
  *  the flash check (tests/helpers/visualizer-flash-check.mjs --worst --looks
  *  --gpu) found them stepping over 0.10 on their own clock, with no time
- *  surge at all: Mandelbrot's Neon (0.105) and Ocean (0.112) palettes cycle
- *  hard-edged bands through its dive. */
+ *  surge at all. (Mandelbrot's Neon (0.105) and Ocean (0.112), whose
+ *  palettes cycle hard-edged bands through its dive, are back with slower
+ *  colour cycling, LOOK_ADJUSTED.) */
 export const LOOKS_LEFT_OUT = Object.freeze({
-  mandelbrot: Object.freeze([1, 3]),
   // Glass Fractal DE Flight's Chrome Cyan (0.088 at its cap of 1x over 360 s
   // of its clock, 0.094 with drift; its other colour schemes 0.056 at most).
   path_traced_fractal_flight: Object.freeze([2]),
@@ -63,6 +63,10 @@ export const LOOKS_LEFT_OUT = Object.freeze({
   orbit_trap: Object.freeze([3]),
   tricorn: Object.freeze([1, 2]),
   mandelbox_flight: Object.freeze([0, 3]),
+  // Quaternion Julia Flight starts on its Amber Glass (0.075 at 1x over
+  // 360 s of its clock, scenes.js defaults); its Alien Coral
+  // (0.099) and its Blue Plasma and Rose Metal (0.14) are left out.
+  quaternion_julia_flight: Object.freeze([0, 2, 3]),
 });
 
 /** Psychedelia presets left out of a scene's looks (by preset name), for
@@ -73,7 +77,8 @@ export const LOOKS_LEFT_OUT = Object.freeze({
  *  bright ribbons about three times as fast as its start look, stepping by
  *  0.32 and 0.37 at 3x, 0.199 and 0.218 at its cap of 1.5x (scenes.js
  *  SPEED_CAPS) and still 0.146 and 0.183 at 1x (360 s of its clock, the
- *  surge at its most, on the graphics card). (L-System Tube Flight's
+ *  surge at its most, on the graphics card); flown at its start look's
+ *  speed (0.72) they still stepped by 0.090 and 0.217 at 1.5x. (L-System Tube Flight's
  *  Crystal Fern Cathedral, left out until Psychedelia 0a4fdc1 for flying
  *  through a branch, is back: 0.056 at 1x.) */
 export const PRESETS_LEFT_OUT = Object.freeze({
@@ -81,7 +86,8 @@ export const PRESETS_LEFT_OUT = Object.freeze({
   // Slice 12, the flights back from the held list (scenes.js SPEED_CAPS),
   // each at its cap of 1x over 360 s of its clock. Apollonian Foam: its
   // Knighty Foam Orbit and Kleinian Box Graze fly in and out of the foam
-  // (0.275, 0.165), its Apollonian Cell Tunnel 0.091 (too near 0.10).
+  // (0.275, 0.165), its Apollonian Cell Tunnel 0.091 (too near 0.10; 0.089
+  // with glow 1.4).
   apollonian_foam_flight: Object.freeze(['Knighty Foam Orbit', 'Apollonian Cell Tunnel', 'Kleinian Box Graze']),
   // Its Amazing Box Orbit: 0.212.
   folded_box_variants_flight: Object.freeze(['Amazing Box Orbit']),
@@ -91,13 +97,15 @@ export const PRESETS_LEFT_OUT = Object.freeze({
   // With no preset left it offers its colour schemes (LOOKS_LEFT_OUT).
   path_traced_fractal_flight: Object.freeze(['Glass Mandelbox Dive', 'Crystal Bulb Chamber', 'Mirror Menger Corridor', 'Void Caustic Shell Orbit']),
   // Slice 13, 2D Formula Lab: its Root Solver Bloom flips bands of its
-  // root basins (0.256 at 3x over 360 s of its clock, 0.144 still at 1x);
-  // its other looks 0.076 at most at 3x.
+  // root basins (0.256 at 3x over 360 s of its clock, 0.144 still at 1x;
+  // 0.256 at 3x with its colour cycling at 0.2); its other looks 0.076 at
+  // most at 3x.
   escape_time_lab: Object.freeze(['Root Solver Bloom']),
   // Fractal Flame Lab: its colours cycle through its palette, and four of
   // its palettes have a dark end; these four sit near black (under 0.05)
   // for 14 to 18 s of every cycle at the music's own pace, and with their
-  // colours held (LOOK_ADJUSTED) they stay dark throughout.
+  // colours held they stay dark throughout (with exposure 2 as well, under
+  // 0.05 for 28 to 120 s at a time over 120 s).
   fractal_flame_lab: Object.freeze(['Spherical Ember Cloud', 'Julia Veil Glass', 'Radial Streak Crown', 'Popcorn Texture Bloom']),
   // The near-black sweep (every look, 30 s at Medium on the graphics card):
   // Analytic Field Lab's Continued Portal under 0.05 for 16.7 s at a time
@@ -105,6 +113,13 @@ export const PRESETS_LEFT_OUT = Object.freeze({
   // Dive 2.6 s (the same at glow 2).
   analytic_field_lab: Object.freeze(['Continued Portal']),
   fractal_flame_volume_flight: Object.freeze(['Swirl Flame Dive']),
+  // DIFS Tunnel Flight starts on its Koch Vault Orbit (scenes.js
+  // defaults); the others fly into their surface at 1x over 360 s of its
+  // clock: Mandalay Deep Box 0.41, Torus Tube Push 0.16, Kaleido Column
+  // Graze 0.13. Koch Vault Orbit stays listed beside the start look, which
+  // has its values: with no preset left, the scene's four colour schemes
+  // would be offered as its looks instead (sceneLooks below).
+  difs_tunnel_flight: Object.freeze(['Mandalay Deep Box', 'Torus Tube Push', 'Kaleido Column Graze']),
 });
 
 /** Values the app sets on top of a look (by the look's name: a Psychedelia
@@ -123,6 +138,10 @@ export const LOOK_ADJUSTED = Object.freeze({
     'PDJ Chaos Silk': Object.freeze({ flame_color_speed: 0 }),
     'Rings Orbit Flame': Object.freeze({ flame_color_speed: 0 }),
   }),
+  // Mandelbrot's Neon and Ocean (0.105 and 0.112 at their own colour speed,
+  // 0.3) with their colours cycling at half that: 0.049 and 0.048 at its cap
+  // of 1.25x over 360 s of its clock, never under 0.05.
+  mandelbrot: Object.freeze({ Neon: Object.freeze({ color_speed: 0.15 }), Ocean: Object.freeze({ color_speed: 0.15 }) }),
   // Fluid Ink: its darker colour schemes sat under 0.05 for up to 17 s at
   // a time (Ink & Gold) at its own brightness; brighter, they stay over it.
   // Its Pastel is bright as it is. (scenes.js starts it at 1.6, so a

@@ -1,9 +1,21 @@
 /**
- * Held: overlay value drift. A few of an overlay's settings wander slowly
+ * Overlay value drift. A few of an overlay's settings wander slowly
  * around the value chosen, on the drift clock (drift.js: smooth, tempo
  * folded into DRIFT_BPM_RANGE, the swell setting the depth), inside the
- * range the shuffle draws them from. Released with
- * OVERLAY_VALUE_DRIFT_RELEASED once measured; numbers PROPOSED.
+ * range the shuffle draws them from, while slow drift is on.
+ *
+ * Measured (tests/helpers/visualizer-fx-check.py, the test machine's
+ * graphics card, 1504 x 797 at Medium), on and off, for every overlay
+ * below, over a whole drift cycle (51 s) at its deepest (1.4 x 1.15) and
+ * fastest clock, with the sheets' motion, each drifted setting from the
+ * middle of its range and the rest at their strongest, on Voronoi,
+ * Starfield and Plasma (78 runs): every setting stayed inside its range and
+ * went at most its depth from the value chosen (0.0966 of its range, 0.0483
+ * for the fastest wave); the largest step of the frame mean 0.0789 on and
+ * off alike (Plasma's own), at most 0.0019 above the same run without
+ * drift, no 3 Hz oscillation. Cost: none measurable (Figures 0.49 -> 0.56
+ * ms a frame on Medium and 0.55 -> 0.48 on High, Petal Mandala 2.37 ->
+ * 2.18 and 2.66 -> 2.57, within the runs' spread).
  *
  * Which settings: only sizes and spreads (OVERLAY_DRIFT_PARAMS), chosen by
  * hand. Never a speed or rate (the overlays turn time into motion by
@@ -21,8 +33,8 @@
 import { DRIFT_DEPTH, fxDriftPlan } from './drift.js';
 import { HELD_OVERLAY_ROWS, OVERLAY_QUALITY_LIMITS, overlayRow } from './overlay-catalog.js';
 
-export const OVERLAY_VALUE_DRIFT_RELEASED = false;
-/** Share of the range's span (PROPOSED; the effects' drift uses 0.1). */
+export const OVERLAY_VALUE_DRIFT_RELEASED = true;
+/** Share of the range's span (the effects' drift uses 0.1). */
 export const OVERLAY_DRIFT_DEPTH = 0.06;
 export const OVERLAY_DRIFT_PARAMS = Object.freeze({
   petals: Object.freeze(['size']),

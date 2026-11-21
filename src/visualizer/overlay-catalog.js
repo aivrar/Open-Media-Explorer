@@ -62,12 +62,32 @@
 
 import { OVERLAY_NEW_PATTERNS_RELEASED } from './overlay-patterns.js';
 
-/** Held: two more blend-ins, both calm by construction (fx-chain.js
+/** Two more blend-ins, both calm by construction (fx-chain.js
  *  OVERLAY_BLEND_SRC): Lighten (each channel the brighter of the scene and
  *  the overlay: never more light than Screen adds) and Colour (the overlay's
  *  hue and saturation on the scene's own luminance: no change of light at
- *  all). Added after the others; nothing renumbered. PROPOSED. */
-export const OVERLAY_EXTRA_BLENDS_RELEASED = false;
+ *  all). Added after the others; nothing renumbered.
+ *  Measured (tests/helpers/visualizer-fx-check.py, the test machine's
+ *  graphics card, 1504 x 797 at Medium, 10 s each) with the overlays that
+ *  light the most (Stage Lights, Fireworks, Lasers, Bokeh, Tron Hex Grid,
+ *  Triangle Grid, Starburst) and Strobe at their strongest:
+ *  - Without effects (156 runs the tab draws: on top, and set to go under
+ *    the effects with none drawn, with the mask, tint and bending together,
+ *    on Voronoi, Starfield and Plasma): the largest step of the frame mean
+ *    0.0667 (Lighten) and 0.0670 (Color), Plasma's own 0.0669; Lighten at
+ *    most 0.026 above the scene's own (Bokeh on Starfield), Color 0.0001;
+ *    Color moved the mean by 0.0002 at most; no 3 Hz oscillation.
+ *  - Under Mirror and Swirl at Strong (32 runs, Voronoi and Starfield),
+ *    against the scene with the same effects: Lighten at most 0.034 above
+ *    its step (Fireworks on Starfield, 0.0216 -> 0.0556), Color never above
+ *    it; the largest step 0.0946 (Color, Tron Hex Grid on Voronoi, where the
+ *    effects' own is 0.0953); the mean moved by 0.084 at most with Lighten
+ *    (Tron Hex Grid on Starfield) and 0.0248 with Color (Strobe on
+ *    Voronoi); no 3 Hz oscillation.
+ *  Cost no more than Screen's (Pulse Rings blended in on Tunnel, Medium and
+ *  High: 0.06 to 0.10 ms a frame and 0.05 to 0.08 ms its upload; Screen
+ *  0.11 and 0.12 ms). */
+export const OVERLAY_EXTRA_BLENDS_RELEASED = true;
 export const OVERLAY_EXTRA_BLENDS = Object.freeze(['lighten', 'colour']);
 
 /** How the overlay is put on the picture. 'add' is Psychedelia's (the canvas
@@ -96,20 +116,27 @@ const PALETTE = Object.freeze({
 });
 const COLOR_MODE = Object.freeze({ pick: [0, 1, 2] });
 
-/** Held: three more of ours (overlay-patterns.js HELD_OVERLAY_PATTERNS),
- *  steady and calm: the soft blends only. Costs PROPOSED (light, as the
- *  others of ours), to be measured. */
+/** Three more of ours (overlay-patterns.js HELD_OVERLAY_PATTERNS; the names
+ *  are kept from before their release), steady and calm: the soft blends
+ *  only. Their flash check is in overlay-patterns.js. Cost (each alone on
+ *  Tunnel at its strongest, 10 s three times over, the measuring's wait
+ *  taken out): Ripples 0.52 ms a frame on Medium and 0.69 on High (light);
+ *  Orbits 1.24 and 1.18 (medium: over 1 ms); Fireflies 2.48 and 3.43
+ *  (medium: its dots are filled arcs, as Petal Mandala's 2.37 and 2.66). As
+ *  a share of one core at 30 frames a second, over Tunnel alone (0.058 on
+ *  Medium, 0.081 on High): Ripples +0.06 and +0.05, Orbits +0.11 and +0.06,
+ *  Fireflies +0.12 and +0.14. */
 export const HELD_OVERLAY_ROWS = Object.freeze({
   ripples: {
     label: 'Ripples', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
     pins: {}, auto: {}, ranges: { size: [0.5, 1], speed: [0.4, 1.4] },
   },
   fireflies: {
-    label: 'Fireflies', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
+    label: 'Fireflies', source: 'ours', category: 'Ours', cost: 'medium', flash: 'steady', blends: SOFT, under: true, shuffle: true,
     pins: {}, auto: {}, ranges: { size: [0.4, 1], speed: [0.4, 1.4] },
   },
   orbits: {
-    label: 'Orbits', source: 'ours', category: 'Ours', cost: 'light', flash: 'steady', blends: SOFT, under: true, shuffle: true,
+    label: 'Orbits', source: 'ours', category: 'Ours', cost: 'medium', flash: 'steady', blends: SOFT, under: true, shuffle: true,
     pins: {}, auto: {}, ranges: { size: [0.5, 1], speed: [0.4, 1.4] },
   },
 });
@@ -117,7 +144,11 @@ export const HELD_OVERLAY_ROWS = Object.freeze({
 export const OVERLAY_TABLE = Object.freeze({
   /* ---- Light Show (Psychedelia) ---- */
   lasers: {
-    label: 'Lasers', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true,
+    // Not under the effects: under Mirror (Kaleidoscope) and Swirl at Strong
+    // its beams, copied round the picture, stepped by 0.152 (Screen), 0.148
+    // (Lighten) and 0.147 (Add) on Starfield and by 0.108 (Difference) and
+    // 0.105 (Multiply) on Voronoi (the effects alone 0.021 and 0.095).
+    label: 'Lasers', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: false, shuffle: true,
     // Drawn as beams with their own glow (overlay-layer.js laserBeam): 1.1
     // to 1.3 ms a frame on Medium and High, less than as Psychedelia's lines
     // (1.8 to 4.1). Its own glow stays off: a shadow blur for every beam.
@@ -129,7 +160,10 @@ export const OVERLAY_TABLE = Object.freeze({
     },
   },
   spotlights: {
-    label: 'Stage Lights', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true, anchored: true,
+    // Not under the effects: under Mirror (Kaleidoscope) and Swirl at Strong
+    // its beams stepped by 0.105 (Screen) and 0.104 (Add, Lighten) on
+    // Starfield (the effects alone 0.021).
+    label: 'Stage Lights', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: false, shuffle: true, anchored: true,
     pins: {},
     auto: { spot_sync: 4 },
     ranges: {
@@ -140,13 +174,21 @@ export const OVERLAY_TABLE = Object.freeze({
   lightning: {
     // A sky flash lights the whole picture: kept to Add and Screen, low, and
     // left to a choice by hand (as Psychedelia keeps it out of its shuffle).
-    label: 'Lightning', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: Object.freeze(['add', 'screen']), under: true, shuffle: false, anchored: true,
+    // Not under the effects: under Mirror (Kaleidoscope) alone at Strong its
+    // bolts, copied round the picture, stepped by 0.115 (Screen) and 0.108
+    // (Add) on Voronoi (the effect alone 0.102) and by 0.091 and 0.090 on
+    // Starfield (the effect alone 0.022).
+    label: 'Lightning', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: Object.freeze(['add', 'screen']), under: false, shuffle: false, anchored: true,
     pins: { bolt_flash: 0.2 },
     auto: { bolt_sync: 2 },
     ranges: { bolt_sync: { pick: [1, 2, 5] } },
   },
   fireworks: {
-    label: 'Fireworks', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true,
+    // Not under the effects: under Mirror (Kaleidoscope) and Swirl at Strong
+    // its bursts, copied round the picture, stepped by 0.191 (Screen), 0.187
+    // (Lighten) and 0.187 (Add) on Starfield and 0.118 (Screen) on Voronoi
+    // (the effects alone 0.021 and 0.095).
+    label: 'Fireworks', source: 'psychedelia', category: 'Light show', cost: 'medium', flash: 'trigger', blends: ALL, under: false, shuffle: true,
     pins: {},
     auto: { fw_sync: 5 },
     ranges: {
@@ -238,10 +280,11 @@ export const OVERLAY_TABLE = Object.freeze({
   bokeh: {
     // Its flares (35% of the lights, up to 2.4 times as bright, on a hit) are
     // its steps of light. At its strongest here (32 lights, opacity 0.45):
-    // 0.065 at most over plain, every mode over and under, the masks, tint
-    // and bend on Voronoi, Starfield, Islamic Stars and Plasma (0.046 on
-    // Starfield plain; Plasma's own steps are 0.062). 40 lights at 0.5 gave
-    // 0.093 (Starfield, Screen, under the effects).
+    // 0.065 at most over plain, every mode on top, the masks, tint and bend
+    // on Voronoi, Starfield, Islamic Stars and Plasma (0.046 on Starfield
+    // plain; Plasma's own steps are 0.062). Under Mirror (Kaleidoscope) and
+    // Swirl at Strong: 0.057 on Starfield (Screen; the effects alone 0.021)
+    // and 0.095 at most on Voronoi (the effects alone 0.095), every mode.
     label: 'Bokeh Lights', source: 'psychedelia', category: 'Atmosphere', cost: 'medium', flash: 'trigger', blends: ALL, under: true, shuffle: true,
     pins: {},
     auto: { bk_sync: 1 },
@@ -289,8 +332,10 @@ export const OVERLAY_TABLE = Object.freeze({
     // OVERLAY_SPECTRUM_RISE_PER_S (overlay-layer.js): 0.023 at most on
     // Voronoi, Starfield and Islamic Stars over plain, every mode over and
     // under, the masks, tint and bend (0.064 on Plasma, whose own steps are
-    // 0.062).
-    label: 'Spectrum', source: 'psychedelia', category: 'Audio', cost: 'light', flash: 'steady', blends: ALL, under: true, shuffle: true, anchored: true,
+    // 0.062). Not under the effects: under Mirror (Kaleidoscope) alone at
+    // Strong its bars, copied round the picture, stepped by 0.112 (Add,
+    // Screen, Lighten) on Starfield (the effect alone 0.022).
+    label: 'Spectrum', source: 'psychedelia', category: 'Audio', cost: 'light', flash: 'steady', blends: ALL, under: false, shuffle: true, anchored: true,
     pins: { spectrum_smoothing: 0.75, spectrum_glow: 0 },
     auto: {},
     ranges: {
@@ -411,15 +456,26 @@ export const OVERLAY_GLOW_PARAMS = Object.freeze({
 });
 export const OVERLAY_GLOW_SCALE = Object.freeze({ high: 0, medium: 0, low: 0 });
 
-/** Held: "Extra glow", a switch in the panel (off by default). Every sheet
+/** "Extra glow", a switch in the panel (off by default). Every sheet
  *  without a line overlay's halo (OVERLAY_HALO_IDS) gets the same halo pass
  *  (overlay-layer.js halo), at `near` and `wide` per quality (null: none).
  *  It moves light rather than adding it: before the glow is laid on, the
  *  sheet itself is faded by the glow's share (near x (1 + wide)), so the
  *  sheet's mean light stays as it was (up to the glow spreading it onto
- *  nearby pixels). Its cost: the halo's, about 0.6 to 1.5 ms a frame, to be
- *  measured. Numbers PROPOSED. */
-export const OVERLAY_EXTRA_GLOW_RELEASED = false;
+ *  nearby pixels).
+ *  Measured (tests/helpers/visualizer-fx-check.py, the test machine's
+ *  graphics card, 10 s each), on and off, with Stage Lights, Fireworks,
+ *  Lasers, Bokeh, Triangle Grid, Starburst, Strobe, Ripples, Fireflies and
+ *  Orbits at their strongest, plain and blended in (Screen) at Medium
+ *  (1504 x 797) and plain at High (2005 x 1063), on Voronoi, Starfield and
+ *  Plasma (178 runs the tab draws): the largest step of the frame mean
+ *  0.0669 with it as without it, at most 0.0003 above the same run without
+ *  it, the mean never higher (0.0010 lower at most), no 3 Hz oscillation.
+ *  Cost (on Tunnel, 10 s three times over): Petal Mandala 2.37 -> 3.27 ms a
+ *  frame on Medium and 2.66 -> 3.86 on High, Stage Lights 1.83 -> 2.21 and
+ *  1.95 -> 2.72, Ripples 0.52 -> 1.71 and 0.69 -> 2.06; as a share of one
+ *  core at 30 frames a second, +0.02 to +0.08. None at Low. */
+export const OVERLAY_EXTRA_GLOW_RELEASED = true;
 /** The glow's share of the sheet's light (and what the sheet gives up). */
 export const extraGlowShare = (look) => (look ? look.near * (1 + (look.wide || 0)) : 0);
 export const OVERLAY_EXTRA_GLOW = Object.freeze({
@@ -464,25 +520,35 @@ export const OVERLAY_LINE_PARAMS = Object.freeze({
   spectrum: Object.freeze(['spectrum_thickness']),
 });
 
-/** Held: Psychedelia's overlay sizes in pixels follow the picture's height
+/** Psychedelia's overlay sizes in pixels follow the picture's height
  *  by the rule our own patterns use (overlay-patterns.js lineScale), which is
  *  also Psychedelia's own rule now (its pixel sizes x the canvas height /
  *  720): one unit is a 720th of the picture's height, and never less than
  *  one of the picture's pixels (a picture under 720 lines keeps today's
  *  sizes). A width is then the same share of the screen at every quality and
- *  window size. Today one unit is one of the picture's pixels, so the same
- *  width is a smaller share of the screen at High than at Low.
+ *  window size. Switched off, one unit is one of the picture's pixels, so
+ *  the same width is a smaller share of the screen at High than at Low.
  *  Switched on, in a 1920 x 1080 window (pictures 531, 797 and 1063 lines
  *  high), the OVERLAY_LINE_PARAMS widths on the screen: Low as now, Medium
  *  x 1.11, High x 1.48. Particles' Size (OVERLAY_SIZE_720_PARAMS), not
- *  scaled at all today, then follows the same rule: on the plain sheet
+ *  scaled at all with it off, then follows the same rule: on the plain sheet
  *  smaller dots on Low and Medium (x 0.68 and x 0.71), about the same on
  *  High (x 0.96); blended in (a smaller sheet) about half the size at each.
  *  Not changed: Lasers (their own rule, per 1080 lines of the sheet) and the
  *  overlays that already scale by 720 themselves (3D Laser Room, Matrix, Hex
- *  Grid, Sacred Geometry, Image and Lyrics glow). */
-export const OVERLAY_SIZE_720_RELEASED = false;
-/** Sizes in pixels that are not scaled at all today, scaled with the switch. */
+ *  Grid, Sacred Geometry, Image and Lyrics glow).
+ *  Measured with and without it (tests/helpers/visualizer-fx-check.py, the
+ *  test machine's graphics card, 10 s each): the six overlays above and
+ *  Particles at their strongest, plain and with every blend-in they allow,
+ *  at Medium (1504 x 797) and High (2005 x 1063), on Voronoi, Starfield and
+ *  Plasma (232 runs the tab draws): the largest step of the frame mean
+ *  0.0678 with it as without it (Spectrum on Plasma, the scene's own), no
+ *  3 Hz oscillation; the mean moved by at most 0.003 (Particles, Screen, on
+ *  Starfield). Cost (each alone on Tunnel, 10 s three times over): within
+ *  the runs' spread except Plexus at High, 2.22 -> 3.05 ms a frame (still
+ *  medium); as a share of one core at 30 frames a second, -0.02 to +0.03. */
+export const OVERLAY_SIZE_720_RELEASED = true;
+/** Sizes in pixels that are not scaled at all with the switch off, scaled with it on. */
 export const OVERLAY_SIZE_720_PARAMS = Object.freeze({
   particles: Object.freeze(['particle_size']),
 });
@@ -496,7 +562,7 @@ export function overlaySizedParams(id, size720 = OVERLAY_SIZE_720_RELEASED) {
 }
 
 /** What a pixel-size setting is multiplied by on a sheet `sheetHeight`
- *  pixels high over a picture `pictureHeight` pixels high: held, the sheet's
+ *  pixels high over a picture `pictureHeight` pixels high: switched off, the sheet's
  *  share of the picture (at most 1); with the switch, the sheet's height /
  *  min(720, the picture's height). 1 when either is unknown. */
 export function overlaySizeUnit(sheetHeight, pictureHeight, size720 = OVERLAY_SIZE_720_RELEASED) {
@@ -603,6 +669,20 @@ export function parseOverlayToken(token) {
       mode: LETTER_MODE[match[2]], under: match[3] === 'u', mask: match[4] === 'b' ? 'bright' : (match[4] === 'k' ? 'dark' : 'none'), tint: match[5] === 't', bend: match[6] === 'n',
     },
   };
+}
+
+const SAVED_ID = /^([a-z][a-z0-9_]{0,23})~/;
+
+/** { id, blend } of a saved token (settings, favourites), or null. A
+ *  blend-in this build cannot read (a letter from a later build) is left
+ *  out: the overlay is read as drawn plain on top, the blend most allowed
+ *  everywhere. An id this build does not have is read as it is, and
+ *  overlaysDrawnFor drops that overlay alone. */
+export function readOverlayToken(token) {
+  const parsed = parseOverlayToken(token);
+  if (parsed) return parsed;
+  const id = typeof token === 'string' ? SAVED_ID.exec(token) : null;
+  return id ? { id: id[1], blend: { ...PLAIN_BLEND } } : null;
 }
 
 /** The overlays as `entry` (a scenes.js row) draws them, from a chosen list

@@ -11,15 +11,17 @@ The **Visualizer** tab, **Add as: Auto**, **Move to bottom**, **Remove all
 favorites** and the list of pictures that were not used require v0.1.11 or
 newer. Starred songs, **Rename** for favorites, dragging favorites in **My
 order**, `.json` and `.csv` import, **Pick the best stream** and **Processor
-use** require v0.1.12 or newer.
+use** require v0.1.12 or newer. The **Now Playing** tab, the "!" mark on a
+station that did not play, **Choose picture…** and dropping a picture on a
+station's card require v0.1.13 or newer.
 
 ## Window layout
 
 The top bar is shared by every mode:
 
 - **World Media** opens the current view.
-- **Library**, **Tuner**, **Grid**, **Discovery**, **Visualizer**, and **About**
-  switch modes.
+- **Library**, **Tuner**, **Grid**, **Discovery**, **Now Playing**,
+  **Visualizer**, and **About** switch modes.
 - The **Sleep** control starts or cancels the sleep timer.
 - The musical note opens the **Song log**.
 - The gear opens **Settings**.
@@ -39,7 +41,12 @@ volume is at zero. Point at the volume slider to see the volume as a
 percentage: it starts at 80%, and 100% is full volume (there is no boost).
 When a radio station sends the title of its current song, the bar shows it
 under the station name with a note sign, and a star beside it stars that song;
-see **Song log** below.
+see **Song log** below. The song is shown larger and brighter than the rest of
+the line, and both the song and the station name grow with the window on large
+screens (the song from 14 px in a 1024 px wide window to 22 px in one about
+2,800 px wide or wider).
+A title too long for the bar ends in an ellipsis; point at it to read all of
+it. The Tuner dial's station name grows with the window the same way.
 
 The **sound meter** is a row of small LED-style bars beside **EQ** that move
 with the sound, so you can see that a station is really playing. It has 14 bars,
@@ -297,11 +304,13 @@ In **Favorites**, the **Sort** buttons choose how the list is shown.
   or the search box is hiding some favorites, up and down swap the card with
   the next favorite you can see, and the top and bottom buttons put the card
   before or after all the others.
-- In **My order** you can also drag a card with the mouse and drop it on
-  another card: dropped toward its top left, it goes before that card; toward
-  its bottom right, after it. A colored edge on the top and left, or on the
-  bottom and right, of that card shows where it will go. With a type button,
-  a category or the search box hiding some favorites, only the cards you can
+- In **My order** you can also drag a card with the mouse and drop it
+  anywhere on another card: it takes that card's place, and the cards in
+  between move up or down by one. A colored edge shows where it will go: on
+  the top and left of that card when you move a card up the list, on the
+  bottom and right when you move it down. Letting go in a gap between cards,
+  or on the card you are dragging, changes nothing. With a type button, a
+  category or the search box hiding some favorites, only the cards you can
   see change places; the hidden ones keep theirs.
   Dragging a playlist file onto the window is never taken for a move. The
   **Move** buttons do the same from the keyboard.
@@ -352,6 +361,29 @@ group in the favorites `.m3u8` files. Categories are kept in
 `profile-preferences-extra.json` beside `profile-preferences.json`, so an older
 version of World Media still reads your favorites (without their categories).
 **Clear local cache** removes them with the rest of your favorites.
+
+### Did not play last time
+
+When the last try to play a favorite or a My Playlists station failed (none of
+its streams worked, or the last of them did not begin within 30 seconds), its
+Library card and its card in the Tuner strip show a small red **!**. Point at
+it, or open the detail panel, to read "Did not play last time (date). It is
+tried again when you play it." The mark never stops you: press Play as usual,
+and it goes as soon as the station plays. Stopping a station, choosing another
+one before it starts, a start Windows or the browser holds back until you
+press Play, or closing the app does not count as a failure. A station with
+more than one stream is only judged once every stream has had its turn.
+
+A failure caused by your connection, not the station, is not marked either.
+Nothing is marked while Windows reports no connection, or when the station's
+address could not be looked up at all. When a station could not be reached,
+World Media marks it only if something on the internet answered within the
+last minute, or if a small check (Radio Browser's short statistics page, at
+most once every 30 seconds) gets an answer; otherwise nothing is marked. The
+check never holds up a play. A result still waiting for the check is dropped
+if that station plays meanwhile, if you clear the cache, or after two minutes. Stations you have not saved are not marked. The
+marks are kept only on this computer, at most 2,000 of them, are not part of
+a backup, and **Clear local cache** removes them.
 
 ### Remove all favorites
 
@@ -452,12 +484,36 @@ attempts. A provider that is slow or unavailable does not block the other
 providers indefinitely. Discovery is not a guarantee of uniqueness across all
 time; it is a fresh candidate selection from current provider data.
 
+## Now Playing
+
+**Now Playing** shows whatever plays now, large: the station or item picture
+(your own station picture when you have one, else its artwork, else the same
+initials tile the cards show), its name (your own name for a renamed favorite,
+with the original name under it) and, for a favorite, its category. A star
+beside the name adds it to or removes it from your favorites. For radio and
+other live audio, the song announced is shown in large type, with the same star as
+the player bar (shown only when the title looks like a song) and **Copy**;
+when the station announces no title, the tab says so. **Stream details** lists
+what the app already knows: the source, the type, the format and bitrate of
+the stream that plays, the **Better stream** line of **Pick the best stream:
+Auto**, the country and language when the item has them, and how long it has
+played (only time with sound counts, not connecting or buffering; a pause is
+marked). Below the song a large
+copy of the sound meter moves with the sound (the setting **Sound meter in the
+player bar** switches only the small one); like the small one, it rests with
+flat bars when there is no sound to show, and it stays still when Windows is set
+to show fewer animations. The background is a blurred, dimmed copy of the
+picture. Play, pause and stop stay in the player bar, and a TV channel or video
+keeps playing in its own square. With nothing playing, the tab says so and
+offers the Library and the Tuner. Nothing in the tab runs while it is closed.
+
 ## Visualizer
 
 The Visualizer shows pictures that move with the sound of whatever is playing:
-99 scenes, post effects, overlays, a shuffle, and favorites of its own. It
+103 scenes, post effects, overlays, a shuffle, and favorites of its own. It
 shows moving, flashing pictures, so a notice about photosensitivity comes first.
-It loads only when you open the tab and costs nothing while the tab is closed.
+It loads only when you open the tab and costs nothing while the tab is closed,
+unless you turned on the setting that shows it behind the Tuner.
 It has its own page: [Visualizer](09-visualizer.md).
 
 ## About
@@ -484,6 +540,10 @@ restart; the local server port is explicitly marked **for next launch**.
   each station's picture on its card under the Tuner dial. Updates immediately.
 - **Sound meter in the player bar:** on by default. Shows the small bars beside
   EQ that move with the sound. Updates immediately.
+- **Show the Visualizer behind the Tuner:** off by default. While sound plays,
+  the Visualizer is drawn faintly behind the Tuner, without overlays or
+  effects, once its notice about flashing has been accepted in the Visualizer
+  tab. See [Visualizer](09-visualizer.md).
 - **Show technical source details:** off by default. Turn it on to see the
   per-source status words (Pull, Wait, Done, Live, Stale), boxed source badges,
   and license notes on cards.
@@ -730,6 +790,27 @@ line says how many pictures were found and why any were ignored, for example
   beside it stays plain.
 - Only plain files directly in the folder are used. Subfolders, shortcuts and
   links are ignored.
+
+You can also give a favorite or a My Playlists station a picture without
+opening the folder. In the station's detail panel (where **Rename** is), press
+**Choose picture…** and pick a PNG, JPG, WebP or GIF file of up to 2 MB, or
+drop one picture file on the station's card in **Favorites** or **My
+Playlists**. World Media checks the picture exactly as it checks the folder
+(an SVG or a file that is not really a picture is refused, with the reason),
+then saves a copy in the `station-images` folder, named after the station by
+the rules above. For example, `Nu-Metal/Alternative` gets
+`Nu-Metal-Alternative.png`. A renamed favorite's picture is named after the
+station's own name. If a file is already there for the station, you are asked
+before it is replaced, and the question names it, for example "The file
+AC-DC.png is already there. Replace it?". The new picture shows at once on the
+cards, the Tuner and the player bar. **Remove picture**, shown while the
+station has a picture of its own, asks first, naming the file or files it will
+delete, and then deletes only those files from the folder. For a renamed
+favorite whose picture is named after your name for it, that one file is the
+one named and deleted. File names are always shown in full. If more than 20
+files in the folder belong to one station, nothing is replaced or deleted and
+a message asks you to tidy the folder by hand first. A picture dropped anywhere else changes nothing; a message says where to
+drop it. A playlist file dropped on the window is still imported as before.
 
 Under the status line, **Pictures to check** lists the files in the folder that
 need a look, each as the file name and the reason. It shows up to ten lines and

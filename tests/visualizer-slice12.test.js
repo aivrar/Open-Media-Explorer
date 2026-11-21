@@ -151,7 +151,7 @@ test('the chain binds the pass\'s palette to its own texture unit, once per pale
 const BACK = Object.freeze([
   'apollonian_foam_flight', 'folded_box_variants_flight', 'mandelbox_flight', 'triplex_mutation_flight', 'path_traced_fractal_flight',
 ]);
-const STILL_HELD = Object.freeze(['hypercomplex_slice_flight', 'difs_tunnel_flight', 'quaternion_julia_flight']);
+const STILL_HELD = Object.freeze(['hypercomplex_slice_flight']);
 const FADED = Object.freeze({
   apollonian_foam_flight: 'foamDE', folded_box_variants_flight: 'foldedBoxDE', mandelbox_flight: 'mandelboxDE',
 });

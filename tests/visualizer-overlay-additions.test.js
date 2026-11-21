@@ -21,6 +21,7 @@ import { MOOD_STRENGTH } from '../src/visualizer/mood.js';
 import { createFlashGate, createOverlayLayer } from '../src/visualizer/overlay-layer.js';
 import { Fake2D, FakeNodeEl } from './helpers/visualizer-fakes.js';
 import { patternLight } from './helpers/overlay-light.js';
+import { normalizeVisualizerOverlaySet, parseVisualizerFavourite } from '../src/lib/visualizer-settings.js';
 
 const LUMA = [0.2126, 0.7152, 0.0722];
 const luma = (c) => LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
@@ -28,25 +29,60 @@ let seed = 7;
 const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 const colour = () => [random(), random(), random()];
 
-test('held: every addition is off, and what is offered and drawn is as before', () => {
-  assert.equal(OVERLAY_EXTRA_BLENDS_RELEASED, false);
-  assert.equal(OVERLAY_NEW_PATTERNS_RELEASED, false);
-  assert.equal(OVERLAY_EXTRA_GLOW_RELEASED, false);
-  assert.equal(OVERLAY_VALUE_DRIFT_RELEASED, false);
-  assert.deepEqual(OVERLAY_BLENDS, ['add', 'screen', 'multiply', 'soft', 'difference']);
-  assert.equal(OVERLAY_TOKEN, '[a-z][a-z0-9_]{0,23}(?:~[asmod]u?[bk]?t?n?)?');
-  assert.equal(parseOverlayToken('petals~l'), null, 'a held mode is not read back');
-  for (const id of Object.keys(HELD_OVERLAY_ROWS)) {
-    assert.ok(!OVERLAY_IDS.includes(id), id);
-    assert.equal(overlayRow(id), null);
-    assert.ok(!(id in OVERLAY_PATTERNS));
+test('released: every addition is on, added after what was there (nothing renumbered or replaced)', () => {
+  assert.equal(OVERLAY_EXTRA_BLENDS_RELEASED, true);
+  assert.equal(OVERLAY_NEW_PATTERNS_RELEASED, true);
+  assert.equal(OVERLAY_EXTRA_GLOW_RELEASED, true);
+  assert.equal(OVERLAY_VALUE_DRIFT_RELEASED, true);
+  assert.deepEqual(OVERLAY_BLENDS, ['add', 'screen', 'multiply', 'soft', 'difference', 'lighten', 'colour']);
+  assert.equal(OVERLAY_TOKEN, '[a-z][a-z0-9_]{0,23}(?:~[asmodlc]u?[bk]?t?n?)?');
+  assert.deepEqual(parseOverlayToken('petals~l'), { id: 'petals', blend: { ...PLAIN_BLEND, mode: 'lighten' } });
+  assert.deepEqual(parseOverlayToken('ripples~cu'), { id: 'ripples', blend: { ...PLAIN_BLEND, mode: 'colour', under: true } });
+  // The tokens saved before keep their meaning.
+  assert.deepEqual(parseOverlayToken('petals~d'), { id: 'petals', blend: { ...PLAIN_BLEND, mode: 'difference' } });
+  // The new patterns after every overlay there was, in this order.
+  const added = Object.keys(HELD_OVERLAY_ROWS);
+  assert.deepEqual(added, ['ripples', 'fireflies', 'orbits']);
+  assert.deepEqual(OVERLAY_IDS.slice(-3), added);
+  assert.equal(OVERLAY_IDS.indexOf('color_strobe'), OVERLAY_IDS.length - 4);
+  for (const id of added) {
+    assert.equal(overlayRow(id), HELD_OVERLAY_ROWS[id]);
+    assert.equal(OVERLAY_PATTERNS[id], HELD_OVERLAY_PATTERNS[id]);
   }
-  assert.doesNotMatch(OVERLAY_BLEND_SRC, /colourBlend|u_mode > 4\.5/);
-  assert.match(OVERLAY_BLEND_SRC, /\n {4}if \(u_mode > 3\.5\) b = abs\(s - c\);/);
+  // Their cost classes as measured (Orbits and Fireflies over 1 ms a frame on Medium).
+  assert.deepEqual(added.map((id) => overlayRow(id).cost), ['light', 'medium', 'medium']);
+  assert.match(OVERLAY_BLEND_SRC, /colourBlend/);
+  assert.match(OVERLAY_BLEND_SRC, /\n {4}else if \(u_mode > 3\.5\) b = abs\(s - c\);/);
   const index = readFileSync('src/visualizer/index.js', 'utf8');
   assert.match(index, /ovGlowField\.field\.hidden = !OVERLAY_EXTRA_GLOW_RELEASED;/);
   assert.match(index, /const extraGlowNow = \(\) => OVERLAY_EXTRA_GLOW_RELEASED && overlayGlowOn;/);
   assert.match(index, /if \(OVERLAY_VALUE_DRIFT_RELEASED\) overlayLayer\.drift\(driftState\.bars, overlayDepth\);/);
+});
+
+test('the settings keep the new blend-ins as chosen, in the overlay set and in favorites', () => {
+  for (const token of ['plexus~l', 'ripples~cu', 'petals~lbtn', 'orbits~c']) {
+    assert.ok(parseOverlayToken(token), token);
+    assert.deepEqual(normalizeVisualizerOverlaySet([token]), [token], `${token} kept`);
+  }
+  assert.deepEqual(parseVisualizerFavourite('plasma:2|mirror/ripples~cu+petals~l').overlays, ['ripples~cu', 'petals~l']);
+  // Every mode the catalog offers has a letter the settings keep.
+  for (const mode of OVERLAY_BLENDS) {
+    const token = `rings~${mode === 'add' ? 'au' : ({ screen: 's', multiply: 'm', soft: 'o', difference: 'd', lighten: 'l', colour: 'c' })[mode]}`;
+    assert.ok(parseOverlayToken(token), token);
+    assert.deepEqual(normalizeVisualizerOverlaySet([token]), [token], `${mode} kept by the settings`);
+  }
+});
+
+test('switched off again, each addition leaves what was there before', () => {
+  // The blend shader without the added modes is the one before them.
+  assert.doesNotMatch(overlayBlendSource({ extraBlends: false }), /colourBlend|u_mode > 4\.5/);
+  assert.match(overlayBlendSource({ extraBlends: false }), /\n {4}if \(u_mode > 3\.5\) b = abs\(s - c\);/);
+  // The switches are read where they gate (one place each).
+  const catalog = readFileSync('src/visualizer/overlay-catalog.js', 'utf8');
+  assert.match(catalog, /\.\.\.\(OVERLAY_EXTRA_BLENDS_RELEASED \? OVERLAY_EXTRA_BLENDS : \[\]\)\]\);\r?\n/);
+  assert.match(catalog, /\.\.\.\(OVERLAY_NEW_PATTERNS_RELEASED \? HELD_OVERLAY_ROWS : \{\}\),/);
+  const patterns = readFileSync('src/visualizer/overlay-patterns.js', 'utf8');
+  assert.match(patterns, /\.\.\.\(OVERLAY_NEW_PATTERNS_RELEASED \? HELD_OVERLAY_PATTERNS : \{\}\),/);
 });
 
 test('the new blend-ins: added after the others, nothing renumbered; calm (not lively); full strength', () => {
@@ -82,15 +118,16 @@ test('Lighten never adds more light than Screen; Colour keeps the scene\'s luma 
   assert.ok(red[0] > red[1] + 0.1);
 });
 
-test('the shader takes the new modes only once released, the same steps as the CPU version', () => {
+test('the shader takes the new modes while released, the same steps as the CPU version', () => {
   const released = overlayBlendSource({ extraBlends: true });
-  assert.equal(overlayBlendSource({ extraBlends: false }), OVERLAY_BLEND_SRC);
+  assert.equal(released, OVERLAY_BLEND_SRC);
+  const before = overlayBlendSource({ extraBlends: false });
   assert.match(released, /vec3 colourBlend\(vec3 s, vec3 c\) \{\n {4}float y = luma\(s\);\n {4}vec3 d = c - vec3\(luma\(c\)\);/);
   assert.match(released, /return vec3\(y\) \+ d \* max\(k, 0\.0\);/);
   assert.match(released, / {4}if \(u_mode > 5\.5\) b = colourBlend\(s, c\);\n {4}else if \(u_mode > 4\.5\) b = max\(s, c\);\n {4}else if \(u_mode > 3\.5\) b = abs\(s - c\);/);
   // Only that changes.
   const strip = (src) => src.split('\n').filter((line) => !/colourBlend|u_mode > [345]\.5|float y = luma|vec3 d = c - |float k = 1|if \(d\.[rgb]|return vec3\(y\)|^\}$/.test(line));
-  assert.deepEqual(strip(released), strip(OVERLAY_BLEND_SRC));
+  assert.deepEqual(strip(released), strip(before));
 });
 
 test('the new patterns follow our patterns\' rules: time-based, counts by quality, no shadow, nothing full-screen', () => {
@@ -195,6 +232,39 @@ test('Extra glow on the layer: off, nothing; on, one halo pass on a sheet withou
   rig.layer.render(1.09, 0.03, {});
   assert.equal(rig.layer.stats.halos, 2);
   assert.equal(rig.top.context2d.count('fillRect'), before);
+  rig.layer.destroy();
+});
+
+test('the halo pass makes no array, closure or iterator a frame; its three levels are made once and halved each time', () => {
+  const source = readFileSync('src/visualizer/overlay-layer.js', 'utf8').replace(/\r\n/g, '\n');
+  const start = source.indexOf('  function halo(sheet, ctx) {');
+  const body = source.slice(start, source.indexOf('\n  }\n', start));
+  assert.ok(start > 0 && body.includes('stats.halos += 1;'));
+  // The one line that makes the levels runs once per sheet.
+  const perFrame = body.split('\n').filter((line) => !line.includes('if (!sheet.halo) sheet.halo = ') && !line.trim().startsWith('//'));
+  for (const line of perFrame) {
+    // No arrow function, array literal, array method or for...of.
+    assert.doesNotMatch(line, /=>|(=|\(|,|return)\s*\[|\.(push|map|some|filter|forEach|every|find)\(|for \(const |for \(let [a-z]+ of |const \[|let \[/, line.trim());
+  }
+  assert.match(source, /\nfunction makeHaloLevel\(level, from\) \{/);
+  // Sizes as before: each level half the one before, rounded up.
+  const rig = layerRig();
+  rig.layer.resize(1001, 501, 'high');
+  rig.layer.setExtraGlow(true);
+  rig.layer.set([item('petals')], { now: true });
+  rig.layer.render(1, 0.03, {});
+  rig.layer.render(1.03, 0.03, {});
+  assert.equal(rig.layer.stats.halos, 2);
+  assert.equal(rig.made.length, 3, 'made once');
+  const top = rig.top;
+  const sizes = rig.made.map((canvas) => [canvas.width, canvas.height]);
+  const expected = [];
+  for (let w = top.width, h = top.height, i = 0; i < 3; i += 1) {
+    w = Math.max(1, Math.ceil(w / 2));
+    h = Math.max(1, Math.ceil(h / 2));
+    expected.push([w, h]);
+  }
+  assert.deepEqual(sizes, expected);
   rig.layer.destroy();
 });
 

@@ -89,7 +89,8 @@ function verifiedState(item, settings, playing, now = Date.now()) {
  *  now on: while it plays on the verified stream it switches back at once;
  *  before that (verified, used from the next start) nothing restarts. null
  *  when there is no line (Listed streams, Off, or not a Radio Browser
- *  station). */
+ *  station). `focusAfterUse` returns the control to focus once that button
+ *  has gone (default: the details panel's first action). */
 export function createBestStreamStatus(item, {
   settings = () => getState().settings,
   verified = getVerifiedStream,
@@ -99,6 +100,7 @@ export function createBestStreamStatus(item, {
   play = playItem,
   onAutoChange = onBestStreamChange,
   on = subscribe,
+  focusAfterUse = null,
 } = {}) {
   const textNow = () => bestStreamStatusText(item, {
     settings: settings(), playing: verified(), checking: checking(item?.id),
@@ -123,8 +125,10 @@ export function createBestStreamStatus(item, {
         const panel = node.parentNode;
         use?.remove?.();
         use = null;
-        // The button is gone: focus the panel's first action.
-        panel?.querySelector?.('.detail-actions button')?.focus?.();
+        // The button is gone: focus the given control, else the panel's
+        // first action (the Library's details panel).
+        const target = typeof focusAfterUse === 'function' ? focusAfterUse() : null;
+        (target || panel?.querySelector?.('.detail-actions button'))?.focus?.();
         const now = current();
         if (playingIt && now?.id === item.id) play(now).catch?.(() => {});
         update();

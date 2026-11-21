@@ -9,7 +9,14 @@
    one goes through the chain. Cost runs (run.cost) time each frame instead.
    run.motion: the sheets move (overlay-motion.js) at the drift check's depth,
    the drift clock at the top of its range; the top sheet is laid over with
-   its CSS transform, as the compositor would. */
+   its CSS transform, as the compositor would.
+   run.extraGlow: "Extra glow" on (overlay-catalog.js OVERLAY_EXTRA_GLOW).
+   run.valueDrift: overlay value drift (overlay-drift.js) at the drift
+   check's depth, the drift clock at the top of its range, called after the
+   sheets move as the tab calls it; the run reports how far each drifted
+   setting moved from its chosen value (a share of its range) against its
+   depth. Every overlay run reports what it drew with (effective): the
+   quality, sizes, each overlay's blend and values as installed. */
 
 import loadPostFx from '../../src/visualizer/vendor/psychedelia/engine/post-fx-library.js';
 import loadPalettes from '../../src/visualizer/vendor/psychedelia/engine/palettes.js';
@@ -30,7 +37,11 @@ import { cappedValues } from '../../src/visualizer/scenes.js';
 import { createClockHarness, fakeVisibilityDoc } from './signal-harness.js';
 import loadOverlays from '../../src/visualizer/vendor/psychedelia/engine/overlays.js';
 import { createFlashGate, createOverlayLayer } from '../../src/visualizer/overlay-layer.js';
-import { overlayRow } from '../../src/visualizer/overlay-catalog.js';
+import {
+  OVERLAY_EXTRA_BLENDS_RELEASED, OVERLAY_SIZE_720_RELEASED, isBlendIn, overlayRow, overlaySizedParams,
+} from '../../src/visualizer/overlay-catalog.js';
+import { OVERLAY_NEW_PATTERNS_RELEASED } from '../../src/visualizer/overlay-patterns.js';
+import { overlayDriftPlan, overlayDriftScale } from '../../src/visualizer/overlay-drift.js';
 import { danceTrack, simulatedAnalyser } from './audio-sim.js';
 import './luma-meter.js';
 
@@ -208,7 +219,11 @@ window.runOne = async (run, clip, W, H) => {
   bridge.setSpeedCap(scene.maxSpeed);
   bridge.reactor.getSpeed = () => 3; // the time surge at its most (the recordings' "worst")
   const chain = createFxChain({ gl, mode: 'webgl2', charge: () => bridge.charge() });
-  const passes = run.fx.map((item) => ({ ...item, fx: byId.get(item.id) })).filter((item) => item.fx);
+  // An effect id the catalog does not have stops the run (it would draw
+  // nothing and be measured as if it had).
+  const unknown = run.fx.filter((item) => !byId.has(item.id)).map((item) => item.id);
+  if (unknown.length) throw new Error(`no such effect: ${unknown.join(', ')}`);
+  const passes = run.fx.map((item) => ({ ...item, fx: byId.get(item.id) }));
   chain.setPasses(passes);
   // Overlays, as the tab draws them (index.js syncOverlays).
   const overlays = run.overlays || [];
@@ -238,6 +253,7 @@ window.runOne = async (run, clip, W, H) => {
       ...(run.noHalo ? { halos: {}, beams: false } : {}),
     });
     layer.setHue(run.hue ?? 200);
+    if (run.extraGlow) layer.setExtraGlow(true);
     layer.resize(W, H, quality);
     layer.set(overlays, { now: true });
     while (layer.loading) await new Promise((resolve) => { setTimeout(resolve, 5); });
@@ -278,7 +294,56 @@ window.runOne = async (run, clip, W, H) => {
   bridge.setSwellShare(run.drift ? 1 : 0);
   const drift = { bars: 0, scale: run.drift ? driftScale(1, Math.max(...Object.values(MOOD_STRENGTH))) : 0 };
   const motionDepth = run.motion ? driftScale(1, Math.max(...Object.values(MOOD_STRENGTH))) : 0;
+  const valueDepth = run.valueDrift ? driftScale(1, Math.max(...Object.values(MOOD_STRENGTH))) : 0;
   let motionClock = 0;
+  // Value drift: the farthest each drifted setting went from its chosen
+  // value (a share of its range), its depth there, and values found outside
+  // the range.
+  const driftMost = {};
+  const driftBound = {};
+  let driftOutside = 0;
+  const driftSpread = () => {
+    for (const sheet of [layer.top, layer.blend]) {
+      if (!sheet?.items?.length) continue;
+      for (const one of sheet.items) {
+        const pattern = sheet.patterns.get(one.id);
+        const now = pattern ? pattern.values : sheet.driftOut?.[one.id];
+        const chosen = pattern ? pattern.base : one.values;
+        if (!now || !chosen) continue;
+        for (const wave of overlayDriftPlan(one.id)) {
+          const value = now[wave.name];
+          const given = chosen[wave.name];
+          if (typeof value !== 'number' || typeof given !== 'number') continue;
+          const key = `${one.id}.${wave.name}`;
+          const at = Math.min(wave.hi, Math.max(wave.lo, given));
+          driftMost[key] = Math.max(driftMost[key] || 0, Math.abs(value - at) / wave.span);
+          driftBound[key] = wave.depth * overlayDriftScale(valueDepth);
+          if (value < wave.lo - 1e-9 || value > wave.hi + 1e-9) driftOutside += 1;
+        }
+      }
+    }
+  };
+  // What each overlay was installed with (read back from the layer).
+  let effective = null;
+  if (layer) {
+    const valuesOf = (sheet, one) => {
+      const pattern = sheet?.patterns.get(one.id);
+      if (pattern) return { ...pattern.values };
+      if (!sheet?.psy) return null;
+      const out = {};
+      for (const name of new Set([...Object.keys(one.values || {}), ...overlaySizedParams(one.id)])) {
+        const value = sheet.psy.getParam(name);
+        if (value !== undefined) out[name] = typeof value === 'number' ? +value.toFixed(4) : value;
+      }
+      return out;
+    };
+    effective = {
+      quality, size: [W, H], topSize: [top.width, top.height], blendSize: layer.blendSheet ? [layer.blendSheet.canvas.width, layer.blendSheet.canvas.height] : null,
+      extraGlow: layer.extraGlow, valueDrift: Boolean(run.valueDrift), valueDepth, motionDepth, fx: passes.map((item) => item.id),
+      released: { newPatterns: OVERLAY_NEW_PATTERNS_RELEASED, extraBlends: OVERLAY_EXTRA_BLENDS_RELEASED, size720: OVERLAY_SIZE_720_RELEASED },
+      items: layer.drawn.map((one) => ({ id: one.id, blend: one.blend, values: valuesOf(isBlendIn(one.blend) ? layer.blend : layer.top, one) })),
+    };
+  }
   const drifted = {};
   const from = WARM_UP_MS + (run.from * 1000) / FPS;
   let drawMs = 0;
@@ -306,7 +371,7 @@ window.runOne = async (run, clip, W, H) => {
     fps: FPS,
     react: bridge.react,
     draw: (state) => {
-      if (run.drift || run.motion) motionClock = driftClock.step(state.dt, 0);
+      if (run.drift || run.motion || run.valueDrift) motionClock = driftClock.step(state.dt, 0);
       if (run.drift) drift.bars = motionClock;
       state.drift = drift;
       if (h.now < from || lumas.length >= clip) { pulseSeen = false; return true; }
@@ -325,6 +390,7 @@ window.runOne = async (run, clip, W, H) => {
         layer.render(t, state.dt, state.sources);
         // The sheets' motion, as the tab moves them after drawing (index.js).
         layer.move(motionClock, motionDepth);
+        if (run.valueDrift) layer.drift(motionClock, valueDepth);
         if (run.cost && top.width) {
           // Its drawing done, read without getImageData (Chrome moves a 2D
           // canvas read back often off the graphics card, which the tab never
@@ -344,6 +410,7 @@ window.runOne = async (run, clip, W, H) => {
           sync();
           syncMs += performance.now() - s0;
         } else overlayMs += performance.now() - o0;
+        if (run.valueDrift && !run.cost) driftSpread();
         if (gate.stats.admitted !== admittedSeen) { admittedSeen = gate.stats.admitted; changed = true; }
       }
       // As scene-renderer.js draw: the values with the sound's links, then
@@ -447,7 +514,10 @@ window.runOne = async (run, clip, W, H) => {
   loop.destroy();
   const ms = drawMs / Math.max(1, lumas.length);
   const failed = chain.stats.failed;
-  const drawnCount = chain.drawnIds.length;
+  // The effects really drawn (their programs linked and in the chain), read
+  // back from the chain after the run.
+  const fxDrawn = chain.drawnIds;
+  const drawnCount = fxDrawn.length;
   const { triggers, triggersRefused } = chain.stats;
   let most = 0;
   for (let at = 0; at < changes.length; at += 1) {
@@ -470,11 +540,14 @@ window.runOne = async (run, clip, W, H) => {
     refused: gate.stats.refused,
     uncounted,
     blendSize: layer.blendSheet ? [layer.blendSheet.canvas.width, layer.blendSheet.canvas.height] : null,
+    halos: layer.stats.halos,
+    effective,
+    ...(run.valueDrift ? { driftMost, driftBound, driftOutside } : {}),
   } : {};
   layer?.destroy();
   chain.destroy();
   return {
-    lumas, ms, failed, drawn: drawnCount, asked: passes.length, triggers, triggersRefused, mostPerSecond: most, ...overlayStats,
+    lumas, ms, failed, drawn: drawnCount, asked: passes.length, fxDrawn, triggers, triggersRefused, mostPerSecond: most, ...overlayStats,
     quality, size: [W, H],
   };
 };

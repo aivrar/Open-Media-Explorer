@@ -154,6 +154,17 @@ export function laserBeam(ctx, x1, y1, xm, ym, x2, y2, color, thickness) {
   return true;
 }
 
+/** One level of a sheet's halo ({ canvas, ctx }) made anew from `from`
+ *  (cleared, then drawn: cheaper than a 'copy' draw here). */
+function makeHaloLevel(level, from) {
+  const c = level.ctx;
+  c.globalCompositeOperation = 'source-over';
+  c.globalAlpha = 1;
+  c.imageSmoothingEnabled = true;
+  c.clearRect(0, 0, level.canvas.width, level.canvas.height);
+  c.drawImage(from, 0, 0, level.canvas.width, level.canvas.height);
+}
+
 /**
  * The flash gate: the Beat Reactor as the overlays see it.
  * @param {object} deps
@@ -288,7 +299,7 @@ export function createOverlayLayer({
   let gain = 1;
   let lastTime = Number.NaN;
   let freed = false;
-  // "Extra glow" (held: overlay-catalog.js OVERLAY_EXTRA_GLOW): off unless
+  // "Extra glow" (overlay-catalog.js OVERLAY_EXTRA_GLOW): off unless
   // the tab turns it on.
   let extraGlow = false;
   let drifted = false; // the values were last drifted (not as chosen)
@@ -612,23 +623,31 @@ export function createOverlayLayer({
   function halo(sheet, ctx) {
     // A line overlay's halo as measured; else, with Extra glow on, the same
     // pass at OVERLAY_EXTRA_GLOW, the sheet faded by the glow's share first.
-    const lines = Boolean(halos[quality]) && sheet.items.some((item) => OVERLAY_HALO_IDS.has(item.id) && !broken.has(item.id));
+    // Every frame: no array, closure or iterator is made on this path (the
+    // three levels are made once per sheet).
+    let lines = false;
+    if (halos[quality]) {
+      const items = sheet.items;
+      for (let i = 0; i < items.length && !lines; i += 1) {
+        lines = OVERLAY_HALO_IDS.has(items[i].id) && !broken.has(items[i].id);
+      }
+    }
     const extra = !lines && extraGlow && sheet.items.length ? OVERLAY_EXTRA_GLOW[quality] || null : null;
     const look = lines ? halos[quality] : extra;
     if (!look) return;
     const w = sheet.canvas.width;
     const h = sheet.canvas.height;
     if (!sheet.halo) sheet.halo = [makeCanvas(), makeCanvas(), makeCanvas()].map((canvas) => ({ canvas, ctx: null }));
-    const [half, quarter, eighth] = sheet.halo;
-    const sizes = [];
-    for (let level = 0, fw = w, fh = h; level < 3; level += 1) {
-      fw = Math.max(1, Math.ceil(fw / 2));
-      fh = Math.max(1, Math.ceil(fh / 2));
-      sizes.push([fw, fh]);
-    }
+    const half = sheet.halo[0];
+    const quarter = sheet.halo[1];
+    const eighth = sheet.halo[2];
+    // Each level half the one before (rounded up, at least one pixel).
+    let lw = w;
+    let lh = h;
     for (let i = 0; i < 3; i += 1) {
       const level = sheet.halo[i];
-      const [lw, lh] = sizes[i];
+      lw = Math.max(1, Math.ceil(lw / 2));
+      lh = Math.max(1, Math.ceil(lh / 2));
       if (level.canvas.width !== lw || level.canvas.height !== lh) {
         level.canvas.width = lw;
         level.canvas.height = lh;
@@ -637,20 +656,10 @@ export function createOverlayLayer({
       level.ctx ||= level.canvas.getContext?.('2d') || null;
       if (!level.ctx) return;
     }
-    // A level made anew from `from` (cleared, then drawn: cheaper than a
-    // 'copy' draw here).
-    const make = (level, from) => {
-      const c = level.ctx;
-      c.globalCompositeOperation = 'source-over';
-      c.globalAlpha = 1;
-      c.imageSmoothingEnabled = true;
-      c.clearRect(0, 0, level.canvas.width, level.canvas.height);
-      c.drawImage(from, 0, 0, level.canvas.width, level.canvas.height);
-    };
-    make(half, sheet.canvas);
-    make(quarter, half.canvas);
+    makeHaloLevel(half, sheet.canvas);
+    makeHaloLevel(quarter, half.canvas);
     if (look.wide > 0) {
-      make(eighth, quarter.canvas);
+      makeHaloLevel(eighth, quarter.canvas);
       const q = quarter.ctx;
       q.globalCompositeOperation = 'lighter';
       q.globalAlpha = look.wide;
@@ -679,7 +688,7 @@ export function createOverlayLayer({
     ctx.restore();
     stats.halos += 1;
   }
-  /** Overlay value drift (held: overlay-drift.js) on one sheet: each
+  /** Overlay value drift (overlay-drift.js) on one sheet: each
    *  overlay's planned settings moved around their chosen values, into the
    *  values it draws with (ours) or its Psychedelia instance. Nothing made
    *  per frame. */
@@ -844,12 +853,12 @@ export function createOverlayLayer({
 
     /** The quality changed (step-down or by hand). */
     setQuality(next) { layer.resize(width, height, next); },
-    /** "Extra glow" on or off (held: the tab calls it only once released). */
+    /** "Extra glow" on or off (the tab calls it while released). */
     setExtraGlow(on) { extraGlow = on === true; },
     get extraGlow() { return extraGlow; },
-    /** Overlay value drift (held: overlay-drift.js) at drift clock `bars`
+    /** Overlay value drift (overlay-drift.js) at drift clock `bars`
      *  and drift depth `depth` (0: the values as chosen). Called every drawn
-     *  frame by the tab once released. */
+     *  frame by the tab while released. */
     drift(bars, depth) {
       if (freed) return;
       const scale = overlayDriftScale(depth);

@@ -42,6 +42,28 @@ export class MediaConnectionError extends Error {
   }
 }
 
+const HOST_NOT_FOUND = 'MEDIA_HOST_NOT_FOUND';
+const DNS_FAILED = 'MEDIA_DNS_FAILED';
+
+/**
+ * A plain sentence for a start that failed because the stream's host name
+ * could not be found: every failed stream said its host does not exist
+ * (`MEDIA_HOST_NOT_FOUND`) or that the name could not be looked up
+ * (`MEDIA_DNS_FAILED`). '' for any other failure, which keeps its own text.
+ */
+export function hostLookupFailureMessage(error, item = null) {
+  const nested = Array.isArray(error?.errors) && error.errors.length ? error.errors : [error];
+  const codes = nested.map((entry) => (typeof entry?.code === 'string' ? entry.code : ''));
+  if (!codes.every((code) => code === HOST_NOT_FOUND || code === DNS_FAILED)) return '';
+  if (codes.includes(DNS_FAILED)) {
+    return "This stream's address could not be looked up. Check your internet connection, then press Play to retry.";
+  }
+  const kind = item?.type === 'radio' || item?.type === 'tv'
+    ? 'station'
+    : (Array.isArray(item?.tags) && item.tags.includes('podcast') ? 'episode' : 'item');
+  return `This ${kind}'s address does not exist. Press Play to retry.`;
+}
+
 function abortError(reason = null) {
   if (reason?.name === 'AbortError') return reason;
   if (typeof DOMException === 'function') {
@@ -242,6 +264,15 @@ export async function probeMediaRelay(relay, candidate, options = {}) {
   return true;
 }
 
+// Relays whose stream answered a test request before playback (a single
+// plain stream gets no test request: registering it only looks up its name).
+const probedRelays = new WeakSet();
+
+/** True when `relay`'s stream answered a test request while connecting. */
+export function relayWasProbed(relay) {
+  return Boolean(relay && typeof relay === 'object' && probedRelays.has(relay));
+}
+
 async function connectCandidate(item, candidate, index, options, shouldProbe) {
   const controller = options.controller;
   const onAbort = () => controller.abort(abortError(options.signal?.reason));
@@ -269,6 +300,7 @@ async function connectCandidate(item, candidate, index, options, shouldProbe) {
         fetchImpl: options.fetchImpl,
         signal: controller.signal,
       });
+      if (relay && typeof relay === 'object') probedRelays.add(relay);
     }
     return { relay, candidate, index };
   } catch (error) {

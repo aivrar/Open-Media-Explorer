@@ -31,6 +31,14 @@ export const LEGACY_PROFILE_STORAGE_KEYS = Object.freeze([
   EQ_STORAGE_KEY,
 ]);
 
+/** The keys the data folder keeps a second copy of, because releases 0.1.9 to
+ *  0.1.11 drop them from the extra file (worldmedia_runtime
+ *  PROFILE_TRANSFER_COPY_KEYS). */
+export const PROFILE_COPY_KEYS = Object.freeze([
+  'worldmedia.favnames.v1',
+  'worldmedia.ownstream.v1',
+]);
+
 /*
  * Write order, enforced by the server (worldmedia_runtime.save_profile_transfer):
  * every write carries this page's random id and a number that only goes up. A
@@ -169,6 +177,9 @@ function sendProfileRequest(requestImpl, requestOptions, body) {
     ...requestOptions,
     ...(controller ? { signal: controller.signal } : {}),
     headers: { ...(requestOptions.headers || {}), ...nextWriteHeaders() },
+    // Its own connection: never queued behind a slow catalogue load in the
+    // browser, so the time limit measures the save (capture-client.js).
+    ownConnection: true,
     method: 'POST',
     body,
   }));
@@ -377,21 +388,77 @@ export function cancelScheduledProfileHandoff() {
   automaticSyncTimer = null;
 }
 
-/** Restore the previous origin's handoff before state.js reads localStorage. */
+/** In an origin that has a profile of its own, set only the keys the server
+ *  says came from the data folder's second copy (`copied`) and that this
+ *  origin lacks. That is the case after an older release moved the port: it
+ *  restored the favorites here but not the names it does not know. A key the
+ *  extra file holds is never reported as copied, and a key this origin has is
+ *  never replaced. Returns true when anything was set. */
+export function restoreCopiedProfileValues(values, copied, storage) {
+  const selected = resolveStorage(storage);
+  if (!Array.isArray(copied) || typeof selected?.setItem !== 'function') return false;
+  const set = [];
+  try {
+    const safeValues = validValues(values);
+    for (const key of PROFILE_COPY_KEYS) {
+      if (!copied.includes(key) || typeof safeValues[key] !== 'string') continue;
+      if (typeof selected.getItem(key) === 'string') continue;
+      selected.setItem(key, safeValues[key]);
+      set.push(key);
+    }
+    return set.length > 0;
+  } catch (_) {
+    for (const key of set) {
+      try { selected.removeItem(key); } catch (_) { /* Storage may be unavailable. */ }
+    }
+    return false;
+  }
+}
+
+/** Restore the previous origin's handoff before state.js reads localStorage.
+ *  An origin with a profile of its own only takes copied keys it lacks (see
+ *  restoreCopiedProfileValues); when it has them all, nothing is asked. */
 export async function restoreProfileHandoff(options = {}) {
+  return (await restoreProfileHandoffOutcome(options)) === 'restored';
+}
+
+function plainValues(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * restoreProfileHandoff, telling how it ended:
+ * - 'restored': values from the data folder were written to this page;
+ * - 'nothing': the data folder answered and there was nothing to take (or
+ *   nothing needed asking);
+ * - 'failed': the data folder could not be asked or read (a network error, an
+ *   error answer, an unreadable answer) or the values could not be written;
+ *   what is in this page may then be only part of the profile;
+ * - 'skipped': no local server to ask (the page opened from a file).
+ */
+export async function restoreProfileHandoffOutcome(options = {}) {
   const {
     storage,
     requestImpl = controlRequest,
     ...requestOptions
   } = options;
-  const selected = resolveStorage(storage);
-  if (!canUseNativeProfileService(requestImpl)) return false;
+  if (!canUseNativeProfileService(requestImpl)) return 'skipped';
   try {
-    if (hasLegacyProfile(selected)) return false;
+    const selected = resolveStorage(storage);
+    if (hasLegacyProfile(selected)) {
+      if (PROFILE_COPY_KEYS.every((key) => typeof selected.getItem(key) === 'string')) return 'nothing';
+      const data = await requestImpl(PROFILE_ROUTE, requestOptions);
+      if (!plainValues(data?.values)) return 'failed';
+      return restoreCopiedProfileValues(data.values, data.copied, selected) ? 'restored' : 'nothing';
+    }
     const data = await requestImpl(PROFILE_ROUTE, requestOptions);
-    return restoreProfileStorageValues(data?.values, selected);
+    if (!plainValues(data?.values)) return 'failed';
+    let safeValues;
+    try { safeValues = validValues(data.values); } catch (_) { return 'failed'; }
+    if (Object.keys(safeValues).length === 0) return 'nothing';
+    return restoreProfileStorageValues(data.values, selected) ? 'restored' : 'failed';
   } catch (_) {
-    return false;
+    return 'failed';
   }
 }
 

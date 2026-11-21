@@ -15,7 +15,7 @@ import loadPalettes from '../src/visualizer/vendor/psychedelia/engine/palettes.j
 import {
   OVERLAY_BLENDS, OVERLAY_BLEND_MAX_PIXELS, OVERLAY_COST_BUDGET, OVERLAY_GLOW_PARAMS, OVERLAY_GLOW_SCALE, OVERLAY_LINE_PARAMS, OVERLAY_QUALITY_LIMITS, OVERLAY_SHUFFLE_COST_MAX, OVERLAY_TOP_MAX_PIXELS, OVERLAY_COST_UNITS, OVERLAY_EXCLUDED, OVERLAY_IDS, OVERLAY_LIVELY_BLENDS,
   OVERLAY_MASKS, OVERLAY_TABLE, PLAIN_BLEND, isBlendIn, overlayOrder, overlayRow, overlayToken, overlaysDrawnFor, overlaysKey,
-  OVERLAY_HALO, OVERLAY_HALO_IDS, parseOverlayToken,
+  OVERLAY_HALO, OVERLAY_HALO_IDS, parseOverlayToken, overlaySizeUnit,
 } from '../src/visualizer/overlay-catalog.js';
 import { CONTOUR_ALPHA, OVERLAY_PATTERNS, patternValues } from '../src/visualizer/overlay-patterns.js';
 import {
@@ -98,8 +98,8 @@ test('the catalog: every Psychedelia overlay is offered or left out with a reaso
       }
     }
   }
-  // Eight of our own (Strobe the eighth), marked so.
-  assert.equal(OVERLAY_IDS.filter((id) => overlayRow(id).source === 'ours').length, 8);
+  // Eleven of our own (Strobe the eighth; Ripples, Fireflies and Orbits after it), marked so.
+  assert.equal(OVERLAY_IDS.filter((id) => overlayRow(id).source === 'ours').length, 11);
 });
 
 test('flash rules of the catalog: no flicker, no free run, Lightning by hand only and low, full-screen ones only on top', () => {
@@ -383,7 +383,7 @@ test('the top sheet: at most OVERLAY_TOP_MAX_PIXELS per quality in the picture\'
   rig.layer.destroy();
 });
 
-test('the layer: settings limited per quality (OVERLAY_QUALITY_LIMITS) and pixel line widths scaled by the sheet\'s share of the picture, always from the values as chosen', async () => {
+test('the layer: settings limited per quality (OVERLAY_QUALITY_LIMITS) and pixel line widths scaled by the sheet\'s size unit (overlaySizeUnit), always from the values as chosen', async () => {
   const rig = layerRig();
   rig.layer.resize(1920, 1080, 'medium');
   rig.layer.set([
@@ -395,11 +395,13 @@ test('the layer: settings limited per quality (OVERLAY_QUALITY_LIMITS) and pixel
   const psy = rig.layer.top.psy;
   const near = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-6, `${what}: ${a}, not ${b}`);
   const check = (quality) => {
-    const share = rig.top.height / 1080;
-    assert.ok(share < 1, `${quality}: the sheet is smaller than the picture`);
+    assert.ok(rig.top.height < 1080, `${quality}: the sheet is smaller than the picture`);
+    // A 720th of the 1080-line picture, in the sheet's pixels.
+    const unit = overlaySizeUnit(rig.top.height, 1080);
+    assert.ok(Math.abs(unit - rig.top.height / 720) < 1e-9, `${quality}: the unit`);
     const L = OVERLAY_QUALITY_LIMITS;
     assert.equal(psy.getParam('px_count'), Math.min(80, L.plexus.px_count.max[quality]), `${quality} px_count`);
-    near(psy.getParam('px_line_width'), Math.min(2, L.plexus.px_line_width.max[quality]) * share, `${quality} px_line_width`);
+    near(psy.getParam('px_line_width'), Math.min(2, L.plexus.px_line_width.max[quality]) * unit, `${quality} px_line_width`);
     assert.equal(psy.getParam('laser_count'), Math.min(10, L.lasers.laser_count.max[quality]), `${quality} laser_count`);
     // Lasers are beams (laserBeam): their width costs nothing (not limited), and
     // they follow the sheet's height themselves (not scaled here).
@@ -410,7 +412,7 @@ test('the layer: settings limited per quality (OVERLAY_QUALITY_LIMITS) and pixel
   };
   check('medium');
   assert.equal(psy.getParam('px_count'), 50);
-  near(psy.getParam('px_line_width'), 1.5 * (530 / 1080), 'Medium on a 1920 x 1080 screen: a 530-line sheet');
+  near(psy.getParam('px_line_width'), 1.5 * (530 / 720), 'Medium on a 1920 x 1080 screen: a 530-line sheet');
   rig.layer.setQuality('high');
   check('high');
   rig.layer.setQuality('low');
@@ -1143,8 +1145,22 @@ test('in the tab: overlays by hand, quick ticks all count, plain ones cost the c
   assert.ok(uploads <= frames, 'at most one upload a frame');
   // A blend-in on the second makes the first plain again (one at a time).
   const row2 = session.overlays.rows[1];
+  assert.equal(row.note.hidden, true);
+  assert.equal(row2.note.hidden, true, 'nothing said before a choice takes the blend-in');
   change(row2.mode, 'soft');
   assert.deepEqual(session.overlays.chosen.map((x) => overlayToken(x)), ['rings', 'petals~o']);
+  // Said in one line under the choice just made, not in the other row.
+  assert.equal(row2.note.hidden, false);
+  assert.equal(row2.note.textContent, 'Only one overlay can be blended in at a time.');
+  assert.equal(row.note.hidden, true);
+  const parts = [...row2.row.children];
+  assert.equal(parts[parts.indexOf(row2.note) - 1]?.classList?.contains('viz-ov-mode-field'), true, 'right under the Blend choice');
+  assert.doesNotMatch(session.overlays.note.textContent, /Only one overlay/, 'not repeated in the section\'s note');
+  // A blend choice that takes nothing from another overlay says nothing.
+  change(row2.mode, 'add');
+  assert.equal(row2.note.hidden, true);
+  change(row2.mode, 'soft');
+  assert.equal(row2.note.hidden, true, 'the other overlay was already plain');
   await m.play(SETTLE_MS);
   // The star saves the exact combination.
   click(controls.star);
@@ -1165,6 +1181,80 @@ test('in the tab: overlays by hand, quick ticks all count, plain ones cost the c
   assert.equal(session.overlays.layer, null);
   assert.equal(session.overlayCanvas.width, 0);
   assert.equal(gl.textures.size, 0);
+});
+
+test('in the tab: an overlay that cannot go under the effects says why its box is grayed', async () => {
+  const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerOverlays: true, visualizerOverlayShuffle: false } });
+  const { session } = m;
+  await m.until(() => session.switcher.current === 'tunnel', 'tunnel');
+  m.start();
+  await m.play(500);
+  const boxes = session.overlays.boxes;
+  change(boxes.get('fireworks'), true);
+  change(boxes.get('rings'), true);
+  await m.play(SETTLE_MS);
+  const rowFor = (id) => session.overlays.rows.find((row) => row.id === id);
+  const fireworks = rowFor('fireworks');
+  assert.equal(fireworks.under.disabled, true);
+  assert.equal(fireworks.under.title, OVERLAY_TEXT.underNone);
+  assert.equal(fireworks.underField.title, 'Not available for this overlay.');
+  const why = fireworks.under.getAttribute('aria-describedby');
+  assert.ok(why, 'described for a screen reader');
+  const whyNode = fireworks.underField.children.find((node) => (node.id || node.getAttribute?.('id')) === why);
+  assert.equal(whyNode?.textContent, 'Not available for this overlay.');
+  // One that can go under the effects says nothing extra.
+  const rings = rowFor('rings');
+  assert.equal(rings.underField.title, '');
+  assert.equal(rings.under.getAttribute('aria-describedby'), null);
+  // Lasers and Stage Lights, in the row Fireworks had: the same words.
+  change(boxes.get('fireworks'), false);
+  change(boxes.get('lasers'), true);
+  await m.play(SETTLE_MS);
+  assert.equal(rowFor('lasers').underField.title, OVERLAY_TEXT.underNone);
+  change(boxes.get('lasers'), false);
+  change(boxes.get('spotlights'), true);
+  await m.play(SETTLE_MS);
+  assert.equal(rowFor('spotlights').underField.title, OVERLAY_TEXT.underNone);
+  assert.equal(rowFor('rings').underField.title, '');
+  session.destroy();
+});
+
+test('in the tab: "Only one overlay can be blended in" goes with the next change of the overlays: one removed, or new overlays now', async () => {
+  const m = await mount({ settings: { visualizerScene: 'tunnel', visualizerOverlays: true, visualizerOverlayShuffle: false } });
+  const { session, controls } = m;
+  await m.until(() => session.switcher.current === 'tunnel', 'tunnel');
+  m.start();
+  await m.play(500);
+  const boxes = session.overlays.boxes;
+  const [first, second] = session.overlays.rows;
+  /** Rings and Petals chosen, Rings blended in, then Petals takes the blend-in. */
+  const noteOnSecond = async () => {
+    change(boxes.get('petals'), true);
+    change(boxes.get('rings'), true);
+    await m.play(SETTLE_MS);
+    change(first.mode, 'screen');
+    change(second.mode, 'soft');
+    assert.deepEqual(session.overlays.chosen.map((x) => overlayToken(x)), ['rings', 'petals~o']);
+    assert.equal(second.note.hidden, false);
+    assert.equal(first.note.hidden, true);
+  };
+  await noteOnSecond();
+  // The overlay that was set back to plain is removed: the note goes.
+  change(boxes.get('rings'), false);
+  assert.deepEqual(session.overlays.chosen.map((x) => x.id), ['petals']);
+  assert.equal(first.note.hidden, true);
+  assert.equal(second.note.hidden, true);
+  // A redraw with nothing changed keeps it; new overlays now take it away.
+  change(boxes.get('petals'), false);
+  await m.play(SETTLE_MS);
+  await noteOnSecond();
+  change(controls.overlaysToggle, true); // already on: no change
+  assert.equal(second.note.hidden, false, 'kept while nothing changed');
+  click(controls.overlaysNow);
+  assert.equal(session.overlays.rows.every((row) => row.note.hidden), true);
+  await m.play(SETTLE_MS);
+  assert.equal(session.overlays.rows.every((row) => row.note.hidden), true, 'not back after the change is made');
+  session.destroy();
 });
 
 test('in the tab: a lost context holds the overlay sheet still (no transform, no will-change) and it moves again once drawing resumes', async () => {

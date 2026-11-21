@@ -43,5 +43,5 @@ test('the band buttons reload the dial, also the band already chosen', async () 
   assert.match(setBand, /\n {2}loadStations\(\);\n\}/);
   assert.doesNotMatch(setBand, /if \(state\.band === b\) return/);
   assert.match(tuner, /\{ id: 'radio', label: 'Radio' \}, \{ id: 'tv', label: 'TV' \}/);
-  assert.match(tuner, /let text = emptyLiveText\(state\.loading, state\.sourceStates\);/);
+  assert.match(tuner, /let text = emptyLiveText\(state\.loading, state\.sourceStates,\n\s+\{ waiting: autoRetry\.waiting\(\), tries: autoRetry\.tries\(\) \}\);/);
 });

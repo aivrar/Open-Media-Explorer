@@ -492,6 +492,98 @@ test('native nonretryable publisher status failures retain the six-hour dead-fee
   source.dispose();
 });
 
+test('a feed refused for what it sent (too large, too complex, unsafe) is not asked again for six hours; other failures are asked again after five minutes', async () => {
+  const refused = ['CATALOG_BODY_TOO_LARGE', 'CATALOG_DECODED_TOO_LARGE', 'FEED_XML_TOO_COMPLEX', 'FEED_XML_UNSAFE'];
+  const passing = ['MEDIA_DNS_FAILED', 'CATALOG_TOTAL_TIMEOUT', 'FEED_XML_INVALID', 'CATALOG_CONTENT_TYPE'];
+  for (const code of [...refused, ...passing]) {
+    const directoryShow = show(1);
+    let time = FIXED_NOW;
+    let calls = 0;
+    const source = adapter({
+      now: () => time,
+      getJson: async () => [directoryShow],
+      resolvePodcastFeed: async () => {
+        calls += 1;
+        throw Object.assign(new Error('feed refused'), { status: 502, code, retryable: code === 'MEDIA_DNS_FAILED' });
+      },
+    });
+    await source.browsePage();
+    time += 10 * 60 * 1000;
+    await source.browsePage();
+    assert.equal(calls, refused.includes(code) ? 1 : 2, code);
+    source.dispose();
+  }
+});
+
+test('Play resolves a podcast feed at once, past browse lookups waiting their turn, and says so to the catalogue client', async () => {
+  const shows = [show(1), show(2)];
+  const asked = [];
+  let hold = false;
+  const waiting = [];
+  const feedScheduler = {
+    run(host, task, signal) {
+      if (hold) return new Promise(() => { waiting.push(host); });
+      return task(signal);
+    },
+    dispose() {},
+  };
+  const source = adapter({
+    getJson: async () => shows,
+    feedScheduler,
+    feedCacheTtlMs: 0,
+    resolvePodcastFeed: async (url, options = {}) => {
+      asked.push({ url, forPlayback: options.forPlayback === true });
+      return feedFor(shows.find((entry) => entry.url === url));
+    },
+  });
+  const page = await source.browsePage();
+  assert.ok(asked.length > 0 && asked.every((entry) => entry.forPlayback === false), 'browse lookups queue');
+  const favorite = normalizeFavoriteItem(page.items[0], { restart: true });
+  assert.equal(favorite.stream_url, '');
+  hold = true;
+  void source.browsePage({ force: true });
+  await flush();
+  assert.ok(waiting.length > 0, 'browse lookups are waiting');
+  const before = asked.length;
+  await source.resolveStream(favorite);
+  assert.equal(favorite.stream_url, page.items[0].stream_url);
+  assert.deepEqual(asked.slice(before).map((entry) => entry.forPlayback), [true]);
+  source.dispose();
+});
+
+test('a retry the user asks for (force) asks a feed in its wait again; automatic loads keep to the wait', async () => {
+  const directoryShow = show(1);
+  let time = FIXED_NOW;
+  let calls = 0;
+  let refuse = true;
+  const source = adapter({
+    now: () => time,
+    getJson: async () => [directoryShow],
+    resolvePodcastFeed: async () => {
+      calls += 1;
+      if (refuse) throw Object.assign(new Error('feed refused'), { status: 502, code: 'CATALOG_BODY_TOO_LARGE' });
+      return feedFor(directoryShow);
+    },
+  });
+  await source.browsePage();
+  assert.equal(calls, 1);
+  time += 60 * 1000;
+  assert.equal((await source.browsePage()).items.length, 0);
+  assert.equal(calls, 1, 'an automatic load waits');
+  // Asked again and refused again: a new six-hour wait from now.
+  await source.browsePage({ force: true });
+  assert.equal(calls, 2);
+  time += 60 * 1000;
+  await source.browsePage();
+  assert.equal(calls, 2);
+  // The publisher fixed the feed: the next forced retry shows it.
+  refuse = false;
+  const fixed = await source.browsePage({ force: true });
+  assert.equal(calls, 3);
+  assert.ok(fixed.items.length > 0);
+  source.dispose();
+});
+
 test('last-known-good feed data survives a temporary refresh failure', async () => {
   const directoryShow = show(1);
   let time = FIXED_NOW;

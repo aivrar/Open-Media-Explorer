@@ -243,6 +243,10 @@ async function fetchBrowsePage(sourceId, generation, options = {}) {
   mergeBrowseStatus(sourceId, { state: 'loading', count: progress.loaded });
   const generationSignal = options.signal || currentGenerationSignal();
   const requestedCursorKey = cursorKey(progress.cursor);
+  // The first page after the user's Retry asks afresh (`force`): a podcast
+  // feed in its wait after a failure is asked again (gpodder.js).
+  const force = progress.forceNext === true;
+  progress.forceNext = false;
 
   try {
     const page = await catalogScheduler.enqueue({
@@ -254,6 +258,7 @@ async function fetchBrowsePage(sourceId, generation, options = {}) {
         limit: PAGE_SIZE,
         cursor: progress.cursor,
         signal,
+        ...(force ? { force: true } : {}),
       }),
     });
     if (generation !== view.searchGen || generationSignal.aborted || !sourceEnabled(sourceId)) return;
@@ -565,6 +570,7 @@ export function retrySources({ restartExhausted = true } = {}) {
       progress.exhausted = false;
       view.exhausted.delete(sourceId);
     }
+    progress.forceNext = true; // fetchBrowsePage
     mergeFiniteStatus(sourceId, statusFromProgress(progress));
   }
   renderChainState();

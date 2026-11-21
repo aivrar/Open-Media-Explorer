@@ -217,6 +217,18 @@ export function meterLayout(width, height, dpr = 1, bars = METER_BARS) {
   };
 }
 
+/** The scale meterLayout is given. The player bar's meter (no `segments`)
+ *  uses the screen scale, so its segments are 2 px at 100 %. A larger meter
+ *  (the Now Playing tab) asks for about `segments` segments over its height,
+ *  so its LEDs grow with the canvas instead of turning into thin lines; never
+ *  smaller than the screen scale. */
+export function meterScale(height, dpr = 1, segments = 0) {
+  const scale = dpr > 0 ? dpr : 1;
+  const h = Number(height);
+  if (!(segments > 0) || !(h > 0)) return scale;
+  return Math.max(scale, h / (3 * segments));
+}
+
 /* ---------------- Drawing ---------------- */
 
 
@@ -262,6 +274,8 @@ export function drawMeter(ctx, layout, lit, peak, colors, width, height) {
  * @param {HTMLElement} options.root   the block that is shown/hidden by the setting
  * @param {HTMLCanvasElement} options.canvas
  * @param {{ subscribe(fn, opts): () => void }} options.signal
+ * @param {number} [options.segments] about this many segments over the
+ *   height (meterScale); left out, the player bar's 2 px segments
  */
 export function createPlayerMeter({
   root,
@@ -270,6 +284,7 @@ export function createPlayerMeter({
   win = globalThis.window,
   doc = globalThis.document,
   enabled = true,
+  segments: targetSegments = 0,
 } = {}) {
   const state = createMeterState(METER_BARS);
   const lit = new Int8Array(METER_BARS);
@@ -349,7 +364,7 @@ export function createPlayerMeter({
       deviceWidth = w;
       deviceHeight = h;
       const dpr = Number(win?.devicePixelRatio) || 1;
-      layout = meterLayout(w, h, dpr, METER_BARS);
+      layout = meterLayout(w, h, meterScale(h, dpr, targetSegments), METER_BARS);
       ctx = ctx || canvas.getContext?.('2d') || null;
       readColors();
       draw(true);

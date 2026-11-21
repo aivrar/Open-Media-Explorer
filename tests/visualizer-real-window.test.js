@@ -15,7 +15,7 @@ import {
 import { MAX_VOLUME_GAIN_DB, createReactorBridge } from '../src/visualizer/reactor.js';
 import { createSceneRenderer } from '../src/visualizer/scene-renderer.js';
 import { createSceneSwitcher } from '../src/visualizer/scene-switcher.js';
-import { LOOKS_LEFT_OUT, sceneLooks } from '../src/visualizer/looks.js';
+import { LOOK_ADJUSTED, LOOKS_LEFT_OUT, sceneLooks } from '../src/visualizer/looks.js';
 import { SCENES, SPEED_CAPS } from '../src/visualizer/scenes.js';
 import {
   STEP_DOWN_GRACE_MS, STEP_DOWN_LONG_GAP, STEP_DOWN_WINDOWS_NEEDED, STEP_DOWN_WINDOW_MS, createStepDown,
@@ -131,7 +131,7 @@ test('a scene\'s own cap on the time surge: the limiter keeps to it, the tab set
   limiter.setSpeedCap(9);
   assert.equal(limiter.speedCap, FLASH_LIMITS.maxSpeed, 'never above the limiter\'s own');
   // The table: real scenes, caps between 1 and the limiter's 3, on the entries.
-  assert.deepEqual(Object.keys(SPEED_CAPS).sort(), ['analytic_field_lab', 'apollonian_foam_flight', 'aurora', 'endless_terrain', 'folded_box_variants_flight', 'fractal_flame_volume_flight', 'infinite_lattice', 'lsystem_tube_flight', 'mandelbox_flight', 'mandelbrot', 'path_traced_fractal_flight', 'polyfold_flight', 'schottky_inversion_flight', 'strange_attractor_flight', 'tricorn', 'triplex_mutation_flight']);
+  assert.deepEqual(Object.keys(SPEED_CAPS).sort(), ['analytic_field_lab', 'apollonian_foam_flight', 'aurora', 'difs_tunnel_flight', 'endless_terrain', 'folded_box_variants_flight', 'fractal_flame_volume_flight', 'infinite_lattice', 'lsystem_tube_flight', 'mandelbox_flight', 'mandelbrot', 'path_traced_fractal_flight', 'polyfold_flight', 'quaternion_julia_flight', 'schottky_inversion_flight', 'strange_attractor_flight', 'tricorn', 'triplex_mutation_flight']);
   for (const [id, cap] of Object.entries(SPEED_CAPS)) {
     const entry = SCENES.find((scene) => scene.id === id);
     assert.ok(entry, id);
@@ -409,13 +409,14 @@ test('the global flash and pump never jump: each moves at most its slew a second
   assert.ok(was - off.flash <= FLASH_SLEW / 30 + 1e-12);
 });
 
-test('looks the flash check found stepping over 0.10 on their own are left out (Mandelbrot Neon and Ocean); the others keep their option index as their value', async () => {
+test('Mandelbrot offers all five colour schemes, each with its option index as its value (Neon and Ocean, once over 0.10, with slower colour cycling)', async () => {
   const renderer = createSceneRenderer({ canvas: { width: 8, height: 8 }, gl: new StrictGL(), mode: 'webgl2' });
   const entry = SCENES.find((scene) => scene.id === 'mandelbrot');
   const def = renderer.register(await entry.load(), entry.id);
   const list = sceneLooks(def);
-  assert.deepEqual(LOOKS_LEFT_OUT.mandelbrot, [1, 3]);
-  assert.deepEqual(list.map((look) => look.name), ['Rainbow', 'Fire', 'Psychedelic']);
-  assert.deepEqual(list.map((look) => look.values.palette_type), [0, 2, 4]);
+  assert.equal(LOOKS_LEFT_OUT.mandelbrot, undefined);
+  assert.deepEqual(list.map((look) => look.name), ['Rainbow', 'Neon', 'Fire', 'Ocean', 'Psychedelic']);
+  assert.deepEqual(list.map((look) => look.values.palette_type), [0, 1, 2, 3, 4]);
+  assert.deepEqual(LOOK_ADJUSTED.mandelbrot, { Neon: { color_speed: 0.15 }, Ocean: { color_speed: 0.15 } });
   renderer.destroy();
 });

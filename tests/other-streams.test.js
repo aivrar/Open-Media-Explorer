@@ -216,7 +216,8 @@ test('the label shows in the detail panel, on technical cards, and only on hover
   assert.match(css, /:root:not\(\[data-tech-details="on"\]\) \.card-license \{ display: none; \}/);
   // Player: in the hover title after the normal line, never in the visible meta line.
   // The player bar shows the format and bitrate of the stream that plays.
-  assert.match(player, /const played = playedStream\(item\);\s*const listed = streamQualityLabel\(played && \(played\.bitrate \|\| played\.codec\)[\s\S]*?: item\);[\s\S]*?const quality = \[listed, [\s\S]*?setSourceLine\(line, \{ itemLine: true, hover: quality \? \[line, quality\]/);
+  // (stream-quality.js playedQualityLabel, shared with the Now Playing tab.)
+  assert.match(player, /const listed = playedQualityLabel\(item, playedStream\(item\)\);[\s\S]*?const quality = \[listed, [\s\S]*?setSourceLine\(line, \{ itemLine: true, hover: quality \? \[line, quality\]/);
   assert.match(player, /hover: \[text, line, quality\]\.filter\(Boolean\)\.join\('\\n'\)/);
   assert.doesNotMatch(player, /setSourceLine\(\[[^\]]*quality/);
 });

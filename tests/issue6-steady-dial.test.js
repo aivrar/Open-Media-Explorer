@@ -52,6 +52,12 @@ test('a card holds only its name, its source and an optional badge', async () =>
   const tuner = await read('src/modes/tuner.js');
   const strip = tuner.match(/function renderStrip\(\) \{[\s\S]*?\n\}/)[0];
   assert.match(strip, /el\('span', \{ text: saved \? `\u2605 \$\{s\.title\}` : s\.title \}\),\s+el\('small', \{ text: getSourceLabel\(s\.source\) \}\),\s+rating \? el\('span', \{ className: 'content-rating-badge', text: rating \}\) : null\);/);
+  // And, laid over its corner, the "Did not play last time" mark: added last
+  // (also when it comes later), so it takes no place in the card's grid.
+  assert.match(strip, /setPillTrouble\(pill\);\s+ui\.strip\.appendChild\(pill\);/);
+  const mark = tuner.match(/function setPillTrouble\(pill\) \{[\s\S]*?\n\}/)[0];
+  assert.match(mark, /mark = el\('span', \{ className: 'pill-trouble', text: '!', attrs: \{ role: 'img' \} \}\);\s*pill\.appendChild\(mark\);/);
+  assert.match(mark, /mark\.setAttribute\('aria-label', trouble\);/);
   // Names stay on one line.
   assert.match(block(await read('src/styles/tuner.css'), '.station-pill'), /white-space: nowrap;/);
 });

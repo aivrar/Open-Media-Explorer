@@ -134,11 +134,14 @@
   color: var(--dial-text-dim);
   letter-spacing: 1px;
 }
+/* The name grows with the window on large screens (13 px up to about 1150 px
+   wide, 17 px from about 2500 px). */
 .tuner-frequency .station-name {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: clamp(13px, 0.3vw + 9.5px, 17px);
   color: var(--dial-text);
-  max-width: min(220px, 46cqw);
+  /* Grows with the name's size: 221 px at 13 px, 289 px at 17 px. */
+  max-width: min(17em, 46cqw);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -225,6 +228,29 @@
   color: var(--accent-contrast);
   border-color: transparent;
   font-weight: 600;
+}
+
+/* "Did not play last time" (the user's own stations): a small round mark on
+   the card's top right corner, laid over it so the card keeps its size. */
+.station-pill.has-trouble { position: relative; }
+.station-pill > .pill-trouble {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  min-width: 0;
+  max-width: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  overflow: hidden;
 }
 
 .tuner-empty {

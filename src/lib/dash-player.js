@@ -66,6 +66,17 @@ export async function createDashPlayback(video, url, {
   }
   return {
     player,
+    /** True for a live (dynamic) stream, false for a recording; null while
+     *  dash.js cannot tell yet (it throws before the stream is set up). */
+    isLive() {
+      if (destroyed) return null;
+      try {
+        const dynamic = player.isDynamic?.();
+        return typeof dynamic === 'boolean' ? dynamic : null;
+      } catch (_) {
+        return null;
+      }
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;

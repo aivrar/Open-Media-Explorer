@@ -25,8 +25,16 @@ import {
   MAX_FAVORITE_NAME_LENGTH, favoriteName, withFavoriteName, withoutFavoriteName,
 } from '../../lib/favorite-names.js';
 import { renameFavorite, resetFavoriteName } from '../../lib/favorite-rename.js';
+import { didNotPlayNote, isSavedItem } from '../../lib/did-not-play-view.js';
+import {
+  PICTURE_ACCEPT, removeStationPicture, saveStationPicture,
+} from '../../lib/station-image-files.js';
 
 let detailReturnFocus = null;
+// The item the open panel shows, for the parts that change in place.
+let detailItem = null;
+let detailTrouble = null;
+let detailPicture = null;
 let detailKeyHandler = null;
 let detailArtworkAbort = null;
 let detailArtworkShown = null;
@@ -78,6 +86,8 @@ function detailArtwork(item) {
     className: 'detail-thumb',
     attrs: { alt: '', referrerpolicy: 'no-referrer' },
   });
+  // A station's artwork is its logo, often a wide wordmark: shown whole.
+  if (item.type === 'tv' || item.type === 'radio') detailThumb.classList?.add?.('logo-art');
   const loadDetailArtwork = () => {
     // The user's own station picture first, then the item's relay artwork.
     const source = artworkSourceFor(item);
@@ -195,6 +205,11 @@ export function openDetail(item, options = {}) {
     meta.appendChild(el('span', { className: 'content-rating-badge', text: ratingLabel }));
   }
   ui.detailPanel.appendChild(meta);
+  // "Did not play last time" for the user's own stations (did-not-play.js).
+  detailItem = item;
+  detailTrouble = el('p', { className: 'detail-trouble', attrs: { role: 'note' } });
+  ui.detailPanel.appendChild(detailTrouble);
+  refreshDetailTrouble();
   // Auto (verified): what the check knows of this station, kept up to date.
   if (item.__contentHidden !== true) {
     detailBestStream = createBestStreamStatus(item);
@@ -242,7 +257,16 @@ export function openDetail(item, options = {}) {
     actions.appendChild(rename.button);
     if (rename.reset) actions.appendChild(rename.reset);
   }
+  // A picture of the station's own, for favorites and My Playlists stations.
+  detailPicture = isSavedItem(item.id) && item.__contentHidden !== true ? buildPictureControls(item) : null;
+  if (detailPicture) {
+    actions.appendChild(detailPicture.choose);
+    actions.appendChild(detailPicture.remove);
+    actions.appendChild(detailPicture.input);
+    refreshDetailPictureControls();
+  }
   ui.detailPanel.appendChild(actions);
+  if (detailPicture) ui.detailPanel.appendChild(detailPicture.message);
   if (rename) ui.detailPanel.appendChild(rename.form);
   if (otherStreams.section) ui.detailPanel.appendChild(otherStreams.section);
   if (otherStreams.note) ui.detailPanel.appendChild(otherStreams.note);
@@ -337,10 +361,83 @@ function buildRename(item) {
   return { button, reset, form, input };
 }
 
+/** "Choose picture..." (a file chooser for pictures) and, while the station
+ *  has a picture of its own in the station-images folder, "Remove picture".
+ *  Both end in that folder with the folder's own checks (station-image-files.js);
+ *  the result is said in plain words under the buttons. */
+function buildPictureControls(item) {
+  const input = el('input', {
+    className: 'detail-picture-input',
+    attrs: { type: 'file', accept: PICTURE_ACCEPT, tabindex: '-1', 'aria-hidden': 'true' },
+  });
+  input.hidden = true;
+  const choose = el('button', {
+    className: 'btn', text: 'Choose picture…',
+    attrs: { type: 'button', 'data-act': 'choose-station-picture', title: 'Use a PNG, JPG, WebP or GIF picture (up to 2 MB) for this station' },
+  });
+  const remove = el('button', {
+    className: 'btn', text: 'Remove picture',
+    attrs: { type: 'button', 'data-act': 'remove-station-picture' },
+  });
+  const message = el('p', { className: 'detail-picture-message', attrs: { role: 'status', 'aria-live': 'polite' } });
+  message.hidden = true;
+  let busy = false;
+  const show = (result) => {
+    if (!result || result.cancelled || !result.text) return;
+    message.textContent = result.text;
+    message.dataset.state = result.ok ? 'ready' : 'error';
+    message.hidden = false;
+  };
+  const run = async (work) => {
+    if (busy) return;
+    busy = true;
+    choose.disabled = true;
+    remove.disabled = true;
+    try {
+      show(await work());
+    } finally {
+      busy = false;
+      choose.disabled = false;
+      remove.disabled = false;
+      refreshDetailPictureControls();
+    }
+  };
+  choose.addEventListener('click', () => { if (!busy) input.click?.(); });
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    void run(() => saveStationPicture(item, file)).finally(() => { input.value = ''; });
+  });
+  remove.addEventListener('click', () => { void run(() => removeStationPicture(item)); });
+  return { item, input, choose, remove, message, show };
+}
+
+/** Show "Remove picture" only while the station has a picture of its own. */
+export function refreshDetailPictureControls() {
+  if (!detailPicture) return false;
+  detailPicture.remove.hidden = !stationImageSourceFor(detailPicture.item);
+  return true;
+}
+
+/** The "Did not play last time" sentence of the open panel, kept current. */
+export function refreshDetailTrouble() {
+  if (!detailTrouble || !detailItem) return false;
+  const text = didNotPlayNote(detailItem);
+  if (detailTrouble.textContent !== text) detailTrouble.textContent = text;
+  detailTrouble.hidden = !text;
+  return true;
+}
+
+/** Tests: the open panel's picture controls. */
+export function detailPictureControls() { return detailPicture; }
+
 export function closeDetail({ preserveSelection = false } = {}) {
   if (detailArtworkAbort && !detailArtworkAbort.signal.aborted) detailArtworkAbort.abort();
   detailArtworkAbort = null;
   detailArtworkShown = null;
+  detailItem = null;
+  detailTrouble = null;
+  detailPicture = null;
   stopOtherStreams();
   if (ui.detailPanel) {
     ui.detailPanel.remove();

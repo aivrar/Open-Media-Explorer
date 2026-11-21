@@ -53,13 +53,15 @@
  *   node tests/helpers/visualizer-fx-check.mjs out.json --overlays --overlay-focus=spectrum
  *
  * writes only that overlay's runs: plain and with every blend-in it allows,
- * on the same scenes, from three places in the track (focusRuns).
+ * on the same scenes, from three places in the track (focusRuns). The runs
+ * "under" the effects draw one (Mirror in its Kaleidoscope mode, Strong).
  *
  *   node tests/helpers/visualizer-fx-check.mjs out.json --overlays --overlay-focus=bokeh --overlay-together=starfield
  *
  * writes that overlay's parts together instead, on that one scene: each mode
  * it allows with a mask (bright, dark), the tint and bending at once, over
- * the effects and (where it may) under them; with Add + bending and Screen
+ * the effects and (where it may) under them, the "under" runs under Mirror
+ * in its Kaleidoscope mode at Strong; with Add + bending and Screen
  * alone beside them for comparison, all from the place in the track the
  * blend runs start on that scene.
  *
@@ -110,6 +112,9 @@ export const OVERLAY_CHECK_STRONG = Object.freeze(['spotlights', 'fireworks', 'l
 /** The drawing sizes of Low, Medium and High on a 1920 x 1080 screen
  *  (size.js drawingSize with the presets). */
 export const OVERLAY_CHECK_SIZES = Object.freeze({ low: [960, 540], medium: [1440, 810], high: [1920, 1080] });
+/** The tab's picture at each quality in a 1920 x 1080 window: flash runs
+ *  of a spec asked at a quality are drawn at this size. */
+export const OVERLAY_FLASH_SIZES = Object.freeze({ low: [1003, 531], medium: [1504, 797], high: [2005, 1063] });
 
 /** An overlay at its strongest settings: the top of every range, on the
  *  kick when it has a sync (the most hits), else the first pick. */
@@ -131,9 +136,13 @@ export const OVERLAY_CHECK_BRIGHTEST = Object.freeze({
 });
 
 /** --overlay-focus=<id>: one overlay alone, plain and with every blend-in it
- *  allows (each mode over and under the effects, the masks, the tint,
- *  bending), on every overlay check scene, from three places in the track. */
-function focusRuns(id, flashScenes, entryOf, item, together = null) {
+ *  allows (each mode over the effects, and under them where it may, the
+ *  masks, the tint, bending), on every overlay check scene, from three
+ *  places in the track. A run "under" the effects draws one: `underFx`
+ *  (Mirror in its Kaleidoscope mode, at Strong), which then acts on the scene
+ *  and the overlay together; the others draw none. */
+function focusRuns(id, flashScenes, entryOf, item, together = null, underFx = []) {
+  if (!underFx.length) throw new Error('focus runs: no effect to draw the "under" runs with');
   const row = overlayRow(id);
   const blends = together ? [['add + bend', { mode: 'add', bend: true }], ['screen', { mode: 'screen' }]] : [['plain', {}]];
   for (const mode of row.blends) {
@@ -159,7 +168,8 @@ function focusRuns(id, flashScenes, entryOf, item, together = null) {
         // Together: from where the blend runs start on that scene.
         const first = together ? OVERLAY_CHECK_SCENES.indexOf(together) * 31 : which * 13;
         runs.push({
-          group: `focus ${name}`, scene, from: (first + start * 30) % (RECORDED_FRAMES - FX_CHECK_CLIP_FRAMES), fx: [], intensity: together ? 'strong' : 'normal', flash: false,
+          group: `focus ${name}`, scene, from: (first + start * 30) % (RECORDED_FRAMES - FX_CHECK_CLIP_FRAMES),
+          fx: blend.under ? underFx : [], intensity: together || blend.under ? 'strong' : 'normal', flash: false,
           overlays: [asked], blendName: name, allowed: JSON.stringify(drawn.blend) === JSON.stringify(asked.blend),
         });
       }
@@ -172,12 +182,34 @@ function focusRuns(id, flashScenes, entryOf, item, together = null) {
  *  check scene's id), items ([{ id, blend, values }]: values over the
  *  strongest), from, clip (frames), motion (the sheets' motion at its
  *  deepest, the drift clock at the top of its range), fx (effect ids, at
- *  Strong), cost (a quality: timed at its size instead), group }. */
+ *  Strong; an id the catalog does not have stops the build), fxValues
+ *  ({ id: { param: value } } over the values drawn, e.g. { mirror: { mode:
+ *  3 } } for its Kaleidoscope), cost (a quality: timed at its size
+ *  instead), quality (a flash run drawn at that quality, at
+ *  OVERLAY_FLASH_SIZES, or at `size` [w, h] when given), extraGlow ("Extra
+ *  glow" on), valueDrift (overlay value drift at its deepest), group, key
+ *  (passed through to the row) }. */
 function specRuns(path, at, entryOf) {
   // The palettes as the tab gives them (the Palette Map pass).
   const { PsyPalettes } = loadPalettes({});
   const { PostFxLibrary } = loadPostFx({ PsyPalettes });
   const effects = createFxShuffle({ catalog: fxCatalog(PostFxLibrary, PsyPalettes), random: seededRandom(1111) });
+  // The same effects (ids and fxValues) are built once and drawn with the
+  // same values in every run that asks for them, so runs with and without
+  // an overlay compare like with like. An id the catalog does not have stops
+  // the build: it would draw nothing.
+  const built = new Map();
+  const buildFx = (ids, more = {}) => {
+    const key = JSON.stringify([ids, more]);
+    if (!built.has(key)) {
+      const fx = effects.build(ids, 'strong').fx.map(({ id, values, links }) => ({ id, values: { ...values, ...(more[id] || {}) }, links }));
+      if (fx.length !== ids.length) {
+        throw new Error(`--overlay-spec: effects ${ids.join('+')} asked, ${fx.map((one) => one.id).join('+') || 'none'} built`);
+      }
+      built.set(key, fx);
+    }
+    return built.get(key);
+  };
   return JSON.parse(readFileSync(path, 'utf8')).map((spec) => {
     const scene = at(spec.scene);
     if (scene < 0) throw new Error(`--overlay-spec: ${spec.scene} is not an overlay check scene`);
@@ -185,10 +217,13 @@ function specRuns(path, at, entryOf) {
     const drawn = overlaysDrawnFor(entryOf(scene), asked);
     return {
       group: spec.group || 'spec', scene, from: spec.from || 0, intensity: 'strong', flash: false, overlays: asked,
-      fx: spec.fx?.length ? effects.build(spec.fx, 'strong').fx.map(({ id, values, links }) => ({ id, values, links })) : [],
+      fx: spec.fx?.length ? buildFx(spec.fx, spec.fxValues || {}) : [],
       clip: spec.clip || FX_CHECK_CLIP_FRAMES, motion: Boolean(spec.motion), allowed: JSON.stringify(drawn.map((x) => x.blend)) === JSON.stringify(asked.map((x) => x.blend)),
-      // Cost runs (timing only) at a quality's size.
+      extraGlow: Boolean(spec.extraGlow), valueDrift: Boolean(spec.valueDrift), key: spec.key || null,
+      // Cost runs (timing only) at a quality's size; flash runs at a quality
+      // at the tab's picture size.
       ...(spec.cost ? { cost: true, quality: spec.cost, size: OVERLAY_CHECK_SIZES[spec.cost] } : {}),
+      ...(!spec.cost && spec.quality ? { quality: spec.quality, size: spec.size || OVERLAY_FLASH_SIZES[spec.quality] } : {}),
     };
   });
 }
@@ -211,8 +246,11 @@ async function overlayRuns(out, focus = null, together = null, spec = null) {
   // The palettes as the tab gives them (the Palette Map pass).
   const { PsyPalettes } = loadPalettes({});
   const { PostFxLibrary } = loadPostFx({ PsyPalettes });
+  // Psychedelia's Kaleidoscope is a mode of its Mirror effect (mode 3), not
+  // an effect of its own: an id the catalog does not have builds nothing.
   const kaleidoscope = createFxShuffle({ catalog: fxCatalog(PostFxLibrary, PsyPalettes), random: seededRandom(66) })
-    .build(['kaleidoscope'], 'strong').fx.map(({ id, values, links }) => ({ id, values, links }));
+    .build(['mirror'], 'strong').fx.map(({ id, values, links }) => ({ id, values: { ...values, mode: 3 }, links }));
+  if (!kaleidoscope.length) throw new Error('the Mirror effect is not in the catalog');
   const item = (id, blend = PLAIN_BLEND) => ({ id, blend: { ...PLAIN_BLEND, ...blend }, values: OVERLAY_CHECK_WORST(id) });
   const flashScenes = OVERLAY_CHECK_SCENES.map(at);
   if (spec) {
@@ -226,7 +264,7 @@ ${scenes.length} scenes, ${runs.length} runs -> ${out}`);
     if (!overlayRow(focus)) throw new Error(`--overlay-focus: no overlay ${focus}`);
     if (together && !OVERLAY_CHECK_SCENES.includes(together)) throw new Error(`--overlay-together: ${together} is not an overlay check scene`);
     const onScenes = together ? [at(together)] : flashScenes;
-    runs.push(...focusRuns(focus, onScenes, entryOf, item, together));
+    runs.push(...focusRuns(focus, onScenes, entryOf, item, together, kaleidoscope));
     writeFileSync(out, JSON.stringify({ scenes, runs, clip: FX_CHECK_CLIP_FRAMES }));
     console.log(`\n${scenes.length} scenes, ${runs.length} ${focus} runs -> ${out}`);
     return;

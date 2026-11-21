@@ -7,6 +7,8 @@ import {
 } from '../src/visualizer/structure.js';
 import { createShuffleTimer, SHUFFLE_MIN_DWELL_S } from '../src/visualizer/shuffle.js';
 import { WARP_DISSOLVE_RELEASED, WARP_DISSOLVE_SHADER, warpWeight } from '../src/visualizer/warp-dissolve.js';
+import { createMoodTracker } from '../src/visualizer/mood.js';
+import { beatTrack, listen } from './helpers/mood-sim.js';
 
 /* Song structure on synthetic level curves: 120 bpm, 60 frames a second,
    one level (dB) per bar, or a function of (bar, beat in bar). */
@@ -106,10 +108,48 @@ test('a drop brings the shuffle change forward only after the minimum time, and 
   assert.equal(timer.bringForward(), false, 'a new scene starts its minimum time again');
 });
 
+test('fed the mood\'s own beat count, a steady beat is neither a build nor a drop', () => {
+  // A minute of a steady dance beat read as the page reads it; the bar clock
+  // runs only while the mood's tempo reading is sure.
+  const mood = createMoodTracker();
+  const detector = createStructureDetector();
+  const drops = [];
+  let built = false;
+  let counted = 0;
+  listen(mood, beatTrack({ bpm: 128, hats: 4, kicks: [0, 1, 2, 3] }), 60, {
+    each: (now, m, sound) => {
+      if (Number.isFinite(m.beats)) counted += 1;
+      if (detector.step(m.beats, sound.levelDb) === 'drop') drops.push(now);
+      built ||= detector.building;
+    },
+  });
+  assert.ok(counted > 30 * 40, `the clock ran ${counted} frames`);
+  assert.deepEqual(drops, []);
+  assert.equal(built, false);
+});
+
+test('the mood\'s beat count: none while its tempo is not sure, then beats at the tempo read', () => {
+  const mood = createMoodTracker();
+  assert.ok(Number.isNaN(mood.beats));
+  let first = Number.NaN;
+  let from = 0;
+  listen(mood, beatTrack({ bpm: 120, hats: 2 }), 30, {
+    each: (now, m) => {
+      if (Number.isNaN(first) && Number.isFinite(m.beats)) { first = m.beats; from = now; }
+    },
+  });
+  assert.equal(mood.tempo.sure, true);
+  const rate = (mood.beats - first) / (30 - 1 / 30 - from);
+  assert.ok(Math.abs(rate - mood.tempo.bpm / 60) < 0.05, `${rate} beats a second at ${mood.tempo.bpm}`);
+  mood.reset();
+  assert.ok(Number.isNaN(mood.beats));
+});
+
 test('held: nothing steers until released; the warped dissolve is a convex mix, held and not wired', () => {
   assert.equal(SONG_STRUCTURE_RELEASED, false);
   const viz = readFileSync('src/visualizer/index.js', 'utf8');
   assert.match(viz, /const structure = SONG_STRUCTURE_RELEASED \? createStructureDetector\(\) : null;/);
+  assert.match(viz, /structure\.step\(mood\.beats, bridge\.adapter\.levelDb\)/, 'the bar clock is the mood\'s beat count');
   assert.match(viz, /if \(structureEvent === 'drop' && shuffleOn && started && !lost\) shuffleTimer\.bringForward\(\);/);
   assert.equal(WARP_DISSOLVE_RELEASED, false);
   assert.doesNotMatch(viz, /warp-dissolve/);

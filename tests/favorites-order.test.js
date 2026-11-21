@@ -720,17 +720,18 @@ test('moveFavoriteTo puts a favorite before or after another with one save and o
   });
 });
 
-test('the top-left half of a card is before it and the bottom-right half after it', () => {
-  const rect = { left: 100, top: 50, width: 200, height: 80 };
-  assert.equal(favoriteDropPlace(rect, 110, 60), 'before');
-  assert.equal(favoriteDropPlace(rect, 290, 120), 'after');
-  // A wide row in one column: the top is before, the bottom after.
-  assert.equal(favoriteDropPlace(rect, 200, 55), 'before');
-  assert.equal(favoriteDropPlace(rect, 200, 125), 'after');
-  // Grid cards side by side: the left part is before, the right part after.
-  assert.equal(favoriteDropPlace(rect, 120, 90), 'before');
-  assert.equal(favoriteDropPlace(rect, 280, 90), 'after');
-  assert.equal(favoriteDropPlace(null, 0, 0), 'before');
+test('a card dropped on another takes its place: before it from later in the order, after it from earlier', () => {
+  const order = ['a', 'b', 'c', 'd', 'e'];
+  assert.equal(favoriteDropPlace(order, 'd', 'b'), 'before');
+  assert.equal(favoriteDropPlace(order, 'c', 'b'), 'before', 'a neighbour from below');
+  assert.equal(favoriteDropPlace(order, 'b', 'c'), 'after', 'a neighbour from above');
+  assert.equal(favoriteDropPlace(order, 'a', 'e'), 'after');
+  assert.equal(favoriteDropPlace(new Map([['x', 4], ['y', 9]]), 'y', 'x'), 'before');
+  // Onto itself, or a card that is not shown: nowhere.
+  assert.equal(favoriteDropPlace(order, 'b', 'b'), '');
+  assert.equal(favoriteDropPlace(order, 'b', 'z'), '');
+  assert.equal(favoriteDropPlace(order, 'z', 'b'), '');
+  assert.equal(favoriteDropPlace(null, 'a', 'b'), '');
 });
 
 /** The drag listeners the Library binds on the results host, called with
@@ -781,7 +782,7 @@ test('dragging a card onto another moves it there and saves "My order"', () => {
   withLibrary([card('a', 'Alpha'), card('b', 'Beta'), card('c', 'Gamma'), card('d', 'Delta')], ({ state, host, values, events }) => {
     const drag = dragHarness(host);
     renderResults();
-    assert.deepEqual([...drag.listeners.keys()].sort(), ['dragend', 'dragleave', 'dragover', 'dragstart', 'drop']);
+    assert.deepEqual([...drag.listeners.keys()].sort(), ['dragend', 'dragenter', 'dragleave', 'dragover', 'dragstart', 'drop']);
     const d = cardNode(host, 'd');
     assert.equal(d.getAttribute('draggable'), 'true');
     assert.equal(d.classList.contains('is-draggable'), true);
@@ -795,14 +796,15 @@ test('dragging a card onto another moves it there and saves "My order"', () => {
     assert.equal(over.event.prevented, true, 'the card accepts the drop');
     assert.equal(over.event.dataTransfer.dropEffect, 'move');
     assert.equal(b.classList.contains('drop-before'), true);
+    // Anywhere on the card: d comes from later, so it goes before b.
     drag.fire('dragover', b, { x: 190, y: 70 });
-    assert.equal(b.classList.contains('drop-before'), false);
-    assert.equal(b.classList.contains('drop-after'), true);
-    // Over itself: no mark, no drop.
-    const self = drag.fire('dragover', d, { x: 20, y: 10 });
-    assert.equal(self.event.prevented, false);
+    assert.equal(b.classList.contains('drop-before'), true);
     assert.equal(b.classList.contains('drop-after'), false);
-    const drop = drag.fire('drop', b, { x: 20, y: 10 });
+    // Over itself: accepted (no "no entry" cursor), but no mark.
+    const self = drag.fire('dragover', d, { x: 20, y: 10 });
+    assert.equal(self.event.prevented, true);
+    assert.equal(b.classList.contains('drop-before'), false);
+    const drop = drag.fire('drop', b, { x: 190, y: 70 });
     assert.equal(drop.event.prevented, true);
     assert.deepEqual(ids(state.favorites), ['a', 'd', 'b', 'c']);
     assert.deepEqual(ids(JSON.parse(values.get(STORAGE_KEYS.favorites))), ['a', 'd', 'b', 'c']);
@@ -861,9 +863,9 @@ test('with a filter or a category, a drop moves the card among the shown ones on
     assert.deepEqual(shownIds(host), ['r1', 'r2', 'r3']);
     drag.fire('dragstart', cardNode(host, 'r3'));
     drag.fire('drop', cardNode(host, 'r1'), { x: 190, y: 70 });
-    // The hidden TV favorites keep their places.
-    assert.deepEqual(ids(state.favorites), ['r1', 't1', 'r3', 't2', 'r2']);
-    assert.deepEqual(shownIds(host), ['r1', 'r3', 'r2']);
+    // r3 takes r1's place; the hidden TV favorites keep theirs.
+    assert.deepEqual(ids(state.favorites), ['r3', 't1', 'r1', 't2', 'r2']);
+    assert.deepEqual(shownIds(host), ['r3', 'r1', 'r2']);
     // A card that is not shown cannot be the target.
     assert.equal(onDropFavorite('r2', 't2', 'before'), false);
   });
@@ -880,6 +882,115 @@ test('with a filter or a category, a drop moves the card among the shown ones on
     assert.deepEqual(ids(state.favorites), ['r3', 't1', 'r2', 'r1', 't2']);
     assert.deepEqual(shownIds(host), ['r3', 'r1', 't2']);
   });
+});
+
+/** The shown order after the card at `from` takes the place of the one at `to`. */
+function takePlace(order, from, to) {
+  const next = [...order];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+test('every drop on another card moves it into that card\'s place, from above and below, near and far', () => {
+  const list = ['a', 'b', 'c', 'd', 'e'].map((id) => card(id, id.toUpperCase()));
+  withLibrary(list, ({ state, host, events }) => {
+    const drag = dragHarness(host);
+    renderResults();
+    // Each corner of the target, and a drop on the card itself, a child of
+    // it, or a grandchild (its picture or a button), all work alike.
+    const spots = [{ x: 4, y: 4 }, { x: 196, y: 76 }, { x: 196, y: 4 }, { x: 4, y: 76 }];
+    let drops = 0;
+    for (let from = 0; from < 5; from += 1) {
+      for (let to = 0; to < 5; to += 1) {
+        if (from === to) continue;
+        const before = shownIds(host);
+        const draggedId = before[from];
+        const targetId = before[to];
+        const target = cardNode(host, targetId);
+        const spot = spots[drops % spots.length];
+        const dropOn = [target, target.children[0], target.children[0]?.children?.[0] || target][drops % 3];
+        drag.fire('dragstart', cardNode(host, draggedId));
+        const enter = drag.fire('dragenter', dropOn, spot);
+        assert.equal(enter.event.prevented, true, 'entering any part of the card accepts the drop');
+        const mark = from > to ? 'drop-before' : 'drop-after';
+        assert.equal(target.classList.contains(mark), true, `${draggedId} onto ${targetId}: ${mark}`);
+        const drop = drag.fire('drop', dropOn, spot);
+        assert.equal(drop.event.prevented, true);
+        drops += 1;
+        const after = shownIds(host);
+        assert.deepEqual(after, takePlace(before, from, to), `${draggedId} onto ${targetId}`);
+        assert.equal(after.indexOf(draggedId), to, 'the dragged card ends at the place the target had');
+        assert.deepEqual(ids(state.favorites), after);
+        assert.equal(events(), drops, 'every drop changed the order');
+      }
+    }
+  });
+});
+
+test('with a filter, a dragged card takes the shown target\'s place and the hidden ones stay put', () => {
+  const list = [card('t0', 'TV zero', 'tv'), card('r1', 'One'), card('t1', 'TV one', 'tv'), card('r2', 'Two'),
+    card('r3', 'Three'), card('t2', 'TV two', 'tv'), card('r4', 'Four')];
+  withLibrary(list, ({ state, host }) => {
+    const drag = dragHarness(host);
+    view.personalFilters.favorites.type = 'radio';
+    renderResults();
+    const hiddenAt = () => ['t0', 't1', 't2'].map((id) => ids(state.favorites).indexOf(id));
+    const hidden = hiddenAt();
+    for (const [from, to] of [[3, 0], [0, 3], [1, 2], [2, 1], [3, 2], [0, 1]]) {
+      const before = shownIds(host);
+      drag.fire('dragstart', cardNode(host, before[from]));
+      drag.fire('drop', cardNode(host, before[to]), { x: 100, y: 40 });
+      assert.deepEqual(shownIds(host), takePlace(before, from, to), `${before[from]} onto ${before[to]}`);
+      assert.deepEqual(hiddenAt(), hidden, 'hidden favorites keep their places');
+    }
+  });
+});
+
+test('while a favorite is dragged the whole results area accepts it; a gap or the card itself changes nothing', () => {
+  withLibrary([card('a', 'Alpha'), card('b', 'Beta'), card('c', 'Gamma')], ({ state, host, events }) => {
+    const drag = dragHarness(host);
+    renderResults();
+    // No favorite being dragged: dragenter and dragover are left alone.
+    assert.equal(drag.fire('dragenter', cardNode(host, 'a')).event.prevented, false);
+    assert.equal(drag.fire('dragover', host).event.prevented, false);
+    const c = cardNode(host, 'c');
+    drag.fire('dragstart', c);
+    // The gap between cards (the results host itself) and the dragged card.
+    for (const target of [host, c, c.children[0]]) {
+      for (const type of ['dragenter', 'dragover']) {
+        const { event } = drag.fire(type, target);
+        assert.equal(event.prevented, true, `${type} accepted`);
+        assert.equal(event.dataTransfer.dropEffect, 'move');
+      }
+    }
+    assert.equal(host.children.some((node) => node.classList.contains('drop-before') || node.classList.contains('drop-after')), false);
+    // A file dragged in while a card drag is still recorded is never a reorder.
+    assert.equal(drag.fire('dragenter', cardNode(host, 'a'), { files: true }).event.prevented, false);
+    assert.equal(drag.fire('dragover', cardNode(host, 'a'), { files: true }).event.prevented, false);
+    assert.equal(drag.fire('drop', cardNode(host, 'a'), { files: true }).event.prevented, false);
+    assert.deepEqual(ids(state.favorites), ['a', 'b', 'c']);
+    // Let go in a gap: taken in, nothing moves.
+    assert.equal(drag.fire('drop', host).event.prevented, true);
+    assert.equal(c.classList.contains('is-dragging'), false);
+    drag.fire('dragstart', c);
+    assert.equal(drag.fire('drop', c.children[0]).event.prevented, true);
+    assert.deepEqual(ids(state.favorites), ['a', 'b', 'c']);
+    assert.equal(events(), 0);
+  });
+});
+
+test('buttons inside a card neither start a drag of their own nor stop the drop', async () => {
+  const render = (await read('src/modes/library/render.js')).replace(/\r\n/g, '\n');
+  // Only cards are made draggable, and no drag listener sits below the results host.
+  assert.equal(render.match(/setAttribute\('draggable'/g).length, 1);
+  const drag = render.slice(render.indexOf('function bindFavoriteDrag('), render.indexOf('/** A card was dropped on another'));
+  for (const type of ['dragstart', 'dragenter', 'dragover', 'dragleave', 'drop', 'dragend']) {
+    assert.match(drag, new RegExp(`host\\.addEventListener\\('${type}'`), type);
+  }
+  assert.equal((render.match(/addEventListener\('drag|addEventListener\('drop/g) || []).length, 6);
+  // The drop finds its card from any element inside it.
+  assert.match(render, /target\?\.closest\?\.\('\.card\[data-id\]'\)/);
 });
 
 test('a drop among shown favorites leaves the hidden ones exactly where they were', () => {

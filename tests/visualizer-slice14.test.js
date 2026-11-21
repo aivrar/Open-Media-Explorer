@@ -38,7 +38,7 @@ const manifest = JSON.parse(readFileSync(join(VENDOR_DIR, 'manifest.json'), 'utf
 
 const SIMS = Object.freeze(['curl_silk', 'fluid_ink', 'lenia', 'physarum']);
 // The line-drawing scenes offered (slice 15) also need WebGL 2: tests/visualizer-lines.test.js.
-const LINES = Object.freeze(['hopf', 'knots', 'lissajous', 'lorenz', 'spirograph']);
+const LINES = Object.freeze(['epicycles', 'hopf', 'knots', 'lissajous', 'lorenz', 'polytopes', 'spirograph']);
 const FEEDBACK = Object.freeze(['feedback', 'reaction_diffusion']);
 const NEW_IDS = Object.freeze([...SIMS, ...FEEDBACK]);
 const SOURCES = Object.freeze({

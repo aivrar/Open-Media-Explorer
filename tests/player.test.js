@@ -69,6 +69,12 @@ test('player owns lifecycle state across pause, errors, rejection, stop, and rap
   const player = await import(`../src/lib/player.js?phase1=${Date.now()}`);
   player.initPlayer();
 
+  // Only media with a finite length gets a seek bar.
+  for (const length of [125, 0.5, 36000]) assert.equal(player.hasSeekableLength(length), true, String(length));
+  for (const length of [Infinity, Number.NaN, 0, -1, undefined, null]) {
+    assert.equal(player.hasSeekableLength(length), false, String(length));
+  }
+
   const audioItem = item('audio-one', 'audio', 'audio');
   await player.playItem(audioItem);
   assertPlaying(elements, true);
@@ -90,6 +96,16 @@ test('player owns lifecycle state across pause, errors, rejection, stop, and rap
   elements['audio-el'].emit('error');
   assertPlaying(elements, true);
 
+  // No length yet (as for a live stream): no seek bar and no length shown,
+  // only hidden (their space stays); the time played stays shown.
+  elements['video-el'].currentTime = 3;
+  elements['video-el'].emit('timeupdate');
+  assert.equal(elements['player-seek'].classList.contains('is-no-length'), true);
+  assert.equal(elements['player-dur'].classList.contains('is-no-length'), true);
+  assert.equal(elements['player-time'].classList.contains('is-no-length'), false);
+  assert.equal(elements['player-time'].textContent, '0:03');
+  assert.equal(elements['player-seek'].hidden, false, 'visibility only: the bar does not move');
+
   elements['video-el'].duration = 125;
   elements['video-el'].currentTime = 5;
   elements['video-el'].emit('durationchange');
@@ -97,6 +113,15 @@ test('player owns lifecycle state across pause, errors, rejection, stop, and rap
   assert.equal(elements['player-time'].textContent, '0:05');
   assert.equal(elements['player-dur'].textContent, '2:05');
   assert.equal(elements['player-seek'].disabled, false);
+  assert.equal(elements['player-seek'].classList.contains('is-no-length'), false);
+  assert.equal(elements['player-dur'].classList.contains('is-no-length'), false);
+
+  // A live stream reports an endless length.
+  elements['video-el'].duration = Infinity;
+  elements['video-el'].emit('durationchange');
+  assert.equal(elements['player-seek'].classList.contains('is-no-length'), true);
+  elements['video-el'].duration = 125;
+  elements['video-el'].emit('durationchange');
 
   elements['video-el'].pause();
   assertPlaying(elements, false);

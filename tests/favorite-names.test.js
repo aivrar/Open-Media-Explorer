@@ -231,8 +231,9 @@ test('the Library and the Tuner show the name; search finds both names', () => {
 test('the player bar, the song log and the cards follow the name', async () => {
   const player = await read('src/lib/player.js');
   // Every place the player bar writes the station name uses the shown name.
-  assert.doesNotMatch(player, /elements\.title\.textContent = (currentItem\?*|item)\.title/);
-  assert.equal(player.match(/elements\.title\.textContent = shownTitle\(/g).length, 4);
+  assert.doesNotMatch(player, /setTitleLine\((currentItem\?*|item)\.title/);
+  assert.equal(player.match(/elements\.title\.textContent = /g).length, 1, 'only setTitleLine writes it');
+  assert.equal(player.match(/setTitleLine\(shownTitle\(/g).length, 4);
   assert.match(player, /artist: shownTitle\(currentItem\)/);
   assert.match(player, /subscribe\('favorites-change', \(\) => \{[\s\S]*?setMetaText\(currentItem\);[\s\S]*?\}\);/);
   const main = await read('src/main.js');

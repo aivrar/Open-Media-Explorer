@@ -134,7 +134,9 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   border-left: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(12, 13, 17, 0.94);
+  /* Nearly opaque: a bright scene or overlay behind it only tints the panel
+     and never shows through behind its text. */
+  background: rgba(12, 13, 17, 0.98);
   color: #f1f4f7;
   font-size: 12px;
 }
@@ -538,7 +540,14 @@
 .viz-start-text { margin: 0; }
 
 /* ---- Effects (fx-chain.js): the switches and one per effect ---- */
-.viz-fx-now { align-self: flex-start; }
+/* "New effects now" and "New overlays now": text buttons among the panel's
+   choices, so the size of those choices (the panel's text, the lists'
+   padding), not the larger arrow buttons of .viz-btn. */
+.viz-fx-now,
+.viz-ov-now { align-self: flex-start; padding: 3px 6px; font-size: inherit; }
+/* Under a blend choice that set another overlay back to plain. */
+.viz-ov-blend-note { flex-basis: 100%; margin: 0; color: #c9b27a; font-size: 0.9em; white-space: normal; }
+.viz-ov-blend-note[hidden] { display: none; }
 .viz-fx-line { margin: 0; color: #a7b0bc; overflow-wrap: anywhere; }
 .viz-fx-line[hidden] { display: none; }
 /* Effects the scene drawn now leaves out (calm scenes): still chosen, shown
@@ -565,7 +574,7 @@
   line-height: 1.25;
   cursor: pointer;
 }
-/* A long name ("Heat Haze & Caustic Light") wraps; nothing is cut off. */
+/* A name too long for its column wraps; nothing is cut off. */
 .viz-fx-item span {
   min-width: 0;
   white-space: normal;
@@ -576,7 +585,6 @@
 .viz-fx-box:disabled + span { color: #7d8692; }
 
 /* ---- Overlays (overlay-layer.js) ---- */
-.viz-ov-now { align-self: flex-start; }
 /* One small block per chosen overlay: its name, then Blend and Show on a
    line each, then the switches, which wrap. */
 .viz-ov-blends {

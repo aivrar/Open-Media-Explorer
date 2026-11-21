@@ -128,7 +128,7 @@ test('a dropped playlist is imported and never handed to Windows', async () => {
 
 test('a drop goes through the Library import and lands on My Playlists', async () => {
   const main = await read('src/main.js');
-  assert.match(main, /initPlaylistDrop\(\{ onPlaylist: importDroppedPlaylist \}\)/);
+  assert.match(main, /initPlaylistDrop\(\{\s*onPlaylist: importDroppedPlaylist,\s*onPicture: dropStationPicture,\s*describePictureDrop: pictureDropText,\s*\}\)/);
   assert.match(main, /getState\(\)\.mode === 'tuner' \? tunerBand\(\) : ''/);
   assert.match(main, /showMyPlaylists\(\);\s*if \(getState\(\)\.mode !== 'library'\) setMode\('library'\);\s*await importLocalPlaylist\(file, type\);/);
   const controls = await read('src/modes/library/personal-controls.js');

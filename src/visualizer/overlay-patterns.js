@@ -473,13 +473,25 @@ const strobe = {
   },
 };
 
-/* ---- Held: three more of ours (OVERLAY_NEW_PATTERNS_RELEASED) ----
+/* ---- Three more of ours: Ripples, Fireflies, Orbits ----
    Calm by design: steady (nothing fires on a hit), thin lines up to a pixel
    and small dots, no fill wider than a dot; the music moves them only
    (spacing, sway), never their light. Each adds less light on average than
    the brightest of ours above (tests/visualizer-overlay-additions.test.js
-   measures it the same way for all). Numbers PROPOSED. */
-export const OVERLAY_NEW_PATTERNS_RELEASED = false;
+   measures it the same way for all).
+   Measured (tests/helpers/visualizer-fx-check.py on the test machine's
+   graphics card, 1504 x 797 at Medium, 10 s each, at their strongest: size
+   1, speed 1.4). Without effects (90 runs: plain and with every blend-in
+   they allow, on top and set to go under the effects with none drawn, on
+   Voronoi (bright), Starfield (dark) and Plasma (calm)): the largest step
+   of the frame mean 0.0670 (Plasma's own 0.0669), at most 0.0001 above the
+   scene's own, the mean moved by at most 0.0007, no 3 Hz oscillation (most
+   0.043 peak to peak, the scene's own). Under Mirror and Swirl at Strong
+   (Voronoi and Starfield, 30 runs), against the scene with the same
+   effects: the largest step 0.0953, the effects' own on Voronoi, at most
+   0.0001 above theirs; the mean moved by 0.0244 at most (Fireflies, Color,
+   on Voronoi); no 3 Hz oscillation. Cost in overlay-catalog.js. */
+export const OVERLAY_NEW_PATTERNS_RELEASED = true;
 
 /** Ripples: thin rings rising from the centre and fading as they spread;
  *  the bass widens their spacing a little. */
@@ -577,7 +589,8 @@ const orbits = {
   },
 };
 
-/** The held patterns (in OVERLAY_PATTERNS once released). */
+/** The three added patterns (in OVERLAY_PATTERNS while released; the name
+ *  is kept from before their release). */
 export const HELD_OVERLAY_PATTERNS = Object.freeze({ ripples, fireflies, orbits });
 
 export const OVERLAY_PATTERNS = Object.freeze({

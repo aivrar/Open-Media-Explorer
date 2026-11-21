@@ -28,11 +28,12 @@ import {
   reconcileContentPreference,
 } from './chain.js';
 import {
-  renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus, syncCardStars,
+  renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus, syncCardStars, syncDidNotPlayMarks,
 } from './render.js';
 import { cancelThumbnailHydration, resetThumbnailHydrationScope } from './thumbnails.js';
 import {
-  openDetail, closeDetail, getRestorableDetailItem, refreshDetailArtwork,
+  openDetail, closeDetail, getRestorableDetailItem, refreshDetailArtwork, refreshDetailPictureControls,
+  refreshDetailTrouble,
 } from './detail.js';
 import { filterItems } from './filter.js';
 import { libraryPool } from './personal.js';
@@ -46,6 +47,7 @@ import { syncFavoriteCategories } from './favorite-categories.js';
 import { closeCategoryMenu } from './card-category.js';
 import { FAVORITE_GROUPS_EVENT } from '../../lib/favorite-groups.js';
 import { onStationImagesChange } from '../../lib/station-images.js';
+import { onDidNotPlayChange } from '../../lib/did-not-play.js';
 
 const subs = [];
 
@@ -174,7 +176,8 @@ export function renderLibrary(host) {
     // Category counts follow the favorites (and Clear cache removes the categories).
     syncFavoriteCategories();
     if (view.activeSource === 'favorites') { renderResults(); renderStatus(); }
-    else syncCardStars();
+    else { syncCardStars(); syncDidNotPlayMarks(); }
+    refreshDetailTrouble();
   }));
   subs.push(subscribe(FAVORITE_GROUPS_EVENT, () => {
     // A deleted category falls back to "All categories" before the cards are drawn.
@@ -184,10 +187,15 @@ export function renderLibrary(host) {
   // Station pictures listed, refreshed or failed: only the cards whose picture
   // changed are redrawn (render.js compares each card's artwork), and an open
   // detail panel swaps its picture if that one changed.
-  subs.push(onStationImagesChange(() => { renderResults(); refreshDetailArtwork(); }));
+  subs.push(onStationImagesChange(() => { renderResults(); refreshDetailArtwork(); refreshDetailPictureControls(); }));
+  // "Did not play last time" changed (a start's result, or Clear cache): only
+  // the marks on the cards and the sentence in the open panel change.
+  subs.push(onDidNotPlayChange(() => { syncDidNotPlayMarks(); refreshDetailTrouble(); }));
   subs.push(subscribe('playlists-change', () => {
     syncPersonalControls(); updateSidebarCounts();
     if (view.activeSource === 'playlists') { renderResults(); renderStatus(); updateSentinelStatus(); }
+    else syncDidNotPlayMarks();
+    refreshDetailTrouble();
   }));
   // A failed read is tried again when My Playlists is opened (sidebar.js).
   void ensurePlaylistsLoaded();

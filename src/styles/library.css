@@ -160,6 +160,33 @@
 .source-item .source-health.is-wait { color: var(--warning, #f5a524); }
 .source-item .source-health.is-done,
 .source-item .source-health.is-off { color: var(--text-mute); }
+/* Technical details on: the status label goes under the count, so a long
+   source name ("Wikimedia Commons", "gPodder Podcasts") keeps the room beside
+   them instead of being cut. The row keeps its height. In the narrow layout
+   (the sources in one scrolling line) the row is as wide as its content. */
+@media (min-width: 981px) {
+  :root[data-tech-details="on"] .source-item:has(> .source-health) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name count" "name health";
+    column-gap: 8px;
+    row-gap: 0;
+    padding-block: 6px;
+  }
+  :root[data-tech-details="on"] .source-item:has(> .source-health) > .source-name { grid-area: name; }
+  :root[data-tech-details="on"] .source-item:has(> .source-health) > .source-count {
+    grid-area: count;
+    align-self: end;
+    line-height: 12px;
+  }
+  :root[data-tech-details="on"] .source-item:has(> .source-health) > .source-health {
+    grid-area: health;
+    align-self: start;
+    justify-self: end;
+    width: auto;
+    line-height: 11px;
+  }
+}
 
 .library-search-bar {
   display: flex;
@@ -563,6 +590,11 @@
   aspect-ratio: 16 / 9;
   object-fit: cover;
 }
+/* A radio or TV station's own artwork (its logo): whole and centred on the
+   picture's surface, as on the cards. */
+.detail-thumb.logo-art {
+  object-fit: contain;
+}
 /* The user's own station picture: whole and centred on the panel itself. */
 .detail-thumb.is-station-image {
   object-fit: contain;
@@ -628,6 +660,55 @@
 .detail-rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .detail-rename-message { margin: 0; font-size: 12px; color: var(--danger); }
 .detail-rename-hint { margin: 0; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+
+/* "Did not play last time" in the panel: the same sentence as on the card. */
+.detail-trouble {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-elev-1));
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.detail-trouble[hidden] { display: none; }
+/* What happened to a chosen or removed station picture, in plain words. */
+.detail-picture-message { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-dim); overflow-wrap: anywhere; }
+.detail-picture-message[data-state="error"] { color: var(--danger); }
+.detail-picture-message[hidden],
+.detail-picture-input[hidden],
+.detail-actions > .btn[hidden] { display: none; }
+
+/* "Did not play last time": a small round mark on the card's picture, not a
+   whole red card. Its sentence is its tooltip. On the compact Favorites and
+   My Playlists cards it sits on the picture's corner. */
+.card-trouble {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.library-root.is-personal-view .card-thumb > .card-trouble {
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+}
 
 /* "Other streams": other Radio Browser entries for the same station. */
 .other-streams {
@@ -901,9 +982,25 @@
 }
 .library-root.is-personal-view .card { contain-intrinsic-size: auto 80px; }
 .library-root.is-personal-view .card:hover { transform: none; }
+/* The card's content fills the card, so when a long name makes one card in a
+   row taller (the grid gives every card in the row that height), the picture
+   and text of the others stay centred on their buttons. */
 .library-root.is-personal-view .card-open {
+  flex: 1 1 auto;
   flex-direction: row;
   align-items: center;
+}
+/* A long name takes a second line instead of being cut at once; past two
+   lines it ends in an ellipsis, and the whole name is on hover. The body's
+   right padding keeps it clear of the category, move and star buttons. */
+.library-root.is-personal-view .card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .library-root.is-personal-view .card-thumb {
   flex: 0 0 60px;
@@ -980,6 +1077,9 @@
   transform: translateY(-50%);
   background: transparent;
 }
+/* No dark square behind the star here, so an empty star takes the text color
+   (a white one cannot be seen on a light theme's card). */
+.library-root.is-personal-view .card-star:not(.is-fav) { color: var(--text); }
 .library-root.is-personal-view .card-star:hover { transform: translateY(-50%) scale(1.08); }
 
 /* Favorites in "My order": the move buttons (top, up / down, bottom) in a
@@ -1020,8 +1120,9 @@
 .card-order-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card-order-btn[aria-disabled="true"] { opacity: 0.35; cursor: default; }
 /* Dragging a favorite in "My order": the card being moved fades, and an
-   accent edge on the card under the pointer shows the side it goes to
-   (top-left edge: before it; bottom-right edge: after it). */
+   accent edge on the card under the pointer shows the side it goes to when
+   it takes that card's place (top-left edge: before it, for a card coming
+   from later in the order; bottom-right edge: after it, from earlier). */
 .card.is-draggable img { -webkit-user-drag: none; }
 .card.is-dragging { opacity: 0.45; }
 .card.drop-before { box-shadow: inset 4px 4px 0 var(--accent); border-color: var(--accent); }

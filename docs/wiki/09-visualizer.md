@@ -3,10 +3,13 @@
 The Visualizer tab requires v0.1.11 or newer. The scene families listed under
 **Scene** below, the extra looks of the labs, **Palette Map**, **Strobe**,
 **Slow drift**, **Very high** quality and the folding sections of the settings
-panel require v0.1.12 or newer.
+panel require v0.1.12 or newer. The scenes DIFS Tunnel Flight, Quaternion Julia
+Flight, Fourier Epicycles and 4D Polytopes, the overlays Ripples, Fireflies and
+Orbits, the **Lighten** and **Color** blends, **Extra glow** and the setting
+that shows the Visualizer behind the Tuner require v0.1.13 or newer.
 
 The Visualizer shows pictures that move with the sound of whatever is playing.
-It is the tab between **Discovery** and **About**. It is ported from [Psychedelia
+It is the tab between **Now Playing** and **About**. It is ported from [Psychedelia
 Studio](https://github.com/aivrar/psychedelia-studio), the author's own project.
 Work on the Visualizer continues, and more is planned, so this page describes
 this version.
@@ -90,14 +93,14 @@ while the switch is on.
 
 The scene button shows the scene's name and badge. Press it to open the list.
 
-- There are 99 scenes, grouped by category: Color, Cosmic, Demoscene,
+- There are 103 scenes, grouped by category: Color, Cosmic, Demoscene,
   Distortion, Endless Scenes, Fractals, Geometry, Math, Nature, Noise,
   Patterns, Psychedelic, Retro, Simulation and Sound Shapes. Some are flat
   patterns, such as Plasma, Tunnel and Starfield. Others are 3D scenes you fly
   through, such as Mandelbulb Flight, Menger Citadel and Planet Sunrise.
 - Each scene has a badge that says how hard it works the graphics card.
   **Light** (32 scenes) needs little. **Medium** (23 scenes) works it
-  moderately. **Heavy** (44 scenes) is hard on it, and its quality may be
+  moderately. **Heavy** (48 scenes) is hard on it, and its quality may be
   lowered on a weaker computer.
 - Type in the **Search scenes** box to filter by name, category or badge word.
   Press **Up** or **Down** to move through the list, **Enter** to pick, and
@@ -108,8 +111,9 @@ The scene button shows the scene's name and badge. Press it to open the list.
 
 Among the scenes are these families:
 
-- **Line drawings:** Hopf Fibration, Knots & Surfaces, Lissajous, Attractor
-  Ribbons and Spirograph (in Math). Curves, knots and rings drawn as glowing
+- **Line drawings:** Fourier Epicycles, Hopf Fibration, Knots & Surfaces,
+  Lissajous, Attractor Ribbons, 4D Polytopes and Spirograph (in Math). Curves,
+  knots, rings, spinning circles and four-dimensional solids drawn as glowing
   lines.
 - **Simulations:** Curl-Noise Silk, Fluid Ink, Lenia, Physarum and
   Reaction-Diffusion (in Simulation), and Feedback Loop (in Distortion).
@@ -117,8 +121,9 @@ Among the scenes are these families:
   in water, a network of glowing veins, or soft creatures that glide and
   divide.
 - **Flights:** Apollonian Foam Flight, Folded Box Variants Flight, Mandelbox
-  Flight, Triplex Mutation Flight and Glass Fractal DE Flight (in Fractals).
-  Journeys through 3D fractal shapes.
+  Flight, Triplex Mutation Flight, Glass Fractal DE Flight, DIFS Tunnel Flight
+  and Quaternion Julia Flight (in Fractals). Journeys through 3D fractal
+  shapes.
 - **Buddhabrot Lab** (in Fractals): a still picture that builds up point by
   point within about a minute, then stays as it is until you change the
   look. It takes no post effects.
@@ -171,24 +176,29 @@ lively scenes for lively music. It prepares the next scene ahead so the change
 is quick, and it changes only when the flash limiter has room.
 
 The line **Music** under it says what the Visualizer hears: **calm**, **steady**
-or **energetic**. It counts the drum hits and looks at how fast a beat it is
-sure of. One drum stroke heard in several parts of the sound counts once, a
-kick or a snare counts fully, and hi-hats alone count half, so busy hi-hats
-over a slow beat do not make the music read as energetic. The tempo adds to
-the reading only from 80 beats a minute.
+or **energetic**. It reads the sound's spectrum: how often new sounds start,
+how busy the high sounds such as hi-hats and cymbals are, how regular the beat
+is, and how bright the sound is. It does not depend on how loud the sound is,
+and it changes little with the frame rate; at 15 frames a second a very fast,
+dense beat can read as steady.
 
-- **calm:** few hits and no fast beat, or almost no sound;
-- **energetic:** many hits and a quick beat, as in dance music;
+- **calm:** sound that glides along with few new starts, such as pads, drones
+  and strings, or almost no sound;
+- **energetic:** new sounds starting often, with busy hi-hats, as in dance
+  music, or a bright, even wall of sound with some movement in it, as in metal
+  or trance;
 - **steady:** anything in between. It starts as steady.
 
 A new mood must last a few seconds before the line changes, and it changes at
-most every ten seconds. After another station, a pause, or a gap in the sound,
-the reading starts afresh, and the line keeps its last word until the new
-reading is ready. A screen reader reads the line once when the panel opens, not
-at every change. Besides the shuffle's leaning, the mood makes the picture's
-reaction to the beat a little gentler for calm music and a little stronger for
-energetic music, always inside the flash limiter. The **Strobe**
-overlay is picked by the shuffle only while the music is energetic.
+most every ten seconds. Almost no sound for five seconds reads as calm at once.
+After another station, a pause, or a gap in the sound, the reading starts
+afresh, and the line keeps its last word until the first new reading is ready,
+about three seconds of sound later; that reading takes effect at once. A screen
+reader reads the line once when the panel opens, not at every change. Besides
+the shuffle's leaning, the mood makes the picture's reaction to the beat a
+little gentler for calm music and a little stronger for energetic music, always
+inside the flash limiter. The **Strobe** overlay is picked by the shuffle only
+while the music is energetic.
 
 If **Favorites only** has nothing to show, a line says why: "No favorites yet.
 Star a scene to use this." or "None of your favorites is in the Scenes choice
@@ -223,9 +233,11 @@ At most three effects work at once, and two when **Quality** is Low. Some
 scenes are easily pushed into flicker by effects. For those scenes, the
 shuffle keeps to the calmer effects, at most two, and the panel grays out the
 others with the note "Grayed effects are not shown with this scene: it would
-flicker." A few pairs of effects are never shown together; when you tick one of
-them, the other is grayed with the note "Grayed effects are not shown together
-with another one chosen: they would flicker."
+flicker." A scene can also gray a single effect for the same reason, with the
+same note: Voronoi Cells does not take Mirror. A few pairs of effects are never
+shown together; when you tick one of them, the other is grayed with the note
+"Grayed effects are not shown together with another one chosen: they would
+flicker."
 
 ### Overlays
 
@@ -236,11 +248,14 @@ default.
 - **Overlays on** (always shown), **Shuffle overlays** (on by default) and
   **New overlays now** work like the effects' switches. The controls below
   **Overlays on** show only while it is on.
-- **The list:** 26 overlays in five groups: Light show (6), Shapes (6),
-  Atmosphere (6), Audio (1) and Ours (7, written for World Media). Up to three
-  work at once, and two when **Quality** is Low. Lightning is only used when
-  you tick it by hand. Point at an overlay to see its group and how heavy it
-  is.
+- **Extra glow (Medium and High quality):** off by default, and shown under
+  **Shuffle overlays**. It spreads some of the overlays' light into a soft glow
+  around them. It works at Medium quality and above and does nothing at Low.
+- **The list:** 29 overlays in five groups: Light show (6), Shapes (6),
+  Atmosphere (6), Audio (1) and Ours (10, written for World Media, among them
+  the calm Ripples, Fireflies and Orbits). Up to three work at once, and two
+  when **Quality** is Low. Lightning is only used when you tick it by hand.
+  Point at an overlay to see its group and how heavy it is.
 - **Strobe** (in Light show) is a soft colored pulse on the beat, kept inside
   the flash limiter. The shuffle picks it only while the music is energetic;
   you can tick it by hand at any time. When it is chosen, its row has a
@@ -250,11 +265,16 @@ default.
   colors but never turns plain white.
 - **Blend-ins:** one chosen overlay at a time can be blended into the picture
   instead of just lying on top. Each chosen overlay has a row of choices:
-  - **Blend:** Add (plain, on top), Screen, Multiply, Soft light or Difference.
+  - **Blend:** Add (plain, on top), Screen, Multiply, Soft light, Difference,
+    Lighten or Color. If a choice in this row blends the overlay in and so sets
+    another one back to plain, a line under **Blend** says "Only one overlay can
+    be blended in at a time." The line goes away at the next change.
   - **Show:** **Everywhere**, **In bright areas** or **In dark areas** of the
     scene.
   - **Under the effects:** the overlay goes under the effects, so they change
-    it too.
+    it too. Fireworks, Lasers, Stage Lights, Lightning, Spectrum and Cinematic
+    always stay over the effects; for them the box is grayed, and its hint
+    reads "Not available for this overlay."
   - **Scene colors:** the overlay takes the scene's colors.
   - **Bend the scene:** the overlay's light moves the scene's picture a little.
   - **Style:** for overlays that have styles, such as Strobe.
@@ -277,7 +297,9 @@ A few scenes cannot take every blend without flickering. The panel then says
   draws at High". At Low a saved Very high draws as High and is kept for when
   the level is raised again. At **High** Processor use, Curl-Noise Silk, Fluid
   Ink and Physarum also start at a larger size (more particles or a finer
-  grid) when **Quality** is High or Very high.
+  grid) when **Quality** is High or Very high. Overlay lines and particles are
+  drawn at the same size on the screen at every quality whose picture is at
+  least 720 pixels tall; a shorter picture draws them larger.
 - **Frame rate:** **15**, **30** (the default) or **60** pictures a second while
   sound plays.
 - **Brightness:** from 30% to 100%, in steps of 5. It dims the whole picture and
@@ -298,8 +320,10 @@ flicker.
 With **Slow drift** on, the overlays also move slowly: they turn a little,
 breathe (grow and shrink a little) and sway, in time with the bars. Overlays
 drawn along the edges of the screen or along its horizontal lines hold still,
-and so do the overlays drawn on the same layer with them. Turning **Slow
-drift** off stops both.
+and so do the overlays drawn on the same layer with them. The size or spread
+of some overlays, such as Figures, Plexus, Spectrum and Petal Mandala, also
+drifts a little, even where the overlay itself holds still. An overlay's colors
+and brightness never drift. Turning **Slow drift** off stops all of this.
 
 ## Favorites
 
@@ -317,11 +341,24 @@ separately, and they keep the way the picture looks, not a station.
 - With **Shuffle** on **Favorites only**, the shuffle goes through your
   favorites, with the look, effects and overlays each one keeps.
 
+## The Visualizer behind the Tuner
+
+**Settings > Appearance > Show the Visualizer behind the Tuner** is off by
+default. When it is on, the Visualizer is drawn faintly behind the Tuner while
+sound plays. It starts only after you have accepted the notice about flashing in
+the Visualizer tab, and it stops a few seconds after the sound stops and when
+you leave the Tuner. Only Light scenes are drawn there: if the scene you chose
+in the Visualizer is not Light, Plasma is drawn instead, and your choice is not
+changed. With the shuffle on, it picks Light scenes only. There are no overlays
+and no effects, the picture is drawn at Low quality and at most 30 frames a
+second, and the flash limiter still applies.
+
 ## Keep it light on a weak computer
 
-The Visualizer costs nothing while its tab is closed. Leaving the tab stops
-every timer and frame, drops the sound subscription and gives the graphics back.
-While the tab is open, these choices make it lighter:
+The Visualizer costs nothing while its tab is closed, apart from the picture
+behind the Tuner if you turned that on. Leaving the tab stops every timer and
+frame, drops the sound subscription and gives the graphics back. While the tab
+is open, these choices make it lighter:
 
 - Set **Quality** to Low.
 - Set **Frame rate** to 15 or 30.
@@ -386,8 +423,8 @@ does closing the tab.
 ## Where its choices are saved
 
 The Visualizer's choices (scene, looks, shuffle, effects, overlays and their
-styles, Slow drift, quality, frame rate, brightness, favorites, the panel's
-folded sections and whether you accepted the notice) are
+styles, Extra glow, Slow drift, quality, frame rate, brightness, favorites, the
+panel's folded sections and whether you accepted the notice) are
 stored inside your settings in the browser profile. They are not a separate
 file. **Clear local cache** resets them with the rest of your settings, so the
 notice comes back too. See [Data, cache, and

@@ -1,10 +1,10 @@
 /**
- * The Visualizer behind the Tuner (held: lib/tuner-background.js has the
- * rules). attachTunerBackground(root) is called once by the Tuner; it returns
+ * The Visualizer behind the Tuner (lib/tuner-background.js has the rules). attachTunerBackground(root) is called once by the Tuner; it returns
  * the function that takes it all away again.
  *
- * Held, or with the setting off: nothing is made, loaded or drawn (no layer,
- * no canvas, no context). Held: not even a listener.
+ * With the setting off: nothing is made, loaded or drawn (no layer, no
+ * canvas, no context), only its three state listeners. With the switch
+ * off (TUNER_BACKGROUND_RELEASED): not even a listener.
  *
  * On: one layer (a div, aria-hidden and inert, after the Tuner's own
  * content) behind everything the Tuner shows, made only while it is wanted
@@ -13,7 +13,9 @@
  * back. It takes the app's one Visualizer slot (visualizer-slot.js) before
  * mounting, so a Visualizer still mounted anywhere is destroyed first. It is
  * taken away when the setting goes off, at once; when the sound stops, after
- * TUNER_BACKGROUND_STOP_GRACE_MS; and when the Tuner goes, at once.
+ * TUNER_BACKGROUND_STOP_GRACE_MS; and when the Tuner goes, at once, and then
+ * the controller detaches itself (its listeners removed), so nothing of it
+ * outlives that Tuner: the next one attaches a controller of its own.
  */
 
 import { getState, subscribe } from '../lib/state.js';
@@ -73,16 +75,16 @@ export function attachTunerBackground(root, {
     layer.inert = true;
     root.classList.add('has-viz-bg');
     root.append(layer);
-    load().then(({ mountVisualizer }) => {
+    load().then(({ mountVisualizer, sceneCost }) => {
       if (mine !== token || detached) return;
       unclaim = claimVisualizer('tuner', stop);
       const host = doc.createElement('div');
       layer.append(host);
       session = mountVisualizer(host, {
         signal: signal(),
-        getSettings: () => tunerBackgroundSettings(state().settings),
+        getSettings: () => tunerBackgroundSettings(state().settings, sceneCost),
         saveSettings: () => {},
-        subscribeSettings: (fn) => on('settings-change', (settings) => fn(tunerBackgroundSettings(settings))),
+        subscribeSettings: (fn) => on('settings-change', (settings) => fn(tunerBackgroundSettings(settings, sceneCost))),
         background: true,
         ...mountOptions,
       });
@@ -96,7 +98,8 @@ export function attachTunerBackground(root, {
   function update() {
     if (detached) return;
     const appState = state();
-    if (appState.mode !== 'tuner') { stop(); return; }
+    // The Tuner has gone: everything away, listeners too.
+    if (appState.mode !== 'tuner') { detach(); return; }
     if (tunerBackgroundWanted(appState)) {
       clearStop();
       if (!layer) start();
@@ -117,15 +120,16 @@ export function attachTunerBackground(root, {
     if (!tunerBackgroundWanted(state()) || state().mode !== 'tuner') stop();
   }
 
-  subs.push(on('settings-change', update));
-  subs.push(on('playing-change', update));
-  subs.push(on('mode-change', update));
-  update();
-
-  return function detach() {
+  function detach() {
     if (detached) return;
     stop();
     detached = true;
     while (subs.length) { try { subs.pop()(); } catch (_) {} }
-  };
+  }
+
+  subs.push(on('settings-change', update));
+  subs.push(on('playing-change', update));
+  subs.push(on('mode-change', update));
+  update();
+  return detach;
 }

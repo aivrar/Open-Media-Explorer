@@ -6,7 +6,9 @@
  * checks, and only the resulting opaque same-origin route may reach an <img>.
  */
 
-import { registerCatalogAsset } from './catalog-client.js';
+import {
+  REFUSED_ASSET_TTL_MS, assetRefusedThisSession, isRefusedAssetError, registerCatalogAsset,
+} from './catalog-client.js';
 import { safeExternalUrl } from './item-model.js';
 import { isRetiredSource, loadAdapter } from './sources.js';
 import {
@@ -160,6 +162,7 @@ const artworkQueue = createTaskQueue();
 const artworkImageQueue = createTaskQueue(ARTWORK_IMAGE_MAX_CONCURRENT);
 const rawArtwork = new WeakMap();
 const artworkChecked = new WeakMap();
+const heldRefusals = new WeakMap(); // item -> address refused for a while only
 
 /** Exported only for lifecycle assertions and the Library's session state. */
 export const artworkRequests = new Map();
@@ -357,11 +360,25 @@ function lookupKey(item) {
     || '';
 }
 
-export function artworkNeedsResolution(item) {
+/** True when the item was already checked for this artwork key. A check that
+ *  ended in a refusal held only for a while (catalog-client.js
+ *  REFUSED_ASSET_TTL_MS) counts until that refusal runs out; then the item is
+ *  asked about again at its next render or lookup. */
+function alreadyChecked(item, key, now) {
+  if (artworkChecked.get(item) !== key) return false;
+  const refusedUrl = heldRefusals.get(item);
+  if (refusedUrl === undefined || assetRefusedThisSession(refusedUrl, now)) return true;
+  heldRefusals.delete(item);
+  artworkChecked.delete(item);
+  return false;
+}
+
+/** `now` (ms) is for tests. */
+export function artworkNeedsResolution(item, now = Date.now()) {
   if (!item || typeof item !== 'object' || !item.id || !item.source) return false;
   if (isArtworkRelayUrl(item.thumbnail)) return false;
   const key = lookupKey(item);
-  return artworkChecked.get(item) !== key;
+  return !alreadyChecked(item, key, now);
 }
 
 function storeResolvedArtwork(item, relayUrl, canonicalUrl = '') {
@@ -378,16 +395,27 @@ function storeResolvedArtwork(item, relayUrl, canonicalUrl = '') {
     item._extra.needsArtwork = false;
   }
   artworkChecked.set(item, relayUrl);
+  heldRefusals.delete(item);
   return item;
 }
 
 async function registerProviderArtwork(item, url, opts) {
   const registerAssetImpl = opts.registerAssetImpl || registerCatalogAsset;
-  const registration = await retryArtworkLookup(() => registerAssetImpl({
-    url,
-    sourceId: item.source,
-    itemId: item.id,
-  }, { signal: opts.signal }), opts.retry);
+  let registration;
+  try {
+    registration = await retryArtworkLookup(() => registerAssetImpl({
+      url,
+      sourceId: item.source,
+      itemId: item.id,
+    }, opts.now ? { signal: opts.signal, now: opts.now } : { signal: opts.signal }), opts.retry);
+  } catch (error) {
+    // Keep the address of a refusal that only holds for a while, so the item
+    // can ask again once it has run out.
+    if (isRefusedAssetError(error) && Number.isFinite(REFUSED_ASSET_TTL_MS[error.code])) {
+      return { relayUrl: '', canonicalUrl: '', heldRefusal: url };
+    }
+    throw error;
+  }
   const relayUrl = typeof registration?.relay_url === 'string'
     ? registration.relay_url.trim() : '';
   if (!isArtworkRelayUrl(relayUrl)) {
@@ -396,7 +424,19 @@ async function registerProviderArtwork(item, url, opts) {
   return { relayUrl, canonicalUrl: url };
 }
 
+/** An address the app refuses (catalog-client.js remembers it) means "no
+ *  artwork": the initials tile, not an error to report on every view. A
+ *  refusal that only holds for a while comes back as `heldRefusal`. */
 async function performResolution(item, candidate, opts) {
+  try {
+    return await resolveArtworkOnce(item, candidate, opts);
+  } catch (error) {
+    if (isRefusedAssetError(error)) return { relayUrl: '', canonicalUrl: '' };
+    throw error;
+  }
+}
+
+async function resolveArtworkOnce(item, candidate, opts) {
   if (candidate) return registerProviderArtwork(item, candidate, opts);
   // A removed source has no adapter to ask. Artwork the item already carries
   // was registered above like any other; without it, the initials tile shows.
@@ -436,7 +476,7 @@ export async function resolveArtworkRelay(item, opts = {}) {
 
   const candidate = captureProviderArtwork(item);
   const currentKey = candidate || lookupKey(item);
-  if (artworkChecked.get(item) === currentKey) return item;
+  if (alreadyChecked(item, currentKey, (opts.now || Date.now)())) return item;
 
   const scope = `${item.source}\u0000${item.id}`;
   let entry = artworkRequests.get(scope);
@@ -465,7 +505,14 @@ export async function resolveArtworkRelay(item, opts = {}) {
   const result = await entry.promise;
   if (result.relayUrl) return storeResolvedArtwork(item, result.relayUrl, result.canonicalUrl);
   item.thumbnail = '';
-  rawArtwork.delete(item);
+  if (result.heldRefusal) {
+    // The initials tile for now; the address is kept for a later try.
+    rawArtwork.set(item, result.heldRefusal);
+    heldRefusals.set(item, result.heldRefusal);
+  } else {
+    rawArtwork.delete(item);
+    heldRefusals.delete(item);
+  }
   artworkChecked.set(item, lookupKey(item));
   return item;
 }

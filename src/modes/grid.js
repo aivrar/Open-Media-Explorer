@@ -13,9 +13,18 @@ import { onStationImagesChange } from '../lib/station-images.js';
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
-import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
+import {
+  mergeSourceItems, failedSourceState, liveStatusText, refreshKeepsList, createLiveRetry, runLiveLoad,
+} from '../lib/live-load.js';
 
 const ui = {};
+// An empty Grid left by a failed source tries again by itself (twice), only
+// while the Grid is on screen; any reload the user asks for cancels it.
+const autoRetry = createLiveRetry({
+  run: () => { load({ automatic: true }); },
+  // A try due while the window is hidden waits until it is shown again.
+  isShown: () => getState().mode === 'grid' && Boolean(ui.tilesHost?.isConnected),
+});
 const state = {
   band: 'tv',
   category: '',
@@ -29,6 +38,7 @@ const state = {
   sourceStates: new Map(),
   enabledSignature: '',
   contentPreference: false,
+  listKey: '', // band, filters and settings the tiles were loaded for
 };
 
 const CATEGORIES = ['', 'news', 'music', 'sports', 'movies', 'documentary', 'kids', 'entertainment', 'education'];
@@ -229,15 +239,49 @@ function rebuildSourceSelect() {
 
 function renderSourceStatus() {
   if (!ui.status) return;
-  const statuses = [...state.sourceStates.values()];
-  const ready = statuses.filter(({ state: value }) => value === 'ready').length;
-  const failed = statuses.filter(({ state: value }) => value === 'error').length;
-  if (state.loading && state.tiles.length === 0) {
-    ui.status.textContent = `Loading ${statuses.length || liveSources().length} live sources…`;
-    return;
+  ui.status.textContent = liveStatusText({
+    count: state.tiles.length,
+    noun: 'live items',
+    sourceStates: state.sourceStates,
+    loading: state.loading,
+    sourceCount: chosenLiveSourceCount(),
+  });
+}
+
+/** How many live sources the chosen source filter asks. */
+function chosenLiveSourceCount() {
+  return liveSources().filter((source) => state.sourceFilter === 'all' || source.id === state.sourceFilter).length;
+}
+
+/** What the Grid's tiles depend on; a reload with the same key keeps them
+ *  (see refreshKeepsList in lib/live-load.js). */
+export function gridListKey({
+  band, category = '', country = '', sourceFilter = 'all', enabled = '', showExplicit = false,
+} = {}) {
+  return [band, category, country, sourceFilter, enabled, showExplicit ? 'explicit' : 'filtered'].join('|');
+}
+
+function currentListKey() {
+  return gridListKey({
+    band: state.band, category: state.category, country: state.country, sourceFilter: state.sourceFilter,
+    enabled: enabledSignature(), showExplicit: getState().settings.showExplicitContent === true,
+  });
+}
+
+/** The empty Grid's heading and line: a source that did not answer is not
+ *  "no channels". `retry` is as for the Tuner's emptyLiveText. */
+export function emptyGridText(loading, sourceStates, retry = {}) {
+  if (loading) return { title: 'Loading…', text: 'Fetching from source…' };
+  const failed = [...(sourceStates?.values?.() || [])].some((status) => status?.state === 'error');
+  if (!failed) return { title: 'No channels', text: 'Try changing filters or country.' };
+  const title = 'Channels could not be loaded';
+  if (retry.waiting) {
+    return { title, text: 'A source did not answer. Trying again by itself in a few seconds, or press Live TV or Radio above to try now.' };
   }
-  ui.status.textContent = `${state.tiles.length} live items from ${ready} sources${failed ? ` · ${failed} unavailable` : ''}`
-    + (state.loading ? pendingSourcesText(state.sourceStates) : '');
+  if (retry.tries > 0) {
+    return { title, text: 'A source did not answer, also after trying again. Press Live TV or Radio above to try again.' };
+  }
+  return { title, text: 'A source did not answer. Press Live TV or Radio above to try again.' };
 }
 
 function setBand(b) {
@@ -251,23 +295,38 @@ function setBand(b) {
   load();
 }
 
-async function load({ onlySourceIds = null, preserve = false } = {}) {
+async function load({ onlySourceIds = null, preserve = false, automatic = false } = {}) {
+  // Any reload the user asks for cancels a waiting automatic try.
+  if (!automatic) autoRetry.reset();
   const gen = ++state.loadGen;
   state.requestAbort?.abort();
   state.requestAbort = null;
   state.loading = true;
+  rebuildSourceSelect();
+  const key = currentListKey();
+  // The same view asked again keeps its tiles: each source's tiles are
+  // replaced when it answers, and a source that fails keeps its earlier ones.
+  const refresh = !preserve && refreshKeepsList(state.listKey, key, state.tiles);
+  state.listKey = key;
   if (!preserve) {
-    state.tiles = [];
+    if (!refresh) state.tiles = [];
     state.sourceStates = new Map();
   }
+  // The sources this load asks, each marked as loading before the status
+  // line is drawn: it counts only those, and kept tiles are never shown as
+  // coming "from 0 sources".
+  const candidates = liveSources().filter((source) => (
+    (state.sourceFilter === 'all' || source.id === state.sourceFilter)
+    && (!onlySourceIds || onlySourceIds.has(source.id))
+  ));
+  for (const source of candidates) {
+    state.sourceStates.set(source.id, refresh
+      ? { state: 'loading', count: state.tiles.filter((item) => item.source === source.id).length, refreshing: true }
+      : { state: 'loading', count: 0 });
+  }
   renderTiles();
-  rebuildSourceSelect();
   renderSourceStatus();
   try {
-    const candidates = liveSources().filter((source) => (
-      (state.sourceFilter === 'all' || source.id === state.sourceFilter)
-      && (!onlySourceIds || onlySourceIds.has(source.id))
-    ));
     if (candidates.length === 0) {
       if (!preserve) state.tiles = [];
       state.loading = false;
@@ -280,40 +339,48 @@ async function load({ onlySourceIds = null, preserve = false } = {}) {
     if (state.category) opts.tag = state.category;
     const controller = new AbortController();
     state.requestAbort = controller;
-    for (const source of candidates) state.sourceStates.set(source.id, { state: 'loading', count: 0 });
     // Show each source's tiles as soon as it answers; a slow or stalled
-    // source no longer holds the others back (see lib/live-load.js).
-    await Promise.allSettled(candidates.map((source) => {
-      const deadline = sourceDeadline(controller.signal);
-      return catalogScheduler.enqueue({
+    // source no longer holds the others back, and a load overtaken by a newer
+    // one changes nothing (see lib/live-load.js).
+    await runLiveLoad({
+      candidates,
+      signal: controller.signal,
+      ask: (source, signal) => catalogScheduler.enqueue({
         sourceId: source.id,
         key: `grid:${gen}:${state.band}`,
         priority: CATALOG_PRIORITY.USER,
-        signal: deadline.signal,
-        task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
-      }).then((items) => {
-        if (gen !== state.loadGen) return;
+        signal,
+        task: ({ signal: taskSignal }) => browseLiveOne(source.id, { ...opts, signal: taskSignal }),
+      }),
+      isCurrent: () => gen === state.loadGen,
+      onItems: (source, items) => {
         state.sourceStates.set(source.id, { state: 'ready', count: items.length });
         state.tiles = mergeSourceItems(state.tiles, source.id, items, state.band);
         renderTiles();
         renderSourceStatus();
-      }, (error) => {
-        if (gen !== state.loadGen) return;
-        if (deadline.timedOut() || error?.name !== 'AbortError') {
-          const message = deadline.timedOut() ? 'Timed out' : String(error?.message || error);
-          state.sourceStates.set(source.id, { state: 'error', count: 0, error: message });
-          renderSourceStatus();
-        }
-      }).finally(() => deadline.done());
-    }));
+      },
+      onFailed: (source, message) => {
+        // Its tiles from the previous load stay on screen.
+        state.sourceStates.set(source.id, failedSourceState(state.tiles, source.id, message));
+        renderSourceStatus();
+      },
+      onDone: finishLoad,
+    });
+    return;
   } catch (err) {
     if (gen !== state.loadGen) return;
     if (err?.name !== 'AbortError') console.warn('Grid load failed:', err);
-    if (!preserve) state.tiles = [];
+    if (!preserve && !refresh) state.tiles = [];
   }
-  if (gen !== state.loadGen) return;
+  if (gen === state.loadGen) finishLoad();
+}
+
+/** The end of a live load that is still the current one. */
+function finishLoad() {
   state.requestAbort = null;
   state.loading = false;
+  autoRetry.settle(state.tiles.length === 0
+    && [...state.sourceStates.values()].some((status) => status.state === 'error'));
   renderTiles();
   renderSourceStatus();
 }
@@ -332,6 +399,8 @@ function applyContentPreference(showExplicit) {
   state.requestAbort = null;
   state.loading = false;
   state.tiles = filterContentItems(state.tiles, false);
+  // The tiles now match the new setting, so a later reload keeps them.
+  state.listKey = currentListKey();
   for (const [sourceId, status] of state.sourceStates) {
     if (status.state === 'ready') {
       state.sourceStates.set(sourceId, {
@@ -354,9 +423,13 @@ function renderTiles() {
     tiles = tiles.filter((t) => (t.tags || []).some((tag) => tag.toLowerCase().includes(state.category)));
   }
   if (tiles.length === 0) {
+    // A source failure explains an empty list only when nothing was loaded;
+    // tiles hidden by the filters still say "No channels".
+    const empty = emptyGridText(state.loading, state.tiles.length ? null : state.sourceStates,
+      { waiting: autoRetry.waiting(), tries: autoRetry.tries() });
     ui.tilesHost.appendChild(el('div', { className: 'empty-state', style: { gridColumn: '1 / -1' } },
-      el('h3', { text: state.loading ? 'Loading…' : 'No channels' }),
-      el('p', { text: state.loading ? 'Fetching from source…' : 'Try changing filters or country.' }),
+      el('h3', { text: empty.title }),
+      el('p', { text: empty.text }),
     ));
     return;
   }
@@ -467,6 +540,7 @@ function tearDown() {
   state.requestAbort?.abort();
   state.requestAbort = null;
   state.loading = false;
+  autoRetry.stop();
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
 }
 

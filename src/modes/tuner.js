@@ -21,11 +21,15 @@ import { contentBadgeText, filterContentItems, isContentAllowed } from '../lib/c
 import { normalizeTunerCardSize, tunerCardsShowPictures } from '../lib/tuner-card-size.js';
 import { createTunerCardArt } from '../lib/tuner-card-art.js';
 import { onStationImagesChange } from '../lib/station-images.js';
-import { sourceDeadline, mergeSourceItems, pendingSourcesText } from '../lib/live-load.js';
+import {
+  mergeSourceItems, failedSourceState, liveStatusText, refreshKeepsList, createLiveRetry, runLiveLoad,
+} from '../lib/live-load.js';
 import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorites-order.js';
 import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
 import { attachTunerBackground } from './tuner-background.js';
+import { onDidNotPlayChange } from '../lib/did-not-play.js';
+import { didNotPlayNote } from '../lib/did-not-play-view.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -57,9 +61,18 @@ const state = {
   contentPreference: false,
   favoritesSort: '',
   cardSize: 'small', // Settings > Appearance > Tuner card size
+  listKey: '', // band, country, source and settings the live list on the dial was loaded for
 };
 
 const ui = {};
+
+// A dial left empty because a source failed tries again by itself (twice),
+// only while the Tuner is on screen; any reload the user asks for cancels it.
+const autoRetry = createLiveRetry({
+  run: () => { loadStations({ automatic: true }); },
+  // A try due while the window is hidden waits until it is shown again.
+  isShown: () => getState().mode === 'tuner' && Boolean(ui.root?.isConnected),
+});
 
 /** True when a card's picture box is inside the visible part of the strip. */
 function artInView(box) {
@@ -454,9 +467,6 @@ function rebuildSourceSelect() {
 
 function renderSourceStatus() {
   if (!ui.status) return;
-  const states = [...state.sourceStates.values()];
-  const failures = states.filter(({ state: value }) => value === 'error').length;
-  const completed = states.filter(({ state: value }) => value === 'ready').length;
   const count = state.stations.length;
   if (isFavoritesSource(state.sourceFilter)) {
     const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
@@ -467,14 +477,18 @@ function renderSourceStatus() {
       });
     return;
   }
-  const noun = state.band === 'radio' ? 'stations' : 'channels';
-  if (state.loading && count === 0) {
-    ui.status.textContent = `Loading ${states.length || liveSources().length} live sources…`;
-    return;
-  }
-  ui.status.textContent = `${count} ${noun} from ${completed} sources`
-    + (failures ? ` · ${failures} unavailable` : '')
-    + (state.loading ? pendingSourcesText(state.sourceStates) : '');
+  ui.status.textContent = liveStatusText({
+    count,
+    noun: state.band === 'radio' ? 'stations' : 'channels',
+    sourceStates: state.sourceStates,
+    loading: state.loading,
+    sourceCount: chosenLiveSourceCount(),
+  });
+}
+
+/** How many live sources the chosen source filter asks. */
+function chosenLiveSourceCount() {
+  return liveSources().filter((source) => state.sourceFilter === 'all' || source.id === state.sourceFilter).length;
 }
 
 /** The only way the station list changes, so the dial's hover glow
@@ -542,13 +556,32 @@ export function favoriteStations(favorites, { band, country = '', settings = {},
 }
 
 /** What the empty strip says for the live sources: a source that did not
- *  answer is not "no stations". */
-export function emptyLiveText(loading, sourceStates) {
+ *  answer is not "no stations". `retry` tells whether an automatic try is
+ *  waiting (`waiting`) and how many were made (`tries`). */
+export function emptyLiveText(loading, sourceStates, retry = {}) {
   if (loading) return 'Loading stations…';
   const failed = [...(sourceStates?.values?.() || [])].some((status) => status?.state === 'error');
-  return failed
-    ? 'The stations could not be loaded. Press Radio or TV above to try again.'
-    : 'No stations found for this country.';
+  if (!failed) return 'No stations found for this country.';
+  if (retry.waiting) {
+    return 'The stations could not be loaded. Trying again by itself in a few seconds, or press Radio or TV above to try now.';
+  }
+  if (retry.tries > 0) {
+    return 'The stations could not be loaded, also after trying again. Press Radio or TV above to try again.';
+  }
+  return 'The stations could not be loaded. Press Radio or TV above to try again.';
+}
+
+/** What the live list on the dial depends on; a reload with the same key
+ *  keeps the list (see refreshKeepsList in lib/live-load.js). */
+export function tunerListKey({ band, country = '', sourceFilter = 'all', enabled = '', showExplicit = false } = {}) {
+  return [band, country, sourceFilter, enabled, showExplicit ? 'explicit' : 'filtered'].join('|');
+}
+
+function currentListKey() {
+  return tunerListKey({
+    band: state.band, country: state.country, sourceFilter: state.sourceFilter,
+    enabled: enabledSignature(), showExplicit: getState().settings.showExplicitContent === true,
+  });
 }
 
 /** The favorites the dial leaves out because they are saved as the other
@@ -576,6 +609,8 @@ function loadFavoriteStations() {
   state.requestAbort = null;
   state.loading = false;
   state.sourceStates = new Map();
+  state.listKey = '';
+  autoRetry.reset();
   const selectedId = state.stations[state.index]?.id || getState().currentItem?.id || '';
   reconcileFavoriteGroupSource();
   setStations(favoriteStations(getState().favorites, {
@@ -593,35 +628,55 @@ function loadFavoriteStations() {
   renderSourceStatus();
 }
 
-async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
+async function loadStations({ onlySourceIds = null, preserve = false, automatic = false } = {}) {
   if (isFavoritesSource(state.sourceFilter)) {
     loadFavoriteStations();
     return;
   }
+  // Any reload the user asks for (band, country, source, opening the Tuner)
+  // cancels a waiting automatic try and starts its count again.
+  if (!automatic) autoRetry.reset();
   const gen = ++state.loadGen;
   state.requestAbort?.abort();
   state.requestAbort = null;
   state.loading = true;
   const selectedId = state.stations[state.index]?.id || '';
-  if (!preserve) {
+  rebuildSourceSelect();
+  const key = currentListKey();
+  // The same view asked again keeps its list: each source's stations are
+  // replaced when it answers, and a source that fails keeps its earlier ones.
+  const refresh = !preserve && refreshKeepsList(state.listKey, key, state.stations);
+  state.listKey = key;
+  if (!preserve && !refresh) {
     setStations([]);
     state.index = 0;
     state.rotationDeg = 0;
   }
   applyRotation();
-  ui.stationName.textContent = 'Loading…';
-  ui.stationName.removeAttribute('title');
+  if (refresh) {
+    updateFrequencyDisplay();
+  } else {
+    ui.stationName.textContent = 'Loading…';
+    ui.stationName.removeAttribute('title');
+  }
   renderStrip();
-  rebuildSourceSelect();
+  // The sources this load asks, each marked as loading before the status
+  // line is drawn: it counts only those, and a kept list is never shown as
+  // coming "from 0 sources".
+  const candidates = liveSources().filter((source) => (
+    (state.sourceFilter === 'all' || source.id === state.sourceFilter)
+    && (!onlySourceIds || onlySourceIds.has(source.id))
+  ));
   if (!preserve) state.sourceStates = new Map();
+  for (const source of candidates) {
+    state.sourceStates.set(source.id, refresh
+      ? { state: 'loading', count: state.stations.filter((item) => item.source === source.id).length, refreshing: true }
+      : { state: 'loading', count: 0 });
+  }
   renderSourceStatus();
   try {
     const opts = { limit: 80, type: state.band };
     if (state.country) opts.country = state.country;
-    const candidates = liveSources().filter((source) => (
-      (state.sourceFilter === 'all' || source.id === state.sourceFilter)
-      && (!onlySourceIds || onlySourceIds.has(source.id))
-    ));
     if (candidates.length === 0) {
       if (!preserve) setStations([]);
       state.loading = false;
@@ -632,38 +687,46 @@ async function loadStations({ onlySourceIds = null, preserve = false } = {}) {
     }
     const controller = new AbortController();
     state.requestAbort = controller;
-    for (const source of candidates) state.sourceStates.set(source.id, { state: 'loading', count: 0 });
     // Each source goes on the dial as soon as it answers; a slow or stalled
-    // source no longer holds the others back (see lib/live-load.js).
-    await Promise.allSettled(candidates.map((source) => {
-      const deadline = sourceDeadline(controller.signal);
-      return catalogScheduler.enqueue({
+    // source no longer holds the others back, and a load overtaken by a newer
+    // one changes nothing (see lib/live-load.js).
+    await runLiveLoad({
+      candidates,
+      signal: controller.signal,
+      ask: (source, signal) => catalogScheduler.enqueue({
         sourceId: source.id,
         key: `tuner:${gen}:${state.band}`,
         priority: CATALOG_PRIORITY.USER,
-        signal: deadline.signal,
-        task: ({ signal }) => browseLiveOne(source.id, { ...opts, signal }),
-      }).then((items) => {
-        if (gen !== state.loadGen) return;
+        signal,
+        task: ({ signal: taskSignal }) => browseLiveOne(source.id, { ...opts, signal: taskSignal }),
+      }),
+      isCurrent: () => gen === state.loadGen,
+      onItems: (source, items) => {
         state.sourceStates.set(source.id, { state: 'ready', count: items.length });
         publishStations(source.id, items, selectedId);
-      }, (error) => {
-        if (gen !== state.loadGen) return;
-        if (deadline.timedOut() || error?.name !== 'AbortError') {
-          const message = deadline.timedOut() ? 'Timed out' : String(error?.message || error);
-          state.sourceStates.set(source.id, { state: 'error', count: 0, error: message });
-          renderSourceStatus();
-        }
-      }).finally(() => deadline.done());
-    }));
+      },
+      onFailed: (source, message) => {
+        // Its stations from the previous load stay on the dial.
+        state.sourceStates.set(source.id, failedSourceState(state.stations, source.id, message));
+        renderSourceStatus();
+      },
+      onDone: finishLoad,
+    });
+    return;
   } catch (err) {
     if (gen !== state.loadGen) return;
     if (err?.name !== 'AbortError') console.warn('Tuner load failed:', err);
-    if (!preserve) setStations([]);
+    if (!preserve && !refresh) setStations([]);
   }
-  if (gen !== state.loadGen) return;
+  if (gen === state.loadGen) finishLoad();
+}
+
+/** The end of a live load that is still the current one. */
+function finishLoad() {
   state.requestAbort = null;
   state.loading = false;
+  autoRetry.settle(state.stations.length === 0
+    && [...state.sourceStates.values()].some((status) => status.state === 'error'));
   updateFrequencyDisplay();
   renderStrip();
   renderSourceStatus();
@@ -687,6 +750,8 @@ function applyContentPreference(showExplicit) {
   state.loading = false;
   const selectedId = state.stations[state.index]?.id || '';
   setStations(filterContentItems(state.stations, false));
+  // The list now matches the new setting, so a later reload keeps it.
+  state.listKey = currentListKey();
   const restoredIndex = selectedId
     ? state.stations.findIndex((item) => item.id === selectedId)
     : -1;
@@ -726,7 +791,8 @@ function renderStrip() {
   ui.strip.innerHTML = '';
   if (state.stations.length === 0) {
     if (pictures) cardArt.commit();
-    let text = emptyLiveText(state.loading, state.sourceStates);
+    let text = emptyLiveText(state.loading, state.sourceStates,
+      { waiting: autoRetry.waiting(), tries: autoRetry.tries() });
     const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
     if (groupName) {
       const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
@@ -753,10 +819,7 @@ function renderStrip() {
     const pill = el('button', {
       className: 'station-pill' + (i === state.index ? ' is-active' : '') + (saved ? ' is-favorite' : '')
         + (pictures ? ' has-art' : ''),
-      attrs: {
-        title: `${saved ? '★ Favorite · ' : ''}${s.title} · ${getSourceLabel(s.source)}`,
-        'aria-pressed': i === state.index ? 'true' : 'false',
-      },
+      attrs: { 'aria-pressed': i === state.index ? 'true' : 'false' },
       on: { click: () => { state.index = i; state.rotationDeg = i * 12; applyRotation(); tuneCurrent(); } },
     },
     // Medium and large cards: the station's picture box (reused across steps).
@@ -764,10 +827,43 @@ function renderStrip() {
     el('span', { text: saved ? `★ ${s.title}` : s.title }),
     el('small', { text: getSourceLabel(s.source) }),
     rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
+    pill.__station = s;
+    pill.__saved = saved;
+    setPillTrouble(pill);
     ui.strip.appendChild(pill);
   }
   centerActivePill();
   if (pictures) cardArt.commit();
+}
+
+/** A card's "Did not play last time" mark (the user's own stations only),
+ *  its tooltip and its accessible text, changed in place: the strip, its
+ *  scroll position and the focused card stay as they are. */
+function setPillTrouble(pill) {
+  const s = pill.__station;
+  if (!s) return;
+  const trouble = didNotPlayNote(s);
+  pill.classList.toggle('has-trouble', Boolean(trouble));
+  pill.setAttribute('title',
+    `${pill.__saved ? '★ Favorite · ' : ''}${s.title} · ${getSourceLabel(s.source)}${trouble ? `\n${trouble}` : ''}`);
+  let mark = pill.__trouble || null;
+  if (!trouble) {
+    mark?.remove();
+    pill.__trouble = null;
+    return;
+  }
+  if (!mark) {
+    // Last, laid over the card's corner: it takes no place in the card's grid.
+    mark = el('span', { className: 'pill-trouble', text: '!', attrs: { role: 'img' } });
+    pill.appendChild(mark);
+    pill.__trouble = mark;
+  }
+  if (mark.getAttribute('aria-label') !== trouble) mark.setAttribute('aria-label', trouble);
+}
+
+/** The marks changed: update the cards in the strip, nothing else. */
+export function syncTunerMarks(strip = ui.strip) {
+  for (const pill of Array.from(strip?.children || [])) setPillTrouble(pill);
 }
 
 /** Show the card size chosen in Settings, at once. */
@@ -810,6 +906,7 @@ function tearDown() {
   state.requestAbort?.abort();
   state.requestAbort = null;
   state.loading = false;
+  autoRetry.stop();
   cardArt.clear();
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
   if (ui.unbindDial) { try { ui.unbindDial(); } catch (_) {} ui.unbindDial = null; }
@@ -825,7 +922,7 @@ export function renderTuner(host) {
   state.cardSize = normalizeTunerCardSize(getState().settings.tunerCardSize);
   const root = buildShell();
   host.appendChild(root);
-  // The dimmed Visualizer behind it, when asked for (held: nothing at all).
+  // The dimmed Visualizer behind it, while its setting asks for it.
   subs.push(attachTunerBackground(root));
   state.enabledSignature = enabledSignature();
   state.contentPreference = getState().settings.showExplicitContent === true;
@@ -862,6 +959,10 @@ export function renderTuner(host) {
   // A new or removed picture in the station-images folder (Refresh).
   subs.push(onStationImagesChange(() => {
     if (getState().mode === 'tuner' && cardPictures() && cardArt.stationImagesChanged()) renderStrip();
+  }));
+  // A station's "Did not play last time" mark came or went.
+  subs.push(onDidNotPlayChange(() => {
+    if (getState().mode === 'tuner') syncTunerMarks();
   }));
   // A wider window shows more cards: wait, then load the ones now in view.
   const onResize = () => { if (cardPictures()) cardArt.poke(); };

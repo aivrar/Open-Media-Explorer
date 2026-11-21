@@ -41,6 +41,18 @@ LEGACY_PROFILE_TRANSFER_KEYS = frozenset({
     "worldmedia.eq.v1",
 })
 PROFILE_TRANSFER_EXTRA_FILENAME = "profile-preferences-extra.json"
+# Keys added in 0.1.12. Releases 0.1.9 to 0.1.11 do open the extra file, but they
+# rewrite it with only the keys they know (and remove it when none are left), so
+# these would be lost when such a release runs in between. A second copy of them
+# is kept in a file of its own that no older release opens; it is read back only
+# for keys the extra file lacks (see save_profile_transfer, load_profile_transfer).
+PROFILE_TRANSFER_COPY_KEYS = frozenset({
+    "worldmedia.favnames.v1",
+    "worldmedia.ownstream.v1",
+})
+PROFILE_TRANSFER_COPY_FILENAME = "profile-preferences-extra-copy.json"
+FAVORITES_KEY = "worldmedia.favorites.v1"
+FAVORITE_NAMES_KEY = "worldmedia.favnames.v1"
 # Write order for the two profile files. A page sends its own random id and a
 # number that only goes up with every profile write (request headers, so the
 # body stays what every client sends). A write whose number is not higher than
@@ -145,6 +157,12 @@ def profile_transfer_extra_path(paths: RuntimePaths | None = None) -> Path:
     return profile_transfer_path(paths).with_name(PROFILE_TRANSFER_EXTRA_FILENAME)
 
 
+def profile_transfer_copy_path(paths: RuntimePaths | None = None) -> Path:
+    """Return the file with the second copy of the keys 0.1.9 to 0.1.11 drop."""
+
+    return profile_transfer_path(paths).with_name(PROFILE_TRANSFER_COPY_FILENAME)
+
+
 def _atomic_write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
@@ -237,19 +255,94 @@ def _read_profile_file(path: Path) -> dict[str, str]:
         return {}
 
 
-def load_profile_transfer(paths: RuntimePaths | None = None) -> dict[str, str]:
-    """Read the latest safe handoff, treating corrupt data as unavailable."""
+def _favorite_ids(raw: object) -> set[str] | None:
+    """The ids in a saved favorites list; None when it cannot be read."""
+
+    try:
+        favorites = json.loads(raw) if isinstance(raw, str) else None
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(favorites, list):
+        return None
+    return {item["id"] for item in favorites if isinstance(item, dict) and isinstance(item.get("id"), str)}
+
+
+def _names_for_favorites(raw_names: str, raw_favorites: object) -> str | None:
+    """The copied favorite names, keeping only names of favorites the main
+    file holds now; None when none are left or either cannot be read."""
+
+    ids = _favorite_ids(raw_favorites)
+    try:
+        document = json.loads(raw_names)
+    except (ValueError, RecursionError):
+        return None
+    names = document.get("names") if isinstance(document, dict) else None
+    if not ids or not isinstance(names, dict):
+        return None
+    kept = {key: name for key, name in names.items() if key in ids}
+    if not kept:
+        return None
+    if len(kept) == len(names):
+        return raw_names
+    return json.dumps({**document, "names": kept}, separators=(",", ":"), ensure_ascii=False)
+
+
+def copied_profile_values(main: dict[str, str], extra: dict[str, str], copy: dict[str, str]) -> dict[str, str]:
+    """The values to take from the second copy: its keys the extra file lacks.
+
+    Every write of this release puts the same values in both files, so a key
+    is only missing from the extra file alone when an older release rewrote or
+    removed that file afterwards. A key this release removed (Clear cache, the
+    last name taken away) is gone from both and does not come back.
+
+    Nothing is taken when the main file holds no profile at all (an older
+    release's Clear cache). A favorite's name is taken only for a favorite the
+    main file still holds, so names cleared by an older release do not come
+    back with a profile it saved afterwards. Own-stream choices are taken as
+    they are: they can be made for any station, not only favorites, this
+    release's own Clear cache keeps them, and all they do is keep a station on
+    the stream it lists."""
+
+    if not any(key in main for key in LEGACY_PROFILE_TRANSFER_KEYS):
+        return {}
+    copied: dict[str, str] = {}
+    for key, entry in copy.items():
+        if key not in PROFILE_TRANSFER_COPY_KEYS or key in extra:
+            continue
+        if key == FAVORITE_NAMES_KEY:
+            entry = _names_for_favorites(entry, main.get(FAVORITES_KEY))
+            if entry is None:
+                continue
+        copied[key] = entry
+    return copied
+
+
+def load_profile_transfer_report(paths: RuntimePaths | None = None) -> tuple[dict[str, str], list[str]]:
+    """The handoff and the keys in it that came from the second copy (the
+    page sets those even in an origin that has a profile of its own, when it
+    lacks them). Corrupt data is treated as unavailable; when everything
+    together is too large, the copied values are left out first."""
 
     path = profile_transfer_path(paths)
     with PROFILE_FILES_LOCK:
         main = _read_profile_file(path)
         extra = _read_profile_file(path.with_name(PROFILE_TRANSFER_EXTRA_FILENAME))
+        copy = _read_profile_file(path.with_name(PROFILE_TRANSFER_COPY_FILENAME))
     merged = dict(main)
     merged.update({key: entry for key, entry in extra.items() if key not in LEGACY_PROFILE_TRANSFER_KEYS})
-    try:
-        return normalize_profile_transfer_values(merged)
-    except ValueError:
-        return main
+    copied = copied_profile_values(main, extra, copy)
+    for candidate, keys in (({**merged, **copied}, sorted(copied)), (merged, [])):
+        try:
+            return normalize_profile_transfer_values(candidate), keys
+        except ValueError:
+            continue
+    return main, []
+
+
+def load_profile_transfer(paths: RuntimePaths | None = None) -> dict[str, str]:
+    """Read the latest safe handoff, treating corrupt data as unavailable."""
+
+    return load_profile_transfer_report(paths)[0]
 
 
 def parse_profile_write_order(writer: object, sequence: object) -> tuple[str, int] | None:
@@ -288,12 +381,15 @@ def save_profile_transfer(
     extra file, so an older release can still read the main file (and with it
     the favorites) after a downgrade.
 
-    Order of the two writes, for saves and clears alike: the main (legacy) file
-    first, then the extra file (replaced, or removed when there is nothing to
-    keep in it). If the second write fails, the favorites and settings are
-    already the newest and only the categories are one step behind; their stale
-    entries are pruned harmlessly by the page. The failure is still raised, so
-    the page reports it and saves again.
+    Order of the writes, for saves and clears alike: the main (legacy) file
+    first, then the second copy of the keys older releases drop
+    (PROFILE_TRANSFER_COPY_KEYS), then the extra file; each later one is
+    replaced, or removed when there is nothing to keep in it. If a later write
+    fails, the favorites and settings are already the newest and only the newer
+    keys are one step behind; their stale entries are pruned harmlessly by the
+    page. The copy is written before the extra file, so a failure never leaves
+    the copy holding a key the newest extra file no longer has. The failure is
+    still raised, so the page reports it and saves again.
 
     With ``order`` (page id, number), a write that is not newer than the last
     one taken for that page changes nothing and returns None ("superseded")."""
@@ -302,8 +398,10 @@ def save_profile_transfer(
     normalized = normalize_profile_transfer_values(values)
     legacy = {key: entry for key, entry in normalized.items() if key in LEGACY_PROFILE_TRANSFER_KEYS}
     newer = {key: entry for key, entry in normalized.items() if key not in LEGACY_PROFILE_TRANSFER_KEYS}
+    copied = {key: entry for key, entry in newer.items() if key in PROFILE_TRANSFER_COPY_KEYS}
     main_path = profile_transfer_path(selected)
     extra_path = main_path.with_name(PROFILE_TRANSFER_EXTRA_FILENAME)
+    copy_path = main_path.with_name(PROFILE_TRANSFER_COPY_FILENAME)
     with PROFILE_FILES_LOCK:
         if order is not None:
             writer, sequence = order
@@ -317,6 +415,10 @@ def save_profile_transfer(
             while len(_profile_writers) > MAX_PROFILE_WRITERS:
                 _profile_writers.popitem(last=False)
         _atomic_write_json(main_path, {"version": PROFILE_TRANSFER_VERSION, "values": legacy})
+        if copied:
+            _atomic_write_json(copy_path, {"version": PROFILE_TRANSFER_VERSION, "values": copied})
+        else:
+            copy_path.unlink(missing_ok=True)
         if newer:
             _atomic_write_json(extra_path, {"version": PROFILE_TRANSFER_VERSION, "values": newer})
         else:

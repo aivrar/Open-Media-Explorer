@@ -54,7 +54,8 @@ test('the dial fits a short window and its station name stays inside the knob', 
   assert.match(css, /width: min\(420px, 92vw, 100cqh\);/);
   // The knob is half the dial wide; the name is held just inside that.
   assert.match(css, /\.tuner-dial \{[^}]*container-type: inline-size;/);
-  assert.match(css, /max-width: min\(220px, 46cqw\);/);
+  // Its width limit grows with its size (17em: 221 px at 13 px).
+  assert.match(css, /max-width: min\(17em, 46cqw\);/);
   assert.match(css, /max-width: min\(170px, 46cqw\);/);
 });
 

@@ -1,0 +1,27 @@
+{
+  "about": "A station's name and the file name (without extension) the local server gives a picture saved for it (picture_stem in worldmedia_station_images.py). The page must match every such file to its station (tests/station-image-files.test.js). An empty file name means the station cannot have a picture of its own.",
+  "cases": [
+    ["Radio Paradise", "Radio Paradise"],
+    ["  Radio   Paradise  ", "Radio Paradise"],
+    ["Tab\tName", "Tab Name"],
+    ["Nu-Metal/Alternative", "Nu-Metal-Alternative"],
+    ["Hits: 80s/90s \"Live\"", "Hits- 80s-90s -Live-"],
+    ["Rock/Pop", "Rock-Pop"],
+    ["AUX", "AUX_"],
+    ["con", "con_"],
+    ["COM1.FM", "COM1_.FM"],
+    ["CON .fm", "CON _.fm"],
+    ["Radio X...", "Radio X"],
+    ["Caf\u00e9 del Mar", "Caf\u00e9 del Mar"],
+    ["\uff32\uff41\uff44\uff49\uff4f", "Radio"],
+    ["../../evil", "..-..-evil"],
+    ["..\\..\\evil", "..-..-evil"],
+    ["C:\\Windows\\evil", "C--Windows-evil"],
+    ["Bell\u0007Radio", "BellRadio"],
+    ["..", ""],
+    ["", ""],
+    ["   ", ""],
+    ["\u202eevil", ""],
+    ["._hidden", ""]
+  ]
+}

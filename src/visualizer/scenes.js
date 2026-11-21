@@ -246,6 +246,11 @@ export const SPEED_CAPS = Object.freeze({
   // steps by 0.108 at 3x, 0.102 at 2, 0.096 at 1.5 and 0.069 at 1; its
   // presets 0.044 at most at 3x.
   analytic_field_lab: 1,
+  // Back from the held list on new start looks (their defaults), at 1x over
+  // 360 s of their clock: DIFS Tunnel Flight 0.024, Quaternion Julia Flight
+  // 0.075.
+  difs_tunnel_flight: 1,
+  quaternion_julia_flight: 1,
 });
 
 /** Scenes whose own frame-to-frame steps of light reach 0.06 with the
@@ -272,6 +277,8 @@ export const FX_CALM_SCENES = Object.freeze(new Set([
   'escape_time_lab', 'analytic_field_lab',
   // Slice 14: Feedback Loop 0.062 (its trails zooming in on themselves).
   'feedback',
+  // Back from the held list: Quaternion Julia Flight 0.075 at its cap of 1x.
+  'quaternion_julia_flight',
 ]));
 /** Calm scenes that get no effects at all (and overlays only plain on top):
  *  those whose own frame-to-frame steps reach 0.085 on some look they offer
@@ -289,7 +296,7 @@ export const FX_NONE_SCENES = Object.freeze(new Set([
   'multibrot', 'glow_lab', 'fractal_flame_volume_flight', 'sierpinski', 'polyfold_flight',
 ]));
 
-/** Effects a calm scene does not get (by effect id), on top of the calm
+/** Effects a scene does not get (by effect id), on top of the calm
  *  rule: each one that the FX check, alone at the strong intensity, over a
  *  whole drift cycle (51 s, the surge at its most, on the graphics card),
  *  found stepping past 0.10 on it, or (two at once, as a calm scene may
@@ -312,6 +319,10 @@ export const FX_LEFT_OUT = Object.freeze({
   // eight scenes checked 0.061 at most.
   aurora: Object.freeze(['palette_map']),
   sierpinski: Object.freeze(['palette_map']),
+  // Voronoi Cells (not calm): Mirror in its Kaleidoscope mode, alone at the
+  // strong intensity (10 segments), stepped by 0.102 in a 10-s clip (the
+  // scene alone 0.014; on Starfield 0.022), with nothing else drawn.
+  voronoi: Object.freeze(['mirror']),
 });
 // The other calm scenes (Nebula for its single effects), each with the calm effects that raised its steps in
 // 3-s clips (or, where it had none, the ones that raised others' most), alone
@@ -557,17 +568,16 @@ export function cappedValues(id, quality, values) {
  *  only reaches the same pop later. Reported upstream (camera clearance);
  *  the numbers are after its camera bubble (Psychedelia 0a4fdc1), which
  *  brought Polyfold, the Flame Volume and Schottky Inversion back. Slice 12
- *  brought back five more (SPEED_CAPS); the three below still fail with
- *  their start look, which cannot be left out (the most it may step by is
- *  0.085, for room under 0.10). Hypercomplex Slice's and DIFS Tunnel's
- *  distance estimates jump from one frame to the next (the surface appears
- *  at the camera), so a fade by the camera's distance does not help (it
- *  raised DIFS Tunnel's start look from 0.092 to 0.138); Quaternion Julia's
- *  start look steps by 0.099 with the camera clear of the surface. */
+ *  brought back five more (SPEED_CAPS), and DIFS Tunnel and Quaternion
+ *  Julia came back on new start looks (their defaults). The one below still
+ *  fails with its start look, which cannot be left out (the most it may
+ *  step by is 0.085, for room under 0.10): its distance estimate jumps from
+ *  one frame to the next (the surface appears at the camera), so a fade by
+ *  the camera's distance does not help; with its 4D shape held still (no
+ *  slice motion, 4D rotation or morph of its constant) it still stepped by
+ *  0.45 on its start look and 0.42 to 0.65 on its presets at 1x over 360 s. */
 export const HELD_SCENES = Object.freeze({
   hypercomplex_slice_flight: 'the surface appears at the camera from one frame to the next: steps of 0.40 to 0.49 at 1x over 360 s on every look, its start look 0.43',
-  difs_tunnel_flight: 'the surface appears at the camera from one frame to the next: its start look steps by 0.092 at 1x over 360 s (Mandalay Deep Box 0.41, Torus Tube Push 0.16, Kaleido Column Graze 0.13; Koch Vault Orbit 0.024)',
-  quaternion_julia_flight: 'its start look (Alien Coral) steps by 0.099 at 1x over 360 s (Blue Plasma and Rose Metal 0.14; Amber Glass 0.075); not near the camera',
 });
 
 /** Every ported scene, held ones too (HELD_SCENES). */
@@ -772,10 +782,28 @@ const ALL_SCENES = Object.freeze([
   scene('mandelbulb_flight', 'Mandelbulb Flight', 'Fractals', 'mandelbulb-flight', 'medium', 'motion', () => import('./vendor/psychedelia/effects/mandelbulb-flight.js')),
   scene('triplex_mutation_flight', 'Triplex Mutation Flight', 'Fractals', 'triplex-mutation-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/triplex-mutation-flight.js')),
   scene('kifs_flight', 'KIFS Fold Flight', 'Fractals', 'kifs-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/kifs-flight.js')),
-  scene('difs_tunnel_flight', 'DIFS Tunnel Flight', 'Fractals', 'difs-tunnel-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/difs-tunnel-flight.js')),
+  scene('difs_tunnel_flight', 'DIFS Tunnel Flight', 'Fractals', 'difs-tunnel-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/difs-tunnel-flight.js'), {
+    // It starts on its Koch Vault Orbit preset: its own start look stepped
+    // by 0.092 at 1x over 360 s of its clock (its surface appearing at the
+    // camera), Koch Vault Orbit by 0.024 (0.0244 again as its start look,
+    // the surge at its most under its cap of 1x, never under 0.05; its
+    // other presets are left out, looks.js PRESETS_LEFT_OUT).
+    defaults: {
+      family: 0, iterations: 9, fold_scale: 2.72, fold_offset: 0.86, fold_bias: 0.12, symmetry: 6, twist: 0.62, thickness: 0.76, bailout: 4.2,
+      detail: 1.2, flight_speed: 1.55, tunnel_depth: 1.25, orbit_radius: 1.18, orbit_spin: 1.28, motion_mode: 0, motion_phase: 0.14,
+      structure_pulse: 0.66, fold_rotation: 0.66, roll: 0.22, roll_speed: 1.2, color_speed: 0.72, palette: 0, shade_mode: 2, fog: 0.24, glow: 1.78,
+    },
+  }),
   scene('mandelbox_flight', 'Mandelbox Flight', 'Fractals', 'mandelbox-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/mandelbox-flight.js')),
   scene('folded_box_variants_flight', 'Folded Box Variants Flight', 'Fractals', 'folded-box-variants-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/folded-box-variants-flight.js')),
-  scene('quaternion_julia_flight', 'Quaternion Julia Flight', 'Fractals', 'quaternion-julia-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/quaternion-julia-flight.js')),
+  scene('quaternion_julia_flight', 'Quaternion Julia Flight', 'Fractals', 'quaternion-julia-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/quaternion-julia-flight.js'), {
+    // It starts on its Amber Glass colours: its own Alien Coral stepped by
+    // 0.099 at 1x over 360 s of its clock, Amber Glass by 0.075 (0.0747
+    // again as its start look under its cap of 1x, never under 0.05: calm,
+    // FX_CALM_SCENES; its other colours are left out, looks.js
+    // LOOKS_LEFT_OUT).
+    defaults: { palette: 1 },
+  }),
   scene('hypercomplex_slice_flight', 'Hypercomplex Slice Flight', 'Fractals', 'hypercomplex-slice-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/hypercomplex-slice-flight.js')),
   scene('schottky_inversion_flight', 'Schottky Inversion Flight', 'Fractals', 'schottky-inversion-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/schottky-inversion-flight.js')),
   // Borrowed code under CC BY-NC-SA 3.0 and code with no licence stated
@@ -861,6 +889,11 @@ export const SCENES = Object.freeze([
   ...ALL_SCENES.filter((entry) => !Object.hasOwn(HELD_SCENES, entry.id)), ...OFFERED_LINE_SCENES, ...OFFERED_ACCUMULATING_SCENES,
   ...OFFERED_OWN_SCENES,
 ]);
+/** The cost class of offered scene `id` ('light' | 'medium' | 'heavy'), or
+ *  null (lib/tuner-background.js draws only light ones). */
+export function sceneCost(id) {
+  return SCENES.find((entry) => entry.id === id)?.cost || null;
+}
 /** The held scenes' entries (for the flash check and the tests; never offered). */
 export const HELD_SCENE_ENTRIES = Object.freeze(ALL_SCENES.filter((entry) => Object.hasOwn(HELD_SCENES, entry.id)));
 

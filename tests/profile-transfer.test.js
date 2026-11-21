@@ -49,8 +49,10 @@ test('failed fresh-origin restore rolls back keys and can be retried', () => {
 });
 
 test('oversize backup does not prevent app initialization or overwrite existing preferences', async () => {
-  const storage = new MemoryStorage({ 'worldmedia.favorites.v1': 'x'.repeat(2 * 1024 * 1024 + 1) });
-  assert.equal(await restoreProfileHandoff({ storage, requestImpl: async () => { throw new Error('must not request'); } }), false);
+  const big = 'x'.repeat(2 * 1024 * 1024 + 1);
+  const storage = new MemoryStorage({ 'worldmedia.favorites.v1': big });
+  assert.equal(await restoreProfileHandoff({ storage, requestImpl: async () => { throw new Error('unavailable'); } }), false);
+  assert.equal(storage.getItem('worldmedia.favorites.v1'), big);
 });
 
 test('profile handoff sends only the supported local browser keys before a port move', async () => {
@@ -74,7 +76,7 @@ test('profile handoff sends only the supported local browser keys before a port 
   assert.equal(calls.length, 1);
   const { signal, headers, ...options } = calls[0].options;
   assert.equal(calls[0].path, '/api/v1/profile/preferences');
-  assert.deepEqual(options, { method: 'POST', body: { values: result.values } });
+  assert.deepEqual(options, { method: 'POST', body: { values: result.values }, ownConnection: true });
   assert.deepEqual(Object.keys(headers).sort(), [PROFILE_SEQUENCE_HEADER, PROFILE_WRITER_HEADER].sort());
   assert.ok(signal instanceof AbortSignal, 'every profile request can be stopped by its timeout');
 });

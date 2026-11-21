@@ -114,8 +114,9 @@ export const OVERLAY_BEND_MAX = 0.012;
 /** Mask from the scene's luminance: shown where it is between these. */
 export const OVERLAY_MASK_EDGES = Object.freeze([0.12, 0.55]);
 
-/** The held blend-ins' lines (overlay-catalog.js OVERLAY_EXTRA_BLENDS), in
- *  the shader only once released: held, it is the shader as measured.
+/** The added blend-ins' lines (overlay-catalog.js OVERLAY_EXTRA_BLENDS), in
+ *  the shader while OVERLAY_EXTRA_BLENDS_RELEASED is on; off, it is the
+ *  shader as it was before them.
  *  Colour keeps the scene's luma exactly: the overlay's chroma (its colour
  *  less its own luma, which has luma 0) is laid on the scene's luma and,
  *  where that leaves the 0..1 cube, shrunk toward grey just enough to fit

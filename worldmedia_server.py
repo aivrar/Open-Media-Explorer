@@ -60,7 +60,8 @@ from worldmedia_recording import RecordingError, RecordingService, normalize_rec
 from worldmedia_stream_probe import ProbeBusy, client_went_away, probe_pair
 from worldmedia_processor import PROCESSOR_USE
 from worldmedia_playlists import PlaylistStore
-from worldmedia_station_images import StationImages
+from worldmedia_station_images import MAX_SAVE_BODY_BYTES as STATION_IMAGE_SAVE_BODY_LIMIT
+from worldmedia_station_images import StationImages, decode_picture_data
 from worldmedia_songlog import (
     MAX_BODY_BYTES as SONG_LOG_BODY_LIMIT,
     SongLogError,
@@ -80,7 +81,7 @@ from worldmedia_runtime import (
     PROFILE_SEQUENCE_HEADER,
     PROFILE_WRITER_HEADER,
     get_runtime_paths,
-    load_profile_transfer,
+    load_profile_transfer_report,
     parse_profile_write_order,
     runtime_status,
     save_profile_transfer,
@@ -103,7 +104,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.12 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.13 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -165,6 +166,10 @@ CATALOG_BODY_LIMITS = {
     "/api/v1/starred-songs/export": STARRED_SONGS_BODY_LIMIT,
     # Preferences are JSON strings inside JSON: escaping expands the payload.
     "/api/v1/profile/preferences": 12 * 1024 * 1024 + 8 * 1024,
+    # A station picture (2 MB at most) as base64, with the station's name.
+    "/api/v1/station-images/save": STATION_IMAGE_SAVE_BODY_LIMIT,
+    # The picture's id and up to 20 file names it is made of.
+    "/api/v1/station-images/remove": 32 * 1024,
 }
 
 
@@ -617,7 +622,10 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     # Visualizer steers by it); nothing runs in between.
                     return self._send_api_success(PROCESSOR_USE.reading())
                 if path == "/api/v1/profile/preferences":
-                    return self._send_api_success({"values": load_profile_transfer(RUNTIME_PATHS)})
+                    # "copied": keys taken from the second copy of the newer
+                    # keys (worldmedia_runtime.load_profile_transfer_report).
+                    values, copied = load_profile_transfer_report(RUNTIME_PATHS)
+                    return self._send_api_success({"values": values, "copied": copied})
                 if path == "/api/v1/song-log":
                     try:
                         return self._send_api_success(load_song_log(RUNTIME_PATHS))
@@ -633,7 +641,10 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 if path == "/api/v1/station-images":
                     # Read-only: scans the folder (new or changed files only are read).
                     return self._send_api_success(STATION_IMAGES.listing())
-                if path == "/api/v1/station-images/open-folder":
+                if path in {
+                    "/api/v1/station-images/open-folder", "/api/v1/station-images/save",
+                    "/api/v1/station-images/remove",
+                }:
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 if path == "/api/v1/catalog/owncast/snapshot":
                     return self._send_api_success(CATALOG_SERVICE.owncast_snapshot())
@@ -834,6 +845,43 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         )
                     # A fixed location: the folder is made when there is none yet.
                     return self._send_api_success({"opened": True, "path": STATION_IMAGES.open_folder()})
+                if path == "/api/v1/station-images/save":
+                    # The picture's bytes and the station's name; the file name is
+                    # made from that name in worldmedia_station_images, never sent.
+                    # First {"station", "current"?, "preview": true}: the files a
+                    # new picture would replace, named in full for the question.
+                    if "preview" in body:
+                        if (body["preview"] is not True or "station" not in body
+                                or set(body) - {"station", "current", "preview"}):
+                            raise ApiError(
+                                HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE",
+                                "Asking what a picture would replace needs only the station's name.",
+                            )
+                        return self._send_api_success(STATION_IMAGES.replace_files(body["station"], body.get("current")))
+                    if not {"station", "data"}.issubset(body) or set(body) - {"station", "data", "replace", "current", "files"}:
+                        raise ApiError(
+                            HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE",
+                            "A station picture needs only the station's name, the picture and the answer to replace.",
+                        )
+                    result = STATION_IMAGES.save(
+                        body["station"], decode_picture_data(body["data"]),
+                        replace=body.get("replace", False), current=body.get("current"), files=body.get("files"),
+                    )
+                    self.log_message("station picture saved replaced=%s", result["replaced"])
+                    return self._send_api_success(result)
+                if path == "/api/v1/station-images/remove":
+                    # First {"id", "preview": true}: the files it would delete,
+                    # for the question; then {"id", "files"}: those files only.
+                    if set(body) == {"id", "preview"} and body["preview"] is True:
+                        return self._send_api_success(STATION_IMAGES.removal_files(body["id"]))
+                    if set(body) != {"id", "files"}:
+                        raise ApiError(
+                            HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE",
+                            "Removing a station picture needs its id and the files the user agreed to.",
+                        )
+                    result = STATION_IMAGES.remove(body["id"], body["files"])
+                    self.log_message("station picture removed files=%d", result["removed"])
+                    return self._send_api_success(result)
                 if path == "/api/v1/backup/create":
                     if body:
                         raise ApiError(

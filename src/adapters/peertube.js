@@ -1021,7 +1021,9 @@ export function createPeerTubeAdapter(dependencies = {}) {
       isStale: (value) => value.cacheStale === true,
     }, () => originScheduler.run(identity.origin, async (signal) => {
       try {
-        const payload = await resolveVideoImpl(identity.watchUrl, identity.uuid, { signal });
+        // Only resolveStream (Play) asks for this: sent at once, not queued
+        // behind browse lookups in the catalogue client (catalog-client.js).
+        const payload = await resolveVideoImpl(identity.watchUrl, identity.uuid, { signal, forPlayback: true });
         const value = normalizeResolvedPeerTube(payload, identity);
         originScheduler.recordSuccess?.(identity.origin);
         return value;

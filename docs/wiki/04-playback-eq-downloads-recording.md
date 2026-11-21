@@ -30,8 +30,14 @@ API. Local relay IDs are short-lived and are removed from persisted favorites.
   hides the player bar, and returns catalog/artwork priority to normal.
 - **Try next** appears for a broken live item when alternate candidates or a
   source-level retry is appropriate.
-- **Seek** is enabled for finite media with a known duration. Live streams
-  normally have no seek range.
+- **Seek** is enabled for finite media with a known duration. A live stream
+  (internet radio, live TV) has no length to move along, so the seek bar and
+  the length beside it are not shown while it plays, and the time label shows
+  how long it has played. A station or channel listed as live is treated as
+  live from the start, unless the player finds a complete recording behind it;
+  an item listed as on demand (a film, a podcast episode) always keeps its
+  seek bar. Anything else counts as live when the player says so, when it has
+  no end, or when its length keeps growing with the clock.
 - **Mute** and **volume** affect playback only. Volume is persisted locally.
   The speaker button shows a crossed-out speaker when the sound is muted or the
   volume is at zero. Point at the slider to see the volume as a percentage: it

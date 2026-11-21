@@ -19,10 +19,24 @@ The mean luminance is added up on the graphics card (luma-meter.js) and only
 a small float target read back; --readback reads every pixel back and adds
 them up in the page instead (the old way, for comparing). --low, --cores and
 --progress: check_limits.py; each row gives the processor time it took
-(cpu_s)."""
+(cpu_s).
+
+Each run is compared with the scene alone (no effects, no overlays) drawn at
+the run's own quality, picture size and clip (scene_alone, scene_max_step,
+scene_mean); each row names the effects asked for (fx) and those the chain
+really drew (fx_drawn, read back from the page). An effect id the catalog
+does not have stops the run.
+
+--rows=F appends each run's row to F (one JSON line) as soon as it is done,
+so a long run stopped part way keeps what it measured. A run of 10 s or more
+is also reported per 10-s window as the flash check does (its oscillation
+test: a dominant frequency of 3 Hz or more with a 3 Hz+ peak to peak over
+0.10). A cost run gives its processor time as a share of one core at the
+tab's 30 frames a second (cpu_s over the clip's length)."""
 
 import functools
 import http.server
+import importlib.util
 import json
 import pathlib
 import sys
@@ -31,6 +45,11 @@ import threading
 from playwright.sync_api import sync_playwright
 
 from check_limits import Limits, options
+
+_flash = importlib.util.spec_from_file_location('visualizer_flash_check', pathlib.Path(__file__).with_name('visualizer-flash-check.py'))
+_flash_module = importlib.util.module_from_spec(_flash)
+_flash.loader.exec_module(_flash_module)
+windows = _flash_module.windows
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PAGE = (b'<!doctype html><html><body>'
@@ -72,7 +91,8 @@ def main():
     limits, argv = options(sys.argv)
     gpu = '--gpu' in argv
     readback = '--readback' in argv
-    argv = [arg for arg in argv if arg not in ('--gpu', '--readback')]
+    rows_file = next((arg.split('=', 1)[1] for arg in argv if arg.startswith('--rows=')), None)
+    argv = [arg for arg in argv if arg not in ('--gpu', '--readback') and not arg.startswith('--rows=')]
     path = argv[1] if len(argv) > 1 else 'visualizer-fx-frames.json'
     width = int(argv[2]) if len(argv) > 2 else 320
     height = int(argv[3]) if len(argv) > 3 else 180
@@ -99,19 +119,32 @@ def main():
             page.evaluate('() => { window.lumaReadback = true; }')
         meter.apply_to_children()
         page.evaluate('(s) => window.setScenes(s)', data['scenes'])
+        # The scene alone (no effects, no overlays) as each run draws it: the
+        # same scene, quality, picture size and clip (where it starts and how
+        # long), measured once per such set the runs use, so "above the
+        # scene's own" compares like with like.
         baseline = {}
-        for index, scene in enumerate(data['scenes']):
-            whole = {'scene': index, 'from': 0, 'fx': [], 'intensity': 'normal', 'flash': False}
-            meter.begin(f"baseline {scene['id']}")
-            result = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)',
-                                   [whole, scene['frameCount'], width, height])
-            baseline[index] = measure(result['lumas'], scene['fps'])
-            baseline[index]['cpu_s'] = meter.end()
+
+        def scene_alone(run, clip, w, h):
+            key = '%s|%s|%dx%d|%s+%s%s' % (data['scenes'][run['scene']]['id'], run.get('quality') or 'medium', w, h, run.get('from', 0), clip,
+                                            '|drift' if run.get('drift') else '')
+            if key not in baseline:
+                # (A run with the scene's slow drift: the scene alone drifts too.)
+                alone = {'scene': run['scene'], 'from': run.get('from', 0), 'fx': [], 'intensity': run['intensity'], 'flash': False,
+                         'drift': bool(run.get('drift')), **({'quality': run['quality']} if run.get('quality') else {})}
+                meter.begin('scene alone ' + key)
+                found = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)', [alone, clip, w, h])
+                baseline[key] = measure(found['lumas'], data['scenes'][run['scene']]['fps'])
+                baseline[key]['cpu_s'] = meter.end()
+            return key
+
         for run in data['runs']:
             scene = data['scenes'][run['scene']]
             w, h = run.get('size') or (width, height)
+            clip = run.get('clip') or data['clip']
+            alone_key = None if run.get('cost') else scene_alone(run, clip, w, h)
             meter.begin(f"{run.get('group', '')} on {scene['id']}")
-            result = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)', [run, run.get('clip') or data['clip'], w, h])
+            result = page.evaluate('([r, c, W, H]) => window.runOne(r, c, W, H)', [run, clip, w, h])
             row = measure(result['lumas'], scene['fps'])
             row['cpu_s'] = meter.end()
             if run.get('overlays') is not None:
@@ -134,14 +167,39 @@ def main():
                 'most_per_s': result.get('mostPerSecond', 0),
                 'intensity': run['intensity'], 'flash': run['flash'], 'scene': scene['id'],
                 'fx': '+'.join(item['id'] for item in run['fx']) or '(none)',
+                # What the chain really drew (read back from the page).
+                'fx_drawn': '+'.join(result.get('fxDrawn') or []) or '(none)',
+                'fx_modes': {item['id']: item.get('values', {}).get('mode') for item in run['fx'] if 'mode' in item.get('values', {})},
                 'ms': round(result['ms'], 2), 'failed': result['failed'],
                 'quality': result.get('quality'), 'drawn_size': result.get('size'),
-                'scene_max_step': baseline[run['scene']]['max_step'],
+                'scene_alone': alone_key,
+                'scene_max_step': baseline[alone_key]['max_step'] if alone_key else None,
+                'scene_mean': baseline[alone_key]['mean'] if alone_key else None,
+                'key': run.get('key'), 'frames': len(result['lumas']),
             })
+            if run.get('overlays') is not None:
+                row.update({'halos': result.get('halos', 0), 'effective': result.get('effective'),
+                            'extra_glow': run.get('extraGlow', False), 'value_drift': run.get('valueDrift', False)})
+                if run.get('valueDrift'):
+                    row.update({'drift_most': result.get('driftMost'), 'drift_bound': result.get('driftBound'),
+                                'drift_outside': result.get('driftOutside')})
+            if run.get('cost'):
+                seconds = len(result['lumas']) / scene['fps']
+                row['cpu_share_one_core_30fps'] = round(row['cpu_s'] / seconds, 4) if row['cpu_s'] is not None and seconds else None
+            elif len(result['lumas']) >= 10 * scene['fps']:
+                per_window = windows(result['lumas'], scene['fps'])
+                row.update({
+                    'oscillations': sum(1 for w in per_window if w['oscillation']),
+                    'most_fast_p2p': max((w['fast_p2p'] for w in per_window), default=0),
+                    'dominant_hz': [w['dominant_hz'] for w in per_window],
+                })
             rows.append(row)
+            if rows_file:
+                with open(rows_file, 'a') as f:
+                    f.write(json.dumps(row) + '\n')
         browser.close()
     server.shutdown()
-    report = {'size': [width, height], 'quality': qualities, 'gpu': gpu, 'readback': readback, 'baseline': {data['scenes'][i]['id']: v for i, v in baseline.items()},
+    report = {'size': [width, height], 'quality': qualities, 'gpu': gpu, 'readback': readback, 'baseline': baseline,
               'summary': {}, 'worst': {}, 'rows': rows}
     for key in sorted({row['group'] for row in rows}):
         part = [row for row in rows if row['group'] == key]

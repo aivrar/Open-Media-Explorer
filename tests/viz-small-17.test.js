@@ -8,12 +8,13 @@ import loadOverlays from '../src/visualizer/vendor/psychedelia/engine/overlays.j
 import { createFlashLedger } from '../src/visualizer/flash-limiter.js';
 import { CROSSFADE_SLOW_MS, mountVisualizer } from '../src/visualizer/index.js';
 import {
-  MOOD_CALM_BELOW, MOOD_ENERGETIC_ABOVE, createMoodTracker, moodEnergy,
+  MOOD_CALM_BELOW, MOOD_ENERGETIC_ABOVE, MOOD_WEIGHTS, createMoodTracker, moodEnergy, moodParts,
 } from '../src/visualizer/mood.js';
 import { overlayRow } from '../src/visualizer/overlay-catalog.js';
 import { COMPILE_POLL_MS } from '../src/visualizer/scene-renderer.js';
 import { seededRandom } from '../src/visualizer/shuffle.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
+import { beatTrack, listen } from './helpers/mood-sim.js';
 import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle,
 } from './helpers/visualizer-fakes.js';
@@ -141,13 +142,17 @@ test('the mood line carries the mood\'s numbers as data attributes, at most once
   const store = { saved: [], current: normalizeSettings({ visualizerNoticeSeen: true, visualizerScene: 'tunnel' }) };
   const m = await mount(store);
   const line = m.session.controls.moodLine;
-  assert.equal(line.getAttribute('data-calm-below'), '0.30');
-  assert.equal(line.getAttribute('data-energetic-above'), '0.48');
-  assert.equal(MOOD_CALM_BELOW, 0.30);
-  assert.equal(MOOD_ENERGETIC_ABOVE, 0.48);
-  for (const name of ['data-energy', 'data-hits-per-second', 'data-bpm', 'data-tempo-confidence']) {
+  assert.equal(line.getAttribute('data-calm-below'), '0.20');
+  assert.equal(line.getAttribute('data-energetic-above'), '0.65');
+  assert.equal(MOOD_CALM_BELOW, 0.2);
+  assert.equal(MOOD_ENERGETIC_ABOVE, 0.65);
+  for (const name of ['data-energy', 'data-onset', 'data-busy', 'data-pulse', 'data-bpm', 'data-tempo-confidence']) {
     assert.match(line.getAttribute(name) ?? '', /^\d+(\.\d\d)?$/, name);
   }
+  for (const name of ['data-bright', 'data-sway']) {
+    assert.match(line.getAttribute(name) ?? '', /^-?\d+\.\d$/, name);
+  }
+  assert.equal(line.getAttribute('data-hits-per-second'), null, 'the reactor\'s hits are not used');
   assert.equal(line.getAttribute('data-energy'), m.session.mood.energy.toFixed(2));
   assert.equal(line.getAttribute('aria-live'), 'off', 'nothing said');
   assert.match(line.textContent, /^Music: (calm|steady|energetic)$/, 'the text is as before');
@@ -169,21 +174,35 @@ test('the mood line carries the mood\'s numbers as data attributes, at most once
   m.session.destroy();
 });
 
-test('the mood tracker gives its hits a second; the energy formula on idealized music', () => {
+test('the mood tracker gives its reading; the energy formula on idealized readings', () => {
   const tracker = createMoodTracker();
-  assert.equal(tracker.hitsPerSecond, 0);
-  // A kick every half second for 9 s: two hits a second.
-  for (let step = 0; step <= 180; step += 1) {
-    const kick = step % 10 === 0 ? 1 : 0;
-    tracker.step(step * 0.05, { kick, level: 0.5 });
-  }
-  assert.ok(Math.abs(tracker.hitsPerSecond - 2) < 0.2, String(tracker.hitsPerSecond));
+  assert.deepEqual({ ...tracker.reading }, {
+    onset: 0, busy: 0, pulse: 0, bright: 0, sway: 0,
+  });
+  // A steady beat with hats on the eighths at 120: two strong high onsets a
+  // second (the hats on the off beats, with the snare's), a clear pulse.
+  listen(tracker, beatTrack({ bpm: 120, hats: 2 }), 12);
+  assert.ok(tracker.reading.busy > 1.5 && tracker.reading.busy < 5, String(tracker.reading.busy));
+  assert.ok(tracker.reading.pulse > 0.5, String(tracker.reading.pulse));
+  assert.ok(tracker.reading.onset > 0);
   tracker.reset();
-  assert.equal(tracker.hitsPerSecond, 0);
-  // energy = 0.6 x min(1, max(0, hits - 1) / 4) + 0.4 x confidence x clamp((bpm - 80) / 60, 0, 1)
+  assert.equal(tracker.reading.busy, 0);
+  // energy = 0.2 drive + 0.65 pace + 0.7 wall + 0.15 shine + 0.1 beat, at
+  // most 1.
   const near = (value, expected) => assert.ok(Math.abs(value - expected) < 1e-9, `${value} vs ${expected}`);
-  near(moodEnergy(128 / 60 * 1.5, 1, 128), 0.6 * (3.2 - 1) / 4 + 0.4 * 0.8); // 0.65
-  near(moodEnergy(3, 0.4, 150), 0.3 + 0.16); // 0.46
-  near(moodEnergy(70 / 60 * 1.5, 1, 70), 0.6 * (1.75 - 1) / 4); // 0.1125
-  near(moodEnergy(0, 0, 0), 0);
+  assert.deepEqual({ ...MOOD_WEIGHTS }, {
+    drive: 0.2, pace: 0.65, wall: 0.7, shine: 0.15, beat: 0.1,
+  });
+  // Drive from onset 0.7 to 1.5; pace from 4.5 to 8.5 strong high onsets a
+  // second, times 0.9 + 0.1 x min(1, pulse / 0.4); beat from pulse 0.25 to
+  // 1.55.
+  near(moodEnergy({ onset: 1.1, busy: 6.5, pulse: 0.2, bright: -80, sway: 9 }),
+    0.2 * 0.5 + 0.65 * 0.5 * 0.95); // 0.40875
+  // Shine from bright -51.7 to -47.7; the wall from bright -41.7 to -38.7,
+  // times sway from 5.5 down to 3, times onset from 0.7 to 1.2.
+  near(moodEnergy({ onset: 0.95, busy: 0, pulse: 0.25, bright: -40.2, sway: 4.25 }),
+    0.2 * 0.3125 + 0.7 * (0.5 * 0.5 * 0.5) + 0.15); // 0.3
+  near(moodParts({ onset: 1.2, bright: -38.7, sway: 3 }).wall, 1);
+  near(moodEnergy({ onset: 0, busy: 0, pulse: 0 }), 0);
+  near(moodEnergy({ onset: 5, busy: 20, pulse: 1, bright: -40, sway: 0 }), 1);
 });

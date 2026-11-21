@@ -87,7 +87,7 @@ import { createHud } from './hud.js';
 import { createNotice, NOTICE } from './notice.js';
 import { createTransition } from './transition.js';
 import {
-  SHUFFLE_TEMPO_CONFIDENCE, costFilterMax, createShuffle, createShuffleTimer, lighterCost, lookToneWeight, seededRandom, shuffleCostCap,
+  costFilterMax, createShuffle, createShuffleTimer, lighterCost, lookToneWeight, seededRandom, shuffleCostCap,
 } from './shuffle.js';
 import {
   MOOD_CALM_BELOW, MOOD_ENERGETIC_ABOVE, MOOD_STRENGTH, createMoodTracker,
@@ -96,13 +96,13 @@ import { SONG_STRUCTURE_RELEASED, createStructureDetector, structureDriftScale }
 import { MOOD_TONE_RELEASED, createToneTracker } from './tone.js';
 import { lookDarkness } from './look-darkness.js';
 import {
-  favouriteCombos, favouriteEntries, favouriteKey, favouriteLooks, favouriteToRecall, favouritesAsDrawn, isFavourite,
+  favouriteCombos, favouriteEntries, favouriteKey, favouriteLooks, favouriteToRecall, favouritesFromSaved, isFavourite,
   withFavourite,
 } from './favourites.js';
 import {
   OVERLAY_BEND_OFFERED, OVERLAY_BLEND_LABELS, OVERLAY_COST_BUDGET, OVERLAY_COST_UNITS, OVERLAY_EXTRA_GLOW_RELEASED, OVERLAY_IDS, OVERLAY_LIVELY_BLENDS,
   OVERLAY_MASKS, OVERLAY_MASK_LABELS, OVERLAY_MAX, OVERLAY_MAX_BY_QUALITY, OVERLAY_SHUFFLE_COST_MAX, PLAIN_BLEND, isBlendIn, normalizeBlend,
-  overlayOrder, overlayRow, overlayToken, overlaysDrawnFor, overlaysKey, parseOverlayToken,
+  overlayOrder, overlayRow, overlayToken, overlaysDrawnFor, overlaysKey, readOverlayToken,
 } from './overlay-catalog.js';
 import { createFlashGate, createOverlayLayer } from './overlay-layer.js';
 import { OVERLAY_VALUE_DRIFT_RELEASED } from './overlay-drift.js';
@@ -119,7 +119,7 @@ import {
   DEFAULT_VISUALIZER_QUALITY, DEFAULT_VISUALIZER_SHUFFLE_COST, VISUALIZER_BRIGHTNESS_MAX, VISUALIZER_BRIGHTNESS_MIN, VISUALIZER_BRIGHTNESS_STEP, VISUALIZER_FRAME_RATES,
   VISUALIZER_FX_INTENSITIES, VISUALIZER_FX_TIMINGS, VISUALIZER_SHUFFLE_BARS,
   normalizeVisualizerBrightness, normalizeVisualizerExtras, normalizeVisualizerFps, normalizeVisualizerLooks,
-  normalizeVisualizerQuality, normalizeVisualizerScene, tableQuality, visualizerPreset,
+  normalizeVisualizerQuality, normalizeVisualizerScene, tableQuality, visualizerFavouritesToSave, visualizerOverlaySetToSave, visualizerPreset,
   VISUALIZER_ALL_QUALITIES, VISUALIZER_QUALITY_HIGH, VISUALIZER_QUALITY_VERY_HIGH, VISUALIZER_VERY_HIGH_PRESET,
 } from '../lib/visualizer-settings.js';
 import {
@@ -225,10 +225,12 @@ export const OVERLAY_TEXT = Object.freeze({
   none: 'Overlays: none now',
   noneHere: 'Overlays are drawn plain on top with this scene: blending them in would flicker.',
   calmHere: 'Grayed blends are not used with this scene: they would flicker.',
-  oneBlend: 'One overlay at a time can be blended in.',
+  oneBlend: 'Only one overlay can be blended in at a time.',
   cap: (count) => `At most ${count} at once`,
   blend: 'Blend',
   under: 'Under the effects',
+  /** Why "Under the effects" is grayed for an overlay that cannot go there. */
+  underNone: 'Not available for this overlay.',
   mask: 'Show',
   tint: 'Scene colors',
   bend: 'Bend the scene',
@@ -396,7 +398,10 @@ function buildVisualizer(root, {
     || cost !== DEFAULT_VISUALIZER_SHUFFLE_COST;
   let shuffleCostPicked = shuffleCostPickedIn(initial, shuffleCost);
   let shuffleBars = extras.visualizerShuffleBars;
-  let favourites = extras.visualizerFavourites;
+  // The whole list (favouritesFromSaved, below) and set (newer ones too:
+  // visualizer-settings.js visualizerFavouritesAll, visualizerOverlaySetAll);
+  // saved through visualizerFavouritesToSave and visualizerOverlaySetToSave.
+  let favourites = [];
   let noticeSeen = extras.visualizerNoticeSeen;
   let fxOn = extras.visualizerFx;
   let fxShuffleOn = extras.visualizerFxShuffle;
@@ -407,10 +412,10 @@ function buildVisualizer(root, {
   let fxSet = extras.visualizerFxSet;
   let overlaysOn = extras.visualizerOverlays;
   let overlayShuffleOn = extras.visualizerOverlayShuffle;
-  // "Extra glow" (held: overlay-catalog.js OVERLAY_EXTRA_GLOW_RELEASED).
+  // "Extra glow" (overlay-catalog.js OVERLAY_EXTRA_GLOW_RELEASED).
   let overlayGlowOn = extras.visualizerOverlayGlow;
   const extraGlowNow = () => OVERLAY_EXTRA_GLOW_RELEASED && overlayGlowOn;
-  let overlaySet = extras.visualizerOverlaySet; // saved tokens
+  let overlaySet = extras.visualizerOverlaySetAll; // saved tokens
   let overlayLayer = null; // made the first time an overlay is drawn
   let overlayCombo = null; // the set made now: { key, ids, items: [{ id, blend, values }] }
   // The overlays chosen ([{ id, blend }]): the latest choice, made or still
@@ -455,19 +460,22 @@ function buildVisualizer(root, {
   };
   const entryOf = (id) => scenes.find((scene) => scene.id === id) || null;
   const sceneName = (id) => entryOf(id)?.name || id;
-  // Favourites as read: each one's effects as its scene draws them (a calm
-  // scene leaves lively ones out), so the star matches what is drawn and
-  // can always take a favourite off again. Stored so when that changed it.
-  const favouritesDrawn = (list) => favouritesAsDrawn(
-    list,
+  // Favourites as read: the whole list from the two saved fields, each
+  // one's effects and overlays as its scene draws them (a calm scene leaves
+  // lively ones out), so the star matches what is drawn and can always take
+  // a favourite off again. Stored so when that changed either field.
+  const favouritesSaved = (settings) => favouritesFromSaved(
+    settings.visualizerFavourites,
+    settings.visualizerFavouritesAll,
     (id, fx) => fxDrawnFor(entryOf(id), fx),
     (id, overlays) => overlaysDrawnFor(entryOf(id), overlays),
   );
   {
-    const drawn = favouritesDrawn(favourites);
-    if (JSON.stringify(drawn) !== JSON.stringify(favourites)) {
-      favourites = drawn;
-      saveSettings?.({ visualizerFavourites: favourites });
+    favourites = favouritesSaved(extras);
+    const fields = visualizerFavouritesToSave(favourites);
+    if (JSON.stringify(fields.visualizerFavourites) !== JSON.stringify(extras.visualizerFavourites)
+      || JSON.stringify(fields.visualizerFavouritesAll) !== JSON.stringify(extras.visualizerFavouritesAll)) {
+      saveSettings?.(fields);
     }
   }
   // Every scene of this build (settings keep entries for these).
@@ -637,6 +645,12 @@ function buildVisualizer(root, {
   // How each chosen overlay is blended in (one row per chosen overlay).
   const ovBlendEl = el('div', 'viz-ov-blends', { role: 'group', 'aria-label': 'How overlays blend in' });
   const ovRows = [];
+  // The overlay whose Blend choice last set another one back to plain; its
+  // row says why (OVERLAY_TEXT.oneBlend). Null when none.
+  let blendNoteFor = null;
+  // The overlays and blends (tokens) that change left; null until its row
+  // is drawn after it.
+  let blendNoteSet = '';
   for (let index = 0; index < OVERLAY_MAX; index += 1) {
     // A group named by its overlay; each control's name says which overlay
     // it is for too (a screen reader moving from control to control).
@@ -644,7 +658,16 @@ function buildVisualizer(root, {
     const row = el('div', 'viz-ov-row', { role: 'group', 'aria-labelledby': `viz-ov-name-${index}` });
     const mode = selectField(OVERLAY_TEXT.blend, 'viz-ov-mode', []);
     mode.field.classList.add('viz-ov-mode-field'); // beside the name (its label read, not shown)
+    // Under the Blend choice, shown when that choice set another overlay
+    // back to plain (setOverlayBlend): only one is blended in at a time.
+    const note = el('p', 'viz-ov-blend-note', { 'aria-live': 'polite' }, OVERLAY_TEXT.oneBlend);
+    note.hidden = true;
     const under = checkField(OVERLAY_TEXT.under, 'viz-ov-under');
+    // Read with the box (and shown on hover) while its overlay cannot go
+    // under the effects.
+    const underWhy = el('span', 'viz-ov-under-why', { id: `viz-ov-under-why-${index}` }, OVERLAY_TEXT.underNone);
+    underWhy.hidden = true;
+    under.field.append(underWhy);
     const mask = selectField(OVERLAY_TEXT.mask, 'viz-ov-mask', OVERLAY_MASKS.map((id) => [id, OVERLAY_MASK_LABELS[id]]));
     const tint = checkField(OVERLAY_TEXT.tint, 'viz-ov-tint');
     const bend = checkField(OVERLAY_TEXT.bend, 'viz-ov-bend');
@@ -652,12 +675,12 @@ function buildVisualizer(root, {
     // Only for an overlay with named styles (overlay-catalog.js `styles`).
     const style = selectField(OVERLAY_TEXT.style, 'viz-ov-style', []);
     style.field.hidden = true;
-    row.append(name, mode.field, style.field, mask.field, under.field, tint.field, bend.field);
+    row.append(name, mode.field, note, style.field, mask.field, under.field, tint.field, bend.field);
     row.hidden = true;
     ovBlendEl.append(row);
     ovRows.push({
-      row, name, mode: mode.select, under: under.box, mask: mask.select, tint: tint.box, bend: bend.box, id: null, modes: '',
-      style: style.select, styleField: style.field,
+      row, name, mode: mode.select, under: under.box, underField: under.field, mask: mask.select, tint: tint.box, bend: bend.box,
+      id: null, modes: '', style: style.select, styleField: style.field, note,
     });
   }
   const ovListEl = el('div', 'viz-fx-list viz-ov-list', { role: 'group', 'aria-label': 'Overlays by hand' });
@@ -1126,7 +1149,7 @@ function buildVisualizer(root, {
     if (overlayLayer?.on) {
       if (!state.still || !(driftState.scale > 0)) overlayDepth = driftState.scale;
       overlayLayer.move(driftState.bars, overlayDepth);
-      // Their settings drift too (held: overlay-drift.js).
+      // Their settings drift too (overlay-drift.js OVERLAY_VALUE_DRIFT_RELEASED).
       if (OVERLAY_VALUE_DRIFT_RELEASED) overlayLayer.drift(driftState.bars, overlayDepth);
     }
     if (fxChain && !fxChain.active && fxChain.holding) fxChain.release();
@@ -1203,10 +1226,9 @@ function buildVisualizer(root, {
   const shuffleStats = {
     changes: 0, waitedNotReady: 0, waitedBudget: 0, notPrepared: 0, dropped: 0, nothingNew: 0, fxOnly: 0,
   };
-  // What the mood reads each frame (one object, filled in again).
-  const sound = {
-    kick: 0, snare: 0, hat: 0, level: 0, confidence: 0, bpm: 0,
-  };
+  // What the mood reads each frame (one object, filled in again): the
+  // reactor adapter's analysis for the frame and the sound's level.
+  const sound = { analysis: null, levelDb: Number.NEGATIVE_INFINITY };
 
   function lookFor(id, def) {
     if (lookToPick.has(id)) {
@@ -1247,16 +1269,21 @@ function buildVisualizer(root, {
     if (now < moodDataDue) return;
     moodDataDue = now + MOOD_DATA_MS;
     setMoodData('data-energy', mood.energy.toFixed(2));
-    setMoodData('data-hits-per-second', mood.hitsPerSecond.toFixed(2));
-    setMoodData('data-bpm', String(Math.round(Number(sound.bpm) || 0)));
-    setMoodData('data-tempo-confidence', (Number(sound.confidence) || 0).toFixed(2));
+    setMoodData('data-onset', mood.reading.onset.toFixed(2));
+    setMoodData('data-busy', mood.reading.busy.toFixed(2));
+    setMoodData('data-pulse', mood.reading.pulse.toFixed(2));
+    setMoodData('data-bright', mood.reading.bright.toFixed(1));
+    setMoodData('data-sway', mood.reading.sway.toFixed(1));
+    // The mood's own tempo reading: 0 while it is not sure.
+    setMoodData('data-bpm', String(mood.tempo.sure ? Math.round(mood.tempo.bpm) : 0));
+    setMoodData('data-tempo-confidence', mood.tempo.confidence.toFixed(2));
   }
   function showMood() {
     if (started) showMoodData();
-    // After a fresh start (another station, a resume) the last word stays
-    // until the new reading is ready: no flash to the starting "steady".
-    const held = started && !mood.ready && shownMood;
-    const name = started ? (held ? shownMood : mood.mood) : '';
+    // The tracker's own word, the one the shuffle and the strength use: after
+    // a fresh start (another station, a resume, a gap) it keeps the last word
+    // until its first new reading, so there is no flash to "steady".
+    const name = started ? mood.mood : '';
     if (name === shownMood) return; // nothing built per frame
     shownMood = name;
     if (moodLine.getAttribute('aria-live') !== 'off') moodLine.setAttribute('aria-live', 'off');
@@ -1349,20 +1376,22 @@ function buildVisualizer(root, {
    *  so the shuffle's clock does not move then). Allocates nothing. */
   function liveStep(nowSec) {
     const music = bridge.music();
-    const heard = bridge.reactor;
-    sound.kick = heard.getSource('kick');
-    sound.snare = heard.getSource('snare');
-    sound.hat = heard.getSource('hat');
-    sound.level = heard.getSource('level');
-    sound.confidence = music.confidence;
-    sound.bpm = music.bpm;
+    sound.analysis = bridge.adapter.analysis;
+    sound.levelDb = bridge.adapter.levelDb;
+    const moodRestarts = mood.stats.restarts;
     mood.step(nowSec, sound);
+    // Sound back after seconds of silence inside the stream: the mood
+    // started afresh, so do the other readings.
+    if (mood.stats.restarts !== moodRestarts) {
+      tone?.reset();
+      structure?.reset();
+      musicStats.resets += 1;
+    }
     tone?.step(nowSec, bridge.adapter.analysis);
     // A drop brings the shuffle's next change forward (only once the scene
-    // has shown its minimum time; never an extra change).
-    const structureEvent = structure
-      ? structure.step(music.confidence >= SHUFFLE_TEMPO_CONFIDENCE ? music.beats : Number.NaN, bridge.adapter.levelDb)
-      : null;
+    // has shown its minimum time; never an extra change). Its bar clock is
+    // the mood's own beat count, which runs only while that tempo is sure.
+    const structureEvent = structure ? structure.step(mood.beats, bridge.adapter.levelDb) : null;
     if (structureEvent === 'drop' && shuffleOn && started && !lost) shuffleTimer.bringForward();
     bridge.setStrength(mood.strength);
     showMood();
@@ -1785,7 +1814,7 @@ function buildVisualizer(root, {
     favourites = withFavourite(favourites, shown.scene, shown.look, on, knownIds, shown.fx, shown.overlays);
     showFavourites();
     poolChanged();
-    saveSettings?.({ visualizerFavourites: favourites });
+    saveSettings?.(visualizerFavouritesToSave(favourites));
   }
   function showFavourites() {
     sceneList.setFavourites(favouriteEntries(favourites).map((entry) => entry.scene));
@@ -2343,7 +2372,9 @@ function buildVisualizer(root, {
     const sceneNote = overlaysOn && overlayChosen.length ? (entry?.fxNone ? OVERLAY_TEXT.noneHere : (entry?.fxCalm ? OVERLAY_TEXT.calmHere : '')) : '';
     const failedChosen = overlayChosen.filter((item) => failed.includes(item.id)).map((item) => overlayRow(item.id).label);
     const failedNote = failedChosen.length ? OVERLAY_TEXT.failed1(failedChosen.join(', ')) : '';
-    const note = [sceneNote, failedNote, overlaysOn && overlayChosen.length > 1 ? OVERLAY_TEXT.oneBlend : ''].filter(Boolean).join(' ');
+    // "Only one overlay can be blended in at a time" is said in the row
+    // where the choice is made (blendNoteFor), not here.
+    const note = [sceneNote, failedNote].filter(Boolean).join(' ');
     if (ovNote.textContent !== note) ovNote.textContent = note;
     ovNote.hidden = !note;
     const most = overlayMaxNow();
@@ -2365,10 +2396,22 @@ function buildVisualizer(root, {
     ovListEl.title = OVERLAY_TEXT.cap(most);
     // One row per chosen overlay: its blend-in (the choice, not the drawn
     // one; what this scene leaves out is greyed).
+    // The note describes the change that made it: any later change of the
+    // overlays or of a blend (one removed, a shuffle, a favorite recalled,
+    // new overlays now, another blend choice) takes it away.
+    if (blendNoteFor) {
+      const set = overlaysOn ? overlayChosen.map(overlayToken).join(',') : '';
+      if (blendNoteSet === null && overlaysOn) blendNoteSet = set;
+      if (set !== blendNoteSet || !(overlaysOn && chosenIds.includes(blendNoteFor))) {
+        blendNoteFor = null;
+        blendNoteSet = '';
+      }
+    }
     for (let index = 0; index < ovRows.length; index += 1) {
       const row = ovRows[index];
       const item = overlaysOn ? overlayChosen[index] : null;
       row.row.hidden = !item;
+      row.note.hidden = !item || item.id !== blendNoteFor;
       if (!item) { row.id = null; continue; }
       const def = overlayRow(item.id);
       if (row.id !== item.id) {
@@ -2396,6 +2439,11 @@ function buildVisualizer(root, {
       }
       row.under.checked = item.blend.under;
       row.under.disabled = !def.under || Boolean(entry?.fxNone) || Boolean(entry?.fxCalm && def.calmPlain) || !fxChain;
+      // An overlay that cannot go under the effects says so (OVERLAY_TEXT.underNone).
+      row.underField.title = def.under ? '' : OVERLAY_TEXT.underNone;
+      row.under.title = row.underField.title;
+      if (def.under) row.under.removeAttribute('aria-describedby');
+      else row.under.setAttribute('aria-describedby', `viz-ov-under-why-${index}`);
       row.mask.value = item.blend.mask;
       row.mask.disabled = plainOnly || Boolean(entry?.fxCalm);
       row.tint.checked = item.blend.tint;
@@ -2409,7 +2457,7 @@ function buildVisualizer(root, {
   /** Overlays `list` ([{ id, blend }]) with settings; those already on keep
    *  theirs (unless `fresh`). At most overlayMaxNow(), one blended in. */
   function overlayComboFor(list, { fresh = false } = {}) {
-    const items = (Array.isArray(list) ? list : []).map((item) => (typeof item === 'string' ? parseOverlayToken(item) : item)).filter(Boolean);
+    const items = (Array.isArray(list) ? list : []).map((item) => (typeof item === 'string' ? readOverlayToken(item) : item)).filter(Boolean);
     const combo = overlayShuffle.build(chosenOf(items).slice(0, overlayMaxNow()));
     if (!fresh && overlayCombo) {
       for (const item of combo.items) {
@@ -2521,7 +2569,7 @@ function buildVisualizer(root, {
     overlaySet = chosenOf(list).filter((item) => !failed.includes(item.id)).map(overlayToken);
     overlayStats.byHand += 1;
     changeOverlays(overlayComboFor(overlaySet));
-    saveSettings?.({ visualizerOverlaySet: overlaySet });
+    saveSettings?.(visualizerOverlaySetToSave(overlaySet));
   }
   /** One overlay switched on or off by hand. */
   function toggleOverlay(id, on) {
@@ -2542,6 +2590,9 @@ function buildVisualizer(root, {
   function setOverlayBlend(id, blend) {
     if (!overlaysOn) return;
     const next = normalizeBlend(blend);
+    // Said under this choice when it takes the blend-in from another overlay.
+    blendNoteFor = isBlendIn(next) && overlayChosen.some((item) => item.id !== id && isBlendIn(item.blend)) ? id : null;
+    blendNoteSet = blendNoteFor ? null : '';
     const list = overlayChosen.map((item) => {
       if (item.id === id) return { id, blend: next };
       return { id: item.id, blend: isBlendIn(next) ? { ...PLAIN_BLEND } : item.blend };
@@ -2966,7 +3017,7 @@ function buildVisualizer(root, {
       shuffleTimer.setBars(shuffleBars);
     }
     showShuffleChoice();
-    const moreFavourites = favouritesDrawn(more.visualizerFavourites);
+    const moreFavourites = favouritesSaved(more);
     if (JSON.stringify(moreFavourites) !== JSON.stringify(favourites)) {
       favourites = moreFavourites;
       showFavourites();
@@ -2990,7 +3041,7 @@ function buildVisualizer(root, {
     overlayShuffleOn = more.visualizerOverlayShuffle;
     overlayGlowOn = more.visualizerOverlayGlow;
     overlayLayer?.setExtraGlow(extraGlowNow());
-    overlaySet = more.visualizerOverlaySet;
+    overlaySet = more.visualizerOverlaySetAll;
     if (more.visualizerOverlays !== overlaysOn) setOverlaysOn(more.visualizerOverlays, { save: false });
     showOverlayChoice();
     if (more.visualizerPanelOpen !== panelOpen) setPanelOpen(more.visualizerPanelOpen, { save: false });

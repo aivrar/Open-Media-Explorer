@@ -484,14 +484,18 @@ test('VOD falls back to compatible MP4, active live refuses MP4, and absent medi
     download_url: '',
   }), peerTubeIdentity(liveRaw.url, liveRaw.uuid)), { code: 'PEERTUBE_LIVE_MEDIA_INVALID' });
 
+  const resolveOptions = [];
   const source = adapter({
     getJson: async () => page([vodRaw]),
-    resolvePeerTubeVideo: async () => resolved(vodRaw, {
-      playback_url: '', download_url: '', download_enabled: false,
-    }),
+    resolvePeerTubeVideo: async (_watch, _uuid, options) => {
+      resolveOptions.push(options);
+      return resolved(vodRaw, { playback_url: '', download_url: '', download_enabled: false });
+    },
   });
   const item = (await source.browsePage()).items[0];
   await source.resolveStream(item);
+  // A resolve for Play is sent at once by the catalogue client (catalog-client.js).
+  assert.deepEqual(resolveOptions.map((options) => options.forPlayback), [true]);
   assert.equal(item.stream_url, '');
   assert.equal(item._extra.needsResolve, false);
   assert.equal(item._extra.resolutionStatus, 'unavailable');

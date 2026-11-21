@@ -833,7 +833,13 @@ test('the lab-wide lifts: FLAM3 Density Lab starts at gamma 1.8 (no look sets it
   const presets = read('src', 'visualizer', 'vendor', 'psychedelia', 'effects', 'flam3-density-lab.js').split(/\r?\n/).filter((line) => /preset\('/.test(line));
   assert.ok(presets.length >= 20, String(presets.length));
   for (const line of presets) assert.doesNotMatch(line, /flam3_gamma/, 'no look sets its gamma');
-  for (const id of ['attractor_density_lab', 'buddhabrot_lab', 'ifs_lsystem_lab']) assert.equal(entryOf(id).defaults, null, id);
+  for (const id of ['buddhabrot_lab', 'ifs_lsystem_lab']) assert.equal(entryOf(id).defaults, null, id);
+  // Attractor Density Lab: its density curve lifted (its own 0.72), and no
+  // look sets it.
+  assert.deepEqual({ ...entryOf('attractor_density_lab').defaults }, { attractor_density_curve: 0.45 });
+  const attractorLooks = read('src', 'visualizer', 'vendor', 'psychedelia', 'effects', 'attractor-density-lab.js');
+  assert.match(attractorLooks, /name: 'attractor_density_curve'[^}]*default: 0\.72/, 'its own curve');
+  assert.equal((attractorLooks.match(/attractor_density_curve/g) || []).length, 2, 'read once and declared once: no look sets its curve');
   const held = ACCUMULATING_HELD.ifs_lsystem_lab;
   assert.deepEqual({ ...held.least }, { ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 2.6 });
   let values = { ifs_background: 0, ifs_glow: 1.2, ifs_thickness: 1 };

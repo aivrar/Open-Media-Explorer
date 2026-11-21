@@ -69,5 +69,16 @@ export function streamQualityLabel(item) {
   return formatStreamQuality({ bitrate: extra.bitrate, codec: extra.codec, hls: extra.hls === true });
 }
 
+/** The label for the stream an item plays now: the format and bitrate the
+ *  played stream (media-failover.js playedStream) was listed with when it
+ *  has them, else the item's own. */
+export function playedQualityLabel(item, played) {
+  if (played && (played.bitrate || played.codec)) {
+    const extra = item?._extra && typeof item._extra === 'object' && !Array.isArray(item._extra) ? item._extra : {};
+    return streamQualityLabel({ _extra: { ...extra, bitrate: played.bitrate || 0, codec: played.codec || '' } });
+  }
+  return streamQualityLabel(item);
+}
+
 /** The `_extra` fields that carry the label, so a favourite rewrite can keep them. */
 export const STREAM_QUALITY_FIELDS = Object.freeze(['bitrate', 'codec', 'hls']);

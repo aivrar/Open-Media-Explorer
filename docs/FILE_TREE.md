@@ -30,6 +30,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.10.md
 |   |-- RELEASE_NOTES_0.1.11.md
 |   |-- RELEASE_NOTES_0.1.12.md
+|   |-- RELEASE_NOTES_0.1.13.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -40,6 +41,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.10.md
 |   |-- RELEASE_RECORD_0.1.11.md
 |   |-- RELEASE_RECORD_0.1.12.md
+|   |-- RELEASE_RECORD_0.1.13.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -136,7 +138,7 @@ WorldMediaWindows/
 | `worldmedia_processor.py` | The app's processor use (its own and its window's processes, as a share of the whole processor), read only when the Visualizer asks at Balanced or High. |
 | `src/lib/capture-client.js` | Authenticated control client and frontend relay lifecycle. |
 | `src/lib/catalog-scheduler.js` | Fair global/provider metadata scheduling, retry cooldowns, visibility pause, cancellation, and deduplication. |
-| `src/lib/catalog-client.js` | Authenticated semantic catalog and opaque artwork control client. |
+| `src/lib/catalog-client.js` | Authenticated semantic catalog and opaque artwork control client; at most three slow catalogue requests (podcast feeds, PeerTube, Owncast) at a time. |
 | `src/lib/artwork.js` | Prioritized, deduplicated, retryable conversion from provider image metadata to opaque local asset URLs, with playback-aware concurrency. |
 | `src/modes/library/catalog-store.js` | Bounded resident catalog, stable merge/update identities, snapshot replacement, and eviction pins. |
 | `src/modes/library/snapshots.js` | Independent live-snapshot refresh (only while the list is shown), stale-cache state, reconciliation, and teardown. |
@@ -160,6 +162,7 @@ WorldMediaWindows/
 | `src/lib/song-log-panel.js` | The Song log panel opened from the top bar: list, Copy, Remove, Save to file, and Clear log, and the **Starred songs** list with its searches, **Save as text** and **Save as CSV**. |
 | `src/lib/starred-songs.js`, `src/lib/song-star.js` | Starred songs: the page's store (kept by the local server, at most 2,000) and the star on the player bar. |
 | `src/lib/favorite-names.js`, `src/lib/favorite-rename.js` | Names of your own for favorites, kept apart from the favorites, and their removal when a favorite goes. |
+| `src/lib/startup-tidy.js` | Once per start, after the profile is restored and before it is first saved: drops names and category assignments of stations that are no longer favorites. |
 | `src/styles/song-log.css` | Styles for the Song log panel. |
 | `src/lib/station-images.js` | Station images: the list from the backend, name matching, and the Settings controls. |
 | `src/lib/stream-quality.js` | The format and bitrate label for Radio Browser stations. |
@@ -169,7 +172,9 @@ WorldMediaWindows/
 | `src/lib/best-stream-auto.js`, `src/lib/stream-verify.js`, `src/lib/stream-lookups.js` | **Auto (verified)**: when the background checks run, the rules a better stream must pass, and the saved directory lookups. |
 | `src/lib/processor-budget.js` | **Processor use**: the level, the limit, the quality steering, and what Balanced and High add (Very high, larger simulations). |
 | `src/lib/audio-signal.js` | Reads the sound for visuals from the audio engine's side tap, once per frame for every listener; runs only while something audible plays and the window is visible. |
-| `src/lib/player-meter.js` | The LED-style sound meter in the player bar (14 bars), switched by Settings > Appearance > Sound meter in the player bar. |
+| `src/lib/player-meter.js` | The LED-style sound meter in the player bar (14 bars), switched by Settings > Appearance > Sound meter in the player bar; the Now Playing tab uses it with larger segments. |
+| `src/modes/now-playing.js`, `src/styles/now-playing.css` | The Now Playing tab: the picture, name, category, song with star and Copy, stream details and a large sound meter over a blurred copy of the picture; everything it uses is removed when the tab closes. |
+| `src/lib/play-clock.js` | How long the loaded item has been playing (only while its media advances, as player.js reports), for the Now Playing tab. |
 | `src/lib/tuner-card-size.js` | The Tuner card size choice (Small, Medium, Large) and which sizes show pictures. |
 | `src/lib/tuner-card-art.js` | Pictures on Medium and Large Tuner cards: initials first, pictures only for cards in view once the strip has stopped moving. |
 | `src/lib/favorite-migration.js` | After a playlist is imported again, moves the favorites of channels that changed between radio and TV to the new channel, keeping place, category and equalizer. |
@@ -238,3 +243,5 @@ WorldMediaWindows/
 | `docs/RELEASE_RECORD_0.1.11.md` | What was checked for v0.1.11, with artifact hashes and limits. |
 | `docs/RELEASE_NOTES_0.1.12.md` | GitHub release notes for the `v0.1.12` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.12.md` | What was checked for v0.1.12, with artifact hashes and limits. |
+| `docs/RELEASE_NOTES_0.1.13.md` | GitHub release notes for the `v0.1.13` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.13.md` | What was checked for v0.1.13, with artifact hashes and limits. |

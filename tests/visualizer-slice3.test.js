@@ -64,9 +64,10 @@ test('the scene set: one vendored file per scene file, every scene of each in sc
 
 test('every scene has a cost class; the counts are as measured', () => {
   const count = Object.fromEntries(COST_CLASSES.map((cost) => [cost, SCENES.filter((scene) => scene.cost === cost).length]));
-  // (Five of them the line-drawing scenes, slice 15; five World Media's own;
-  // Buddhabrot Lab heavy.)
-  assert.deepEqual(count, { light: 32, medium: 23, heavy: 44 });
+  // (Seven of them the line-drawing scenes; five World Media's own;
+  // Buddhabrot Lab heavy; DIFS Tunnel and Quaternion Julia, back from the
+  // held list, heavy.)
+  assert.deepEqual(count, { light: 32, medium: 23, heavy: 48 });
   for (const id of ['black_hole', 'nebula', 'endless_terrain', 'mandelbrot_deep', 'orbit_trap', 'seascape', 'gyroid_tunnels', 'liquid_chrome']) {
     assert.equal(sceneById(id).cost, 'heavy', id);
   }

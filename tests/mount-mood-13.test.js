@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { createAudioSignal } from '../src/lib/audio-signal.js';
 import { normalizeSettings } from '../src/lib/state.js';
@@ -7,11 +8,12 @@ import { claimVisualizer, visualizerHolder } from '../src/lib/visualizer-slot.js
 import { attachTunerBackground } from '../src/modes/tuner-background.js';
 import { createFlashLedger } from '../src/visualizer/flash-limiter.js';
 import { mountVisualizer } from '../src/visualizer/index.js';
-import { MOOD_HOLD_S, createMoodTracker } from '../src/visualizer/mood.js';
+import { MOOD_GAP_S, MOOD_HOLD_S, createMoodTracker } from '../src/visualizer/mood.js';
 import { BLOCKING_COMPILE_DELAY_MS, createSceneRenderer } from '../src/visualizer/scene-renderer.js';
 import { createToneTracker } from '../src/visualizer/tone.js';
 import { createStructureDetector } from '../src/visualizer/structure.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
+import { beatTrack, listen, padTrack } from './helpers/mood-sim.js';
 import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle,
 } from './helpers/visualizer-fakes.js';
@@ -255,28 +257,25 @@ test('a tab mount that throws frees the slot: the Tuner background can claim it,
 
 /* ---- The music's readings start afresh ---- */
 
-test('the mood tracker\'s reset arms every channel again, so the first hit after it counts', () => {
-  const steps = (tracker, from) => {
-    // A kick every quarter second for a second, the first at the start.
-    for (let index = 0; index <= 20; index += 1) {
-      const kick = index % 5 === 0 ? 1 : 0;
-      tracker.step(from + index * 0.05, { kick, snare: 0, hat: 0, level: 0.5, confidence: 0, bpm: 0 });
-    }
-  };
+test('the mood tracker\'s reset forgets the levels it heard, so the first onset after it counts', () => {
+  // Each run its own copy of the beat (the beat's noise has a state).
+  const beat = () => beatTrack({ bpm: 120, hats: 2 });
   const fresh = createMoodTracker();
-  steps(fresh, 100);
+  listen(fresh, beat(), 4, { from: 100 });
   const reset = createMoodTracker();
-  // Before the reset: the kick held high (its channel not armed).
-  for (let index = 0; index < 10; index += 1) reset.step(index * 0.1, { kick: 1, snare: 0, hat: 0, level: 0.5 });
+  // Before the reset: a loud held chord (its levels would make the beat's
+  // first strokes rise from somewhere else).
+  listen(reset, padTrack(), 4, { gain: 8 });
+  const word = reset.mood;
   reset.reset();
   assert.equal(reset.ready, false, 'not ready after a reset');
-  assert.equal(reset.mood, 'steady');
+  assert.equal(reset.mood, word, 'the word stays until the new reading');
   assert.equal(reset.energy, 0);
-  steps(reset, 100);
-  assert.equal(reset.energy, fresh.energy, 'the same reading as a fresh tracker: the first kick counted');
+  listen(reset, beat(), 4, { from: 100 });
+  assert.equal(reset.energy, fresh.energy, 'the same reading as a fresh tracker');
+  assert.equal(reset.reading.onset, fresh.reading.onset);
   assert.ok(fresh.energy > 0);
   // Ready once it has heard MOOD_HOLD_S of sound again.
-  for (let at = 101; at <= 100 + MOOD_HOLD_S + 0.5; at += 0.1) reset.step(at, { level: 0.5 });
   assert.equal(reset.ready, true);
 });
 
@@ -360,23 +359,61 @@ test('a resume after a pause, or after the window was hidden, starts the mood af
   session.destroy();
 });
 
-test('after a reset the mood line keeps its last word until the new reading is ready', async (t) => {
+test('sound back after a gap of a few seconds starts the mood afresh and the other readings with it; a short gap does not', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const { m, session } = await playingMount();
+  const node = m.source.node;
+  const sounding = node.getFloatTimeDomainData;
+  const quiet = (ms) => {
+    node.getFloatTimeDomainData = (data) => data.fill(0);
+    m.h.run(ms);
+    node.getFloatTimeDomainData = sounding;
+  };
+  const resets = session.musicStats.resets;
+  const restarts = session.mood.stats.restarts;
+  // Half a second of silence: nothing starts afresh.
+  quiet(500);
+  m.h.run(500);
+  assert.equal(session.mood.stats.restarts, restarts);
+  assert.equal(session.musicStats.resets, resets);
+  assert.equal(session.mood.ready, true);
+  // Three seconds (longer than MOOD_GAP_S): afresh once the sound is back.
+  assert.ok(MOOD_GAP_S < 3);
+  const word = session.mood.mood;
+  quiet(3000);
+  assert.equal(session.mood.stats.restarts, restarts, 'not while it is quiet');
+  m.h.run(100);
+  assert.equal(session.mood.stats.restarts, restarts + 1);
+  assert.equal(session.musicStats.resets, resets + 1, 'the other readings too');
+  assert.equal(session.mood.ready, false);
+  assert.equal(session.mood.mood, word, 'the word stays');
+  m.h.run(MOOD_HOLD_S * 1000 + 500);
+  assert.equal(session.mood.ready, true);
+  session.destroy();
+});
+
+test('the mood line shows the tracker\'s own word, the one the shuffle and the strength use, ready or not', async (t) => {
   t.mock.method(console, 'error', () => {});
   const { m, session } = await playingMount();
   const line = session.controls.moodLine;
-  // Stand in for a reading: energetic, ready.
+  // Stand in for the tracker: energetic, ready.
   const reading = { mood: 'energetic', ready: true };
   Object.defineProperty(session.mood, 'mood', { get: () => reading.mood });
   Object.defineProperty(session.mood, 'ready', { get: () => reading.ready });
   m.h.run(100);
   assert.equal(line.textContent, 'Music: energetic');
-  // Afresh: the tracker starts at steady but has no reading yet.
-  reading.mood = 'steady';
+  // After a fresh start the tracker keeps its word until its new reading
+  // (visualizer-mood-measure.test.js); the line holds no word of its own,
+  // so it can never show another word than the shuffle and the strength.
   reading.ready = false;
   m.h.run(1000);
-  assert.equal(line.textContent, 'Music: energetic', 'no flash to the starting word');
-  reading.ready = true;
+  assert.equal(line.textContent, 'Music: energetic');
+  reading.mood = 'calm';
   m.h.run(100);
-  assert.equal(line.textContent, 'Music: steady', 'the new reading once ready');
+  assert.equal(line.textContent, 'Music: calm');
   session.destroy();
+  const viz = readFileSync('src/visualizer/index.js', 'utf8');
+  assert.match(viz, /const name = started \? mood\.mood : '';/);
+  assert.match(viz, /poolContext\.mood = mood\.mood;/);
+  assert.match(viz, /bridge\.setStrength\(mood\.strength\);/);
 });

@@ -15,7 +15,8 @@ import {
   recentCount, seededRandom, shuffleCostCap,
 } from '../src/visualizer/shuffle.js';
 import {
-  MOOD_HOLD_S, MOOD_MIN_CHANGE_S, MOOD_STRENGTH, createMoodTracker, moodEnergy,
+  MOOD_CALM_BELOW, MOOD_ENERGETIC_ABOVE, MOOD_HOLD_S, MOOD_MIN_CHANGE_S, MOOD_SILENT_CALM_S, MOOD_STRENGTH,
+  createMoodTracker, moodEnergy,
 } from '../src/visualizer/mood.js';
 import {
   favouriteEntries, favouriteKey, favouriteLooks, isFavourite, withFavourite,
@@ -27,6 +28,7 @@ import {
   CROSSFADE_MS, CROSSFADE_SLOW_MS, NOTES, SHUFFLE_TEXT, mountVisualizer,
 } from '../src/visualizer/index.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
+import { beatTrack, listen } from './helpers/mood-sim.js';
 import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle,
 } from './helpers/visualizer-fakes.js';
@@ -224,50 +226,52 @@ test('timing: without a sure tempo, the time N bars take at 120 BPM; nothing cou
 
 /* ---------------- Mood ---------------- */
 
-/** A synthetic reactor: `hits` onsets a second on the kick, sure of `bpm`. */
-function feed(tracker, from, seconds, { hits = 0, confidence = 0, bpm = 0, level = 0.5 } = {}) {
-  for (let t = from; t < from + seconds; t += 1 / 60) {
-    const phase = hits > 0 ? (t * hits) % 1 : 1;
-    tracker.step(t, {
-      kick: phase < 0.1 ? 0.9 : 0, snare: 0, hat: 0, level, confidence, bpm,
-    });
-  }
-  return from + seconds;
-}
+/* Synthetic music, read as the page reads it (helpers/mood-sim.js): a fast
+   breakbeat (energetic), four to the floor at 110 with hats on the
+   sixteenths (taking turns with the breakbeat, its energy wobbles about the
+   energetic line but stays over the line it is left at) and silence. */
+const fast = () => beatTrack({ bpm: 174, hats: 4, kicks: [0, 2.5] });
+const lighter = () => beatTrack({ bpm: 110, hats: 4, kicks: [0, 1, 2, 3] });
+const silence = () => () => 0;
 
-test('mood: calm, steady or energetic from hits a second and beat confidence, held for a while, at most one change in ten seconds', () => {
-  assert.ok(moodEnergy(0, 0, 0) < 0.3);
-  assert.ok(moodEnergy(6, 0.9, 128) > 0.65);
+test('mood: calm, steady or energetic from the music, held for a while, at most one change in ten seconds', () => {
+  assert.ok(moodEnergy({ onset: 0, busy: 0, pulse: 0 }) < MOOD_CALM_BELOW);
+  assert.ok(moodEnergy({ onset: 4, busy: 9, pulse: 0.6, bright: -57, sway: 11 }) > MOOD_ENERGETIC_ABOVE);
   const tracker = createMoodTracker();
   assert.equal(tracker.mood, 'steady');
-  let t = feed(tracker, 0, 2, { hits: 6, confidence: 0.9, bpm: 128 });
+  const beat = fast();
+  let t = listen(tracker, beat, 2);
   assert.equal(tracker.mood, 'steady', 'not before it has held');
-  while (tracker.mood !== 'energetic' && t < 10) t = feed(tracker, t, 0.1, { hits: 6, confidence: 0.9, bpm: 128 });
+  while (tracker.mood !== 'energetic' && t < 12) t = listen(tracker, beat, 0.1, { from: t });
   assert.equal(tracker.mood, 'energetic');
   assert.ok(t >= MOOD_HOLD_S, 'after it has held');
-  // Straight to near silence (calm as soon as it has held): still energetic
-  // until ten seconds after the last change.
+  // Straight to silence: the word stays, then calm once the silence has
+  // lasted MOOD_SILENT_CALM_S, even within ten seconds of the last change
+  // (nothing is playing).
   const changedAt = t;
   const before = tracker.stats.changes;
-  while (tracker.stats.changes === before && t < changedAt + 30) t = feed(tracker, t, 0.1, { level: 0 });
+  const quietTrack = silence();
+  while (tracker.stats.changes === before && t < changedAt + 30) t = listen(tracker, quietTrack, 0.1, { from: t });
   assert.equal(tracker.mood, 'calm');
-  assert.ok(t - changedAt >= MOOD_MIN_CHANGE_S - 0.15, `changed after ${(t - changedAt).toFixed(1)} s`);
-  assert.ok(t - changedAt < MOOD_MIN_CHANGE_S + 0.5, 'and then at once');
-  t = feed(tracker, t, 12, { level: 0 });
-  // Near silence is calm whatever else.
+  assert.ok(t - changedAt >= MOOD_SILENT_CALM_S - 0.1 && t - changedAt < MOOD_SILENT_CALM_S + 0.3,
+    `calm ${(t - changedAt).toFixed(1)} s into the silence`);
+  assert.ok(t - changedAt < MOOD_MIN_CHANGE_S);
+  t = listen(tracker, quietTrack, 12, { from: t });
+  // Near silence is calm whatever else: the fast beat at -70 dB.
   const quiet = createMoodTracker();
-  feed(quiet, 0, MOOD_HOLD_S + 8, {
-    hits: 6, confidence: 0.9, bpm: 128, level: 0,
-  });
+  listen(quiet, fast(), MOOD_HOLD_S + 8, { gain: 10 ** (-70 / 20) });
   assert.equal(quiet.mood, 'calm');
-  // Hysteresis: energy wobbling around the energetic line does not flip it.
+  // Hysteresis: energy wobbling about the energetic line, but above the line
+  // it is left at, does not flip it.
   const wobble = createMoodTracker();
-  let w = feed(wobble, 0, 12, { hits: 6, confidence: 0.9, bpm: 128 });
+  const busy = fast();
+  const between = lighter();
+  let w = listen(wobble, busy, 12);
   assert.equal(wobble.mood, 'energetic');
   const changes = wobble.stats.changes;
   for (let round = 0; round < 6; round += 1) {
-    w = feed(wobble, w, 2, { hits: 4, confidence: 0.8, bpm: 128 });
-    w = feed(wobble, w, 2, { hits: 5, confidence: 0.9, bpm: 128 });
+    w = listen(wobble, between, 2, { from: w });
+    w = listen(wobble, busy, 2, { from: w });
   }
   assert.equal(wobble.stats.changes, changes);
   // The reaction strength follows the mood slowly.
@@ -317,8 +321,9 @@ test('the slice 4 settings: defaults, checked values, kept by normalizeSettings'
   const {
     visualizerFx, visualizerFxShuffle, visualizerFxIntensity, visualizerFxTiming, visualizerFxFlash, visualizerFxSet,
     visualizerOverlays, visualizerOverlayShuffle, visualizerOverlaySet, visualizerOverlayGlow, visualizerDrift,
-    visualizerOverlayStyles, visualizerFolded, ...slice4
+    visualizerOverlayStyles, visualizerFolded, visualizerFavouritesAll, visualizerOverlaySetAll, ...slice4
   } = normalizeVisualizerExtras({});
+  assert.deepEqual([visualizerFavouritesAll, visualizerOverlaySetAll], [[], []], 'the whole lists, kept beside the fields release 0.1.12 reads');
   assert.deepEqual(visualizerFolded, [], 'every section of the side panel open');
   assert.deepEqual(visualizerOverlayStyles, {}, 'no Style picked: Any');
   assert.equal(visualizerDrift, true, 'slow drift: on');

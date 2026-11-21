@@ -26,11 +26,13 @@ from worldmedia_runtime import (
     LEGACY_PROFILE_TRANSFER_KEYS,
     PORTABLE_STATE_DIR,
     PROFILE_FILES_LOCK,
+    PROFILE_TRANSFER_COPY_FILENAME,
     PROFILE_TRANSFER_EXTRA_FILENAME,
     PROFILE_TRANSFER_FILENAME,
     PROFILE_TRANSFER_MAX_BYTES,
     PROFILE_TRANSFER_VERSION,
     RuntimePaths,
+    copied_profile_values,
     normalize_profile_transfer_values,
 )
 from worldmedia_security import sanitize_filename
@@ -471,6 +473,10 @@ def _readme(*, created: datetime, favorites: int, skipped: int,
         lines.append("    profile-preferences-extra.json - newer saved data, such as your favorites")
         lines.append("      categories and the names you gave favorites, kept apart so older")
         lines.append("      versions of World Media can still read the file above")
+    if PROFILE_TRANSFER_COPY_FILENAME in state_names:
+        lines.append("    profile-preferences-extra-copy.json - a second copy of the names you gave")
+        lines.append("      favorites and the stations kept on their own stream, so they come back")
+        lines.append("      after an older version of World Media has been used in between")
     if SONG_LOG_FILENAME in state_names:
         lines.append("    song-log.json - the songs radio stations announced while you listened")
     if STARRED_FILENAME in state_names:
@@ -602,10 +608,19 @@ def _create_backup(paths: RuntimePaths, store: PlaylistStore, secrets_to_exclude
         playlists_raw, playlist_entries = store.backup_snapshot(
             lambda path: _read_state_file(path, MAX_PLAYLIST_FILE_BYTES)
         )
-        # Both profile files come from the same write (see save_profile_transfer).
+        # The profile files come from the same write (see save_profile_transfer).
         with PROFILE_FILES_LOCK:
             profile_raw = _read_state_file(state_folder / PROFILE_TRANSFER_FILENAME, MAX_PROFILE_FILE_BYTES)
             extra_raw = _read_state_file(state_folder / PROFILE_TRANSFER_EXTRA_FILENAME, MAX_PROFILE_FILE_BYTES)
+            # The second copy only holds extras: one too large to be a profile
+            # file is left out instead of stopping the backup (a link or a
+            # folder in its place is still refused, as for the other files).
+            try:
+                copy_raw = _read_state_file(state_folder / PROFILE_TRANSFER_COPY_FILENAME, MAX_PROFILE_FILE_BYTES)
+            except BackupError as error:
+                if error.code != "BACKUP_TOO_LARGE":
+                    raise
+                copy_raw = None
         if playlists_raw is not None:
             members.append((f"{STATE_ARCHIVE_DIR}/{PLAYLISTS_FILENAME}", playlists_raw))
             state_names.append(PLAYLISTS_FILENAME)
@@ -614,10 +629,22 @@ def _create_backup(paths: RuntimePaths, store: PlaylistStore, secrets_to_exclude
             members.append((f"{STATE_ARCHIVE_DIR}/{PROFILE_TRANSFER_FILENAME}", profile_bytes))
             state_names.append(PROFILE_TRANSFER_FILENAME)
         extra_copy = _extra_profile_copy(extra_raw) if extra_raw is not None else None
+        legacy_values = dict(profile_values)
         if extra_copy is not None:
             members.append((f"{STATE_ARCHIVE_DIR}/{PROFILE_TRANSFER_EXTRA_FILENAME}", extra_copy[0]))
             state_names.append(PROFILE_TRANSFER_EXTRA_FILENAME)
             profile_values = {**profile_values, **extra_copy[1]}
+        # The second copy of the keys older releases drop: in the ZIP as it is
+        # (an unreadable one is left out), and used for the exports the same way
+        # the app reads it back (only keys the extra file lacks).
+        second_copy = _extra_profile_copy(copy_raw) if copy_raw is not None else None
+        if second_copy is not None:
+            members.append((f"{STATE_ARCHIVE_DIR}/{PROFILE_TRANSFER_COPY_FILENAME}", second_copy[0]))
+            state_names.append(PROFILE_TRANSFER_COPY_FILENAME)
+            profile_values = {
+                **profile_values,
+                **copied_profile_values(legacy_values, extra_copy[1] if extra_copy else {}, second_copy[1]),
+            }
         # The song log is copied as stored, readable or not. A file too large to
         # be a song log is left out rather than stopping the backup. Files the
         # song log set aside (song-log-unreadable-*.json) are never included.

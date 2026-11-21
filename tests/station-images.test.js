@@ -301,7 +301,7 @@ test('every view takes its picture from artworkSourceFor and follows a change of
   assert.match(player, /const custom = stationImageSourceFor\(item\);/);
   assert.match(player, /onStationImagesChange\(syncPlayerStationImage\);/);
   assert.match(await read('src/modes/library/index.js'),
-    /subs\.push\(onStationImagesChange\(\(\) => \{ renderResults\(\); refreshDetailArtwork\(\); \}\)\);/);
+    /subs\.push\(onStationImagesChange\(\(\) => \{ renderResults\(\); refreshDetailArtwork\(\); refreshDetailPictureControls\(\); \}\)\);/);
   // Subscribed while the view is mounted; tearDown() unsubscribes with the rest.
   assert.match(await read('src/modes/grid.js'), /subs\.push\(onStationImagesChange\(\(\) => \{ syncTileStationImages\(\); \}\)\);/);
   const discovery = await read('src/modes/discovery.js');

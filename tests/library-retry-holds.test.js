@@ -275,6 +275,27 @@ test('a held source skipped by a preference change resumes when its wait ends', 
   });
 });
 
+test('the first browse page after Retry now asks afresh (force); the pages after it do not', async () => {
+  await withChain(['gpodder'], async ({ jobs }) => {
+    view.catalogActive = false;
+    const progress = backOffSource('gpodder');
+    retrySources({ restartExhausted: false });
+    assert.equal(view.sourceProgress.get('gpodder'), progress);
+    assert.equal(progress.forceNext, true, 'marked for the next page');
+
+    view.catalogActive = true;
+    view.loadAbort = new AbortController();
+    void loadMore();
+    await flush();
+    assert.equal(jobs.filter((job) => job.sourceId === 'gpodder' && job.key.startsWith('browse:')).length, 1);
+    assert.equal(progress.forceNext, false, 'used by that page only');
+  });
+  const chain = (await readFile(new URL('../src/modes/library/chain.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const page = chain.slice(chain.indexOf('async function fetchBrowsePage('), chain.indexOf('export function maybeLoadMore('));
+  assert.match(page, /const force = progress\.forceNext === true;\n\s+progress\.forceNext = false;/);
+  assert.match(page, /browsePageOne\(sourceId, \{\n\s+limit: PAGE_SIZE,\n\s+cursor: progress\.cursor,\n\s+signal,\n\s+\.\.\.\(force \? \{ force: true \} : \{\}\),\n\s+\}\)/);
+});
+
 test('a search failure shows a declared wait capped like the scheduler and browse', async () => {
   const chain = await readFile(new URL('../src/modes/library/chain.js', import.meta.url), 'utf8');
   const record = chain.slice(chain.indexOf('function recordSearchFailure('));

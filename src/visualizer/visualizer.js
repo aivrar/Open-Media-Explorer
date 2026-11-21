@@ -6,3 +6,5 @@
 import './visualizer.css';
 
 export { mountVisualizer } from './index.js';
+// The Tuner's background draws only light scenes (lib/tuner-background.js).
+export { sceneCost } from './scenes.js';

@@ -22,15 +22,25 @@ const onScreen = (quality, kind, size720) => {
   return overlaySizeUnit(sheet, h, size720) * (1063 / sheet);
 };
 
-test('overlay sizes: held, the scaling is exactly as before', () => {
-  assert.equal(OVERLAY_SIZE_720_RELEASED, false);
+test('overlay sizes: released, the switch is on by default', () => {
+  assert.equal(OVERLAY_SIZE_720_RELEASED, true);
+  // The default is the switch's rule: a 720th of the picture from 720 lines up.
+  assert.equal(overlaySizeUnit(690, 1063), overlaySizeUnit(690, 1063, true));
+  assert.equal(overlaySizeUnit(690, 1063), 690 / 720);
+  assert.deepEqual(overlaySizedParams('particles'), ['particle_size']);
+  for (const id of Object.keys(OVERLAY_LINE_PARAMS)) {
+    assert.deepEqual(overlaySizedParams(id), overlaySizedParams(id, true), id);
+  }
+});
+
+test('overlay sizes: switched off, the scaling is exactly as before', () => {
   // The sheet's share of the picture, at most 1; 1 when a size is unknown.
-  assert.equal(overlaySizeUnit(363, 531), 363 / 531);
-  assert.equal(overlaySizeUnit(800, 600), 1);
-  assert.equal(overlaySizeUnit(0, 531), 1);
-  assert.equal(overlaySizeUnit(363, 0), 1);
+  assert.equal(overlaySizeUnit(363, 531, false), 363 / 531);
+  assert.equal(overlaySizeUnit(800, 600, false), 1);
+  assert.equal(overlaySizeUnit(0, 531, false), 1);
+  assert.equal(overlaySizeUnit(363, 0, false), 1);
   for (const id of Object.keys({ ...OVERLAY_LINE_PARAMS, ...OVERLAY_SIZE_720_PARAMS })) {
-    assert.deepEqual(overlaySizedParams(id), OVERLAY_LINE_PARAMS[id] || [], id);
+    assert.deepEqual(overlaySizedParams(id, false), OVERLAY_LINE_PARAMS[id] || [], id);
   }
   // A width is a different share of the screen at each quality.
   const low = onScreen('low', 'top', false);
@@ -45,15 +55,15 @@ test('overlay sizes: with the switch, one unit is a 720th of the picture, never 
       assert.ok(Math.abs(onScreen(quality, kind, true) - 1063 / 720) < 1e-9, `${quality} ${kind}`);
     }
   }
-  // Under 720 lines: one pixel of the picture, as today.
+  // Under 720 lines: one pixel of the picture, as before.
   assert.equal(overlaySizeUnit(363, 531, true), overlaySizeUnit(363, 531, false));
-  // The changes listed for the re-measure (plain sheet; the blend sheet scales alike).
+  // The changes it makes (plain sheet; the blend sheet scales alike).
   const ratio = (quality) => overlaySizeUnit(sheetHeight(quality, 'top'), PICTURES[quality][1], true)
     / overlaySizeUnit(sheetHeight(quality, 'top'), PICTURES[quality][1], false);
   assert.equal(ratio('low').toFixed(2), '1.00');
   assert.equal(ratio('medium').toFixed(2), '1.11');
   assert.equal(ratio('high').toFixed(2), '1.48');
-  // Particles' Size joins the scaled settings (unscaled today: x the unit).
+  // Particles' Size joins the scaled settings (unscaled with it off: x the unit).
   assert.deepEqual(overlaySizedParams('particles', true), ['particle_size']);
   assert.deepEqual(overlaySizedParams('plexus', true), OVERLAY_LINE_PARAMS.plexus);
   assert.equal(overlaySizeUnit(sheetHeight('low', 'top'), 531, true).toFixed(2), '0.68');

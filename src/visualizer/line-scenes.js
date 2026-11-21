@@ -116,7 +116,13 @@ const LIT = Object.freeze({ background: 2 });
 export const LINE_SCENE_ENTRIES = Object.freeze([
   line('epicycles', 'Fourier Epicycles', 'epicycles', 'lively', () => import('./vendor/psychedelia/effects/epicycles.js'), {
     // Kicks flash its glow (x (1 + 0.8 kick)): half its own beat reaction.
-    defaults: { audio_react: 0.5 },
+    // A few circles and one trace: on Nebula Glow with twice its line width
+    // and glow it still sat under 0.05 for 6 s and more. Here on Nebula Glow
+    // with wider lines, a larger figure, its circles at full brightness and
+    // longer trails instead (its glow, which the kicks flash, as its own).
+    defaults: {
+      audio_react: 0.5, ...LIT, thickness: 4, size: 1.3, circles: 1, trails: 0.8,
+    },
   }),
   line('hopf', 'Hopf Fibration', 'hopf', 'calm', () => import('./vendor/psychedelia/effects/hopf.js'), {
     // Kicks flash its glow and speed its rotation: half its own beat reaction.
@@ -145,8 +151,13 @@ export const LINE_SCENE_ENTRIES = Object.freeze([
     // Its own start, "Change Every 4 Bars", swaps the planes it turns in
     // every 12 s (on the beat clock with music): the whole figure jumps to a
     // new pose in one frame. One rotation throughout instead; and half its
-    // own beat reaction (kicks flash its glow and spin it on).
-    defaults: { rotation_style: 0, audio_react: 0.5 },
+    // own beat reaction (kicks flash its glow and spin it on). Its own
+    // Tesseract (32 edges) sat under 0.05 for 16 s and more in its edge-on
+    // poses even on Nebula Glow with wider lines, more glow and longer
+    // trails: the 600-Cell (720 edges) on Nebula Glow instead.
+    defaults: {
+      rotation_style: 0, audio_react: 0.5, ...LIT, shape: 3,
+    },
   }),
   line('spirograph', 'Spirograph', 'spirograph', 'calm', () => import('./vendor/psychedelia/effects/spirograph.js'), {
     defaults: { ...LIT, thickness: 3.2, glow: 2.5, trail_fade: 0.75, zoom: 1.2 },
@@ -156,14 +167,12 @@ export const LINE_SCENE_ENTRIES = Object.freeze([
 ]);
 
 /** Line-drawing scenes held back once the rest are released, with why. */
-export const LINE_SCENES_HELD = Object.freeze({
-  // A few sparse circles and one trace: under 0.05 for 6 s and more even
-  // on Nebula Glow with twice the line width and glow.
-  epicycles: 'near black',
-  // Edge-on poses: under 0.05 for 16 s and more even on Nebula Glow with
-  // wider lines, more glow and longer trails.
-  polytopes: 'near black',
-});
+// Fourier Epicycles and 4D Polytopes are back on their new start values
+// (defaults above), each look 120 s at Medium on the graphics card, the
+// surge at its most, with and without drift: Epicycles under 0.05 for
+// 0.4 s at most at a time (mean 0.086 to 0.090), steps 0.010 at most;
+// Polytopes never under 0.05 (mean 0.117 to 0.124), steps 0.019 at most.
+export const LINE_SCENES_HELD = Object.freeze({});
 
 /** The line-drawing scenes offered: once released, all but the held ones. */
 export const OFFERED_LINE_SCENES = Object.freeze(LINE_SCENES_RELEASED

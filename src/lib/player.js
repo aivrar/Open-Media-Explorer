@@ -17,7 +17,8 @@ import { createPlaybackState } from './player-state.js';
 import { repairFiniteMediaFields, resolveMediaAction } from './media-capabilities.js';
 import { expireMedia } from './capture-client.js';
 import {
-  connectMediaRelay, MediaConnectionError, MEDIA_REGISTRY_FULL, MEDIA_REGISTRY_FULL_MESSAGE, playedStream,
+  connectMediaRelay, hostLookupFailureMessage, MediaConnectionError, MEDIA_REGISTRY_FULL, MEDIA_REGISTRY_FULL_MESSAGE,
+  playedStream, relayWasProbed,
 } from './media-failover.js';
 import {
   createLiveResume, createStallWatchdog, isLiveMedia, RECONNECTING_TEXT, RECONNECT_GAVE_UP_TEXT, RECONNECT_STOPPED_TEXT,
@@ -35,15 +36,17 @@ import {
 import { isContentAllowed } from './content-rating.js';
 import { expectsPicture, hasPicture } from './video-picture.js';
 import { createNowPlayingPoller, NOW_PLAYING_EVENT, songLine } from './now-playing.js';
-import { streamQualityLabel } from './stream-quality.js';
+import { playedQualityLabel } from './stream-quality.js';
 import { favoriteName } from './favorite-names.js';
 import { bestStreamOn } from './best-stream.js';
 import {
   afterStart as afterBestStreamStart, cancelScheduledCheck, followBestStreamSetting, resumeCheck, verifiedDidNotPlay,
   verifiedStreamFor,
 } from './best-stream-auto.js';
-import { createStartWatch, untriedStreams } from './start-failover.js';
+import { createStartWatch, START_FAILOVER_MS, untriedStreams } from './start-failover.js';
 import { verifiedLabel } from './stream-verify.js';
+import { MEDIA_ADVANCING_EVENT, playClock } from './play-clock.js';
+import { createStartOutcome, startFailureKind } from './did-not-play.js';
 
 let Hls = null;
 let hlsInstance = null;
@@ -65,12 +68,20 @@ let verifiedPlaying = null;
 // streams not tried yet (start-failover.js).
 const startWatch = createStartWatch({
   onNext: (item, tried, token) => {
+    // Not this start's result yet: the next stream has its own time limit.
+    startOutcome.handOver(item.id);
     // Never inside the callback that reported the failure (hls.js, dash.js).
     queueMicrotask(() => {
       if (token === playToken && currentItem?.id === item.id) playNextStreams(item, tried);
     });
   },
 });
+
+// "Did not play last time" (did-not-play.js): the result of each start the
+// user asked for. It only listens: a play is never held up or stopped by it.
+// Past the start time limit, a stream that another stream is about to take
+// over from (start-failover.js) is not the result yet.
+const startOutcome = createStartOutcome({ limitMs: START_FAILOVER_MS, handingOver: () => startWatch.active });
 
 /** The verified better stream the current station plays on, or null. */
 export function getVerifiedStream() {
@@ -155,6 +166,7 @@ function newPlaySession(token) {
     progressed: 0,
     seeking: false,
     duration: undefined, // last known duration; NaN (unknown) is never stored
+    lengthGrowth: null, // the lengths reported in this start (trackLengthGrowth)
     unbounded: false, // the duration was Infinity at some point of this start
     hlsLive: null, // hls.js playlist type, once known
     stopReason: '', // a failure that must end an auto-reconnect episode
@@ -436,6 +448,135 @@ function destroyDash() {
   dashSession = null;
 }
 
+/** True for media with a finite length (a file, a podcast episode), which the
+ *  seek bar can move along; false for a live stream. */
+export function hasSeekableLength(duration) {
+  return Number.isFinite(duration) && duration > 0;
+}
+
+/**
+ * When a reported length counts as growing like a live stream's (for items
+ * listed neither as live nor as on demand): it grew on at least `steps`
+ * separate updates (each by `minStepSeconds` or more), the first of the
+ * lengths and the latest growth are `spanMs` or more apart, and it grew by
+ * about the time that passed (between `minPace` and `maxPace` times it). A
+ * file whose length is corrected once or twice while it downloads is not
+ * growing; a live HLS list whose end moves on with each segment is.
+ */
+export const LIVE_GROWTH = Object.freeze({ steps: 3, spanMs: 10_000, minStepSeconds: 0.5, minPace: 0.5, maxPace: 2 });
+
+function lengthTrack(length, at) {
+  return { firstLength: length, firstAt: at, lastLength: length, steps: 0, growing: false };
+}
+
+/**
+ * Follows the lengths one start of an item reports (`at`: a clock in ms);
+ * returns the next track. Once growing, it stays so for that start. A length
+ * that gets shorter starts the watch again from there.
+ */
+export function trackLengthGrowth(track, duration, at) {
+  if (!(Number.isFinite(duration) && duration > 0) || !Number.isFinite(at)) return track || null;
+  if (!track) return lengthTrack(duration, at);
+  if (track.growing) return track;
+  if (duration <= track.lastLength - LIVE_GROWTH.minStepSeconds) return lengthTrack(duration, at);
+  if (duration < track.lastLength + LIVE_GROWTH.minStepSeconds) return track;
+  const steps = track.steps + 1;
+  const span = (at - track.firstAt) / 1000;
+  const grown = duration - track.firstLength;
+  const growing = steps >= LIVE_GROWTH.steps && span * 1000 >= LIVE_GROWTH.spanMs
+    && grown >= span * LIVE_GROWTH.minPace && grown <= span * LIVE_GROWTH.maxPace;
+  return { ...track, lastLength: duration, steps, growing };
+}
+
+/** An item listed as live media: a radio or TV station, or a live delivery. */
+function listedLive(delivery, type) {
+  return delivery === 'live' || (delivery !== 'on-demand' && (type === 'radio' || type === 'tv'));
+}
+
+/**
+ * What the player bar shows for the media playing now. `live`: no seek bar
+ * and no length, and the time label shows the time played (play-clock.js),
+ * because a live stream's own position means nothing to the listener (a
+ * sliding live window, or a broadcast clock: "498673:51:06"). `seekable`:
+ * a seek bar and the length.
+ *
+ * In this order:
+ * 1. An item listed as on demand (a film, a podcast episode) is never live,
+ *    whatever hls.js or dash.js report.
+ * 2. An item listed as live (a radio or TV station, a live delivery) is live
+ *    from the start, while the player is still finding out, so its seek bar
+ *    never shows and then goes. The player's word that the stream is a
+ *    complete recording gives it a seek bar: hls.js (`details.live` false: a
+ *    VOD or ended list) or dash.js (static). Played directly (`direct`: no
+ *    hls.js, no dash.js; a playlist entry listed as a station may point at a
+ *    plain MP3), it is a recording once the element reports a finite length
+ *    that is not growing; an unknown or endless length (now, or earlier in
+ *    this start) or one that keeps growing (LIVE_GROWTH) keeps it live.
+ * 3. Any other item: what hls.js or dash.js say, else an endless length (now,
+ *    or earlier in this start), else a length that keeps growing with the
+ *    clock (LIVE_GROWTH).
+ * A length not known yet gives no seek bar in any case.
+ */
+export function mediaTimeline({
+  duration, delivery = '', type = '', hlsLive = null, dashLive = null, unbounded = false, durationGrowing = false,
+  direct = false,
+} = {}) {
+  let live;
+  if (delivery === 'on-demand') live = false;
+  else if (listedLive(delivery, type)) {
+    if (hlsLive === false || dashLive === false) live = false;
+    else if (direct === true) live = !hasSeekableLength(duration) || unbounded === true || durationGrowing === true;
+    else live = true;
+  } else if (typeof hlsLive === 'boolean') live = hlsLive;
+  else if (typeof dashLive === 'boolean') live = dashLive;
+  else live = duration === Number.POSITIVE_INFINITY || unbounded === true || durationGrowing === true;
+  return { live, seekable: !live && hasSeekableLength(duration) };
+}
+
+/** Whether dash.js says the stream is live; null while it cannot tell. */
+function dashLiveNow() {
+  try {
+    const value = dashSession?.isLive?.();
+    return typeof value === 'boolean' ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Seconds the current item has played (play-clock.js); 0 before it has. */
+function playedSeconds() {
+  const played = playClock.played(currentItem?.id);
+  return played == null ? 0 : played / 1000;
+}
+
+// Whether the media really advances now: true from the element's `playing`
+// event until `waiting` (out of data), a pause, the end, an error, a switch
+// or Stop. `play` alone (isPlaying) can come long before any sound. Published
+// as MEDIA_ADVANCING_EVENT for the play clock (play-clock.js).
+let mediaAdvancing = false;
+
+function setMediaAdvancing(next) {
+  const value = next === true;
+  if (value === mediaAdvancing) return;
+  mediaAdvancing = value;
+  emit(MEDIA_ADVANCING_EVENT, value);
+}
+
+/** Whether the media advances now (see setMediaAdvancing). */
+export function isMediaAdvancing() { return mediaAdvancing; }
+
+// Whether the bar treats the current item's media as a recording (not live),
+// by the same decision as its seek bar (mediaTimeline). Published as
+// 'media-timeline' so the record status does not call a recording live.
+let timelineNote = { itemId: '', recording: false };
+
+function noteTimeline(recording) {
+  const itemId = currentItem?.id || '';
+  if (timelineNote.itemId === itemId && timelineNote.recording === recording) return;
+  timelineNote = { itemId, recording };
+  emit('media-timeline', { ...timelineNote });
+}
+
 /** The only writer of global playback state, play/pause affordances, and seek UI. */
 function syncPlaybackUi(reason = 'sync') {
   if (!elements) return;
@@ -446,6 +587,8 @@ function syncPlaybackUi(reason = 'sync') {
   );
 
   if (getState().isPlaying !== isPlaying) setPlaying(isPlaying);
+  // Not playing is never advancing; only `playing` sets it (bindMediaEvents).
+  if (!isPlaying) setMediaAdvancing(false);
   elements.iconPlay.toggleAttribute('hidden', isPlaying);
   elements.iconPause.toggleAttribute('hidden', !isPlaying);
   const action = isPlaying ? 'Pause' : 'Play';
@@ -464,8 +607,34 @@ function syncPlaybackUi(reason = 'sync') {
   elements.play.disabled = !hasSource && !canRetry;
 
   if (el) {
-    elements.time.textContent = fmtTime(el.currentTime);
-    if (Number.isFinite(el.duration) && el.duration > 0) {
+    const timeline = mediaTimeline({
+      duration: el.duration,
+      delivery: currentItem?.delivery,
+      type: currentItem?.type,
+      hlsLive: playSession.hlsLive,
+      dashLive: dashLiveNow(),
+      unbounded: playSession.unbounded,
+      durationGrowing: playSession.lengthGrowth?.growing === true,
+      // Played by the element itself: no hls.js or dash.js to say live or not.
+      direct: !hlsInstance && !dashSession,
+    });
+    noteTimeline(!timeline.live);
+    // Live: the time played, never the stream's own position.
+    elements.time.textContent = fmtTime(timeline.live ? playedSeconds() : el.currentTime);
+    const withLength = timeline.seekable;
+    // A live stream (internet radio, live TV) cannot be moved along: its
+    // seek bar and the empty length beside it are not shown. They keep their
+    // space (visibility only), so nothing in the bar moves. An item listed as
+    // on demand keeps its seek bar from the press of Play on, disabled until
+    // its length is known, so the bar does not show, go and come back. Not
+    // when its length turns out to be endless: that bar could never be used.
+    const showSeek = withLength
+      || (currentItem?.delivery === 'on-demand' && el.duration !== Infinity);
+    elements.seek.classList.toggle('is-no-length', !showSeek);
+    elements.dur.classList.toggle('is-no-length', !showSeek);
+    // Live: on a wide bar the name column takes the seek bar's room (base.css).
+    elements.seek.classList.toggle('is-live', timeline.live);
+    if (withLength) {
       elements.seek.disabled = false;
       elements.dur.textContent = fmtTime(el.duration);
       elements.seek.max = String(Math.floor(el.duration));
@@ -475,12 +644,27 @@ function syncPlaybackUi(reason = 'sync') {
       elements.dur.textContent = '--:--';
       elements.seek.value = '0';
     }
+  } else if (currentItem && listedLive(currentItem.delivery, currentItem.type)) {
+    // No media yet (connecting, switching, reconnecting, or a start that
+    // failed) for an item listed as live: the bar looks as it will once the
+    // stream plays, so no seek bar shows and then goes.
+    elements.seek.classList.add('is-no-length');
+    elements.dur.classList.add('is-no-length');
+    elements.seek.classList.add('is-live');
+    elements.time.textContent = fmtTime(playedSeconds());
+    elements.dur.textContent = '--:--';
+    elements.seek.disabled = true;
+    elements.seek.value = '0';
   } else {
+    elements.seek.classList.remove('is-no-length');
+    elements.dur.classList.remove('is-no-length');
+    elements.seek.classList.remove('is-live');
     elements.time.textContent = '--:--';
     elements.dur.textContent = '--:--';
     elements.seek.disabled = true;
     elements.seek.value = '0';
   }
+  if (!el) noteTimeline(false);
 
   const mediaSession = globalThis.navigator?.mediaSession;
   if (mediaSession && 'playbackState' in mediaSession) {
@@ -496,21 +680,24 @@ function syncPlaybackUi(reason = 'sync') {
  *  tooltip, so a text cut off by the narrow column can be read in full; the
  *  normal source line clears it again (or sets `hover`, for a song). Text
  *  only, never markup. Only setMetaText() writes the item's own line. */
-function setSourceLine(text, { status = false, hover = '', itemLine = false } = {}) {
+function setSourceLine(text, { status = false, hover = '', itemLine = false, song = false } = {}) {
   elements.source.textContent = text;
   elements.source.title = status ? text : hover;
   metaLineShowsItem = itemLine && !status;
+  // The song stands out (larger, brighter; base.css .player-source.is-song).
+  elements.source.classList?.toggle?.('is-song', song === true && !status);
 }
 
 /** Play failed before there was any playable stream. The capture controls
- *  stop showing "Checking…" for it until the next Play of an item starts. */
+ *  stop showing "Checking…" for it, and offer no recording, until the next
+ *  Play of an item starts. */
 function reportUnplayable(item) {
   emit('media-unplayable', { itemId: item?.id || '' });
 }
 
 function showBrokenState(msg, { showNext = true, retry = false } = {}) {
   stallWatchdog.stop();
-  elements.title.textContent = shownTitle(currentItem) || 'Stream unavailable';
+  setTitleLine(shownTitle(currentItem) || 'Stream unavailable');
   // While a reconnect episode runs, a failed attempt keeps saying so.
   setSourceLine(reconnectStatus || msg || 'This stream could not be played', { status: true });
   playbackProblem = { message: msg, showNext, retry: retry === true };
@@ -559,6 +746,10 @@ function failPlayback(msg, options = {}) {
     // Listed and Auto: a stream that never played; the next streams get a turn.
     if (startWatch.failed(playToken)) return;
     showBrokenState(msg, options);
+    // A start that never played (a stream that played already ended its
+    // start's watch, so this changes nothing for it). Unreachable unless its
+    // stream had answered.
+    startOutcome.failed(currentItem?.id, 'stream');
     return;
   }
   // Inside a running attempt the failure belongs to that attempt: record it so
@@ -610,6 +801,8 @@ function cancelReconnect({ keepAttempt = false } = {}) {
 /** A user pause (the Play/Pause button, Media Session pause). */
 function pauseFromUser() {
   startWatch.end();
+  // A pause during a start is no result for "Did not play last time".
+  startOutcome.cancel();
   const el = getActiveEl();
   if (el && !playbackProblem && !el.paused && !el.ended) {
     // Already sounding, even while a reconnect attempt is still settling its
@@ -719,6 +912,8 @@ function notePlaybackProgress(el) {
   if (playSession.progressed >= 1) {
     playSession.played = true;
     startWatch.end();
+    // It plays: a "Did not play last time" mark goes.
+    startOutcome.played(currentItem?.id);
   }
 }
 
@@ -740,6 +935,7 @@ function noteDuration(el) {
   // closes, the element reports the time played as the length just before
   // `ended`; the start stays known as unbounded so that end is still a drop.
   if (duration === Number.POSITIVE_INFINITY) playSession.unbounded = true;
+  playSession.lengthGrowth = trackLengthGrowth(playSession.lengthGrowth, duration, Date.now());
 }
 
 function noteStartFailure(error, token) {
@@ -781,6 +977,8 @@ function bindMediaEvents(el, generation) {
     noteDuration(el);
     syncPlaybackUi('durationchange');
   });
+  // The stream delivered data: it answered ("Did not play last time").
+  const onData = owned(() => { startOutcome.answered(currentItem?.id); });
   const onStalled = owned(() => {
     if (!el.paused && !el.ended) hlsRecoverySession?.noteStalled();
     syncPlaybackUi('stalled');
@@ -792,6 +990,8 @@ function bindMediaEvents(el, generation) {
     if (!el.paused && !el.ended) hlsRecoverySession?.noteStalled();
     liveResume.noteInterrupted();
     syncPlaybackUi('waiting');
+    // Buffering: still "playing" for the controls, but no time passes in it.
+    setMediaAdvancing(false);
   });
   const onPlay = owned(() => {
     setMediaPriority(true);
@@ -803,6 +1003,8 @@ function bindMediaEvents(el, generation) {
     setMediaPriority(true);
     // Listed and Auto: the first `playing` of this start (start-failover.js).
     startWatch.playing(playToken);
+    // Its stream answered ("Did not play last time").
+    startOutcome.answered(currentItem?.id);
     hlsRecoverySession?.notePlaying();
     if (playSession.lastTime == null) startProgressSample(el);
     noteDuration(el);
@@ -814,6 +1016,7 @@ function bindMediaEvents(el, generation) {
     if (currentItem) setMetaText(currentItem);
     watchForStall();
     syncPlaybackUi('playing');
+    setMediaAdvancing(getState().isPlaying === true);
     // Auto (verified): the check waits VERIFY_AFTER_MS of play from the first
     // `playing` of a start, and again after a pause; nothing new when one is
     // already planned for this station.
@@ -851,6 +1054,9 @@ function bindMediaEvents(el, generation) {
     ['timeupdate', onTimeUpdate],
     ['loadedmetadata', onDurationChange],
     ['durationchange', onDurationChange],
+    ['loadedmetadata', onData],
+    ['loadeddata', onData],
+    ['progress', onData],
     ['play', onPlay],
     ['playing', onPlaying],
     ['pause', onPaused],
@@ -869,6 +1075,8 @@ function bindMediaEvents(el, generation) {
 function invalidatePlaybackOwnership() {
   eqSignalMonitorToken++;
   playback.invalidate();
+  // The old element's events no longer count, including its `pause`.
+  setMediaAdvancing(false);
   if (!elements) return;
   unbindMediaEvents(elements.audio);
   unbindMediaEvents(elements.video);
@@ -882,8 +1090,15 @@ function clearMedia(el) {
   } catch (_) {}
 }
 
+/** The player bar's name line; a long name ends in an ellipsis, so the whole
+ *  of it is on hover. */
+function setTitleLine(text) {
+  elements.title.textContent = text;
+  elements.title.title = text;
+}
+
 function setMetaText(item) {
-  elements.title.textContent = shownTitle(item) || 'Untitled';
+  setTitleLine(shownTitle(item) || 'Untitled');
   // A reconnect attempt rebuilds the player bar; keep the status visible.
   if (reconnectStatus) {
     setSourceLine(reconnectStatus, { status: true });
@@ -894,10 +1109,7 @@ function setMetaText(item) {
   // Stream format and bitrate go on hover only, after the normal line: the
   // visible column is too narrow for them.
   // The format and bitrate of the stream that plays, when they are known.
-  const played = playedStream(item);
-  const listed = streamQualityLabel(played && (played.bitrate || played.codec)
-    ? { _extra: { ...(item._extra || {}), bitrate: played.bitrate || 0, codec: played.codec || '' } }
-    : item);
+  const listed = playedQualityLabel(item, playedStream(item));
   // Auto (verified): said plainly when a verified better stream plays.
   const quality = [listed, verifiedPlaying && currentItem === item ? verifiedLabel(verifiedPlaying) : '']
     .filter(Boolean).join('\n');
@@ -907,7 +1119,7 @@ function setMetaText(item) {
   }
   // The song replaces the line; its full text and the normal line stay readable on hover.
   const text = songLine(song);
-  setSourceLine(text, { hover: [text, line, quality].filter(Boolean).join('\n'), itemLine: true });
+  setSourceLine(text, { hover: [text, line, quality].filter(Boolean).join('\n'), itemLine: true, song: true });
 }
 
 /** Initials on a coloured square behind the artwork, the same as on the
@@ -955,8 +1167,11 @@ function setPlayerArtwork(item) {
   const latest = () => artworkToken === metadataArtworkToken;
   // The class follows what the bar shows: on only while a station picture is
   // on screen (shown whole on the bar, base.css), off while the box is empty,
-  // loading, or showing remote artwork (which fills the square).
+  // loading, or showing remote artwork (which has its own fit).
   const setFit = (custom) => elements.art.classList?.toggle?.(STATION_IMAGE_CLASS, custom);
+  // A radio or TV station's own artwork is its logo, often a wide wordmark:
+  // shown whole in the square (base.css), as on the Library and Tuner cards.
+  elements.art.classList?.toggle?.('is-logo', item?.type === 'radio' || item?.type === 'tv');
   const clearArt = () => {
     setFit(false);
     elements.art.removeAttribute('src');
@@ -1116,6 +1331,8 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
   if (stale() || !playback.owns(target, generation)) return;
   if (!eqPreparation.safe) {
     showBrokenState(eqPreparation.reason, { showNext: false });
+    // The app's equalizer, not the station: no result.
+    startOutcome.cancel(item.id);
     return;
   }
   let playbackStarted = false;
@@ -1140,7 +1357,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
             owns: () => hlsInstance === instance && playback.owns(target, generation),
             getCurrentTime: () => target.currentTime,
             onRecovering: (message) => {
-              if (currentItem) elements.title.textContent = shownTitle(currentItem) || 'Live stream';
+              if (currentItem) setTitleLine(shownTitle(currentItem) || 'Live stream');
               setSourceLine(message, { status: true });
             },
             onRecovered: () => {
@@ -1195,6 +1412,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
         elements.video.src = item.stream_url;
       } else {
         showBrokenState('HLS playback is unavailable in this browser.', { showNext: false });
+        startOutcome.cancel(item.id);
         return;
       }
     } else if (kind === 'dash') {
@@ -1221,6 +1439,8 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
               : 'DASH playback could not be initialized.',
             { showNext: false },
           );
+          // This browser's playback, not the station: no result.
+          startOutcome.cancel(item.id);
         }
         return;
       }
@@ -1246,6 +1466,9 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
         noteStartFailure(e, token);
         if (e?.name === 'NotAllowedError' || !startWatch.failed(token)) {
           showBrokenState('Playback did not start. Press Play to retry.', { showNext: false, retry: true });
+          // Autoplay rules are the browser's, not the station's: no result.
+          if (e?.name === 'NotAllowedError') startOutcome.cancel(item.id);
+          else startOutcome.failed(currentItem?.id, 'stream');
         }
       }
     }
@@ -1266,6 +1489,8 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
         noteStartFailure(e, token);
         if (e?.name === 'NotAllowedError' || !startWatch.failed(token)) {
           showBrokenState('Playback did not start. Press Play to retry.', { showNext: false, retry: true });
+          if (e?.name === 'NotAllowedError') startOutcome.cancel(item.id);
+          else startOutcome.failed(currentItem?.id, 'stream');
         }
       }
     }
@@ -1302,9 +1527,15 @@ export async function playItem(item) {
     return;
   }
   cancelReconnect();
+  // A start the user asked for: its result is remembered (did-not-play.js).
+  startOutcome.begin(item?.id);
   startsInFlight += 1;
   try {
     await startPlayback(item);
+  } catch (error) {
+    // Blocked before it began (the explicit-content setting): no result.
+    startOutcome.cancel(item?.id);
+    throw error;
   } finally {
     startsInFlight -= 1;
   }
@@ -1378,8 +1609,9 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
   syncPlaybackUi('source-switch');
 
   let resolveMessage = '';
+  let resolveError = null;
   if (item._extra?.needsResolve && !item.stream_url) {
-    elements.title.textContent = shownTitle(item) || 'Loading…';
+    setTitleLine(shownTitle(item) || 'Loading…');
     setSourceLine(reconnectStatus || 'Resolving stream…', { status: Boolean(reconnectStatus) });
     const controller = new AbortController();
     resolutionController = controller;
@@ -1396,6 +1628,7 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
       if (err?.name !== 'AbortError' && myToken === playToken) {
         console.warn('Lazy resolve failed:', err);
         resolveMessage = resolveFailureMessage(err);
+        resolveError = err;
       }
     } finally {
       if (resolutionController === controller) resolutionController = null;
@@ -1416,6 +1649,7 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
   if (!item.stream_url) {
     showBrokenState(resolveMessage || 'No stream URL');
     reportUnplayable(item);
+    startOutcome.failed(item.id, startFailureKind(resolveError));
     return;
   }
   let playbackItem = item;
@@ -1452,6 +1686,10 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
       return;
     }
     setActiveRelay(relay.media_id);
+    // The stream is set up: the start time limit runs from here. It answered
+    // only if the relay tested it; otherwise its first data says so.
+    startOutcome.streamSetUp(item.id);
+    if (relayWasProbed(relay)) startOutcome.answered(item.id);
     playbackItem = { ...item, stream_url: relay.relay_url };
     relayAvailable = true;
     verifiedPlaying = afterBestStreamStart(item, verified) ? verified : null;
@@ -1484,15 +1722,19 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
       }
       const message = registryFull
         ? MEDIA_REGISTRY_FULL_MESSAGE
-        : error instanceof MediaConnectionError
+        // Only when no stream of this start failed for another reason first.
+        : (skipStreams.length ? '' : hostLookupFailureMessage(error, item)) || (error instanceof MediaConnectionError
           ? 'No working stream endpoint answered for this channel. Press Play to retry.'
-          : 'Secure media relay unavailable. Press Play on the item to retry.';
+          : 'Secure media relay unavailable. Press Play on the item to retry.');
       showBrokenState(message, {
         showNext: false,
-        // Media was already torn down; keep Play so the user can retry by hand.
-        retry: registryFull,
+        // Media was already torn down; Play stays in the bar and starts the
+        // item again, as the message says (playFromUser).
+        retry: true,
       });
       reportUnplayable(item);
+      // Every stream failed (a full relay is the app's limit, not the station's).
+      startOutcome.failed(item.id, registryFull ? 'app' : startFailureKind(error));
     }
     return;
   } finally {
@@ -1589,6 +1831,8 @@ export async function togglePlay() {
 export function stop() {
   cancelReconnect();
   startWatch.end();
+  // Stopped by the user before a result: no result.
+  startOutcome.cancel();
   nowPlaying.stop(); // at once: the song and its Media Session entry go with the station
   stallWatchdog.stop();
   // Bump the token so any in-flight playItem aborts.

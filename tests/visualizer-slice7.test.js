@@ -34,7 +34,8 @@ const NEW_IDS = [
   'infinite_lattice', 'crystal_geode', 'golden_hour_clouds', 'planet_sunrise',
 ];
 // (Five more came back in slice 12: tests/visualizer-slice12.test.js.)
-const HELD_IDS = ['hypercomplex_slice_flight', 'difs_tunnel_flight', 'quaternion_julia_flight'];
+// (DIFS Tunnel and Quaternion Julia came back later on new start looks.)
+const HELD_IDS = ['hypercomplex_slice_flight'];
 const BACK_IN_SLICE12 = ['apollonian_foam_flight', 'folded_box_variants_flight', 'mandelbox_flight', 'triplex_mutation_flight', 'path_traced_fractal_flight'];
 /** Offered or held: every ported entry. */
 const entryOf = (id) => sceneById(id) || HELD_SCENE_ENTRIES.find((entry) => entry.id === id) || null;
@@ -156,10 +157,10 @@ test('held scenes: ported, credited and in the manifest, but not offered by the 
 
 test('held scenes in the tab: a saved scene or old favourite of one falls back to the default and is never shown', async () => {
   const m = await mount({
-    visualizerScene: 'difs_tunnel_flight',
+    visualizerScene: 'hypercomplex_slice_flight',
     visualizerShuffle: true,
     visualizerShufflePool: 'favourites',
-    visualizerFavourites: ['difs_tunnel_flight', 'hypercomplex_slice_flight:2', 'kifs_flight', 'tunnel'],
+    visualizerFavourites: ['hypercomplex_slice_flight', 'hypercomplex_slice_flight:2', 'kifs_flight', 'tunnel'],
   });
   assert.equal(m.session.switcher.current, DEFAULT_SCENE, 'the saved held scene: the default instead');
   for (const id of HELD_IDS) assert.ok(!m.session.sceneList.shown.includes(id), `${id} not in the list`);
@@ -171,7 +172,7 @@ test('held scenes in the tab: a saved scene or old favourite of one falls back t
   }
   for (const id of HELD_IDS) assert.ok(!shown.has(id), `${id} never picked`);
   // The favourites are kept as saved (they come back when the scene does).
-  assert.ok(m.settings.visualizerFavourites.includes('difs_tunnel_flight'));
+  assert.ok(m.settings.visualizerFavourites.includes('hypercomplex_slice_flight'));
   m.session.destroy();
 });
 
@@ -197,13 +198,13 @@ test("a look's number is its place in Psychedelia's list: leaving one out renumb
     assert.equal(currentLook(looks, left, start), start);
   }
   assert.equal(currentLook(looks, 2, start), 2);
-  // Mandelbrot's palette looks keep the palette's own index (Neon 1 and
-  // Ocean 3 left out): Rainbow 0, Fire 2, Psychedelic 4.
+  // Mandelbrot's palette looks keep the palette's own index: all five
+  // offered (Neon 1 and Ocean 3 with slower colour cycling, looks.js
+  // LOOK_ADJUSTED).
   const mandel = renderer.register(await sceneById('mandelbrot').load(), 'mandelbrot');
-  assert.deepEqual(LOOKS_LEFT_OUT.mandelbrot, [1, 3]);
-  assert.deepEqual(sceneLooks(mandel).map((look) => [look.number, look.name]), [[0, 'Rainbow'], [2, 'Fire'], [4, 'Psychedelic']]);
+  assert.equal(LOOKS_LEFT_OUT.mandelbrot, undefined);
+  assert.deepEqual(sceneLooks(mandel).map((look) => [look.number, look.name]), [[0, 'Rainbow'], [1, 'Neon'], [2, 'Fire'], [3, 'Ocean'], [4, 'Psychedelic']]);
   assert.deepEqual(lookOverrides(null, mandel, 2), { palette_type: 2 });
-  assert.equal(lookOverrides(null, mandel, 1), null);
   // The look shuffle picks numbers offered only.
   const shuffle = createShuffle({ scenes: SCENES, random: seededRandom(4) });
   const numbers = looks.map((look) => look.number);
@@ -252,7 +253,7 @@ test('in the tab: a saved look shows the same preset, and a saved left-out look 
 
 /* ---------------- Flash: speed caps and class ---------------- */
 
-test('flash: the offered slice 7 scenes get their measured speed caps; the two back from the held list and Strange Attractor Flight are calm (the two with no effects), the others normal', () => {
+test('flash: the offered flights and endless scenes get their measured speed caps; the two back from the held list, Strange Attractor Flight and Quaternion Julia Flight are calm (the two with no effects), the others normal', () => {
   // From the 120-s flash check with the surge held at its most, over the
   // same stretch of each scene's clock as 3x (scenes.js SPEED_CAPS).
   // (The flights back in slice 12: tests/visualizer-slice12.test.js.)
@@ -263,10 +264,11 @@ test('flash: the offered slice 7 scenes get their measured speed caps; the two b
     polyfold_flight: 2, fractal_flame_volume_flight: 2, schottky_inversion_flight: 1.5,
     menger_citadel: null, recursive_cathedral: null, fractal_canyon: null, infinite_lattice: 1.5,
     crystal_geode: null, golden_hour_clouds: null, planet_sunrise: null,
+    difs_tunnel_flight: 1, quaternion_julia_flight: 1,
   });
   for (const id of offered) {
     if (SPEED_CAPS[id]) assert.equal(sceneById(id).maxSpeed, SPEED_CAPS[id]);
-    const calm = ['polyfold_flight', 'fractal_flame_volume_flight', 'strange_attractor_flight'].includes(id);
+    const calm = ['polyfold_flight', 'fractal_flame_volume_flight', 'strange_attractor_flight', 'quaternion_julia_flight'].includes(id);
     assert.equal(FX_CALM_SCENES.has(id), calm, id);
     // The two back from the held list reach 0.085 on a look: no effects at all.
     const none = ['polyfold_flight', 'fractal_flame_volume_flight'].includes(id);
@@ -493,4 +495,13 @@ test('borrowed code: one entry per piece in CREDITS.md and the notices; the shar
   }
   assert.match(credits, /It is not under MIT\./);
   assert.match(notices, /It is not covered by the MIT license above\./);
+});
+
+test('DIFS Tunnel Flight offers its start look and Koch Vault Orbit, never its colour schemes as looks', async () => {
+  const renderer = createSceneRenderer({ canvas: { width: 8, height: 8 }, gl: new FakeGL(), mode: 'webgl2' });
+  const def = renderer.register(await sceneById('difs_tunnel_flight').load(), 'difs_tunnel_flight');
+  // With every preset left out, the scene's colour schemes would be offered
+  // as its looks instead; one preset stays so that does not happen.
+  assert.deepEqual(sceneLooks(def).map((look) => look.name), ['Default', 'Koch Vault Orbit']);
+  renderer.destroy();
 });
