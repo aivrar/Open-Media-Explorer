@@ -11,6 +11,9 @@ export const displayName = 'NASA';
 export const itemTypes = ['video', 'audio'];
 
 const BASE = 'https://images-api.nasa.gov';
+// The search API serves no result past the 10,000th and no page past 100.
+const MAX_REACHABLE_RESULTS = 10_000;
+const MAX_BROWSE_PAGE = 100;
 
 function toItem(entry) {
   const data = entry?.data?.[0];
@@ -131,12 +134,41 @@ export async function browsePage(opts = {}) {
   const seed = cursor.seed || opts.seed || seeds[Math.floor(Math.random() * seeds.length)];
   const pageNumber = Number(cursor.page || 1);
   const result = await searchPage(seed, { ...opts, page: pageNumber });
-  const reachedTotal = result.total > 0 && pageNumber * result.pageSize >= result.total;
+  const start = (pageNumber - 1) * result.pageSize;
+  // Paging stops at NASA's own depth limit, or at the reported total.
+  const reachable = Math.min(result.total, MAX_REACHABLE_RESULTS, MAX_BROWSE_PAGE * result.pageSize);
+  // A short or empty page while the total says more remains is a passing
+  // fault (as in internet-archive.js), not the end: the Library keeps the
+  // cursor and asks for the same page again. The same page short for the
+  // SHORT_PAGES_BEFORE_END-th time in a row is taken as the real end (a
+  // total that overstates what NASA returns).
+  const runKey = `${seed}\n${result.pageSize}`;
+  const short = result.total > 0 && result.rawCount < result.pageSize && start + result.rawCount < reachable;
+  if (short && shortPageRun(runKey, pageNumber) < SHORT_PAGES_BEFORE_END) {
+    throw new Error(`NASA returned a transient ${result.rawCount === 0 ? 'empty' : 'incomplete'} page`);
+  }
+  shortPageRuns.delete(runKey);
   return {
     items: result.items,
     cursor: { seed, page: pageNumber + 1 },
-    exhausted: result.rawCount < result.pageSize || reachedTotal,
+    exhausted: short || (result.total > 0 ? start + result.rawCount >= reachable : result.rawCount < result.pageSize),
   };
+}
+
+// Per query (seed and page size): the page last received short while the
+// total said more remained, and how many times in a row. Bounded.
+const SHORT_PAGES_BEFORE_END = 3;
+const MAX_SHORT_PAGE_RUNS = 32;
+const shortPageRuns = new Map();
+
+/** Counts one more short answer for `page`; another page starts again at 1. */
+function shortPageRun(key, page) {
+  const previous = shortPageRuns.get(key);
+  const count = previous?.page === page ? previous.count + 1 : 1;
+  shortPageRuns.delete(key);
+  shortPageRuns.set(key, { page, count });
+  while (shortPageRuns.size > MAX_SHORT_PAGE_RUNS) shortPageRuns.delete(shortPageRuns.keys().next().value);
+  return count;
 }
 
 export async function random(opts = {}) {

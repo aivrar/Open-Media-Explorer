@@ -13,6 +13,7 @@ import zlib
 from pathlib import Path
 from unittest import mock
 
+import worldmedia_catalog
 from worldmedia_catalog import (
     MAX_ASSET_BYTES,
     AssetCache,
@@ -224,13 +225,16 @@ class CatalogUrlAndFeedTests(unittest.TestCase):
         <item><title>Supported</title><guid>supported</guid><podcast:license url="https://license.example/episode">episode-license</podcast:license>
         <enclosure url="https://cdn.example/default.mp3" type="audio/mpeg" />
         <podcast:alternateEnclosure type="video/mp4" default="true" codecs="avc1.4d401f"><podcast:source uri="https://cdn.example/preferred.mp4" /></podcast:alternateEnclosure></item>
-        <item><title>Unsupported</title><guid>unsupported</guid><enclosure url="https://cdn.example/file.ogg" type="audio/ogg" /></item>
+        <item><title>Ogg Vorbis</title><guid>ogg-vorbis</guid><enclosure url="https://cdn.example/file.ogg" type="audio/ogg" /></item>
+        <item><title>Unsupported</title><guid>unsupported</guid><enclosure url="https://cdn.example/file.ogv" type="video/ogg" /></item>
         <item><title>Mismatch</title><guid>mismatch</guid><enclosure url="https://cdn.example/file.mp4" type="audio/mpeg" /></item>
         <item><title>Torrent</title><guid>torrent</guid><podcast:alternateEnclosure type="audio/mpeg"><podcast:source uri="https://cdn.example/file.torrent" contentType="application/x-bittorrent" /></podcast:alternateEnclosure></item>
         <item><title>Wrong codec</title><guid>wrong-codec</guid><podcast:alternateEnclosure type="video/mp4" codecs="hvc1.1.6.L93"><podcast:source uri="https://cdn.example/hevc.mp4" /></podcast:alternateEnclosure></item>
         </channel></rss>'''
         compatible = parse_podcast_feed(compatibility, "https://feed.example/compatibility.xml")
-        self.assertEqual([item["guid"] for item in compatible["items"]], ["supported"])
+        # Ogg Vorbis was refused before; the embedded browser plays it, so it is listed.
+        self.assertEqual([item["guid"] for item in compatible["items"]], ["supported", "ogg-vorbis"])
+        self.assertEqual(compatible["items"][1]["enclosures"][0]["kind"], "audio")
         self.assertEqual(compatible["items"][0]["license"]["label"], "episode-license")
         self.assertEqual(
             [(entry["kind"], entry["relation"], entry["default"], entry["codecs"])
@@ -290,6 +294,227 @@ class CatalogUrlAndFeedTests(unittest.TestCase):
         huge_attribute = (b'<rss><channel><title>x</title><item a="' + b"a" * 9000 + b'"><enclosure url="https://cdn.example/x.mp3" type="audio/mpeg"/></item></channel></rss>')
         with self.assertRaises(CatalogError):
             parse_podcast_feed(huge_attribute, "https://feed.example/attribute")
+        too_many_attributes = (b'<rss><channel><title>x</title><item ' + b" ".join(b'a%d="1"' % index for index in range(33)) + b'><guid>x</guid><enclosure url="https://cdn.example/x.mp3" type="audio/mpeg"/></item></channel></rss>')
+        with self.assertRaises(CatalogError) as caught:
+            parse_podcast_feed(too_many_attributes, "https://feed.example/attributes")
+        self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+
+    def test_bounded_text_matches_the_former_per_character_cleanup_on_every_code_point(self) -> None:
+        import html
+        import re
+
+        def former(value, limit=4096):
+            parser = worldmedia_catalog._PlainText(max(0, int(limit)))
+            parser.feed(str(value or ""))
+            parser.close()
+            value = html.unescape(" ".join(parser.parts))
+            value = worldmedia_catalog._BIDI_CONTROL.sub("", value)
+            characters = []
+            for char in value:
+                if char.isspace():
+                    characters.append(" ")
+                elif not worldmedia_catalog._CONTROL.match(char):
+                    characters.append(char)
+            return re.sub(r"\s+", " ", "".join(characters)).strip()[:limit]
+
+        every = "".join(
+            chr(code) for code in range(0x110000)
+            if not 0xD800 <= code <= 0xDFFF and chr(code) not in "<&"
+        )
+        self.assertEqual(worldmedia_catalog.bounded_text(every, len(every)), former(every, len(every)))
+        for sample in ("  a\tb\x1c c\x00d\u2028e\x85f\u200eg  ", "<p>One&nbsp;&amp;\r\ntwo</p>", "x" * 9000):
+            with self.subTest(sample=sample[:20]):
+                self.assertEqual(worldmedia_catalog.bounded_text(sample), former(sample))
+
+    @staticmethod
+    def large_feed(episodes: int, *, padding: int = 0, extra: str = "") -> bytes:
+        # Shaped like a real show: 9 elements and 5 attributes per episode.
+        items = "".join(
+            f'<item><title>Episode {index}</title><guid isPermaLink="false">ep-{index}</guid>'
+            f'<pubDate>Mon, 06 Jan 2025 10:00:00 GMT</pubDate><description>{"d" * padding}</description>'
+            f'<itunes:duration>3600</itunes:duration><itunes:episode>{index}</itunes:episode>'
+            f'<itunes:image href="https://img.example/{index}.jpg"/>'
+            f'<enclosure url="https://cdn.example/{index}.mp3" length="1000" type="audio/mpeg"/></item>'
+            for index in range(episodes)
+        )
+        return (
+            f'<?xml version="1.0" encoding="UTF-8"?>{extra}'
+            '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>'
+            f'<title>Large show</title>{items}</channel></rss>'
+        ).encode("utf-8")
+
+    def test_stylesheet_line_and_large_real_sized_feeds_parse(self) -> None:
+        stylesheet = '\n<?xml-stylesheet type="text/xsl" href="https://feed.example/style.xsl"?>\n'
+        value = parse_podcast_feed(self.large_feed(3, extra=stylesheet), "https://feed.example/styled.xml")
+        self.assertEqual(len(value["items"]), 3)
+        self.assertEqual(value["title"], "Large show")
+        # 5,600 episodes are 50,403 elements and 28,000 attributes: over the old
+        # 10,000-element limit. Items stay capped at MAX_FEED_ITEMS.
+        payload = self.large_feed(5_600, extra=stylesheet)
+        value = parse_podcast_feed(payload, "https://feed.example/large.xml")
+        self.assertEqual(len(value["items"]), 1_000)
+        self.assertEqual(value["items"][0]["guid"], "ep-0")
+        # More than the old 2 MB of total text.
+        value = parse_podcast_feed(self.large_feed(1_000, padding=3_000), "https://feed.example/text.xml")
+        self.assertEqual(len(value["items"]), 1_000)
+
+    def test_doctype_entity_and_over_limit_feeds_are_still_refused(self) -> None:
+        for prolog in (
+            '<!DOCTYPE rss>',
+            '<!DOCTYPE rss [<!ENTITY a "b">]>',
+            '<?xml-stylesheet href="x.xsl"?><!DOCTYPE rss SYSTEM "https://feed.example/rss.dtd">',
+        ):
+            with self.subTest(prolog=prolog), self.assertRaises(CatalogError) as caught:
+                parse_podcast_feed(self.large_feed(1, extra=prolog), "https://feed.example/unsafe.xml")
+            self.assertEqual(caught.exception.code, "FEED_XML_UNSAFE")
+        # One element over the element limit (250,000), built for real.
+        over = ("<rss><channel><title>x</title>" + "<x/>" * (250_001 - 3) + "</channel></rss>").encode()
+        with self.assertRaises(CatalogError) as caught:
+            parse_podcast_feed(over, "https://feed.example/elements.xml")
+        self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+        at_limit = ("<rss><channel><title>x</title>" + "<x/>" * (250_000 - 3) + "</channel></rss>").encode()
+        self.assertEqual(parse_podcast_feed(at_limit, "https://feed.example/elements.xml")["items"], [])
+        # The attribute and text totals: their real sizes need inputs larger
+        # than a feed can be, so the same check runs against lowered limits.
+        feed = self.large_feed(10, padding=100)
+        with mock.patch("worldmedia_catalog.MAX_XML_ATTRIBUTES", 49):
+            with self.assertRaises(CatalogError) as caught:
+                parse_podcast_feed(feed, "https://feed.example/attributes.xml")
+            self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+        with mock.patch("worldmedia_catalog.MAX_XML_ATTRIBUTES", 52):
+            self.assertEqual(len(parse_podcast_feed(feed, "https://feed.example/attributes.xml")["items"]), 10)
+        with mock.patch("worldmedia_catalog.MAX_XML_TEXT", 999):
+            with self.assertRaises(CatalogError) as caught:
+                parse_podcast_feed(feed, "https://feed.example/text.xml")
+            self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+        self.assertEqual(worldmedia_catalog.MAX_XML_ELEMENTS, 250_000)
+        self.assertEqual(worldmedia_catalog.MAX_XML_ATTRIBUTES, 1_250_000)
+        self.assertEqual(worldmedia_catalog.MAX_XML_TEXT, worldmedia_catalog.MAX_FEED_DECODED_BYTES)
+        self.assertEqual(worldmedia_catalog.MAX_FEED_DECODED_BYTES, 16 * 1024 * 1024)
+        self.assertEqual(worldmedia_catalog.MAX_FEED_COMPRESSED_BYTES, 4 * 1024 * 1024)
+        self.assertEqual(worldmedia_catalog.MAX_XML_DEPTH, 64)
+        self.assertEqual(worldmedia_catalog.MAX_FEED_ITEMS, 1_000)
+
+    def test_feed_far_over_the_limits_is_refused_while_parsing_before_the_tree_is_built(self) -> None:
+        real = worldmedia_catalog.safe_xml_iterparse
+        seen = {"starts": 0, "root": None}
+
+        def counting(*args, **kwargs):
+            self.assertEqual(
+                (kwargs.get("forbid_dtd"), kwargs.get("forbid_entities"), kwargs.get("forbid_external")),
+                (True, True, True),
+            )
+            events = real(*args, **kwargs)
+
+            def generator():
+                for event, element in events:
+                    if event == "start":
+                        seen["starts"] += 1
+                        if seen["root"] is None:
+                            seen["root"] = element
+                    yield event, element
+            return generator()
+
+        def built(root) -> int:
+            return sum(1 for _ in root.iter())
+
+        # A million elements in 4 MB: four times the element limit.
+        flood = ("<rss><channel>" + "<x/>" * 1_000_000 + "</channel></rss>").encode()
+        with mock.patch("worldmedia_catalog.safe_xml_iterparse", counting), \
+                mock.patch("worldmedia_catalog._validate_xml_tree") as validate:
+            with self.assertRaises(CatalogError) as caught:
+                parse_podcast_feed(flood, "https://feed.example/flood.xml")
+        self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+        validate.assert_not_called()
+        self.assertEqual(seen["starts"], worldmedia_catalog.MAX_XML_ELEMENTS + 1)
+        # At most one 16 KiB read (4,096 of these elements) past the limit.
+        self.assertLessEqual(built(seen["root"]), worldmedia_catalog.MAX_XML_ELEMENTS + 4_096)
+
+        # Ten thousand levels deep: stopped at depth 65.
+        seen.update(starts=0, root=None)
+        deep = ("<rss>" + "<x>" * 10_000 + "</x>" * 10_000 + "</rss>").encode()
+        with mock.patch("worldmedia_catalog.safe_xml_iterparse", counting):
+            with self.assertRaises(CatalogError) as caught:
+                parse_podcast_feed(deep, "https://feed.example/deep.xml")
+        self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+        self.assertEqual(seen["starts"], worldmedia_catalog.MAX_XML_DEPTH + 1)
+        self.assertLessEqual(built(seen["root"]), 16 * 1024 // 3 + 1)
+
+        # Attribute total, also counted while parsing (limit lowered here).
+        seen.update(starts=0, root=None)
+        attributes = ("<rss>" + '<x a="1" b="2" c="3"/>' * 100_000 + "</rss>").encode()
+        with mock.patch("worldmedia_catalog.safe_xml_iterparse", counting), \
+                mock.patch("worldmedia_catalog.MAX_XML_ATTRIBUTES", 3_000):
+            with self.assertRaises(CatalogError) as caught:
+                parse_podcast_feed(attributes, "https://feed.example/attributes.xml")
+        self.assertEqual(caught.exception.code, "FEED_XML_TOO_COMPLEX")
+        self.assertEqual(seen["starts"], 1_001 + 1)
+
+        # A feed within the limits still gets the full check afterwards.
+        with mock.patch("worldmedia_catalog._validate_xml_tree", wraps=worldmedia_catalog._validate_xml_tree) as validate:
+            parse_podcast_feed(self.large_feed(2), "https://feed.example/small.xml")
+        validate.assert_called_once()
+
+    def test_bounded_fetcher_asks_for_gzip_and_bounds_identity_by_the_decoded_limit(self) -> None:
+        body = b"x" * 3000
+        gzip_body = gzip.compress(bytes(range(256)) * 40)
+        connector = FakeConnector({
+            "https://feed.example/plain": response(200, body, "application/xml", **{"Content-Length": str(len(body))}),
+            "https://feed.example/plain-unsized": response(200, body, "application/xml"),
+            "https://feed.example/gzip-sized": response(
+                200, gzip_body, "application/xml", **{"Content-Encoding": "gzip", "Content-Length": str(len(gzip_body))}
+            ),
+            "https://feed.example/gzip-unsized": response(200, gzip_body, "application/xml", **{"Content-Encoding": "gzip"}),
+            "https://feed.example/br": response(200, body, "application/xml", **{"Content-Encoding": "br"}),
+        })
+        fetcher = BoundedFetcher(connector)
+        kinds = {"accept": "application/xml", "allowed_types": {"application/xml"}}
+        # Uncompressed: over the compressed limit but within the decoded one.
+        for url in ("https://feed.example/plain", "https://feed.example/plain-unsized"):
+            with self.subTest(url=url):
+                self.assertEqual(fetcher.fetch(url, **kinds, max_compressed=1000, max_decoded=4000).data, body)
+                with self.assertRaises(CatalogError) as caught:
+                    fetcher.fetch(url, **kinds, max_compressed=1000, max_decoded=2999)
+                self.assertEqual(caught.exception.code, "CATALOG_BODY_TOO_LARGE")
+        self.assertTrue(connector.calls)
+        self.assertTrue(all(kwargs.get("accept_gzip") is True for _url, kwargs in connector.calls))
+        self.assertNotIn("Accept-Encoding", connector.calls[0][1]["headers"])
+        # Compressed: the compressed limit still applies to the wire bytes.
+        for url in ("https://feed.example/gzip-sized", "https://feed.example/gzip-unsized"):
+            with self.subTest(url=url):
+                self.assertEqual(
+                    fetcher.fetch(url, **kinds, max_compressed=len(gzip_body), max_decoded=10_240).data,
+                    bytes(range(256)) * 40,
+                )
+                with self.assertRaises(CatalogError) as caught:
+                    fetcher.fetch(url, **kinds, max_compressed=len(gzip_body) - 1, max_decoded=1_000_000)
+                self.assertEqual(caught.exception.code, "CATALOG_BODY_TOO_LARGE")
+        with self.assertRaises(CatalogError) as caught:
+            fetcher.fetch("https://feed.example/br", **kinds)
+        self.assertEqual(caught.exception.code, "CATALOG_ENCODING_UNSUPPORTED")
+
+    def test_feed_resolve_accepts_an_uncompressed_feed_over_the_compressed_limit(self) -> None:
+        payload = self.large_feed(1_200, padding=4_000)
+        self.assertGreater(len(payload), worldmedia_catalog.MAX_FEED_COMPRESSED_BYTES)
+        self.assertLess(len(payload), worldmedia_catalog.MAX_FEED_DECODED_BYTES)
+        url = "https://feeds.example.test/big.xml"
+        with tempfile.TemporaryDirectory() as directory:
+            connector = FakeConnector({url: response(
+                200, payload, "application/rss+xml", **{"Content-Length": str(len(payload))}
+            )})
+            service = CatalogService(Path(directory) / "feed", connector=connector, clock=FakeClock())
+            value = service.resolve_feed({"url": url})
+            self.assertEqual(len(value["items"]), 1_000)
+            self.assertIs(connector.calls[0][1]["accept_gzip"], True)
+        too_big = b" " * (worldmedia_catalog.MAX_FEED_DECODED_BYTES + 1)
+        with tempfile.TemporaryDirectory() as directory:
+            connector = FakeConnector({url: response(
+                200, too_big, "application/rss+xml", **{"Content-Length": str(len(too_big))}
+            )})
+            service = CatalogService(Path(directory) / "feed", connector=connector, clock=FakeClock())
+            with self.assertRaises(CatalogError) as caught:
+                service.resolve_feed({"url": url})
+            self.assertEqual(caught.exception.code, "CATALOG_BODY_TOO_LARGE")
 
     def test_bounded_fetcher_decodes_gzip_and_rejects_expansion_or_wrong_type(self) -> None:
         payload = b"<rss><channel><title>x</title></channel></rss>"
@@ -1272,6 +1497,8 @@ class SocketBoundaryTests(unittest.TestCase):
 
             gzip_feed = service.resolve_feed({"url": fixture.base_url + "/gzip.xml"})
             self.assertEqual(gzip_feed["title"], "Fixture Atom Show")
+            gzip_call = next(call for call in reversed(fixture.calls) if call.get("path") == "/gzip.xml")
+            self.assertEqual(gzip_call["headers"].get("Accept-Encoding"), "gzip")
             for path, code in (
                 ("/malicious.xml", "FEED_XML_UNSAFE"),
                 ("/wrong-type", "CATALOG_CONTENT_TYPE"),

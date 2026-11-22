@@ -40,18 +40,42 @@ function awaitWithSignal(promise, signal) {
   });
 }
 
-async function probeBase(base) {
+// A mirror's liveness probe may also wait in the browser's request queue.
+export const PROBE_TIMEOUT_MS = 5_000;
+
+async function probeBase(base, signal) {
   // Tiny liveness probe — /json/stats is ~150 bytes, returns in <500 ms
   // on a working mirror and times out (or DNS-fails) on a dead one.
   try {
-    const r = await getJson(base + '/json/stats', { timeoutMs: 3000 });
+    const r = await getJson(base + '/json/stats', { timeoutMs: PROBE_TIMEOUT_MS, signal });
     return r && typeof r === 'object' && r.status === 'OK';
   } catch (_e) {
     return false;
   }
 }
 
-async function resolveBase() {
+/** All candidates are probed at once; the first healthy one wins and the
+ *  other probes are cancelled. Null when none answers. */
+async function firstHealthyBase(candidates) {
+  if (candidates.length === 0) return null;
+  const controller = new AbortController();
+  try {
+    return await new Promise((resolve) => {
+      let left = candidates.length;
+      for (const candidate of candidates) {
+        probeBase(candidate, controller.signal).then((ok) => {
+          if (ok) resolve(candidate);
+          else if (--left === 0) resolve(null);
+        });
+      }
+    });
+  } finally {
+    controller.abort();
+  }
+}
+
+/** `exclude`: a mirror that just failed, left out of this search. */
+async function resolveBase(exclude = '') {
   if (cachedBase) return cachedBase;
   if (baseUrlPromise) return baseUrlPromise;
   baseUrlPromise = (async () => {
@@ -59,19 +83,18 @@ async function resolveBase() {
       const servers = await getJson('https://all.api.radio-browser.info/json/servers', { timeoutMs: 5000 });
       if (Array.isArray(servers) && servers.length > 0) {
         // The servers list is known to include stale entries (Radio Browser's
-        // dynamic DNS isn't always purged when a mirror retires). Walk the
-        // list in random order and pick the first one that actually answers.
+        // dynamic DNS isn't always purged when a mirror retires). Probe a few
+        // in random order and take the first one that actually answers.
         const order = [...servers].sort(() => Math.random() - 0.5);
         // Bound startup discovery. A stale mirror list used to make one Radio
         // Browser page spend nearly a minute probing every dead entry.
-        for (const pick of order.slice(0, 4)) {
-          const host = pick.name || pick.ip;
-          if (!host) continue;
-          const candidate = `https://${host}`;
-          if (await probeBase(candidate)) {
-            cachedBase = candidate;
-            return cachedBase;
-          }
+        const candidates = [...new Set(order.map((pick) => pick?.name || pick?.ip)
+          .filter(Boolean).map((host) => `https://${host}`))]
+          .filter((candidate) => candidate !== exclude).slice(0, 4);
+        const found = await firstHealthyBase(candidates);
+        if (found) {
+          cachedBase = found;
+          return cachedBase;
         }
       }
     } catch (_e) { /* fall through */ }
@@ -102,7 +125,10 @@ export function mirrorTooSlow(askedAt, now = Date.now()) {
 }
 
 function normalize(station) {
-  if (!station || !station.stationuuid || !station.url_resolved) return null;
+  // The directory's resolved stream address, or the address the station was
+  // entered with while the directory has not resolved one yet.
+  const streamUrl = String(station?.url_resolved || '').trim() || String(station?.url || '').trim();
+  if (!station || !station.stationuuid || !streamUrl) return null;
   const tags = (station.tags || '').split(',').map((s) => s.trim()).filter(Boolean);
   let lang = (station.languagecodes || station.language || '').split(',')[0].trim();
   const hls = isHlsFlag(station.hls);
@@ -112,10 +138,10 @@ function normalize(station) {
     description: tags.join(', '),
     source: id,
     type: 'radio',
-    stream_url: station.url_resolved,
+    stream_url: streamUrl,
     stream_kind: hls || Number(station.hls) === 1
       ? 'hls'
-      : detectStreamKind(station.url_resolved, 'audio'),
+      : detectStreamKind(streamUrl, 'audio'),
     delivery: 'live',
     download_url: '',
     download_name: '',
@@ -149,8 +175,11 @@ async function fetchStations(path, opts = {}) {
   // Try the cached mirror first, then re-resolve once if that fails.
   // Returns the parsed JSON array and throws if both attempts fail.
   let lastError = null;
+  let failedBase = '';
   for (let attempt = 0; attempt < 2; attempt++) {
-    const base = await awaitWithSignal(resolveBase(), opts.signal);
+    const base = await awaitWithSignal(resolveBase(failedBase), opts.signal);
+    // No other mirror than the one that just failed: asking it again is no failover.
+    if (base === failedBase) break;
     const askedAt = Date.now();
     try {
       const data = await getJson(base + path, {
@@ -160,6 +189,9 @@ async function fetchStations(path, opts = {}) {
       if (Array.isArray(data)) return data;
       throw new TypeError('Radio Browser returned a non-array response');
     } catch (err) {
+      // The provider asks us to slow down (429 or a Retry-After): that answer
+      // goes to the caller unchanged, and the working mirror is kept.
+      if (err?.status === 429 || Number.isFinite(err?.retryAfterMs)) throw err;
       lastError = err;
       // Cancelled by the caller (or its time limit): no new mirror search
       // starts now. A mirror cut short early is kept; one that stayed silent
@@ -169,8 +201,10 @@ async function fetchStations(path, opts = {}) {
         throw err;
       }
       if (attempt === 0) {
-        // Mirror probably died mid-session — drop it and re-resolve.
-        invalidateBase();
+        // Mirror probably died mid-session — drop it and re-resolve without
+        // it (unless another request already moved on to a new mirror).
+        failedBase = base;
+        if (cachedBase === base) invalidateBase();
         continue;
       }
       console.warn('Radio Browser fetch failed both attempts:', err);
@@ -179,8 +213,15 @@ async function fetchStations(path, opts = {}) {
   throw lastError || new Error('Radio Browser fetch failed');
 }
 
-async function stationPage(query, opts = {}, offsetOverride = null) {
-  const limit = Math.min(opts.limit || 30, 100);
+// The Library collects the whole directory. Every request costs about a
+// second before its first byte whatever it asks for, and the directory sends
+// 300 stations in little more time than 30 (measured: 1.1 s for 30, 1.6 s for
+// 300), so a browse page asks for a block of that size: a tenth of the
+// requests, for the user and for the directory alike.
+export const BROWSE_BLOCK = 300;
+
+async function stationPage(query, opts = {}, offsetOverride = null, most = 100) {
+  const limit = Math.min(opts.limit || 30, most);
   const offset = offsetOverride ?? opts.offset ?? 0;
   const params = new URLSearchParams({
     limit: String(limit),
@@ -213,7 +254,7 @@ export async function browse(opts = {}) {
 
 export async function browsePage(opts = {}) {
   const offset = Number(opts.cursor?.offset ?? opts.offset ?? 0);
-  const page = await stationPage('', opts, offset);
+  const page = await stationPage('', { ...opts, limit: BROWSE_BLOCK }, offset, BROWSE_BLOCK);
   return {
     items: page.items,
     cursor: { offset: offset + page.rawCount },

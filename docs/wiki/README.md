@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.14` behavior in this repository: how to
+It describes the shipped `0.1.15` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -11,13 +11,34 @@ catalogs or stream files itself, and it does not have a fixed channel list.
 Stations, channels, episodes, and archive records are discovered from the
 providers at run time and can change without an app update.
 
-![World Media Library with its public sources](<../../screenshots/updated screenshots/all_sources.PNG>)
+![World Media Library with its public sources](<../../screenshots/v0.1.14/library.png>)
 
 | Tune live radio and TV | Discover something unexpected |
 |---|---|
-| ![World Media Tuner](<../../screenshots/updated screenshots/tuner.PNG>) | ![World Media Discovery](<../../screenshots/updated screenshots/discovery.PNG>) |
+| ![World Media Tuner](<../../screenshots/v0.1.14/tuner.png>) | ![World Media Discovery](<../../screenshots/v0.1.14/discovery.png>) |
 
-![Ten-band equalizer with automatic presets](<../../screenshots/updated screenshots/eq.PNG>)
+![Ten-band equalizer with presets](<../../screenshots/v0.1.14/equalizer.png>)
+
+![Visualizer - Black Hole with Lasers and Tron Hex Grid](<../../screenshots/v0.1.14/visualizer-black-hole.jpg>)
+
+## New in 0.1.15
+
+- Radio Browser stations load much faster: the Library asks for 300 at a time
+  where it asked for 30. Lists are sent compressed. See [Sources and
+  channels](03-sources-and-channels.md#provider-pacing-and-caching).
+- A server with several addresses, one of them dead or slow, no longer holds a
+  stream or a list up: the app tries the addresses together. See [Architecture
+  and runtime
+  reference](08-architecture-and-runtime-reference.md#playback-and-relay-boundary).
+- After the connection drops, sources that failed are asked again by
+  themselves when it comes back, in the Library, the Tuner and the Grid. See
+  [Troubleshooting](06-troubleshooting.md).
+- Owncast and the media.ccc.de live rooms are listed from the start, whichever
+  Library view is open.
+- Podcast episodes published as M4A, AAC, Ogg, Opus, FLAC, WAV, WebM, M4V and
+  MOV are listed and play. More media.ccc.de, Wikimedia Commons and Internet
+  Archive recordings play. See [Sources and
+  channels](03-sources-and-channels.md#which-file-of-an-item-plays).
 
 ## New in 0.1.14
 
@@ -207,17 +228,38 @@ providers at run time and can change without an app update.
 These are reference captures of the current UI. They are linked rather than
 copied so the wiki stays alongside the source screenshots:
 
-- [All Sources](<../../screenshots/updated screenshots/all_sources.PNG>)
-- [Favorites](<../../screenshots/updated screenshots/favorites.PNG>)
-- [Radio detail and playback](<../../screenshots/updated screenshots/radio.PNG>)
-- [Radio playing](<../../screenshots/updated screenshots/radio_playing.PNG>)
-- [Radio Browser source](<../../screenshots/updated screenshots/radio_browser.PNG>)
-- [TV detail and playback](<../../screenshots/updated screenshots/tv.PNG>)
-- [Grid](<../../screenshots/updated screenshots/grid.PNG>)
-- [Tuner](<../../screenshots/updated screenshots/tuner.PNG>)
-- [Discovery](<../../screenshots/updated screenshots/discovery.PNG>)
-- [Equalizer](<../../screenshots/updated screenshots/eq.PNG>)
-- [Large video player](<../../screenshots/updated screenshots/big_tv_player.PNG>)
+- [All Sources](<../../screenshots/v0.1.14/library.png>)
+- [Favorites with categories and a station's details](<../../screenshots/v0.1.14/favorites.png>)
+- [My Playlists and Add link](<../../screenshots/v0.1.14/my-playlists.png>)
+- [Video in the larger player](<../../screenshots/v0.1.14/video.png>)
+- [Tuner with the Visualizer behind it](<../../screenshots/v0.1.14/tuner.png>)
+- [Grid](<../../screenshots/v0.1.14/grid.png>)
+- [Discovery](<../../screenshots/v0.1.14/discovery.png>)
+- [Now Playing](<../../screenshots/v0.1.14/now-playing.png>)
+- [Equalizer](<../../screenshots/v0.1.14/equalizer.png>)
+- [Song log](<../../screenshots/v0.1.14/song-log.png>)
+- [Settings](<../../screenshots/v0.1.14/settings.png>)
+- [Visualizer settings panel: Effects](<../../screenshots/v0.1.14/visualizer-panel.png>)
+- [Visualizer settings panel: Overlays](<../../screenshots/v0.1.14/visualizer-overlays.png>)
+- [Visualizer: Black Hole](<../../screenshots/v0.1.14/visualizer-black-hole.jpg>)
+- [Visualizer: Synthwave Grid](<../../screenshots/v0.1.14/visualizer-synthwave.jpg>)
+- [Visualizer: Kleinian Group](<../../screenshots/v0.1.14/visualizer-kleinian.jpg>)
+- [Visualizer: Hyperbolic Tiling](<../../screenshots/v0.1.14/visualizer-hyperbolic.jpg>)
+- [Visualizer: Mandelbrot Deep with Stained Glass](<../../screenshots/v0.1.14/visualizer-stained-glass.jpg>)
+- [Visualizer: Flow Field with Oil Paint](<../../screenshots/v0.1.14/visualizer-flow-field.jpg>)
+- [Visualizer: Physarum](<../../screenshots/v0.1.14/visualizer-physarum.jpg>)
+- [Visualizer: Aurora](<../../screenshots/v0.1.14/visualizer-aurora.jpg>)
+- [Theme: Midnight · Blue](<../../screenshots/v0.1.14/theme-midnight.png>)
+- [Theme: Forest · Green](<../../screenshots/v0.1.14/theme-forest.png>)
+- [Theme: Ember · Orange](<../../screenshots/v0.1.14/theme-ember.png>)
+- [Theme: Amethyst · Violet](<../../screenshots/v0.1.14/theme-amethyst.png>)
+
+Short GIF demos:
+
+- [A short tour of the tabs](../../screenshots/v0.1.14/demo-tour.gif)
+- [The Tuner dial](../../screenshots/v0.1.14/demo-tuner.gif)
+- [Now Playing with the sound meter](../../screenshots/v0.1.14/demo-now-playing.gif)
+- [The Visualizer](../../screenshots/v0.1.14/demo-visualizer.gif)
 
 Screenshots show a point-in-time provider result. Counts, logos, stream
 availability, and status labels are live data and will not necessarily match a

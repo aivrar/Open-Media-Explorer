@@ -11,7 +11,10 @@ export const displayName = 'Wikimedia Commons';
 export const itemTypes = ['video', 'audio'];
 
 const BASE = 'https://commons.wikimedia.org/w/api.php';
-const PLAYABLE_EXTS = ['webm', 'ogg', 'ogv', 'oga', 'mp4', 'mp3', 'wav'];
+// FLAC and Opus files are common on Commons and play in the embedded browser.
+// MIDI does not; Commons offers MP3/Ogg transcodes of it (prop=videoinfo,
+// viprop=derivatives), which this adapter does not read yet.
+const PLAYABLE_EXTS = ['webm', 'ogg', 'ogv', 'oga', 'opus', 'mp4', 'mp3', 'wav', 'flac'];
 
 function pickItem(pageId, page) {
   const info = (page?.imageinfo || [])[0];
@@ -24,7 +27,7 @@ function pickItem(pageId, page) {
   if (!PLAYABLE_EXTS.includes(ext)) return null;
   const mime = info.mime || '';
   const isVideo = mime.startsWith('video/') || ['mp4', 'webm', 'ogv'].includes(ext);
-  const isAudio = mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'oga'].includes(ext);
+  const isAudio = mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'oga', 'opus', 'flac'].includes(ext);
   if (!isVideo && !isAudio) return null;
 
   const ext2 = info.extmetadata || {};

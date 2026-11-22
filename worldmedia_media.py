@@ -1,12 +1,14 @@
 """Pinned upstream connector plus opaque HLS and DASH media relays."""
 from __future__ import annotations
 
+import errno
 import functools
 import http.client
 import heapq
 import ipaddress
 import re
 import secrets
+import select
 import socket
 import ssl
 import threading
@@ -33,7 +35,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.14"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.15"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096
@@ -267,20 +269,183 @@ class _RelayResponse(http.client.HTTPResponse):
         self.fp = _IcyStatusLineReader(self.fp)
 
 
+# A host often has several addresses, and one of them can be dead while the
+# others work (commonly an IPv6 address that is announced but not reachable).
+# Trying them one after another costs a full connect time-out for every request
+# to such a host. A browser starts the next address a moment after the previous
+# one and uses whichever connects first; so does this. Only addresses that
+# passed the address check are ever tried.
+CONNECT_STAGGER = 0.25
+GOOD_ADDRESS_TTL = 600.0
+GOOD_ADDRESS_LIMIT = 256
+_CONNECT_PENDING = frozenset({errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EALREADY, 10035, 10036})
+_good_addresses: OrderedDict[tuple[str, int], tuple[str, float]] = OrderedDict()
+_good_addresses_lock = threading.Lock()
+
+
+def _remember_good_address(host: str, port: int, address: str) -> None:
+    with _good_addresses_lock:
+        _good_addresses[(host, port)] = (address, time.monotonic() + GOOD_ADDRESS_TTL)
+        _good_addresses.move_to_end((host, port))
+        while len(_good_addresses) > GOOD_ADDRESS_LIMIT:
+            _good_addresses.popitem(last=False)
+
+
+def _forget_good_address(host: str, port: int, address: str) -> None:
+    with _good_addresses_lock:
+        entry = _good_addresses.get((host, port))
+        if entry and entry[0] == address:
+            del _good_addresses[(host, port)]
+
+
+def _dial_order(target: ResolvedTarget) -> list[str]:
+    """The validated addresses in the order to try them.
+
+    The two address families take turns, IPv4 first, and the address that
+    last answered for this host goes to the front for a few minutes. Nothing
+    is added: an address that is not in this lookup's validated answer is
+    never tried.
+
+    IPv4 first because a connection that is made is kept whatever its speed:
+    on a home network whose IPv6 route is poor, a host can connect over IPv6
+    at once and then send at a fraction of the IPv4 speed (measured: one
+    directory at a quarter to a tenth), or list an IPv6 address that never
+    answers. Where there is no IPv4 at all, that attempt fails immediately
+    and the IPv6 address is tried in the same moment.
+    """
+    addresses = list(dict.fromkeys(target.addresses or (target.ip,)))
+    same = [address for address in addresses if ":" not in address]
+    other = [address for address in addresses if ":" in address]
+    ordered: list[str] = []
+    for index in range(max(len(same), len(other))):
+        if index < len(same):
+            ordered.append(same[index])
+        if index < len(other):
+            ordered.append(other[index])
+    with _good_addresses_lock:
+        entry = _good_addresses.get((target.host, target.port))
+    if entry and entry[1] > time.monotonic() and entry[0] in ordered:
+        ordered.remove(entry[0])
+        ordered.insert(0, entry[0])
+    return ordered
+
+
+def _connect_first(
+    addresses: Iterable[str],
+    port: int,
+    timeout: float,
+    cancelled: Callable[[], bool] | None = None,
+) -> tuple[socket.socket, str]:
+    """Connect to whichever address answers first; the whole attempt has one time limit.
+
+    The first address gets a short head start, then the next one is started
+    as well (at once when an attempt fails outright). The first to connect is
+    returned with its address; every other attempt is closed.
+    """
+    waiting = list(addresses)
+    if not waiting:
+        raise OSError("no address to connect to")
+    stagger = min(CONNECT_STAGGER, timeout / (2 * len(waiting)))
+    pending: dict[socket.socket, str] = {}
+    deadline = time.monotonic() + timeout
+    next_start = 0.0
+    last_error: OSError | None = None
+    try:
+        while True:
+            now = time.monotonic()
+            if cancelled is not None and cancelled():
+                raise TimeoutError("connect cancelled")
+            if waiting and now < deadline and (not pending or now >= next_start):
+                address = waiting.pop(0)
+                next_start = now + stagger
+                attempt: socket.socket | None = None
+                try:
+                    attempt = socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM)
+                    attempt.setblocking(False)
+                    code = attempt.connect_ex((address, port))
+                except OSError as error:
+                    last_error = error
+                    if attempt is not None:
+                        attempt.close()
+                    continue
+                if code == 0:
+                    attempt.settimeout(timeout)
+                    return attempt, address
+                if code not in _CONNECT_PENDING:
+                    last_error = OSError(code, "connect failed")
+                    attempt.close()
+                    continue
+                pending[attempt] = address
+                continue
+            if not pending or now >= deadline:
+                raise last_error if (last_error is not None and not pending) else TimeoutError("timed out")
+            wait = deadline - now
+            if waiting:
+                wait = min(wait, max(0.0, next_start - now))
+            sockets = list(pending)
+            _, writable, failed = select.select([], sockets, sockets, min(wait, 0.25))
+            for attempt in failed:
+                if attempt not in pending:
+                    continue
+                code = attempt.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                last_error = OSError(code or errno.ECONNREFUSED, "connect failed")
+                del pending[attempt]
+                attempt.close()
+                next_start = 0.0
+            for attempt in writable:
+                if attempt not in pending:
+                    continue
+                code = attempt.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                address = pending.pop(attempt)
+                if code == 0:
+                    attempt.settimeout(timeout)
+                    return attempt, address
+                last_error = OSError(code, "connect failed")
+                attempt.close()
+                next_start = 0.0
+    finally:
+        for attempt in pending:
+            attempt.close()
+
+
 class _PinnedHTTPConnection(http.client.HTTPConnection):
     response_class = _RelayResponse
 
-    def __init__(self, target: ResolvedTarget, timeout: float) -> None:
+    def __init__(
+        self,
+        target: ResolvedTarget,
+        timeout: float,
+        *,
+        candidates: Iterable[str] = (),
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None:
         super().__init__(target.host, target.port, timeout=timeout)
         self._selected_ip = target.ip
+        self._candidates = tuple(candidates)
+        self._cancelled = cancelled
+        self.dialled = False
 
     def connect(self) -> None:
-        self.sock = socket.create_connection((self._selected_ip, self.port), self.timeout)
+        if len(self._candidates) > 1:
+            self.sock, self._selected_ip = _connect_first(
+                self._candidates, self.port, self.timeout, self._cancelled,
+            )
+        else:
+            self.sock = socket.create_connection((self._selected_ip, self.port), self.timeout)
+        self.dialled = True
 
 
 class _PinnedHTTPSConnection(_PinnedHTTPConnection):
-    def __init__(self, target: ResolvedTarget, timeout: float, context: ssl.SSLContext) -> None:
-        super().__init__(target, timeout)
+    def __init__(
+        self,
+        target: ResolvedTarget,
+        timeout: float,
+        context: ssl.SSLContext,
+        *,
+        candidates: Iterable[str] = (),
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None:
+        super().__init__(target, timeout, candidates=candidates, cancelled=cancelled)
         self._context = context
         self._server_hostname = target.host
 
@@ -412,7 +577,16 @@ class SafeConnector:
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
         cancel: threading.Event | None = None,
+        accept_gzip: bool = False,
     ) -> Upstream:
+        """Open url, following approved redirects.
+
+        Media is always asked for uncompressed (Accept-Encoding: identity).
+        accept_gzip=True is for metadata callers that decode or pass on a gzip
+        body themselves; it asks for gzip instead. Callers cannot set
+        Accept-Encoding through headers, so exactly one such header goes out.
+        """
+        accept_encoding = "gzip" if accept_gzip else "identity"
         safe_headers: dict[str, str] = {}
         for raw_name, raw_value in (headers or {}).items():
             if not isinstance(raw_name, str) or not isinstance(raw_value, str):
@@ -466,22 +640,31 @@ class SafeConnector:
             # address makes a multi-address CDN less reliable than a browser:
             # one retired edge turns a healthy channel into an immediate 502.
             # Every address was validated above, so retry each pinned address
-            # without performing another DNS lookup.
-            for selected_ip in target.addresses or (target.ip,):
+            # without performing another DNS lookup. The addresses still to
+            # try are connected to together (see _connect_first), so one dead
+            # address does not hold up a host whose other addresses work.
+            remaining = _dial_order(target)
+            cancelled = cancel.is_set if cancel else None
+            while remaining:
                 if cancel and cancel.is_set():
                     raise _media_error(HTTPStatus.REQUEST_TIMEOUT, "MEDIA_CANCELLED", "Media request was cancelled.")
-                dial_target = target if selected_ip == target.ip else replace(target, ip=selected_ip)
+                dial_target = target if remaining[0] == target.ip else replace(target, ip=remaining[0])
                 if target.scheme == "https":
-                    connection = _PinnedHTTPSConnection(dial_target, self.connect_timeout, self.ssl_context)
+                    connection = _PinnedHTTPSConnection(
+                        dial_target, self.connect_timeout, self.ssl_context,
+                        candidates=remaining, cancelled=cancelled,
+                    )
                 else:
-                    connection = _PinnedHTTPConnection(dial_target, self.connect_timeout)
+                    connection = _PinnedHTTPConnection(
+                        dial_target, self.connect_timeout, candidates=remaining, cancelled=cancelled,
+                    )
                 request_sent = False
                 try:
                     connection.putrequest(current_method, target.request_target, skip_host=True, skip_accept_encoding=True)
                     connection.putheader("Host", host_header)
                     if "Accept" not in current_headers:
                         connection.putheader("Accept", "*/*")
-                    connection.putheader("Accept-Encoding", "identity")
+                    connection.putheader("Accept-Encoding", accept_encoding)
                     if "User-Agent" not in current_headers:
                         connection.putheader("User-Agent", RELAY_USER_AGENT)
                     for name, value in current_headers.items():
@@ -493,6 +676,7 @@ class SafeConnector:
                     if connection.sock:
                         connection.sock.settimeout(self.header_timeout)
                     response = connection.getresponse()
+                    _remember_good_address(target.host, target.port, connection._selected_ip)
                     break
                 except (OSError, TimeoutError, http.client.HTTPException) as error:
                     # The server was reached and took the request, then answered
@@ -504,8 +688,20 @@ class SafeConnector:
                         and isinstance(error, (ConnectionResetError, ConnectionAbortedError))
                     ):
                         protocol_failure = True
+                    dialled = connection.dialled
+                    failed_ip = connection._selected_ip
                     connection.close()
                     connection = None
+                    if cancel and cancel.is_set():
+                        raise _media_error(
+                            HTTPStatus.REQUEST_TIMEOUT, "MEDIA_CANCELLED", "Media request was cancelled.",
+                        ) from None
+                    if not dialled:
+                        # None of the addresses still to try could be connected to.
+                        break
+                    _forget_good_address(target.host, target.port, failed_ip)
+                    if failed_ip in remaining:
+                        remaining.remove(failed_ip)
             if connection is None or response is None:
                 error_type = MediaProtocolError if protocol_failure else MediaError
                 raise error_type(

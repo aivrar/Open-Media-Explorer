@@ -6,7 +6,7 @@ import {
   recordSourceFailure,
   recordSourceSuccess,
   RETRY_BASE_MS,
-  RETRY_MAX_MS,
+  RETRY_MAX_MS, SLOW_RETRY_MAX_MS,
 } from '../src/modes/library/progress.js';
 
 const realFetch = globalThis.fetch;
@@ -41,8 +41,11 @@ test('source failures preserve the cursor and back off instead of exhausting', (
   assert.equal(progress.exhausted, false);
   assert.equal(progress.retryAt, 1_000 + RETRY_BASE_MS);
 
+  // Repeated failures slow the retries down to at most one every ten minutes.
   for (let i = 0; i < 10; i++) recordSourceFailure(progress, new Error('still temporary'), 2_000);
-  assert.ok(progress.retryAt - 2_000 <= RETRY_MAX_MS);
+  assert.equal(progress.retryAt - 2_000, SLOW_RETRY_MAX_MS);
+  assert.ok(RETRY_MAX_MS < SLOW_RETRY_MAX_MS);
+  assert.deepEqual(progress.cursor, { page: 7, seed: 'mars' });
 
   recordSourceSuccess(progress, { cursor: { page: 8 }, exhausted: false }, 30);
   assert.equal(progress.failures, 0);
@@ -56,14 +59,15 @@ test('NASA browse cursor pins one seed across pages', async () => {
     const url = new URL(String(input));
     urls.push(url);
     const page = Number(url.searchParams.get('page'));
+    // A full page: a short one while total_hits says more is an error.
     return json({
       collection: {
         metadata: { total_hits: 1_000 },
-        items: [{
-          href: `https://images-assets.nasa.gov/${page}.json`,
-          data: [{ nasa_id: `nasa-${page}`, title: `NASA ${page}`, media_type: 'video' }],
+        items: Array.from({ length: 30 }, (_, index) => ({
+          href: `https://images-assets.nasa.gov/${page}-${index}.json`,
+          data: [{ nasa_id: `nasa-${page}-${index}`, title: `NASA ${page}`, media_type: 'video' }],
           links: [],
-        }],
+        })),
       },
     });
   }, async () => {
@@ -362,6 +366,94 @@ test('adapter transport failures reject instead of becoming empty pages', async 
   await withFetch(async () => json({ error: 'temporary' }, 504), async () => {
     const nasa = await import(`../src/adapters/nasa.js?failure=${Date.now()}`);
     await assert.rejects(() => nasa.browsePage({ limit: 30 }), /HTTP 504/);
+  });
+});
+
+test('NASA: a short or empty page while total_hits says more remains is an error; the true end and the depth limit end normally', async () => {
+  let reply = { total: 0, count: 0 };
+  await withFetch(async (input) => {
+    const page = Number(new URL(String(input)).searchParams.get('page'));
+    return json({
+      collection: {
+        metadata: { total_hits: reply.total },
+        items: Array.from({ length: reply.count }, (_, index) => ({
+          href: `https://images-assets.nasa.gov/${page}-${index}.json`,
+          data: [{ nasa_id: `nasa-${page}-${index}`, title: `NASA ${page}`, media_type: 'video' }],
+          links: [],
+        })),
+      },
+    });
+  }, async () => {
+    const nasa = await import(`../src/adapters/nasa.js?short=${Date.now()}`);
+    const page = (number, limit = 30) => nasa.browsePage({ limit, cursor: { seed: 'mars', page: number } });
+
+    reply = { total: 1_000, count: 12 };
+    await assert.rejects(() => page(2), /NASA returned a transient incomplete page/);
+    reply = { total: 1_000, count: 0 };
+    await assert.rejects(() => page(1), /NASA returned a transient empty page/);
+
+    // The last page of the total: short, and the end.
+    reply = { total: 70, count: 10 };
+    assert.equal((await page(3)).exhausted, true);
+    reply = { total: 90, count: 30 };
+    assert.equal((await page(3)).exhausted, true);
+    reply = { total: 1_000, count: 30 };
+    const middle = await page(2);
+    assert.equal(middle.exhausted, false);
+    assert.deepEqual(middle.cursor, { seed: 'mars', page: 3 });
+    // No total reported: a short page still ends the listing.
+    reply = { total: 0, count: 5 };
+    assert.equal((await page(4)).exhausted, true);
+
+    // NASA serves no page past 100 and no result past the 10,000th.
+    reply = { total: 50_000, count: 30 };
+    assert.equal((await page(99)).exhausted, false);
+    assert.equal((await page(100)).exhausted, true);
+    reply = { total: 50_000, count: 100 };
+    assert.equal((await page(100, 100)).exhausted, true);
+    reply = { total: 50_000, count: 0 };
+    assert.equal((await page(101)).exhausted, true, 'past the limit is the end, not an error');
+  });
+});
+
+test('NASA: the same page short three times in a row is the real end; a full page or another page starts the count again', async () => {
+  let reply = { total: 0, count: 0 };
+  await withFetch(async (input) => {
+    const page = Number(new URL(String(input)).searchParams.get('page'));
+    return json({
+      collection: {
+        metadata: { total_hits: reply.total },
+        items: Array.from({ length: reply.count }, (_, index) => ({
+          href: `https://images-assets.nasa.gov/${page}-${index}.json`,
+          data: [{ nasa_id: `nasa-${page}-${index}`, title: `NASA ${page}`, media_type: 'video' }],
+          links: [],
+        })),
+      },
+    });
+  }, async () => {
+    const nasa = await import(`../src/adapters/nasa.js?overstated=${Date.now()}`);
+    const page = (number) => nasa.browsePage({ limit: 30, cursor: { seed: 'hubble', page: number } });
+    const transient = /NASA returned a transient incomplete page/;
+
+    // total_hits says 1,000 but NASA stops at 40.
+    reply = { total: 1_000, count: 10 };
+    await assert.rejects(() => page(2), transient);
+    await assert.rejects(() => page(2), transient);
+    // A full answer in between starts the count again.
+    reply = { total: 1_000, count: 30 };
+    assert.equal((await page(2)).exhausted, false);
+    reply = { total: 1_000, count: 10 };
+    await assert.rejects(() => page(2), transient);
+    await assert.rejects(() => page(2), transient);
+    // So does a short answer for another page.
+    await assert.rejects(() => page(3), transient);
+    await assert.rejects(() => page(2), transient);
+    await assert.rejects(() => page(2), transient);
+    const end = await page(2);
+    assert.equal(end.exhausted, true, 'the third short answer in a row ends the listing');
+    assert.equal(end.items.length, 10);
+    // The count was cleared: the next short answer is again a transient error.
+    await assert.rejects(() => page(2), transient);
   });
 });
 

@@ -15,9 +15,23 @@ export const itemTypes = ['tv'];
 
 const API = 'https://iptv-org.github.io/api';
 
+// A good channel list is used for this long; the next load after it fetches
+// the list again while the old one stays in use (a failed refresh keeps it).
+export const IPTV_FRESH_MS = 6 * 60 * 60 * 1000;
+// After a failed refresh or logo download, the next try waits this long.
+const RETRY_GAP_MS = 10 * 60 * 1000;
+// Logos are optional: once streams and channels are in, the list waits at
+// most this long for them (not at all when their download already failed).
+export const LOGO_WAIT_MS = 6_000;
+
 let cachedItemsPromise = null;
 let cachedItems = null;
 let cachedItemsById = new Map();
+let cachedWithLogos = false;
+let refreshAt = 0;
+let logoMap = null;
+let logosRequest = null;
+let logosRetryAt = 0;
 const FILTER_POOL_CACHE_MAX = 16;
 const filteredPoolCache = new Map();
 const MAX_STREAM_CANDIDATES = 8;
@@ -84,34 +98,94 @@ function compareItems(a, b) {
   return metadataScore(b) - metadataScore(a);
 }
 
+// logos.json lives separately from channels.json — channels.json carries no
+// logo field. We join by channel id and prefer in-use, language-neutral logos.
+function buildLogoMap(logos) {
+  if (!Array.isArray(logos) || logos.length === 0) throw new TypeError('iptv-org returned no logos');
+  const map = new Map();
+  // Prefer in_use === true, square or near-square images, no tags (default variant).
+  for (const lg of logos) {
+    if (!lg?.channel || !lg?.url) continue;
+    const existing = map.get(lg.channel);
+    const isPref = lg.in_use !== false && (!lg.tags || lg.tags.length === 0);
+    if (!existing) { map.set(lg.channel, { url: lg.url, pref: isPref }); continue; }
+    if (!existing.pref && isPref) map.set(lg.channel, { url: lg.url, pref: isPref });
+  }
+  return map;
+}
+
+function keepList(items, withLogos) {
+  cachedItems = items;
+  cachedItemsById = new Map(items.map((item) => [item.id, item]));
+  cachedWithLogos = withLogos;
+  filteredPoolCache.clear();
+}
+
+/** Logos that arrived after the list was built: added in the same order, so
+ *  pages already shown keep their places. */
+function addLogos() {
+  keepList(cachedItems.map((item) => {
+    const channel = item._extra?.hasChannel ? item.id.slice(id.length + 1) : '';
+    const logo = channel ? (logoMap.get(channel)?.url || '') : '';
+    return logo && !item.thumbnail ? { ...item, thumbnail: logo } : item;
+  }), true);
+}
+
+/** One logos.json download at a time; once in, it is kept for the session. */
+function loadLogos() {
+  if (logoMap) return Promise.resolve(logoMap);
+  if (!logosRequest) {
+    const request = getJson(`${API}/logos.json`).then((logos) => {
+      logoMap = buildLogoMap(logos);
+      if (cachedItems && !cachedWithLogos) addLogos();
+      return logoMap;
+    });
+    const settle = () => { if (logosRequest === request) logosRequest = null; };
+    request.then(settle, () => { logosRetryAt = Date.now() + RETRY_GAP_MS; settle(); });
+    logosRequest = request;
+  }
+  return logosRequest;
+}
+
+async function logosWithin(pending, ms) {
+  let timer = null;
+  try {
+    return await Promise.race([pending, new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function ensureLoaded(opts = {}) {
-  if (cachedItems) return cachedItems;
+  if (cachedItems) {
+    // The kept list answers at once; a stale one is fetched again (and
+    // missing logos asked for again) in the background.
+    const now = Date.now();
+    if (now >= refreshAt) loadList().catch(() => {});
+    else if (!cachedWithLogos && now >= logosRetryAt) loadLogos().catch(() => {});
+    return cachedItems;
+  }
+  return awaitWithSignal(loadList(), opts.signal);
+}
+
+function loadList() {
   if (!cachedItemsPromise) {
     const request = (async () => {
-    // logos.json lives separately from channels.json — channels.json carries no
-    // logo field. We join by channel id and prefer in-use, language-neutral logos.
-    const [streams, channels, logos] = await Promise.all([
+    const pendingLogos = loadLogos().catch(() => null);
+    const [streams, channels] = await Promise.all([
       getJson(`${API}/streams.json`),
       getJson(`${API}/channels.json`),
-      getJson(`${API}/logos.json`).catch(() => []),
     ]);
     if (!Array.isArray(streams) || !Array.isArray(channels)) {
       throw new TypeError('iptv-org returned invalid streams or channels data');
     }
+    // An empty answer is a failed load: never kept, and a previous good list stays.
+    if (streams.length === 0 || channels.length === 0) {
+      throw new TypeError('iptv-org returned no streams or no channels');
+    }
+    const logos = logoMap || await logosWithin(pendingLogos, LOGO_WAIT_MS);
     const channelMap = new Map();
     for (const c of channels) channelMap.set(c.id, c);
-
-    const logoMap = new Map();
-    if (Array.isArray(logos)) {
-      // Prefer in_use === true, square or near-square images, no tags (default variant).
-      for (const lg of logos) {
-        if (!lg?.channel || !lg?.url) continue;
-        const existing = logoMap.get(lg.channel);
-        const isPref = lg.in_use !== false && (!lg.tags || lg.tags.length === 0);
-        if (!existing) { logoMap.set(lg.channel, { url: lg.url, pref: isPref }); continue; }
-        if (!existing.pref && isPref) logoMap.set(lg.channel, { url: lg.url, pref: isPref });
-      }
-    }
 
     const groups = new Map();
     for (const s of streams) {
@@ -135,7 +209,7 @@ async function ensureLoaded(opts = {}) {
       const primary = candidates[0];
       if (!primary) continue;
       const isNsfw = ch?.is_nsfw === true;
-      const logo = s.channel ? (logoMap.get(s.channel)?.url || '') : '';
+      const logo = s.channel && logos ? (logos.get(s.channel)?.url || '') : '';
       const item = makeItem({
         id: itemId,
         title: ch?.name || s.title || s.channel || 'Channel',
@@ -172,20 +246,23 @@ async function ensureLoaded(opts = {}) {
     // The upstream streams feed starts with thousands of unlinked streams whose
     // channel is null, which means no country/category/logo join is possible.
     // Keep them as fallback inventory, but surface fully joined channels first.
+    if (items.length === 0) throw new TypeError('iptv-org returned no playable streams');
     items.sort(compareItems);
-    cachedItems = items;
-    cachedItemsById = new Map(items.map((item) => [item.id, item]));
-    filteredPoolCache.clear();
+    keepList(items, !!logos);
+    refreshAt = Date.now() + IPTV_FRESH_MS;
     return items;
     })();
     cachedItemsPromise = request;
-    request.catch(() => {
-      // A failed preload must not poison the adapter for the rest of the app
-      // session. The next caller gets a clean retry.
-      if (cachedItemsPromise === request) cachedItemsPromise = null;
+    const settle = () => { if (cachedItemsPromise === request) cachedItemsPromise = null; };
+    request.then(settle, () => {
+      // A failed load must not poison the adapter for the rest of the app
+      // session: the next caller gets a clean retry, and a failed refresh
+      // keeps the old list for a while before trying again.
+      if (cachedItems) refreshAt = Date.now() + RETRY_GAP_MS;
+      settle();
     });
   }
-  return awaitWithSignal(cachedItemsPromise, opts.signal);
+  return cachedItemsPromise;
 }
 
 /** Refresh alternates for an older favorite before giving up on its saved URL. */
@@ -288,11 +365,12 @@ export async function browsePage(opts = {}) {
 
 export async function random(opts = {}) {
   const items = await ensureLoaded(opts);
-  const filtered = filterAndPaginate(items, { ...opts, limit: items.length, offset: 0 }, '');
-  const pool = [...filtered];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+  // Picked from the whole filtered pool, not only its first page.
+  const pool = [...filteredPool(items, opts, '')];
+  const count = Math.min(opts.limit || 20, 60, pool.length);
+  for (let i = 0; i < count; i++) {
+    const j = i + Math.floor(Math.random() * (pool.length - i));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  return pool.slice(0, Math.min(opts.limit || 20, 60));
+  return pool.slice(0, count);
 }

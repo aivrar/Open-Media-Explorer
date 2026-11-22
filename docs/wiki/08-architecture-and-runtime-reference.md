@@ -45,7 +45,16 @@ front end calls it through an authenticated same-origin control session.
 Library finite browsing has one cursor/progress record per enabled source. Only
 `exhausted: true` retires a cursor. Errors preserve the cursor and mark the
 source retrying/rate-limited. Snapshot adapters have a separate refresh manager
-so a live empty snapshot cannot complete a VOD archive.
+so a live empty snapshot cannot complete a VOD archive. A live list is read
+the first time whichever Library view is open, and until it has arrived once
+its retries do not wait for a view that shows it; after that it is refreshed
+only while it is shown.
+
+Requests to the catalog providers pass a gate in `src/lib/http.js`: at most
+four are sent at a time, and a request waits for its turn before its time
+limit starts, because the embedded browser gives the local server six
+connections that pictures, the playing stream and the page's own calls share.
+The server asks the providers for gzip and passes it through.
 
 ## Catalog state and rendering
 
@@ -66,6 +75,14 @@ two at a time. The first working candidate wins; losing relay registrations are
 expired. `worldmedia_media.py` validates redirects, DNS/public addresses,
 content types, byte ranges, and manifest sizes. HLS/DASH manifests are rewritten
 to local opaque child resources.
+
+Every outbound connection is made to an address from the validated lookup of
+the host. Since v0.1.15 the addresses are tried together: IPv4 first, the next
+address a quarter of a second later (at once when an attempt fails outright),
+and the first that connects is used; the whole attempt has one time limit of
+eight seconds. The address that answered is tried first for that host for the
+next ten minutes. Before, the addresses were tried one after another, each
+with the full time limit.
 
 With **Pick the best stream** on **Listed streams** (the default) or **Auto
 (verified)**, `src/lib/best-stream.js` first ranks the listed streams by what

@@ -11,6 +11,7 @@ import {
   loadMore, pauseCatalogWork, reconcileContentPreference, retrySources, runSearch,
 } from '../src/modes/library/chain.js';
 import { ui } from '../src/modes/library/shell-refs.js';
+import { slowWaitingSourceIds, wakeWaitingSources } from '../src/modes/library/chain.js';
 import { FakeElement } from './helpers/fake-dom.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -302,4 +303,64 @@ test('a search failure shows a declared wait capped like the scheduler and brows
   assert.match(record, /retryAt: Date\.now\(\) \+ Math\.min\(RETRY_AFTER_MAX_MS, Number\(error\?\.retryAfterMs \|\| 0\)\),/);
   assert.match(chain, /recordSourceSuccess, RETRY_AFTER_MAX_MS,[\s\S]*?\} from '\.\/progress\.js';/);
   assert.equal(RETRY_AFTER_MAX_MS, MAX_RETRY_AFTER_MS);
+});
+
+test('a plain search failure (a 500 that declares no wait) is shown as retrying, not rate-limited', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } });
+  try {
+    await withChain(['nasa'], async () => {
+      // The search really runs: NASA answers 500, an HttpError with retryAfterMs null.
+      catalogScheduler.enqueue = (job) => job.task({ signal: job.signal });
+      view.query = 'moon';
+      await runSearch();
+      await flush();
+      const status = view.sourceStatus.get('nasa');
+      assert.equal(status.state, 'retrying');
+      assert.equal(view.sourceProgress.get('nasa').rateLimited, false, 'no hold recorded either');
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('the line coming back wakes sources in their slow retry, and only those', async () => {
+  await withChain(['nasa', 'wikimedia', 'librivox'], async () => {
+    view.catalogActive = true;
+    const now = Date.now();
+    const held = holdSource('wikimedia', now);
+    const quick = backOffSource('librivox', now);
+    const failure = { status: 0, message: 'Timed out after 22000 ms' };
+    const slow = createSourceProgress();
+    slow.cursor = 'page-3';
+    for (let count = 0; count < 4; count++) recordSourceFailure(slow, failure, now);
+    view.sourceProgress.set('nasa', slow);
+    catalogScheduler.recordFailure('nasa', failure);
+    assert.ok(slow.retryAt - now >= 60_000, 'it waits minutes by itself');
+
+    view.lastQuery = 'moon';
+    assert.deepEqual(slowWaitingSourceIds(), [], 'a search is not the catalog being collected');
+    view.lastQuery = '';
+    assert.deepEqual(slowWaitingSourceIds(), ['nasa']);
+
+    wakeWaitingSources();
+
+    assert.equal(slow.retryAt, 0, 'asked again now');
+    assert.equal(slow.forceNext, true, 'afresh, like Retry now');
+    assert.equal(slow.failures, 4, 'a new failure goes straight back to the long wait');
+    assert.equal(slow.cursor, 'page-3', 'from where it stopped');
+    assert.equal(catalogScheduler.cooldownRemainingMs('nasa'), 0);
+    assert.equal(isHeldProgress(held), true, 'a wait the provider declared is kept');
+    assert.ok(catalogScheduler.declaredCooldownRemainingMs('wikimedia') > HOUR);
+    assert.ok(quick.retryAt > now, 'a quick retry keeps its own short wait');
+    assert.deepEqual(slowWaitingSourceIds(), [], 'nothing left to wake');
+
+    // It fails again (the provider itself is down): not woken again for five minutes.
+    recordSourceFailure(slow, failure, Date.now());
+    assert.ok(slow.retryAt > Date.now());
+    assert.deepEqual(slowWaitingSourceIds(), [], 'one early try, then its own schedule');
+    assert.deepEqual(slowWaitingSourceIds(Date.now() + 5 * 60_000 + 1_000).length <= 1, true);
+    slow.wokenAt = 0; // as after an answer
+    assert.deepEqual(slowWaitingSourceIds(), ['nasa'], 'after it answered, the next drop wakes it at once');
+  });
 });

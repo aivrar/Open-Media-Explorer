@@ -28,9 +28,44 @@ CONTENT_EXTENSIONS = {
     "audio/flac": "flac", "audio/ogg": "ogg", "audio/opus": "opus",
     "video/mp4": "mp4", "video/webm": "webm", "video/ogg": "ogv",
     "video/quicktime": "mov", "video/mp2t": "ts",
+    "audio/x-m4a": "m4a", "audio/m4a": "m4a", "audio/x-aac": "aac", "audio/aacp": "aac",
+    "audio/x-flac": "flac", "audio/wave": "wav", "audio/vnd.wave": "wav",
+    "audio/webm": "webm", "audio/vorbis": "ogg", "application/ogg": "ogg",
+    "video/x-m4v": "mp4",
     "application/zip": "zip", "application/x-zip-compressed": "zip",
     "application/pdf": "pdf", "application/epub+zip": "epub",
 }
+# Sound alone is often served under a type that is also used for pictures: an
+# M4A as video/mp4, sound-only WebM as video/webm, Ogg sound as video/ogg. For
+# an audio download whose name ends in one of these, that is not a mismatch,
+# and the file keeps the ending it was offered with.
+# The file must also begin the way that container begins.
+AUDIO_IN_VIDEO_CONTAINER = {
+    "video/mp4": frozenset({"m4a"}),
+    "video/quicktime": frozenset({"m4a"}),
+    "video/webm": frozenset({"webm"}),
+    "video/ogg": frozenset({"ogg", "oga", "opus"}),
+}
+
+
+def _container_signature_matches(content_type: str, first_chunk: bytes) -> bool:
+    if content_type in {"video/mp4", "video/quicktime"}:
+        return first_chunk[4:8] == b"ftyp"
+    if content_type == "video/webm":
+        return first_chunk[:4] == b"\x1a\x45\xdf\xa3"
+    if content_type == "video/ogg":
+        return first_chunk[:4] == b"OggS"
+    return False
+
+
+def _audio_in_video_container(registration: MediaRegistration, content_type: str, first_chunk: bytes) -> bool:
+    suggested = Path(registration.download_name).suffix.lower().lstrip(".")
+    return (
+        registration.media_type == "audio"
+        and suggested in SAFE_EXTENSIONS
+        and suggested in AUDIO_IN_VIDEO_CONTAINER.get(content_type, ())
+        and _container_signature_matches(content_type, first_chunk)
+    )
 REJECTED_CONTENT_TYPES = frozenset({
     "text/html", "application/xhtml+xml", "application/json", "application/xml", "text/xml",
 })
@@ -62,6 +97,9 @@ def _trusted_extension(registration: MediaRegistration, content_type: str) -> st
     mapped = CONTENT_EXTENSIONS.get(content_type)
     if suggested in SAFE_EXTENSIONS and (not mapped or suggested == mapped or content_type == "application/octet-stream"):
         return suggested
+    if registration.media_type == "audio" and suggested in AUDIO_IN_VIDEO_CONTAINER.get(content_type, ()):
+        # Nothing is kept under this name unless _validate_content then accepts the file's first bytes.
+        return suggested
     if mapped:
         return mapped
     return "bin"
@@ -70,7 +108,11 @@ def _trusted_extension(registration: MediaRegistration, content_type: str) -> st
 def _validate_content(registration: MediaRegistration, content_type: str, first_chunk: bytes) -> None:
     if content_type in REJECTED_CONTENT_TYPES or first_chunk.lstrip()[:32].lower().startswith((b"<!doctype html", b"<html")):
         raise DownloadError("The source returned a web/error document instead of media.", code="INVALID_MEDIA_CONTENT")
-    if registration.media_type == "audio" and content_type.startswith("video/"):
+    if (
+        registration.media_type == "audio"
+        and content_type.startswith("video/")
+        and not _audio_in_video_container(registration, content_type, first_chunk)
+    ):
         raise DownloadError("The source returned video for an audio download.", code="CONTENT_TYPE_MISMATCH")
     if registration.media_type == "video" and content_type.startswith("audio/"):
         raise DownloadError("The source returned audio for a video download.", code="CONTENT_TYPE_MISMATCH")

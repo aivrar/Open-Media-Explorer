@@ -51,7 +51,9 @@ export function connectionKnownDown(now = Date.now()) {
 }
 
 function askOutside() {
-  return getJson(CONFIRM_URL, { timeoutMs: CONFIRM_TIMEOUT_MS, retries: 0 });
+  // Urgent: it must not wait behind stalled catalog requests (http.js), or a
+  // full queue would look like a dropped line.
+  return getJson(CONFIRM_URL, { timeoutMs: CONFIRM_TIMEOUT_MS, retries: 0, urgent: true });
 }
 
 /** Resolves to true when the connection works (one small request at most

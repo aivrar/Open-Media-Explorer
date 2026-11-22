@@ -17,6 +17,15 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
+**New in v0.1.15:** channels, stations and episodes load faster and keep
+loading through a poor connection: Radio Browser stations arrive 300 at a time,
+lists are sent compressed, a server with a dead or slow address no longer holds
+things up, and sources that failed are asked again by themselves when the
+connection comes back. Podcast episodes published as M4A, Ogg, Opus, FLAC, WAV
+or WebM are now listed and play, and so are more media.ccc.de, Wikimedia
+Commons and Internet Archive recordings. Owncast and the media.ccc.de live
+rooms are listed from the start, whichever Library view is open.
+
 **New in v0.1.14:** stations on an old Shoutcast server, which did not play
 although their address worked in a browser, now play, with their song titles.
 Reported in [issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6).
@@ -90,13 +99,15 @@ technical details back).
 · [Full documentation](docs/wiki/README.md)
 · [Release history](https://github.com/aivrar/Open-Media-Explorer/releases)
 
-![Open Media Explorer - Library view](screenshots/updated%20screenshots/all_sources.PNG)
+![Open Media Explorer - Library view](screenshots/v0.1.14/library.png)
+
+![A short tour of the tabs: Library, Tuner, Grid, Now Playing and Visualizer](screenshots/v0.1.14/demo-tour.gif)
 
 | Tune live radio and TV | Discover something unexpected |
 |---|---|
-| ![World Media Tuner](screenshots/updated%20screenshots/tuner.PNG) | ![World Media Discovery](screenshots/updated%20screenshots/discovery.PNG) |
+| ![World Media Tuner](screenshots/v0.1.14/tuner.png) | ![World Media Discovery](screenshots/v0.1.14/discovery.png) |
 
-![Ten-band equalizer with automatic presets](screenshots/updated%20screenshots/eq.PNG)
+![Ten-band equalizer with presets](screenshots/v0.1.14/equalizer.png)
 
 ## Install
 
@@ -111,7 +122,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.14-portable.zip
+WorldMediaWindows-0.1.15-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -147,7 +158,7 @@ Seven tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**,
 and source: Radio Browser, iptv-org, Internet Archive, NASA, Wikimedia Commons,
 LibriVox, media.ccc.de/C3VOC, gPodder Podcasts, PeerTube, and Owncast.
 
-![Library - TV channels with sidebar counts](screenshots/1.PNG)
+![Library - Favorites in categories, with a station's details open](screenshots/v0.1.14/favorites.png)
 
 **Tuner** - a radio-style dial for live radio and live TV. Drag the dial,
 scroll the mouse wheel, or use arrow keys; the dial shows each station's place
@@ -157,14 +168,16 @@ your Favorites. **Settings > Appearance > Tuner card size** makes the station
 cards under the dial Small, Medium or Large; Medium and Large show each
 station's picture.
 
-![Tuner - analog dial](screenshots/2.PNG)
+![Tuner - the dial moving from station to station](screenshots/v0.1.14/demo-tuner.gif)
 
 **Library detail panel** - click any item to see metadata, license, source, and
 play it.
 
-![Library - detail panel with Wikimedia Commons video](screenshots/3.PNG)
+![Library - detail panel with a NASA video in the larger player](screenshots/v0.1.14/video.png)
 
 **Grid** - TV-guide-style tiles for live radio and live TV.
+
+![Grid - live radio tiles](screenshots/v0.1.14/grid.png)
 
 **Discovery** - random open media from the enabled sources.
 
@@ -172,6 +185,8 @@ play it.
 over a blurred copy of it, its name, the song a radio station announces (with
 a star and **Copy**), the stream details, how long it has played, and a large
 sound meter.
+
+![Now Playing - station picture, song and the large sound meter](screenshots/v0.1.14/now-playing.png)
 
 **Visualizer** - pictures that move with the sound of whatever is playing. It
 has 103 scenes (flat patterns, 3D scenes, simulations and line drawings), a
@@ -187,6 +202,17 @@ changes the sound. It shows moving, flashing pictures: a notice about
 photosensitivity comes before the first picture, and a flash limiter is always
 on. Work on it continues. See the
 [Visualizer page](docs/wiki/09-visualizer.md).
+
+![The Visualizer moving with the music: four scenes with effects and overlays](screenshots/v0.1.14/demo-visualizer.gif)
+
+| | |
+|---|---|
+| ![Visualizer - Black Hole with Lasers and Tron Hex Grid](screenshots/v0.1.14/visualizer-black-hole.jpg) | ![Visualizer - Synthwave Grid with Matrix Rain and Neon Frame](screenshots/v0.1.14/visualizer-synthwave.jpg) |
+| ![Visualizer - Kleinian Group with Sacred Geometry](screenshots/v0.1.14/visualizer-kleinian.jpg) | ![Visualizer - Hyperbolic Tiling with Starburst and Dot Spiral](screenshots/v0.1.14/visualizer-hyperbolic.jpg) |
+| ![Visualizer - Mandelbrot Deep with the Stained Glass effect](screenshots/v0.1.14/visualizer-stained-glass.jpg) | ![Visualizer - Flow Field with the Oil Paint effect](screenshots/v0.1.14/visualizer-flow-field.jpg) |
+| ![Visualizer - Physarum with Lasers and Neon Frame](screenshots/v0.1.14/visualizer-physarum.jpg) | ![Visualizer - Aurora with Sacred Geometry and Dot Spiral](screenshots/v0.1.14/visualizer-aurora.jpg) |
+
+![Visualizer - the settings panel with the Effects list](screenshots/v0.1.14/visualizer-panel.png)
 
 Library discovery collects concurrently from enabled sources, with independent
 provider pacing and backoff. There is no fixed total-item cap. Only 300 cards
@@ -225,7 +251,7 @@ one category. **Rename** in a favorite's details gives it a name of your own;
 **Use original name** brings the station's name back. **Remove all
 favorites** asks first and says how many it will remove.
 
-![My Playlists and the Add link form, shown with public sample channels](screenshots/v0.1.3/my-playlists.png)
+![My Playlists and the Add link form, shown with public sample channels](screenshots/v0.1.14/my-playlists.png)
 
 ### Song titles, station pictures, and backup
 
@@ -236,6 +262,8 @@ copy or save as a CSV file. Star a song in the log, or the one playing now
 with the star on the player bar, to keep it under **Starred songs**, where it
 can be looked up on the web or on YouTube or saved as a text or CSV file. Not
 every station sends titles, and stations delivered as HLS do not show one.
+
+![Song log with starred songs](screenshots/v0.1.14/song-log.png)
 
 Put a picture named exactly like a station (PNG, JPG, WebP or GIF, up to 2 MB)
 in the `station-images` folder (**Settings → Station images → Open folder**),
@@ -274,6 +302,16 @@ Settings includes **System**, **Dark · Teal**, **Light**, **Midnight · Blue**,
 immediately and persist across launches. System follows the Windows light/dark
 preference.
 
+| Midnight · Blue | Forest · Green |
+|---|---|
+| ![Midnight theme - Now Playing](screenshots/v0.1.14/theme-midnight.png) | ![Forest theme - Favorites](screenshots/v0.1.14/theme-forest.png) |
+
+| Ember · Orange | Amethyst · Violet |
+|---|---|
+| ![Ember theme - Tuner](screenshots/v0.1.14/theme-ember.png) | ![Amethyst theme - Grid](screenshots/v0.1.14/theme-amethyst.png) |
+
+![Settings - Appearance](screenshots/v0.1.14/settings.png)
+
 The native title bar follows the selected theme too. Windows 11 supports the
 exact palette color; Windows 10 uses the matching dark or light caption style.
 
@@ -288,9 +326,7 @@ that a station is really playing. It only reads the sound, rests while nothing
 is heard, and can be switched off in **Settings > Appearance > Sound meter in
 the player bar**.
 
-![Fullscreen TV - live IPTV from iptv-org](screenshots/4.PNG)
-
-![Fullscreen video - NASA Image and Video Library](screenshots/5.PNG)
+![Now Playing with the sound meter moving](screenshots/v0.1.14/demo-now-playing.gif)
 
 ## Download, Record, And Equalize
 
@@ -412,7 +448,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.14-portable.zip
+dist\WorldMediaWindows-0.1.15-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

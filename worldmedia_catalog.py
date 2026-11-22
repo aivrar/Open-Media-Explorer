@@ -12,6 +12,7 @@ import email.utils
 import hashlib
 import heapq
 import html
+import io
 import ipaddress
 import json
 import os
@@ -29,7 +30,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from defusedxml.ElementTree import fromstring as safe_xml_fromstring
+from defusedxml.ElementTree import iterparse as safe_xml_iterparse
 from defusedxml.common import DefusedXmlException
 
 from worldmedia_media import ResolvedTarget, SafeConnector
@@ -48,10 +49,15 @@ MAX_ASSET_BYTES = 5 * 1024 * 1024
 MAX_ASSET_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 8192
 MAX_IMAGE_PIXELS = 40_000_000
-MAX_XML_ELEMENTS = 10_000
+# Podcast feeds only (resolve_feed and parse_podcast_feed). Popular feeds with
+# 1,000 to 3,000 episodes measure 17k to 85k elements and 3 to 9 MB of text.
+MAX_FEED_COMPRESSED_BYTES = 4 * 1024 * 1024
+MAX_FEED_DECODED_BYTES = 16 * 1024 * 1024
+MAX_XML_ELEMENTS = 250_000
 MAX_XML_DEPTH = 64
-MAX_XML_ATTRIBUTES = 50_000
-MAX_XML_TEXT = 2 * 1024 * 1024
+# Five per element on average, as before; a real item averages well under one.
+MAX_XML_ATTRIBUTES = 1_250_000
+MAX_XML_TEXT = MAX_FEED_DECODED_BYTES
 MAX_FEED_ITEMS = 1_000
 MAX_OWNCAST_ITEMS = 5_000
 MAX_UPSTREAM_SECONDS = 30.0
@@ -85,6 +91,7 @@ _SENSITIVE_QUERY = re.compile(
     r"(?i)(?:^|[_-])(?:access|auth|credential|key|pass|password|secret|sig|signature|token)(?:$|[_-])"
 )
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_WHITESPACE = re.compile(r"\s")
 _BIDI_CONTROL = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
 _LOCAL_PATH = re.compile(r"(?i)(?:[a-z]:[\\/](?:users|windows|programdata)|/(?:home|users|etc|proc|sys)/)")
 _IPV4_TEXT = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])")
@@ -684,7 +691,9 @@ class BoundedFetcher:
             if held:
                 raise _challenge_error(held)
         started = float(self.clock.monotonic())
-        upstream = self.connector.open(url, method="GET", headers=request_headers, cancel=self.cancel)
+        # Ask for gzip: the bounded decoder below enforces both limits, and a
+        # large feed or list is often a fifth of its size compressed.
+        upstream = self.connector.open(url, method="GET", headers=request_headers, cancel=self.cancel, accept_gzip=True)
         try:
             response = upstream.response
             status = int(response.status)
@@ -723,13 +732,16 @@ class BoundedFetcher:
             allowed = tuple(item.lower() for item in allowed_types)
             if not content_type or not any(content_type == item or (item.endswith("/*") and content_type.startswith(item[:-1])) for item in allowed):
                 raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_CONTENT_TYPE", "Catalog source returned an unexpected content type.")
-            length_value = response.getheader("Content-Length")
-            if length_value:
-                if not length_value.strip().isdecimal() or int(length_value) > max_compressed:
-                    raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_BODY_TOO_LARGE", "Catalog response is too large.")
             encoding = (response.getheader("Content-Encoding", "identity") or "identity").strip().lower()
             if encoding not in {"identity", "gzip", "deflate"}:
                 raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_ENCODING_UNSUPPORTED", "Catalog response encoding is unsupported.")
+            # An uncompressed body is already the decoded body, so it is bound
+            # by the decoded limit; max_compressed bounds compressed bytes only.
+            wire_limit = max_decoded if encoding == "identity" else max_compressed
+            length_value = response.getheader("Content-Length")
+            if length_value:
+                if not length_value.strip().isdecimal() or int(length_value) > wire_limit:
+                    raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_BODY_TOO_LARGE", "Catalog response is too large.")
             decoder = None
             if encoding == "gzip":
                 decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
@@ -739,7 +751,7 @@ class BoundedFetcher:
             decoded = bytearray()
             for chunk in upstream.iter_chunks(cancel=self.cancel):
                 compressed += len(chunk)
-                if compressed > max_compressed:
+                if compressed > wire_limit:
                     raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_BODY_TOO_LARGE", "Catalog response is too large.")
                 if float(self.clock.monotonic()) - started > MAX_UPSTREAM_SECONDS:
                     raise _error(HTTPStatus.GATEWAY_TIMEOUT, "CATALOG_TOTAL_TIMEOUT", "Catalog source took too long to respond.", True)
@@ -786,13 +798,11 @@ def bounded_text(value: Any, limit: int = 4096) -> str:
         return ""
     value = html.unescape(" ".join(parser.parts))
     value = _BIDI_CONTROL.sub("", value)
-    characters: list[str] = []
-    for char in value:
-        if char.isspace():
-            characters.append(" ")
-        elif not _CONTROL.match(char):
-            characters.append(char)
-    value = "".join(characters)
+    # Every whitespace character becomes a space, then the other control
+    # characters go. Regex \s matches exactly what str.isspace() accepts (all
+    # code points checked); this replaced a per-character loop that took
+    # seconds on a large feed's descriptions.
+    value = _CONTROL.sub("", _WHITESPACE.sub(" ", value))
     return re.sub(r"\s+", " ", value).strip()[:limit]
 
 
@@ -921,6 +931,44 @@ def _date(value: str) -> str:
     return parsed.astimezone(_datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _parse_feed_xml(data: bytes) -> Any:
+    """Parse a feed, refusing it as soon as it passes the element, depth or
+    attribute limits, so a hostile feed never grows a tree past them.
+
+    defusedxml's iterparse builds the same DefusedXMLParser as its fromstring
+    with the same three forbid flags, so it is exactly as strict. It reads 16
+    KiB at a time: the tree holds at most one such slice beyond the limit.
+    _validate_xml_tree() still runs on the finished tree.
+    """
+    elements = 0
+    attributes = 0
+    depth = 0
+    root = None
+    events = safe_xml_iterparse(
+        io.BytesIO(data), events=("start", "end"),
+        forbid_dtd=True, forbid_entities=True, forbid_external=True,
+    )
+    try:
+        for event, element in events:
+            if event == "end":
+                depth -= 1
+                continue
+            if root is None:
+                root = element
+            elements += 1
+            depth += 1
+            attributes += len(element.attrib)
+            if elements > MAX_XML_ELEMENTS or depth > MAX_XML_DEPTH or attributes > MAX_XML_ATTRIBUTES:
+                raise _error(HTTPStatus.BAD_GATEWAY, "FEED_XML_TOO_COMPLEX", "Podcast feed XML is too complex.")
+    finally:
+        close = getattr(events, "close", None)
+        if callable(close):
+            close()
+    if root is None:
+        raise SyntaxError("no element found")
+    return root
+
+
 def _validate_xml_tree(root: Any) -> None:
     elements = 0
     attributes = 0
@@ -947,6 +995,142 @@ def _validate_xml_tree(root: Any) -> None:
         stack.extend((child, depth + 1) for child in reversed(list(element)))
 
 
+# Podcast enclosure formats. An episode is listed when its file is one the
+# page's embedded browser (WebView2, Chromium) plays itself: MP3, AAC/M4A, Ogg
+# Vorbis or Opus, FLAC, WAV and WebM audio; H.264 in MP4/M4V/MOV, and VP8, VP9
+# or AV1 video; HLS. Refused: Theora (.ogv, video/ogg), HEVC, Matroska (.mkv),
+# BitTorrent and any other declared type. src/adapters/gpodder.js applies the
+# same rules on the page (enclosureKind) and must be kept in step.
+_ENCLOSURE_AUDIO_TYPES = frozenset({
+    "audio/mpeg", "audio/mp3", "audio/x-mp3", "audio/mpeg3", "audio/x-mpeg",
+    "audio/mp4", "audio/x-m4a", "audio/m4a",
+    "audio/aac", "audio/aacp", "audio/x-aac",
+    "audio/ogg", "audio/opus", "audio/vorbis",
+    "audio/flac", "audio/x-flac",
+    "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave",
+    "audio/webm",
+})
+_ENCLOSURE_VIDEO_TYPES = frozenset({"video/mp4", "video/x-m4v", "video/quicktime", "video/webm"})
+_ENCLOSURE_GENERIC_TYPES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
+_ENCLOSURE_AUDIO_EXTENSIONS = (".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav")
+_ENCLOSURE_VIDEO_EXTENSIONS = (".mp4", ".m4v", ".mov", ".webm")
+_ENCLOSURE_REFUSED_EXTENSIONS = (".mkv", ".ogv", ".torrent")
+# Video containers that also carry audio-only files: with one of these audio
+# types the file is audio, not a contradiction (an AAC episode named .mp4).
+_ENCLOSURE_CONTAINER_AUDIO_TYPES = {
+    ".mp4": frozenset({"audio/mp4", "audio/x-m4a", "audio/m4a"}),
+    ".webm": frozenset({"audio/webm"}),
+}
+# application/ogg says only "Ogg": it is listed with an audio Ogg file name.
+_ENCLOSURE_OGG_AUDIO_EXTENSIONS = (".ogg", ".oga", ".opus")
+_ENCLOSURE_REFUSED_CODECS = re.compile(r"\b(?:theora|hev1|hvc1|dvh1|dvhe)\b")
+_ENCLOSURE_VIDEO_CODECS = re.compile(r"(?:^|[ ,])(?:avc1|avc3|h264|vp8|vp08|vp9|vp09|av01)(?:[., ]|$)")
+_ENCLOSURE_AUDIO_CODECS = re.compile(
+    r"(?:^|[ ,])(?:mp3|mpga|mpeg|mp4a|aac|opus|vorbis|flac|pcm[a-z0-9_-]*|1)(?:[., ]|$)"
+)
+
+
+def _enclosure_kind(path: str, mime_base: str, codecs: str) -> str:
+    """Return "audio", "video" or "hls" for a listable enclosure, or "".
+
+    path is the lower-case URL path, mime_base the lower-case type without
+    parameters, codecs the lower-case Podcasting 2.0 codecs value. A declared
+    type and the file name must not disagree about audio, video or HLS.
+    """
+    if "mpegurl" in mime_base:
+        mime_kind = "hls"
+    elif mime_base in _ENCLOSURE_AUDIO_TYPES:
+        mime_kind = "audio"
+    elif mime_base in _ENCLOSURE_VIDEO_TYPES:
+        mime_kind = "video"
+    elif mime_base == "application/ogg":
+        if not path.endswith(_ENCLOSURE_OGG_AUDIO_EXTENSIONS):
+            return ""
+        mime_kind = "audio"
+    elif mime_base in _ENCLOSURE_GENERIC_TYPES:
+        mime_kind = ""
+    else:
+        return ""
+    if path.endswith(_ENCLOSURE_REFUSED_EXTENSIONS):
+        return ""
+    if path.endswith(".m3u8"):
+        extension_kind = "hls"
+    elif path.endswith(_ENCLOSURE_AUDIO_EXTENSIONS):
+        extension_kind = "audio"
+    elif path.endswith(_ENCLOSURE_VIDEO_EXTENSIONS):
+        extension_kind = "video"
+        for suffix, audio_types in _ENCLOSURE_CONTAINER_AUDIO_TYPES.items():
+            if path.endswith(suffix) and mime_base in audio_types:
+                extension_kind = "audio"
+    else:
+        extension_kind = ""
+    if mime_kind and extension_kind and mime_kind != extension_kind:
+        return ""
+    kind = mime_kind or extension_kind
+    if kind not in {"audio", "video", "hls"}:
+        return ""
+    if codecs and _ENCLOSURE_REFUSED_CODECS.search(codecs):
+        return ""
+    if kind == "video" and codecs and not _ENCLOSURE_VIDEO_CODECS.search(codecs):
+        return ""
+    if kind == "audio" and codecs and not _ENCLOSURE_AUDIO_CODECS.search(codecs):
+        return ""
+    return kind
+
+
+def _enclosure_listed_before(value: Mapping[str, Any]) -> bool:
+    """True for an enclosure the earlier, narrower rule listed (MP3, H.264 MP4, HLS).
+
+    That rule is kept only for ordering: such enclosures come first in an
+    episode's list (_preferred_enclosures_first), so what played before still
+    plays first, and an episode without a GUID keeps the identity it had (the
+    address of its first enclosure). Listing itself follows _enclosure_kind.
+    """
+    path = urllib.parse.urlsplit(str(value.get("url", ""))).path.lower()
+    mime_base = str(value.get("type", ""))
+    codecs = str(value.get("codecs", ""))
+    if "mpegurl" in mime_base:
+        mime_kind = "hls"
+    elif mime_base in {"audio/mpeg", "audio/mp3"}:
+        mime_kind = "audio"
+    elif mime_base == "video/mp4":
+        mime_kind = "video"
+    elif mime_base in _ENCLOSURE_GENERIC_TYPES:
+        mime_kind = ""
+    else:
+        return False
+    if path.endswith(".m3u8"):
+        extension_kind = "hls"
+    elif path.endswith(".mp3"):
+        extension_kind = "audio"
+    elif path.endswith(".mp4"):
+        extension_kind = "video"
+    elif path.endswith((
+        ".aac", ".flac", ".m4a", ".m4v", ".mkv", ".mov", ".oga",
+        ".ogg", ".opus", ".torrent", ".wav", ".webm",
+    )):
+        return False
+    else:
+        extension_kind = ""
+    if mime_kind and extension_kind and mime_kind != extension_kind:
+        return False
+    kind = mime_kind or extension_kind
+    if kind not in {"audio", "video", "hls"}:
+        return False
+    if codecs and re.search(r"\b(?:av01|flac|hev1|hvc1|opus|theora|vorbis|vp0?[89])\b", codecs):
+        return False
+    if kind == "video" and codecs and not re.search(r"(?:^|[ ,])(?:avc1|avc3|h264)(?:[., ]|$)", codecs):
+        return False
+    if kind == "audio" and codecs and not re.search(r"(?:^|[ ,])(?:mp3|mpga|mpeg)(?:[., ]|$)", codecs):
+        return False
+    return True
+
+
+def _preferred_enclosures_first(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Enclosures the earlier rule listed first, each group in feed order."""
+    return sorted(values, key=lambda value: not _enclosure_listed_before(value))
+
+
 def _enclosure(
     url: str,
     mime: str,
@@ -968,40 +1152,14 @@ def _enclosure(
     byte_length = max(0, min(byte_length, 10**15))
     path = urllib.parse.urlsplit(normalized_url).path.lower()
     mime_base = mime.split(";", 1)[0].strip()
-    if "mpegurl" in mime_base:
-        mime_kind = "hls"
-    elif mime_base in {"audio/mpeg", "audio/mp3"}:
-        mime_kind = "audio"
-    elif mime_base == "video/mp4":
-        mime_kind = "video"
-    elif not mime_base or mime_base in {"application/octet-stream", "binary/octet-stream"}:
-        mime_kind = ""
-    else:
-        return None
-    if path.endswith(".m3u8"):
-        extension_kind = "hls"
-    elif path.endswith(".mp3"):
-        extension_kind = "audio"
-    elif path.endswith(".mp4"):
-        extension_kind = "video"
-    elif path.endswith((
-        ".aac", ".flac", ".m4a", ".m4v", ".mkv", ".mov", ".oga",
-        ".ogg", ".opus", ".torrent", ".wav", ".webm",
-    )):
-        return None
-    else:
-        extension_kind = ""
-    if mime_kind and extension_kind and mime_kind != extension_kind:
-        return None
-    kind = mime_kind or extension_kind
-    if kind not in {"audio", "video", "hls"}:
-        return None
     normalized_codecs = bounded_text(codecs, 256).lower()
-    if normalized_codecs and re.search(r"\b(?:av01|flac|hev1|hvc1|opus|theora|vorbis|vp0?[89])\b", normalized_codecs):
+    # A codec named inside the type itself (video/mp4; codecs="hvc1...") is
+    # refused like one named in the codecs field. Nothing more is read from it.
+    named_in_type = re.search(r';\s*codecs\s*=\s*"?([^";]*)', mime)
+    if named_in_type and _ENCLOSURE_REFUSED_CODECS.search(named_in_type.group(1)):
         return None
-    if kind == "video" and normalized_codecs and not re.search(r"(?:^|[ ,])(?:avc1|avc3|h264)(?:[., ]|$)", normalized_codecs):
-        return None
-    if kind == "audio" and normalized_codecs and not re.search(r"(?:^|[ ,])(?:mp3|mpga|mpeg)(?:[., ]|$)", normalized_codecs):
+    kind = _enclosure_kind(path, mime_base, normalized_codecs)
+    if not kind:
         return None
     return {
         "url": normalized_url,
@@ -1069,7 +1227,7 @@ def _rss_enclosures(item: Any, base: str) -> list[dict[str, Any]]:
                 result.append(value)
     deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for value in result:
+    for value in _preferred_enclosures_first(result):
         if value["url"] not in seen:
             seen.add(value["url"])
             deduped.append(value)
@@ -1081,11 +1239,13 @@ def _rss_enclosures(item: Any, base: str) -> list[dict[str, Any]]:
 def parse_podcast_feed(data: bytes, feed_url: str) -> dict[str, Any]:
     if not isinstance(data, bytes) or not data:
         raise _error(HTTPStatus.BAD_GATEWAY, "FEED_EMPTY", "Podcast feed was empty.")
+    # <?xml-stylesheet?> is allowed: the feed is turned into JSON here and is
+    # never rendered, so the processing instruction does nothing.
     upper = data[: min(len(data), 128 * 1024)].upper()
-    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper or b"<?XML-STYLESHEET" in upper:
+    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
         raise _error(HTTPStatus.BAD_GATEWAY, "FEED_XML_UNSAFE", "Podcast feed contains unsafe XML declarations.")
     try:
-        root = safe_xml_fromstring(data, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+        root = _parse_feed_xml(data)
     except DefusedXmlException:
         raise _error(HTTPStatus.BAD_GATEWAY, "FEED_XML_UNSAFE", "Podcast feed contains unsafe XML declarations.") from None
     except (ValueError, SyntaxError, RecursionError):
@@ -1196,6 +1356,7 @@ def parse_podcast_feed(data: bytes, feed_url: str) -> dict[str, Any]:
                     entry_home = _optional_url(link.attrib.get("href", ""), base=base)
             if not enclosures:
                 continue
+            enclosures = _preferred_enclosures_first(enclosures)
             guid = _identifier_text(_first(entry, "id", atom_namespace), 1024) or enclosures[0]["url"]
             summary = _first(entry, "summary", atom_namespace)
             if summary is None:
@@ -2711,8 +2872,8 @@ class CatalogService:
                     accept="application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9",
                     allowed_types={"application/rss+xml", "application/atom+xml", "application/xml", "text/xml", "application/octet-stream"},
                     headers=self._conditional(record),
-                    max_compressed=4 * 1024 * 1024,
-                    max_decoded=8 * 1024 * 1024,
+                    max_compressed=MAX_FEED_COMPRESSED_BYTES,
+                    max_decoded=MAX_FEED_DECODED_BYTES,
                 )
                 if fetched.status == HTTPStatus.NOT_MODIFIED:
                     refreshed = self._refresh_if_current(cache_epoch, provider, requested_url, ttl=ttl)

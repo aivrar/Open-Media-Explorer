@@ -21,7 +21,7 @@ test('a directory mirror that stayed silent until the caller gave up is dropped;
   assert.equal(mirrorTooSlow(0, LIVE_SOURCE_TIMEOUT_MS), true, 'a source that ran out its time limit');
   // The time is counted from the request itself, after a mirror was found.
   const source = (await read('src/adapters/radio-browser.js')).replace(/\r\n/g, '\n');
-  assert.match(source, /const base = await awaitWithSignal\(resolveBase\(\), opts\.signal\);\n\s*const askedAt = Date\.now\(\);\n\s*try \{/);
+  assert.match(source, /const base = await awaitWithSignal\(resolveBase\(failedBase\), opts\.signal\);\n\s*\/\/[^\n]*\n\s*if \(base === failedBase\) break;\n\s*const askedAt = Date\.now\(\);\n\s*try \{/);
 });
 
 test('an empty Tuner says the stations could not be loaded when a source did not answer', () => {

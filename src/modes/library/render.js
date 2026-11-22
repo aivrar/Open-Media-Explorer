@@ -193,19 +193,26 @@ export function renderResults() {
     // also cover background prefetch of every other source (and, during a
     // search, browse pages that have nothing to do with the results shown).
     const onlyHolds = viewWaitsOnlyOnHolds();
-    if (isPersonalSource() || onlyHolds || !viewHasPendingSources()) {
+    // Every source this view still needs failed its quick retries and is now
+    // asked again only every few minutes: say so instead of an empty page.
+    const slowSources = onlyHolds ? [] : viewSlowRetrySources();
+    if (isPersonalSource() || onlyHolds || slowSources.length > 0 || !viewHasPendingSources()) {
       // Hold notices explain the empty page only when nothing else is pending.
       const notices = onlyHolds ? currentSourceNotices() : [];
-      const message = notices.length > 0 ? notices.join(' ') : isPersonalSource()
+      const title = slowSources.length > 0 ? notAnsweringText(slowSources) : 'No matching items';
+      const message = slowSources.length > 0
+        ? 'World Media tries again by itself every few minutes. Retry now, below, tries at once.'
+        : notices.length > 0 ? notices.join(' ') : isPersonalSource()
         ? personalEmptyMessage() : view.query
         ? `Try a different search term, or pick a different source.`
         : `Type a search above, or browse a single source on the left.`;
+      const key = slowSources.length > 0 ? `${title} ${message}` : message;
       // An empty view left over from another tab keeps its own message; replace it.
-      if (ui.resultsHost.querySelector('.empty-state')?.getAttribute('data-message') !== message) {
+      if (ui.resultsHost.querySelector('.empty-state')?.getAttribute('data-message') !== key) {
         ui.resultsHost.innerHTML = '';
         renderedIds.clear();
-        const empty = el('div', { className: 'empty-state', attrs: { 'data-message': message } });
-        empty.appendChild(el('h3', { text: 'No matching items' }));
+        const empty = el('div', { className: 'empty-state', attrs: { 'data-message': key } });
+        empty.appendChild(el('h3', { text: title }));
         empty.appendChild(el('p', { text: message }));
         ui.resultsHost.appendChild(empty);
       }
@@ -999,6 +1006,43 @@ function sourceIsLoading(id, status, searching) {
     && progress.cursor == null && !(progress.loaded > 0));
 }
 
+/** A browse source whose quick retries are used up: it is asked again only
+ *  every few minutes (progress.js slowRetryDelayMs) until it answers. */
+export function isSlowRetryStatus(status) {
+  return status?.state === 'retrying' && status.slow === true;
+}
+
+/** "LibriVox is not answering" / "2 sources are not answering". */
+export function notAnsweringText(sourceIds) {
+  if (sourceIds.length === 1) {
+    const name = SOURCES.find((source) => source.id === sourceIds[0])?.displayName || 'This source';
+    return `${name} is not answering`;
+  }
+  return `${sourceIds.length} sources are not answering`;
+}
+
+/**
+ * The view's slow-retry sources when nothing else of the view is on its way:
+ * every other source is finished, switched off, has nothing more, or is
+ * waiting out a declared hold (which sends nothing either). Empty while
+ * anything else is loading, during a search (the visible status then belongs
+ * to the search) and in the personal views.
+ */
+export function viewSlowRetrySources(sources = effectiveStatusSources(), now = Date.now()) {
+  if (isPersonalSource() || (view.lastQuery || '').trim()) return [];
+  const slow = [];
+  for (const id of sources) {
+    const status = view.sourceStatus.get(id);
+    if (isSlowRetryStatus(status)) {
+      slow.push(id);
+      continue;
+    }
+    if (status?.state === 'disabled' || view.exhausted?.has(id) || isHeldStatus(status, now)) continue;
+    return [];
+  }
+  return slow;
+}
+
 /** Plain-language explanation for a waiting source, or '' when there is none
  *  (raw adapter errors stay in tooltips only). */
 export function sourceNotice(status) {
@@ -1049,6 +1093,14 @@ function compactSourceStatus(status, disabled) {
   }
   if (status?.state === 'rate-limited') {
     return { text: 'Wait', kind: 'wait', title: sourceNotice(status) || 'Rate limited; retry scheduled' };
+  }
+  if (isSlowRetryStatus(status)) {
+    const detail = sourceNotice(status) || status?.error || '';
+    return {
+      text: 'Wait',
+      kind: 'wait',
+      title: `Not answering; tried again every few minutes${detail ? ` (${detail})` : ''}`,
+    };
   }
   if (['retrying', 'error'].includes(status?.state)) {
     return { text: 'Wait', kind: 'wait', title: sourceNotice(status) || status?.error || 'Retry scheduled' };
@@ -1154,7 +1206,14 @@ export function updateSentinelStatus() {
     ui.sentinelButton.style.display = 'none';
   } else if (retryingSources.length > 0) {
     const notices = currentSourceNotices(retryingSources);
-    ui.sentinelStatus.textContent = `${total} items · ${retryingSources.length} ${retryingSources.length === 1 ? 'source' : 'sources'} retrying`
+    // During a search the line keeps its plain wording: a browse status
+    // restored under a search is not what the results shown wait for.
+    const slowOnes = searching
+      ? [] : retryingSources.filter((id) => isSlowRetryStatus(view.sourceStatus.get(id)));
+    const waiting = slowOnes.length > 0 && slowOnes.length === retryingSources.length
+      ? `${notAnsweringText(slowOnes)}; trying again every few minutes`
+      : `${retryingSources.length} ${retryingSources.length === 1 ? 'source' : 'sources'} retrying`;
+    ui.sentinelStatus.textContent = `${total} items · ${waiting}`
       + (notices.length > 0 ? ` · ${notices.join(' ')}` : '');
     ui.sentinelButton.textContent = 'Retry now';
     ui.sentinelButton.dataset.action = 'retry';

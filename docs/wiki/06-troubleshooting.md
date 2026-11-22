@@ -138,9 +138,21 @@ The labels are state, not final failure:
 - **Stale** means a prior live snapshot is still being used.
 - **Done** means only that the finite cursor reached its end.
 
-Since v0.1.12 a source whose page fails twice in a row, without the provider
-saying when to try again, stops loading by itself and shows the error. Use
-**Retry now** for waiting or stopped sources. Use **Check again** after all
+Since v0.1.15 a source whose page fails twice in a row, without the provider
+saying when to try again, is tried again by itself every few minutes (after
+one minute, then two, four and eight, then every ten). Its page says, for
+example, "LibriVox is not answering", the line under it offers **Retry now**,
+and the sidebar shows **Wait**. Use **Retry now** to try at once. When the
+connection has dropped and comes back, World Media notices within about half a
+minute and asks the waiting sources again by itself. In the Tuner and the
+Grid, a source that could not be loaded is tried again by itself after 15
+seconds, then after a minute, then every five minutes, and at once when the
+connection comes back; the other sources stay in the list meanwhile. A large
+catalog such as LibriVox arrives 30 items at a time, one request after
+another, so its count grows steadily while it shows **Pull**; that is normal
+collecting. Radio Browser arrives 300 stations at a time. Owncast and the
+media.ccc.de live rooms are read once at start whichever view is open, so
+their counts no longer stay at 0 while you look at Favorites or Radio. Use **Check again** after all
 finite sources show Done. Scroll near the bottom or press **Load more** when the
 rendered window is ahead of the active fetch. Disable a provider in Settings if
 it is persistently rate-limited, then re-enable it later.

@@ -15,7 +15,7 @@ function rewriteForProxy(url) {
 }
 
 const DEFAULT_HEADERS = {
-  'User-Agent': 'WorldMediaWindows/0.1.14',
+  'User-Agent': 'WorldMediaWindows/0.1.15',
   Accept: 'application/json, text/plain, */*',
 };
 
@@ -25,6 +25,72 @@ const DEFAULT_HEADERS = {
 export const DEFAULT_TIMEOUT_MS = 22_000;
 export const DEFAULT_RESPONSE_MAX_BYTES = 50 * 1024 * 1024;
 export const MAX_RETRY_AFTER_MS = 60 * 60 * 1000;
+
+// The window allows only six connections to the local server at a time, and
+// they are shared with pictures, the playing stream and the app's own calls.
+// When the line drops, catalog requests stall for their whole time-out; six of
+// them would hold every connection, so a press on Play would wait behind them,
+// and requests still waiting for a connection would time out without ever
+// having been sent. So at most this many proxied requests are on their way at
+// once; the others wait here, in order, and a request's time-out starts when
+// it is sent. Waiting itself is limited to the same time-out. A request marked
+// `urgent` (the small connection check) does not wait.
+export const OUTSIDE_REQUEST_LIMIT = 4;
+let outsideActive = 0;
+const outsideWaiting = [];
+
+function outsideRelease() {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const next = outsideWaiting.shift();
+    if (next) next.grant();
+    else outsideActive -= 1;
+  };
+}
+
+function enterOutsideGate({ waitMs, signal, setTimer, clearTimer, url }) {
+  if (signal?.aborted) return Promise.reject(makeAbortError(signal.reason));
+  if (outsideActive < OUTSIDE_REQUEST_LIMIT) {
+    outsideActive += 1;
+    return Promise.resolve(outsideRelease());
+  }
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const entry = {};
+    const leave = () => {
+      if (timer != null) clearTimer(timer);
+      signal?.removeEventListener('abort', onAbort);
+      const at = outsideWaiting.indexOf(entry);
+      if (at >= 0) outsideWaiting.splice(at, 1);
+    };
+    const onAbort = () => {
+      leave();
+      reject(makeAbortError(signal.reason));
+    };
+    // The slot passes straight from the request that finished to this one.
+    entry.grant = () => {
+      leave();
+      resolve(outsideRelease());
+    };
+    if (waitMs > 0) {
+      timer = setTimer(() => {
+        leave();
+        reject(new HttpError(`Timed out after ${waitMs} ms waiting to send ${url}`, {
+          status: 0, url, code: 'TIMEOUT',
+        }));
+      }, waitMs);
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    outsideWaiting.push(entry);
+  });
+}
+
+/** Tests: how many proxied requests are on their way and how many wait. */
+export function outsideRequestCounts() {
+  return { active: outsideActive, waiting: outsideWaiting.length };
+}
 
 export class HttpError extends Error {
   constructor(message, statusOrOptions = 0) {
@@ -201,7 +267,8 @@ async function request(url, options = {}, responseKind = 'json') {
   if (typeof url !== 'string' || !url) throw new TypeError('HTTP request requires a URL');
   const method = options.method || 'GET';
   const headers = { ...DEFAULT_HEADERS, ...(options.headers || {}) };
-  const target = rewriteForProxy(url) || url;
+  const proxied = rewriteForProxy(url);
+  const target = proxied || url;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = Math.max(0, Number(options.retries || 0));
   const retryBaseMs = Math.max(0, Number(options.retryBaseMs ?? 400));
@@ -209,6 +276,15 @@ async function request(url, options = {}, responseKind = 'json') {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch is unavailable');
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // Only requests that leave through the local proxy take a place; the
+    // place is given back when this attempt ends, before any retry pause.
+    const releaseOutside = proxied && options.urgent !== true ? await enterOutsideGate({
+      waitMs: timeoutMs,
+      signal: options.signal,
+      setTimer: options.setTimer || setTimeout,
+      clearTimer: options.clearTimer || clearTimeout,
+      url,
+    }) : null;
     const controller = new AbortController();
     let timedOut = false;
     let timeoutHandle = null;
@@ -300,6 +376,11 @@ async function request(url, options = {}, responseKind = 'json') {
         : error;
       if (options.signal?.aborted) throw makeAbortError(options.signal.reason);
       if (attempt >= retries || !isRetryable(wrapped)) throw wrapped;
+      // Nothing is on its way during the pause: give the place and the timer
+      // back first, or four waiting retries would hold every place.
+      if (timeoutHandle != null) (options.clearTimer || clearTimeout)(timeoutHandle);
+      timeoutHandle = null;
+      releaseOutside?.();
       const retryDelay = Number.isFinite(wrapped?.retryAfterMs)
         ? wrapped.retryAfterMs
         : Math.min(MAX_RETRY_AFTER_MS, retryBaseMs * (2 ** attempt));
@@ -310,6 +391,7 @@ async function request(url, options = {}, responseKind = 'json') {
     } finally {
       if (timeoutHandle != null) (options.clearTimer || clearTimeout)(timeoutHandle);
       options.signal?.removeEventListener('abort', onExternalAbort);
+      releaseOutside?.();
     }
   }
 

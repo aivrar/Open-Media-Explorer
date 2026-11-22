@@ -9,9 +9,31 @@ export const RETRY_MAX_MS = 30_000;
 // scheduler's declared cooldown.
 export const RETRY_AFTER_MAX_MS = MAX_RETRY_AFTER_MS;
 
-/** The same page failing this many times in a row stops automatic loading
- *  of that source until the user asks again (Retry). */
+/** The same page failing this many times in a row ends the quick retries of
+ *  that source. From then on it is asked again only slowly (see
+ *  slowRetryDelayMs) until it answers or the user presses Retry now. */
 export const AUTO_RETRY_LIMIT = 2;
+
+// The slow retries: after one minute, then two, four and eight, then every
+// ten minutes. A source that is down costs a handful of requests an hour, and
+// one that was only slow for a moment (a time-out at start-up) comes back by
+// itself instead of staying empty for the rest of the session.
+export const SLOW_RETRY_BASE_MS = 60_000;
+export const SLOW_RETRY_MAX_MS = 10 * 60_000;
+
+/** The pause before the next automatic try once `failures` requests of the
+ *  same page have failed in a row (failures >= AUTO_RETRY_LIMIT). */
+export function slowRetryDelayMs(failures) {
+  const step = Math.min(10, Math.max(0, Number(failures || 0) - AUTO_RETRY_LIMIT));
+  return Math.min(SLOW_RETRY_MAX_MS, SLOW_RETRY_BASE_MS * (2 ** step));
+}
+
+/** True for a source whose quick retries are used up and which is now asked
+ *  again only slowly. A declared wait (rate limit, hold) is not this. */
+export function isSlowRetryProgress(progress) {
+  return Boolean(progress && progress.error && !progress.rateLimited && !progress.stopped
+    && progress.failures >= AUTO_RETRY_LIMIT);
+}
 
 /** A refusal of the request itself (HTTP 4xx other than 408 and 429, with
  *  no wait declared): asking for the same page again cannot help. A source
@@ -38,8 +60,9 @@ export function createSourceProgress() {
     cursor: null,
     loaded: 0,
     exhausted: false,
-    // Automatic loading stopped after repeated failures (or a refusal);
-    // only the user's Retry starts it again.
+    // Automatic loading stopped because the provider refused the page;
+    // only the user's Retry starts it again. Repeated failures do not stop
+    // a source: they slow its retries down (isSlowRetryProgress).
     stopped: false,
     failures: 0,
     retryAt: 0,
@@ -152,18 +175,23 @@ export function recordSourceFailure(progress, err, now = Date.now()) {
   }
   progress.failures += 1;
   const declared = declaredWaitMs(err);
+  const rateLimited = Number(err?.status) === 429 || Number.isFinite(declared);
+  // Failures are never exhaustion. Keep the cursor intact and retry the same
+  // page after the cooldown. A source that did not declare a wait gets
+  // AUTO_RETRY_LIMIT quick tries of the same page; after that it is asked
+  // again only slowly, so a failing source never turns into a request loop
+  // and never stays silent for the rest of the session either.
+  const slow = !rateLimited && progress.failures >= AUTO_RETRY_LIMIT;
   const delay = Number.isFinite(declared) && declared >= 0
     ? Math.min(RETRY_AFTER_MAX_MS, declared)
-    : Math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ** (progress.failures - 1)));
+    : slow
+      ? slowRetryDelayMs(progress.failures)
+      : Math.min(RETRY_MAX_MS, RETRY_BASE_MS * (2 ** (progress.failures - 1)));
   progress.retryAt = now + delay;
   progress.error = String(err?.message || err || 'Unknown source error');
   progress.notice = sourceNoticeFromError(err);
-  progress.rateLimited = Number(err?.status) === 429 || Number.isFinite(declared);
-  // Failures are never exhaustion. Keep the cursor intact and retry the same
-  // page after the cooldown, but only a bounded number of times: a source
-  // that did not declare a wait stops after AUTO_RETRY_LIMIT failures of the
-  // same page until the user asks again.
+  progress.rateLimited = rateLimited;
   progress.exhausted = false;
-  progress.stopped = !progress.rateLimited && progress.failures >= AUTO_RETRY_LIMIT;
+  progress.stopped = false;
   return delay;
 }

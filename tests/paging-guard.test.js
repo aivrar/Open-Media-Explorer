@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
-  AUTO_RETRY_LIMIT, createSourceProgress, isClientRefusal, recordSourceFailure, recordSourceSuccess,
+  AUTO_RETRY_LIMIT, createSourceProgress, isClientRefusal, isSlowRetryProgress, recordSourceFailure,
+  recordSourceSuccess, SLOW_RETRY_BASE_MS, SLOW_RETRY_MAX_MS, slowRetryDelayMs,
 } from '../src/modes/library/progress.js';
 import { SEPIASEARCH_MAX_END, normalizeSepiaResponse } from '../src/adapters/peertube.js';
 import { HttpError } from '../src/lib/http.js';
@@ -44,21 +45,27 @@ test('a 400 at a deep page gives one request, not a loop, and ends that listing'
   assert.equal(progress.error, '', 'an end, not an error to retry');
 });
 
-test('a 5xx or network failure backs off and stops after the bound until the user acts', () => {
-  for (const error of [httpError(503), httpError(0), new TypeError('Failed to fetch')]) {
+// Seventy minutes of a source that never answers: two quick tries, then one
+// after 1, 2, 4 and 8 minutes and one every 10 minutes after that.
+const SEVENTY_MINUTES_DOWN = AUTO_RETRY_LIMIT + 9;
+
+test('a 5xx, a time-out or a network failure backs off, then is tried again only slowly', () => {
+  const timeout = Object.assign(new Error('Timed out after 22000 ms'), { name: 'TimeoutError' });
+  for (const error of [httpError(503), httpError(0), new TypeError('Failed to fetch'), timeout]) {
     const { progress, requests } = simulate(() => error);
-    assert.equal(requests.length, AUTO_RETRY_LIMIT, String(error.message));
-    assert.equal(progress.stopped, true);
-    assert.equal(progress.exhausted, false, 'the cursor is kept for Retry');
+    assert.equal(requests.length, SEVENTY_MINUTES_DOWN, String(error.message));
+    assert.equal(progress.stopped, false, 'not stopped: it comes back by itself');
+    assert.equal(isSlowRetryProgress(progress), true);
+    assert.equal(progress.exhausted, false, 'the cursor is kept');
     assert.deepEqual(progress.cursor, { start: 9030 });
   }
   // The app's own HTTP errors carry retryAfterMs: null when the answer had no
-  // Retry-After. That is no declared wait: it backs off and stops as well.
+  // Retry-After. That is no declared wait: it backs off and slows down as well.
   for (const status of [500, 503, 0]) {
     const { progress, requests } = simulate(() => new HttpError('failed', { status }));
-    assert.equal(requests.length, AUTO_RETRY_LIMIT, `HttpError ${status}`);
+    assert.equal(requests.length, SEVENTY_MINUTES_DOWN, `HttpError ${status}`);
     assert.equal(progress.rateLimited, false);
-    assert.equal(progress.stopped, true);
+    assert.equal(progress.stopped, false);
   }
   {
     const { progress, requests } = simulate(() => new HttpError('Bad Request', { status: 400 }));
@@ -84,6 +91,47 @@ test('a declared wait (429, or a block with Retry-After) is held, not ended or s
   assert.equal(isClientRefusal(httpError(404)), true);
   assert.equal(isClientRefusal(httpError(408)), false);
   assert.equal(isClientRefusal(httpError(403, { retryAfterMs: 1000 })), false);
+});
+
+test('the slow retries: 1, 2, 4, 8 minutes, then every 10; never faster than a minute', () => {
+  assert.equal(SLOW_RETRY_BASE_MS, 60_000);
+  assert.equal(SLOW_RETRY_MAX_MS, 600_000);
+  assert.deepEqual(
+    [2, 3, 4, 5, 6, 7, 50, 5000].map(slowRetryDelayMs),
+    [60_000, 120_000, 240_000, 480_000, 600_000, 600_000, 600_000, 600_000],
+  );
+  const progress = createSourceProgress();
+  const error = new HttpError('failed', { status: 503 });
+  assert.equal(recordSourceFailure(progress, error, 0), 1_500, 'the first failure: a quick retry');
+  assert.equal(isSlowRetryProgress(progress), false);
+  assert.equal(recordSourceFailure(progress, error, 0), 60_000, 'the second: a minute');
+  assert.equal(isSlowRetryProgress(progress), true);
+  assert.equal(recordSourceFailure(progress, error, 0), 120_000);
+  // One answer ends it: the next failure is a quick retry again.
+  recordSourceSuccess(progress, { items: [], cursor: { start: 30 }, exhausted: false }, 0);
+  assert.equal(isSlowRetryProgress(progress), false);
+  assert.equal(recordSourceFailure(progress, error, 0), 1_500);
+});
+
+test('a source that was slow only for a moment comes back by itself', () => {
+  let calls = 0;
+  const { progress, requests } = simulate(() => {
+    calls += 1;
+    return calls <= 2
+      ? Object.assign(new Error('Timed out after 22000 ms'), { name: 'TimeoutError' })
+      : { items: [], cursor: null, exhausted: true };
+  }, { minutes: 5 });
+  assert.equal(requests.length, 3, 'two time-outs, then the try a minute later answers');
+  assert.equal(progress.exhausted, true);
+  assert.equal(progress.error, '');
+});
+
+test('a rate limit without a declared wait keeps its ordinary backoff and is not a slow retry', () => {
+  const progress = createSourceProgress();
+  for (let index = 0; index < 6; index++) recordSourceFailure(progress, httpError(429), 0);
+  assert.equal(progress.rateLimited, true);
+  assert.equal(isSlowRetryProgress(progress), false);
+  assert.ok(progress.retryAt <= 30_000);
 });
 
 test('the chain never asks a stopped source again by itself; Retry clears it', async () => {

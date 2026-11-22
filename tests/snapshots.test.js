@@ -297,3 +297,107 @@ test('a paused first snapshot attempt is resumed after capability discovery', as
   manager.destroy();
   scheduler.destroy();
 });
+
+test('a live list that is not on screen keeps trying until it first arrives, then waits to be shown', async () => {
+  const clock = new FakeClock();
+  const scheduler = new CatalogScheduler({
+    maxConcurrent: 1,
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+  });
+  const store = makeStore();
+  let calls = 0;
+  let visible = false;
+  const manager = createSnapshotManager({
+    scheduler,
+    store,
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    isVisible: () => visible,
+    loadAdapter: async () => ({
+      refreshSnapshot: async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error('temporary'), { status: 503 });
+        return { items: [live('arrived')], snapshotId: `s${calls}`, refreshAfterMs: 30_000 };
+      },
+    }),
+  });
+  // The first lookup is made although no view lists the source, and fails.
+  await assert.rejects(manager.refresh('live'));
+  assert.equal(manager.state('live').state, 'retrying');
+  assert.equal(manager.timerCount, 1, 'the retry is planned although the list is not shown');
+  await clock.advance(30_000);
+  assert.equal(calls, 2);
+  assert.equal(manager.state('live').state, 'live');
+  assert.equal(store.itemIndex.has('live:arrived'), true);
+  // It has arrived: no repeated refresh while it is not on screen.
+  assert.equal(manager.timerCount, 0);
+  await clock.advance(10 * 60_000);
+  assert.equal(calls, 2);
+  // Shown: refreshed, because its time has passed.
+  visible = true;
+  manager.syncVisibility();
+  await flush();
+  assert.equal(calls, 3);
+  manager.destroy();
+  scheduler.destroy();
+  assert.equal(clock.timers.size, 0);
+});
+
+test('the retries of a list that has never arrived survive a change of view and a pause, and stop while the window is hidden', async () => {
+  const clock = new FakeClock();
+  const scheduler = new CatalogScheduler({
+    maxConcurrent: 1,
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+  });
+  const store = makeStore();
+  let calls = 0;
+  let failing = true;
+  let hidden = false;
+  const manager = createSnapshotManager({
+    scheduler,
+    store,
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    isVisible: () => false, // no view lists the source at any time in this test
+    isWindowHidden: () => hidden,
+    loadAdapter: async () => ({
+      refreshSnapshot: async () => {
+        calls += 1;
+        if (failing) throw Object.assign(new Error('temporary'), { status: 503 });
+        return { items: [live('late')], snapshotId: `s${calls}`, refreshAfterMs: 30_000 };
+      },
+    }),
+  });
+  await assert.rejects(manager.refresh('live'));
+  assert.equal(manager.timerCount, 1);
+  // Another view is chosen: the retry stays planned.
+  manager.syncVisibility();
+  assert.equal(manager.timerCount, 1);
+  // The Library is left and opened again: the retry is planned again.
+  manager.pause();
+  assert.equal(manager.timerCount, 0);
+  manager.resume();
+  assert.equal(manager.timerCount, 1);
+  // The window is hidden: nothing runs; shown again, the overdue retry runs.
+  hidden = true;
+  manager.syncVisibility();
+  assert.equal(manager.timerCount, 0);
+  await clock.advance(10 * 60_000);
+  assert.equal(calls, 1);
+  hidden = false;
+  failing = false;
+  manager.syncVisibility();
+  await flush();
+  assert.equal(calls, 2);
+  assert.equal(manager.state('live').state, 'live');
+  // Arrived and not on screen: no further refresh is planned.
+  assert.equal(manager.timerCount, 0);
+  manager.syncVisibility();
+  await clock.advance(10 * 60_000);
+  assert.equal(calls, 2);
+  manager.destroy();
+  scheduler.destroy();
+  assert.equal(clock.timers.size, 0);
+});

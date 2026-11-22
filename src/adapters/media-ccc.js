@@ -445,28 +445,54 @@ function selectedRecording(detail, originalLanguage) {
     if (!recording || typeof recording !== 'object' || Array.isArray(recording)) return null;
     const url = safeHttpUrl(recording.recording_url);
     if (!url) return null;
+    const format = recordingFormat(cleanString(recording.mime_type, 80).toLowerCase(), url);
+    if (!format) return null;
+    // A file in the talk's own language first: exactly that language, or a
+    // file with several sound tracks led by it (C3VOC names one "deu-eng").
+    // A file in another language only when the talk has none in its own.
     const recordingLanguage = languageToken(recording.language);
-    if (language && recordingLanguage !== language) return null;
-    const mime = cleanString(recording.mime_type, 80).toLowerCase();
-    const isMp4 = mime === 'video/mp4' && /\.mp4(?:[?#]|$)/i.test(url);
-    const isMp3 = (mime === 'audio/mpeg' || mime === 'audio/mp3')
-      && /\.mp3(?:[?#]|$)/i.test(url);
-    if (!isMp4 && !isMp3) return null;
+    const exact = !language || recordingLanguage === language;
+    const leadTrack = !exact && recordingLanguage.startsWith(`${language}-`);
     const width = Math.max(0, Number(recording.width) || 0);
     const height = Math.max(0, Number(recording.height) || 0);
     return {
       recording,
       url,
-      type: isMp4 ? 'video' : 'audio',
+      type: format.type,
       index,
+      otherLanguage: exact || leadTrack ? 0 : 1,
+      rank: format.rank,
+      leadTrack: leadTrack ? 1 : 0,
       score: (recording.high_quality === true ? 10 ** 12 : 0) + width * height,
     };
   }).filter(Boolean);
-  const videos = candidates.filter((candidate) => candidate.type === 'video')
-    .sort((left, right) => right.score - left.score || left.index - right.index);
-  if (videos.length) return videos[0];
-  return candidates.filter((candidate) => candidate.type === 'audio')
-    .sort((left, right) => right.score - left.score || left.index - right.index)[0] || null;
+  return candidates.sort((left, right) => left.otherLanguage - right.otherLanguage
+    || left.rank - right.rank
+    || left.leadTrack - right.leadTrack
+    || right.score - left.score
+    || left.index - right.index)[0] || null;
+}
+
+/**
+ * A recording the embedded browser plays, with its place in the order a
+ * talk's file is chosen: H.264 MP4 video, MP3 audio, then WebM video (VP8 or
+ * VP9 before AV1, which costs more processor to decode), then Opus or Ogg
+ * audio. The MIME type and the file name must agree. Null for anything else
+ * (subtitles, other formats).
+ */
+function recordingFormat(mime, url) {
+  const base = mime.split(';')[0].trim();
+  if (base === 'video/mp4' && /\.mp4(?:[?#]|$)/i.test(url)) return { type: 'video', rank: 0 };
+  if ((base === 'audio/mpeg' || base === 'audio/mp3') && /\.mp3(?:[?#]|$)/i.test(url)) {
+    return { type: 'audio', rank: 1 };
+  }
+  if (base === 'video/webm' && /\.webm(?:[?#]|$)/i.test(url)) {
+    return { type: 'video', rank: /codecs\s*=\s*"?av01/.test(mime) ? 3 : 2 };
+  }
+  if ((base === 'audio/opus' || base === 'audio/ogg') && /\.(?:opus|ogg|oga)(?:[?#]|$)/i.test(url)) {
+    return { type: 'audio', rank: 4 };
+  }
+  return null;
 }
 
 function streamUrl(stream, kind) {

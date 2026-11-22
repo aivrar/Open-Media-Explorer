@@ -52,7 +52,8 @@ class CatalogFixtureHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/gzip-bomb.xml":
             return self._send(
                 200,
-                gzip.compress(b"x" * (9 * 1024 * 1024)),
+                # Expands past the 16 MiB feed decoded limit (MAX_FEED_DECODED_BYTES).
+                gzip.compress(b"x" * (17 * 1024 * 1024)),
                 "application/xml",
                 {"Content-Encoding": "gzip"},
             )

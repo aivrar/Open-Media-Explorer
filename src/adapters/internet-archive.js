@@ -57,7 +57,13 @@ async function fetchMetadata(identifier) {
 }
 
 const VIDEO_EXTS = ['mp4', 'm4v', 'webm', 'ogv', 'mov'];
-const AUDIO_EXTS = ['mp3', 'ogg', 'oga', 'm4a', 'flac', 'wav'];
+const AUDIO_EXTS = ['mp3', 'ogg', 'oga', 'opus', 'm4a', 'flac', 'wav'];
+// Ogg Theora (.ogv) is the one listed format the embedded browser cannot be
+// relied on to play. Archive made it as a derivative of many older video
+// items, beside an original H.264 MP4, so it comes after every other file
+// rather than winning as "the derivative". Opus is chosen only when an audio
+// item has nothing else, so an item that played before plays the same file.
+const LAST_RESORT_EXTS = new Set(['ogv', 'opus']);
 
 function pickPlayable(metadata, isVideo) {
   if (!metadata || !Array.isArray(metadata.files)) return null;
@@ -69,13 +75,16 @@ function pickPlayable(metadata, isVideo) {
   });
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => {
+    const aExt = (a.name || '').split('.').pop().toLowerCase();
+    const bExt = (b.name || '').split('.').pop().toLowerCase();
+    const aLast = LAST_RESORT_EXTS.has(aExt) ? 1 : 0;
+    const bLast = LAST_RESORT_EXTS.has(bExt) ? 1 : 0;
+    if (aLast !== bLast) return aLast - bLast;
     const aDer = a.source === 'derivative' ? 0 : 1;
     const bDer = b.source === 'derivative' ? 0 : 1;
     if (aDer !== bDer) return aDer - bDer;
     // Prefer mp4 over webm over others for compatibility
-    const order = ['mp4', 'mp3', 'm4a', 'm4v', 'webm', 'ogg', 'oga', 'ogv', 'flac', 'wav', 'mov'];
-    const aExt = (a.name || '').split('.').pop().toLowerCase();
-    const bExt = (b.name || '').split('.').pop().toLowerCase();
+    const order = ['mp4', 'mp3', 'm4a', 'm4v', 'webm', 'ogg', 'oga', 'opus', 'ogv', 'flac', 'wav', 'mov'];
     return order.indexOf(aExt) - order.indexOf(bExt);
   });
   return candidates[0];

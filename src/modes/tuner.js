@@ -22,7 +22,8 @@ import { normalizeTunerCardSize, tunerCardsShowPictures } from '../lib/tuner-car
 import { createTunerCardArt } from '../lib/tuner-card-art.js';
 import { onStationImagesChange } from '../lib/station-images.js';
 import {
-  mergeSourceItems, failedSourceState, liveStatusText, refreshKeepsList, createLiveRetry, runLiveLoad,
+  mergeSourceItems, failedSourceState, liveStatusText, refreshKeepsList, createLiveRetry, createSourceRetries,
+  runLiveLoad,
 } from '../lib/live-load.js';
 import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorites-order.js';
 import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
@@ -30,6 +31,7 @@ import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } fr
 import { attachTunerBackground } from './tuner-background.js';
 import { onDidNotPlayChange } from '../lib/did-not-play.js';
 import { didNotPlayNote } from '../lib/did-not-play-view.js';
+import { lastOutsideAnswerAt, onOutsideAnswer } from '../lib/connection-evidence.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -72,6 +74,16 @@ const autoRetry = createLiveRetry({
   run: () => { loadStations({ automatic: true }); },
   // A try due while the window is hidden waits until it is shown again.
   isShown: () => getState().mode === 'tuner' && Boolean(ui.root?.isConnected),
+});
+
+// A source that failed while others answered is asked again by itself
+// (after 15 s, 60 s, then every 5 minutes, and at once when the line seems
+// back) while the Tuner stays open; any new load and leaving the Tuner
+// cancel it (see lib/live-load.js).
+const sourceRetries = createSourceRetries({
+  isShown: () => getState().mode === 'tuner' && Boolean(ui.root?.isConnected),
+  onAnswer: onOutsideAnswer,
+  lastAnswerAt: lastOutsideAnswerAt,
 });
 
 /** True when a card's picture box is inside the visible part of the strip. */
@@ -611,6 +623,7 @@ function loadFavoriteStations() {
   state.sourceStates = new Map();
   state.listKey = '';
   autoRetry.reset();
+  sourceRetries.stop();
   const selectedId = state.stations[state.index]?.id || getState().currentItem?.id || '';
   reconcileFavoriteGroupSource();
   setStations(favoriteStations(getState().favorites, {
@@ -667,6 +680,9 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
     (state.sourceFilter === 'all' || source.id === state.sourceFilter)
     && (!onlySourceIds || onlySourceIds.has(source.id))
   ));
+  // This load asks its sources itself: their automatic tries end (all of
+  // them, unless it only asks some again: see applyContentPreference).
+  sourceRetries.stop(preserve ? candidates.map((source) => source.id) : null);
   if (!preserve) state.sourceStates = new Map();
   for (const source of candidates) {
     state.sourceStates.set(source.id, refresh
@@ -687,29 +703,53 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
     }
     const controller = new AbortController();
     state.requestAbort = controller;
+    // An automatic try of one source is a job of its own (`attempt`), never
+    // joined to the request that failed.
+    const ask = (source, signal, attempt = 0) => catalogScheduler.enqueue({
+      sourceId: source.id,
+      key: `tuner:${gen}:${state.band}${attempt ? `:retry${attempt}` : ''}`,
+      priority: CATALOG_PRIORITY.USER,
+      signal,
+      task: ({ signal: taskSignal }) => browseLiveOne(source.id, { ...opts, signal: taskSignal }),
+    });
+    const onItems = (source, items) => {
+      state.sourceStates.set(source.id, { state: 'ready', count: items.length });
+      sourceRetries.succeeded(source.id);
+      publishStations(source.id, items, selectedId);
+    };
+    const onFailed = (source, message, error) => {
+      // Its stations from the previous load stay on the dial, and it is
+      // asked again by itself while the Tuner stays open.
+      state.sourceStates.set(source.id, failedSourceState(state.stations, source.id, message));
+      renderSourceStatus();
+      sourceRetries.fail(source, retrySource, {
+        error, declaredMs: catalogScheduler.declaredCooldownRemainingMs(source.id),
+      });
+    };
+    // One source asked again: it arrives on the dial as a late answer does.
+    const retrySource = (source, signal, isCurrent, attempt) => runLiveLoad({
+      candidates: [source],
+      signal,
+      ask: (one, oneSignal) => ask(one, oneSignal, attempt),
+      isCurrent,
+      onItems: (one, items) => {
+        onItems(one, items);
+        // An empty dial's line no longer blames this source.
+        if (state.stations.length === 0) renderStrip();
+      },
+      onFailed,
+      onDone() {},
+    });
     // Each source goes on the dial as soon as it answers; a slow or stalled
     // source no longer holds the others back, and a load overtaken by a newer
     // one changes nothing (see lib/live-load.js).
     await runLiveLoad({
       candidates,
       signal: controller.signal,
-      ask: (source, signal) => catalogScheduler.enqueue({
-        sourceId: source.id,
-        key: `tuner:${gen}:${state.band}`,
-        priority: CATALOG_PRIORITY.USER,
-        signal,
-        task: ({ signal: taskSignal }) => browseLiveOne(source.id, { ...opts, signal: taskSignal }),
-      }),
+      ask,
       isCurrent: () => gen === state.loadGen,
-      onItems: (source, items) => {
-        state.sourceStates.set(source.id, { state: 'ready', count: items.length });
-        publishStations(source.id, items, selectedId);
-      },
-      onFailed: (source, message) => {
-        // Its stations from the previous load stay on the dial.
-        state.sourceStates.set(source.id, failedSourceState(state.stations, source.id, message));
-        renderSourceStatus();
-      },
+      onItems,
+      onFailed,
       onDone: finishLoad,
     });
     return;
@@ -725,8 +765,9 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
 function finishLoad() {
   state.requestAbort = null;
   state.loading = false;
-  autoRetry.settle(state.stations.length === 0
-    && [...state.sourceStates.values()].some((status) => status.state === 'error'));
+  // While the whole dial is tried again, single sources are not.
+  if (autoRetry.settle(state.stations.length === 0
+    && [...state.sourceStates.values()].some((status) => status.state === 'error'))) sourceRetries.stop();
   updateFrequencyDisplay();
   renderStrip();
   renderSourceStatus();
@@ -907,6 +948,7 @@ function tearDown() {
   state.requestAbort = null;
   state.loading = false;
   autoRetry.stop();
+  sourceRetries.stop();
   cardArt.clear();
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
   if (ui.unbindDial) { try { ui.unbindDial(); } catch (_) {} ui.unbindDial = null; }

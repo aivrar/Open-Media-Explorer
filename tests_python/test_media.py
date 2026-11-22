@@ -366,6 +366,60 @@ initialization="init-$RepresentationID$.mp4" />
             finally:
                 upstream.close()
 
+    def test_connector_sends_one_accept_encoding_identity_unless_gzip_is_asked_for(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        listener.settimeout(5)
+        port = listener.getsockname()[1]
+        seen: list[bytes] = []
+
+        def serve(count: int) -> None:
+            for _ in range(count):
+                client, _address = listener.accept()
+                with client:
+                    client.settimeout(5)
+                    data = b""
+                    while b"\r\n\r\n" not in data:
+                        chunk = client.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                    seen.append(data)
+                    client.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+
+        server = threading.Thread(target=serve, args=(3,), daemon=True)
+        server.start()
+        connector = SafeConnector(
+            resolver=lambda _host, port: answer("127.0.0.1", port),
+            address_policy=lambda _address: True,
+        )
+        try:
+            for kwargs in ({}, {"accept_gzip": False}, {"accept_gzip": True}):
+                # A caller cannot set Accept-Encoding through headers.
+                upstream = connector.open(
+                    f"http://media.example:{port}/file", headers={"Accept-Encoding": "br"}, **kwargs,
+                )
+                try:
+                    self.assertEqual(upstream.response.read(), b"ok")
+                finally:
+                    upstream.close()
+            server.join(5)
+        finally:
+            listener.close()
+        self.assertEqual(len(seen), 3)
+
+        def encodings(raw: bytes) -> list[str]:
+            lines = raw.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
+            return [
+                line.split(b":", 1)[1].strip().decode()
+                for line in lines if line.split(b":", 1)[0].strip().lower() == b"accept-encoding"
+            ]
+
+        self.assertEqual(encodings(seen[0]), ["identity"])
+        self.assertEqual(encodings(seen[1]), ["identity"])
+        self.assertEqual(encodings(seen[2]), ["gzip"])
+
     def test_stream_iteration_is_bounded_and_cancellable(self) -> None:
         response = mock.Mock()
         response.read.side_effect = [b"x" * 2048, b""]
@@ -474,6 +528,14 @@ class RelayIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 206)
         self.assertEqual(body, AUDIO_BYTES[4:13])
         self.assertEqual(headers["Content-Range"], f"bytes 4-12/{len(AUDIO_BYTES)}")
+
+        # The relay asks media sources for uncompressed bytes even when the
+        # browser offers gzip.
+        status, body, _headers = self.request("GET", media["relay_url"], headers={"Accept-Encoding": "gzip, br"})
+        self.assertEqual((status, body), (200, AUDIO_BYTES))
+        with self.fixture.state.lock:
+            last = next(entry for entry in reversed(self.fixture.state.requests) if entry["path"] == "/media/audio.mp3")
+        self.assertEqual(last["headers"].get("Accept-Encoding"), "identity")
 
         redirected = self.register("/redirect/public")
         self.assertEqual(self.request("GET", redirected["relay_url"])[1], AUDIO_BYTES)

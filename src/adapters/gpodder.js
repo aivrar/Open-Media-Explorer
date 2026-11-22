@@ -13,6 +13,9 @@ import {
 import {
   registerCatalogAsset, resolvePodcastFeed,
 } from '../lib/catalog-client.js';
+import {
+  ANSWER_FRESH_MS, confirmConnection, lastOutsideAnswerAt, noteOutsideAnswer,
+} from '../lib/connection-evidence.js';
 
 export const id = 'gpodder';
 export const displayName = 'gPodder Podcasts';
@@ -38,6 +41,14 @@ const MAX_DEAD_FEED_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const FEED_REFUSED_AS_SENT = new Set([
   'CATALOG_BODY_TOO_LARGE', 'CATALOG_DECODED_TOO_LARGE', 'FEED_XML_TOO_COMPLEX', 'FEED_XML_UNSAFE',
 ]);
+// Feed failures that last: the feed cannot be read as sent, or its host name
+// does not exist. A browse cursor drops such a feed (feedFailureIsPassing).
+const FEED_FAILURE_LASTING = new Set([
+  ...FEED_REFUSED_AS_SENT, 'FEED_XML_INVALID', 'CATALOG_CONTENT_TYPE', 'MEDIA_HOST_NOT_FOUND',
+]);
+// A feed that failed for a passing reason is asked again on a later revisit,
+// at most this many times per browse cursor; then it counts as dead.
+const MAX_FEED_RETRIES = 3;
 const MAX_FEED_CACHE = 256;
 const MAX_FEED_ALIASES = 1_024;
 const MAX_SNAPSHOTS = 3;
@@ -153,10 +164,10 @@ function yearFromDate(value) {
   return year >= 1900 && year <= 3000 ? year : null;
 }
 
-function safeDownloadName(value, url, type) {
-  const fallback = `podcast.${type === 'video' ? 'mp4' : 'mp3'}`;
+function safeDownloadName(value, url, type, fileExtension = '') {
+  const extension = fileExtension || (type === 'video' ? 'mp4' : 'mp3');
+  const fallback = `podcast.${extension}`;
   const raw = cleanString(value, 240) || filenameFromUrl(url, fallback);
-  const extension = type === 'video' ? 'mp4' : 'mp3';
   let candidate = raw.replace(/[<>:"/\\|?*]/g, '_').replace(/[. ]+$/g, '').slice(0, 190);
   if (candidate && !new RegExp(`\\.${extension}$`, 'i').test(candidate)) {
     const stem = candidate.replace(/\.[^.]{1,12}$/, '').replace(/[. ]+$/g, '') || 'podcast';
@@ -482,42 +493,126 @@ function normalizeDirectoryResponse(payload, mode = 'browse') {
   return shows;
 }
 
-function enclosureMimeKind(mime) {
-  const base = cleanString(mime, 128).toLowerCase().split(';', 1)[0].trim();
-  if (!base) return { kind: '', hint: '' };
-  if (base.includes('mpegurl')) {
-    return { kind: 'hls', hint: base.startsWith('video/') ? 'video' : 'audio' };
-  }
-  if (['audio/mpeg', 'audio/mp3'].includes(base)) {
-    return { kind: 'audio', hint: 'audio' };
-  }
-  if (base === 'video/mp4') return { kind: 'video', hint: 'video' };
-  if (['application/octet-stream', 'binary/octet-stream'].includes(base)) return { kind: '', hint: '' };
-  return { kind: 'unsupported', hint: '' };
+// Podcast enclosure formats: the same rules as _enclosure_kind in
+// worldmedia_catalog.py, which must be kept in step. An episode is listed when
+// its file is one the embedded browser (WebView2, Chromium) plays itself: MP3,
+// AAC/M4A, Ogg Vorbis or Opus, FLAC, WAV and WebM audio; H.264 in MP4/M4V/MOV,
+// and VP8, VP9 or AV1 video; HLS. Refused: Theora (.ogv, video/ogg), HEVC,
+// Matroska (.mkv), BitTorrent and any other declared type.
+const ENCLOSURE_AUDIO_TYPES = new Set([
+  'audio/mpeg', 'audio/mp3', 'audio/x-mp3', 'audio/mpeg3', 'audio/x-mpeg',
+  'audio/mp4', 'audio/x-m4a', 'audio/m4a',
+  'audio/aac', 'audio/aacp', 'audio/x-aac',
+  'audio/ogg', 'audio/opus', 'audio/vorbis',
+  'audio/flac', 'audio/x-flac',
+  'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave',
+  'audio/webm',
+]);
+const ENCLOSURE_VIDEO_TYPES = new Set(['video/mp4', 'video/x-m4v', 'video/quicktime', 'video/webm']);
+const ENCLOSURE_GENERIC_TYPES = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
+const ENCLOSURE_AUDIO_EXTENSION = /\.(?:mp3|m4a|aac|ogg|oga|opus|flac|wav)$/;
+const ENCLOSURE_VIDEO_EXTENSION = /\.(?:mp4|m4v|mov|webm)$/;
+const ENCLOSURE_REFUSED_EXTENSION = /\.(?:mkv|ogv|torrent)$/;
+// Video containers that also carry audio-only files: with one of these audio
+// types the file is audio, not a contradiction (an AAC episode named .mp4).
+const ENCLOSURE_CONTAINER_AUDIO_TYPES = [
+  ['.mp4', new Set(['audio/mp4', 'audio/x-m4a', 'audio/m4a'])],
+  ['.webm', new Set(['audio/webm'])],
+];
+// application/ogg says only "Ogg": it is listed with an audio Ogg file name.
+const ENCLOSURE_OGG_AUDIO_EXTENSION = /\.(?:ogg|oga|opus)$/;
+const ENCLOSURE_REFUSED_CODECS = /\b(?:theora|hev1|hvc1|dvh1|dvhe)\b/;
+const ENCLOSURE_VIDEO_CODECS = /(?:^|[ ,])(?:avc1|avc3|h264|vp8|vp08|vp9|vp09|av01)(?:[., ]|$)/;
+const ENCLOSURE_AUDIO_CODECS = /(?:^|[ ,])(?:mp3|mpga|mpeg|mp4a|aac|opus|vorbis|flac|pcm[a-z0-9_-]*|1)(?:[., ]|$)/;
+// Download file names by declared type, used when the address has no known
+// extension. M4V is named .mp4: the same container, and the app's downloader
+// (worldmedia_downloads.py SAFE_EXTENSIONS) keeps .mp4 but not .m4v.
+const DOWNLOAD_EXTENSION_BY_TYPE = new Map([
+  ['audio/mpeg', 'mp3'], ['audio/mp3', 'mp3'], ['audio/x-mp3', 'mp3'], ['audio/mpeg3', 'mp3'], ['audio/x-mpeg', 'mp3'],
+  ['audio/mp4', 'm4a'], ['audio/x-m4a', 'm4a'], ['audio/m4a', 'm4a'],
+  ['audio/aac', 'aac'], ['audio/aacp', 'aac'], ['audio/x-aac', 'aac'],
+  ['audio/ogg', 'ogg'], ['audio/vorbis', 'ogg'], ['application/ogg', 'ogg'], ['audio/opus', 'opus'],
+  ['audio/flac', 'flac'], ['audio/x-flac', 'flac'],
+  ['audio/wav', 'wav'], ['audio/x-wav', 'wav'], ['audio/wave', 'wav'], ['audio/vnd.wave', 'wav'],
+  ['audio/webm', 'webm'], ['video/webm', 'webm'],
+  ['video/mp4', 'mp4'], ['video/x-m4v', 'mp4'], ['video/quicktime', 'mov'],
+]);
+const DOWNLOAD_EXTENSION_BY_SUFFIX = new Map([
+  ['mp3', 'mp3'], ['m4a', 'm4a'], ['aac', 'aac'], ['ogg', 'ogg'], ['oga', 'oga'], ['opus', 'opus'],
+  ['flac', 'flac'], ['wav', 'wav'], ['webm', 'webm'], ['mp4', 'mp4'], ['m4v', 'mp4'], ['mov', 'mov'],
+]);
+
+function enclosureTypeBase(mime) {
+  return cleanString(mime, 128).toLowerCase().split(';', 1)[0].trim();
 }
 
-function enclosureExtensionKind(url) {
-  let path = '';
-  try { path = new URL(url).pathname.toLowerCase(); } catch (_) { return ''; }
-  if (path.endsWith('.m3u8')) return 'hls';
-  if (path.endsWith('.mp3')) return 'audio';
-  if (path.endsWith('.mp4')) return 'video';
-  if (/\.(?:m4a|aac|ogg|oga|webm|m4v|mov|mkv|flac|wav|opus|torrent)$/.test(path)) return 'unsupported';
-  return '';
+function enclosurePath(url) {
+  try { return new URL(url).pathname.toLowerCase(); } catch (_) { return ''; }
 }
 
-function podcastCodecCompatible(value, kind) {
-  const codecs = cleanString(value, 256).toLowerCase();
-  if (!codecs) return true;
-  if (/\b(?:av01|flac|hev1|hvc1|opus|theora|vorbis|vp0?[89])\b/.test(codecs)) return false;
-  if (kind === 'video') return /(?:^|[ ,])(?:avc1|avc3|h264)(?:[., ]|$)/.test(codecs);
-  if (kind === 'audio') return /(?:^|[ ,])(?:mp3|mpga|mpeg)(?:[., ]|$)/.test(codecs);
+/** 'audio', 'video' or 'hls' for a listable enclosure, or ''. */
+function enclosureKind(path, base, codecs) {
+  let mimeKind = '';
+  if (base.includes('mpegurl')) mimeKind = 'hls';
+  else if (ENCLOSURE_AUDIO_TYPES.has(base)) mimeKind = 'audio';
+  else if (ENCLOSURE_VIDEO_TYPES.has(base)) mimeKind = 'video';
+  else if (base === 'application/ogg') {
+    if (!ENCLOSURE_OGG_AUDIO_EXTENSION.test(path)) return '';
+    mimeKind = 'audio';
+  } else if (!ENCLOSURE_GENERIC_TYPES.has(base)) return '';
+  if (ENCLOSURE_REFUSED_EXTENSION.test(path)) return '';
+  let extensionKind = '';
+  if (path.endsWith('.m3u8')) extensionKind = 'hls';
+  else if (ENCLOSURE_AUDIO_EXTENSION.test(path)) extensionKind = 'audio';
+  else if (ENCLOSURE_VIDEO_EXTENSION.test(path)) {
+    extensionKind = ENCLOSURE_CONTAINER_AUDIO_TYPES
+      .some(([suffix, types]) => path.endsWith(suffix) && types.has(base)) ? 'audio' : 'video';
+  }
+  if (mimeKind && extensionKind && mimeKind !== extensionKind) return '';
+  const kind = mimeKind || extensionKind;
+  if (!['audio', 'video', 'hls'].includes(kind)) return '';
+  if (codecs && ENCLOSURE_REFUSED_CODECS.test(codecs)) return '';
+  if (kind === 'video' && codecs && !ENCLOSURE_VIDEO_CODECS.test(codecs)) return '';
+  if (kind === 'audio' && codecs && !ENCLOSURE_AUDIO_CODECS.test(codecs)) return '';
+  return kind;
+}
+
+/** True for an enclosure the earlier, narrower rule listed (MP3, H.264 MP4,
+ *  HLS). Kept only for ordering: such an enclosure is chosen before any other
+ *  (selectPodcastEnclosure), so what played before still plays. Matches
+ *  _enclosure_listed_before in worldmedia_catalog.py. */
+function enclosureListedBefore(path, base, codecs) {
+  let mimeKind = '';
+  if (base.includes('mpegurl')) mimeKind = 'hls';
+  else if (['audio/mpeg', 'audio/mp3'].includes(base)) mimeKind = 'audio';
+  else if (base === 'video/mp4') mimeKind = 'video';
+  else if (!ENCLOSURE_GENERIC_TYPES.has(base)) return false;
+  let extensionKind = '';
+  if (path.endsWith('.m3u8')) extensionKind = 'hls';
+  else if (path.endsWith('.mp3')) extensionKind = 'audio';
+  else if (path.endsWith('.mp4')) extensionKind = 'video';
+  else if (/\.(?:m4a|aac|ogg|oga|webm|m4v|mov|mkv|flac|wav|opus|torrent)$/.test(path)) return false;
+  if (mimeKind && extensionKind && mimeKind !== extensionKind) return false;
+  const kind = mimeKind || extensionKind;
+  if (!['audio', 'video', 'hls'].includes(kind)) return false;
+  if (codecs && /\b(?:av01|flac|hev1|hvc1|opus|theora|vorbis|vp0?[89])\b/.test(codecs)) return false;
+  if (kind === 'video' && codecs) return /(?:^|[ ,])(?:avc1|avc3|h264)(?:[., ]|$)/.test(codecs);
+  if (kind === 'audio' && codecs) return /(?:^|[ ,])(?:mp3|mpga|mpeg)(?:[., ]|$)/.test(codecs);
   return true;
 }
 
-function podcastHlsHasVideo(value) {
-  const codecs = cleanString(value, 256).toLowerCase();
-  return /(?:^|[ ,])(?:avc1|avc3|h264)(?:[., ]|$)/.test(codecs);
+function enclosureIsLossless(path, base) {
+  return /\.(?:flac|wav)$/.test(path)
+    || ['audio/flac', 'audio/x-flac', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave'].includes(base);
+}
+
+function enclosureDownloadExtension(path, base) {
+  const suffix = /\.([a-z0-9]{1,8})$/.exec(path)?.[1] || '';
+  return DOWNLOAD_EXTENSION_BY_SUFFIX.get(suffix) || DOWNLOAD_EXTENSION_BY_TYPE.get(base) || '';
+}
+
+function podcastHlsHasVideo(codecs) {
+  return ENCLOSURE_VIDEO_CODECS.test(codecs);
 }
 
 export function selectPodcastEnclosure(values, { live = false } = {}) {
@@ -527,15 +622,13 @@ export function selectPodcastEnclosure(values, { live = false } = {}) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const url = safeHttpUrl(raw.url);
     if (!url) continue;
-    const mime = enclosureMimeKind(raw.type);
-    const extension = enclosureExtensionKind(url);
-    if (mime.kind === 'unsupported' || extension === 'unsupported') continue;
-    if (mime.kind && extension && mime.kind !== extension) continue;
-    const kind = mime.kind || extension;
-    if (!['audio', 'video', 'hls'].includes(kind)) continue;
-    if (!podcastCodecCompatible(raw.codecs, kind)) continue;
+    const path = enclosurePath(url);
+    const base = enclosureTypeBase(raw.type);
+    const codecs = cleanString(raw.codecs, 256).toLowerCase();
+    const kind = enclosureKind(path, base, codecs);
+    if (!kind) continue;
     const mediaType = kind === 'hls'
-      ? (mime.hint === 'video' || podcastHlsHasVideo(raw.codecs) ? 'video' : 'audio')
+      ? (base.startsWith('video/') || podcastHlsHasVideo(codecs) ? 'video' : 'audio')
       : kind;
     const relation = raw.relation === 'alternate' ? 'alternate' : 'enclosure';
     const preferred = raw.default === true;
@@ -543,12 +636,20 @@ export function selectPodcastEnclosure(values, { live = false } = {}) {
     if (live ? kind === 'hls' : kind !== 'hls') score += 300;
     if (mediaType === 'audio' && /\.mp3(?:$|[?#])/i.test(url)) score += 80;
     if (mediaType === 'video' && /\.mp4(?:$|[?#])/i.test(url)) score += 80;
+    // Formats the earlier rule listed keep their scores and always win, so an
+    // episode that played before plays the same file; among the others,
+    // compressed files come before FLAC and WAV.
+    if (!enclosureListedBefore(path, base, codecs)) {
+      score -= 10_000;
+      if (!enclosureIsLossless(path, base)) score += 60;
+    }
     candidates.push({
       url,
       mediaType,
       streamKind: kind === 'hls' ? 'hls' : mediaType,
       relation,
       score,
+      fileExtension: kind === 'hls' ? '' : enclosureDownloadExtension(path, base),
     });
   }
   candidates.sort((left, right) => right.score - left.score || left.url.localeCompare(right.url));
@@ -600,7 +701,9 @@ function normalizeEpisode(raw, feed, show) {
     delivery: live ? 'live' : 'on-demand',
     download_url: directDownload ? selected.url : '',
     download_name: directDownload
-      ? safeDownloadName(filenameFromUrl(selected.url, ''), selected.url, selected.mediaType)
+      ? safeDownloadName(
+        filenameFromUrl(selected.url, ''), selected.url, selected.mediaType, selected.fileExtension,
+      )
       : '',
     capture_headers: {},
     thumbnail: '',
@@ -734,6 +837,8 @@ function cloneCursor(value) {
     positions: [...value.positions],
     attempted: [...value.attempted],
     dead: [...value.dead],
+    // A cursor from before the retries were counted has none used.
+    retries: value.retries ? [...value.retries] : Array(value.positions.length).fill(0),
   };
 }
 
@@ -746,6 +851,7 @@ function newBrowseCursor(snapshot) {
     positions: Array(snapshot.shows.length).fill(0),
     attempted: Array(snapshot.shows.length).fill(false),
     dead: Array(snapshot.shows.length).fill(false),
+    retries: Array(snapshot.shows.length).fill(0),
   };
 }
 
@@ -757,7 +863,8 @@ function normalizeBrowseCursor(value, snapshot) {
       || !Number.isInteger(value.revisitIndex) || value.revisitIndex < 0 || value.revisitIndex > length
       || !Array.isArray(value.positions) || value.positions.length !== length
       || !Array.isArray(value.attempted) || value.attempted.length !== length
-      || !Array.isArray(value.dead) || value.dead.length !== length) {
+      || !Array.isArray(value.dead) || value.dead.length !== length
+      || value.retries !== undefined && (!Array.isArray(value.retries) || value.retries.length !== length)) {
     throw new TypeError('Invalid gPodder browse cursor');
   }
   for (let index = 0; index < length; index++) {
@@ -765,7 +872,10 @@ function normalizeBrowseCursor(value, snapshot) {
         || value.positions[index] > MAX_EPISODES_PER_FEED
         || typeof value.attempted[index] !== 'boolean'
         || typeof value.dead[index] !== 'boolean'
-        || value.dead[index] && !value.attempted[index]) {
+        || value.dead[index] && !value.attempted[index]
+        || value.retries !== undefined && (!Number.isInteger(value.retries[index])
+          || value.retries[index] < 0 || value.retries[index] > MAX_FEED_RETRIES
+          || value.retries[index] > 0 && !value.attempted[index])) {
       throw new TypeError('Malformed gPodder feed cursor state');
     }
   }
@@ -781,6 +891,13 @@ function normalizeSearchCursor(value, query, snapshotId) {
     throw new TypeError('Invalid gPodder search cursor');
   }
   return { version: 1, query, snapshotId, offset: value.offset };
+}
+
+/** The publisher or the server said how long to wait (Retry-After, 429). */
+function feedFailureDeclaresWait(error) {
+  return Number(error?.status) === 429 || error?.code === 'CATALOG_RATE_LIMITED'
+    || (error?.retryAfter != null && Number.isFinite(Number(error.retryAfter)))
+    || (error?.retryAfterMs != null && Number.isFinite(Number(error.retryAfterMs)));
 }
 
 function feedFailureDelay(error) {
@@ -805,12 +922,34 @@ function feedFailureDelay(error) {
   return DEAD_FEED_COOLDOWN_MS;
 }
 
+// Feeds the app's server sent but this page could not use (normalizeFeedPayload).
+const unusableFeedErrors = new WeakSet();
+
+/** True for a feed failure that may pass (no name lookup, no connection, a
+ *  time-out, a 5xx or 429, no answer from the app's server, or one its server
+ *  marks retryable); false for one that lasts (FEED_FAILURE_LASTING, a feed
+ *  the page could not use, a refusal the server marks not retryable, a 4xx). */
+function feedFailureIsPassing(error) {
+  if (FEED_FAILURE_LASTING.has(error?.code) || unusableFeedErrors.has(error)) return false;
+  if (error?.retryable === true) return true;
+  const status = Number(error?.status || 0);
+  if (status === 408 || status === 429) return true;
+  // CONTROL_ERROR: an answer without the server's own error (capture-client.js).
+  if (error?.retryable === false && error?.code !== 'CONTROL_ERROR') return false;
+  return status === 0 || status >= 500;
+}
+
 export function createGpodderAdapter(dependencies = {}) {
   const now = dependencies.now || (() => Date.now());
   const randomValue = dependencies.random || Math.random;
   const getJsonImpl = dependencies.getJson || getJson;
   const resolveFeedImpl = dependencies.resolvePodcastFeed || resolvePodcastFeed;
   const registerAssetImpl = dependencies.registerCatalogAsset || registerCatalogAsset;
+  // Does the line work? (connection-evidence.js) Decides whether a passing
+  // feed failure counts against the cursor's retries.
+  const noteOutsideAnswerImpl = dependencies.noteOutsideAnswer || noteOutsideAnswer;
+  const lastOutsideAnswerAtImpl = dependencies.lastOutsideAnswerAt || lastOutsideAnswerAt;
+  const confirmConnectionImpl = dependencies.confirmConnection || confirmConnection;
   const hashText = dependencies.hashText || defaultSha256Hex;
   const directoryGate = dependencies.directoryGate || createGpodderDirectoryGate({
     now,
@@ -837,6 +976,8 @@ export function createGpodderAdapter(dependencies = {}) {
   let standaloneExplicit = null;
   const standaloneBuffer = [];
   let snapshotSequence = 0;
+  // Feed lookups that came back from their publisher (processFeedIndices).
+  let feedAnswers = 0;
 
   function showExplicit(opts = {}) {
     if (typeof opts.showExplicitContent === 'boolean') return opts.showExplicitContent;
@@ -1019,11 +1160,14 @@ export function createGpodderAdapter(dependencies = {}) {
     // A load the user asked for (`force`: Retry in the Library, a forced
     // resolve) asks a feed in its wait again; its outcome sets the next wait.
     // Automatic loads keep to the wait.
-    if (entry?.deadUntil > now() && opts.force !== true) {
+    // A wait the publisher asked for is kept even then.
+    if (entry?.deadUntil > now() && (opts.force !== true || entry.declaredWait === true)) {
       if (entry.value) return staleFeedValue(entry.value);
       const error = new ProviderError('Podcast feed is cooling down', {
         code: 'PODCAST_FEED_COOLDOWN', retryAfterMs: entry.deadUntil - now(),
       });
+      // Passing or lasting as the failure that started the wait.
+      error.retryable = entry.lastFailurePassing === true;
       throw error;
     }
     const forPlayback = opts.forPlayback === true;
@@ -1035,6 +1179,9 @@ export function createGpodderAdapter(dependencies = {}) {
       value: previous?.value || null,
       expiresAt: 0,
       deadUntil: previous?.deadUntil || 0,
+      // The last failure may pass (feedFailureIsPassing).
+      lastFailurePassing: previous?.lastFailurePassing === true,
+      declaredWait: previous?.declaredWait === true,
       promise: null,
       signal: opts.signal,
       forPlayback,
@@ -1044,7 +1191,12 @@ export function createGpodderAdapter(dependencies = {}) {
       // The native resolver associates the prior feed identity with that key,
       // which prevents episode/favorite IDs from changing across later moves.
       const payload = await resolveFeedImpl(key, forPlayback ? { signal, forPlayback: true } : { signal });
-      return normalizeFeedPayload(payload, show);
+      try {
+        return normalizeFeedPayload(payload, show);
+      } catch (error) {
+        unusableFeedErrors.add(error);
+        throw error;
+      }
     };
     // A load for Play (resolveStream) is the one request the user waits for:
     // sent at once, not queued behind browse lookups here or in the
@@ -1056,6 +1208,11 @@ export function createGpodderAdapter(dependencies = {}) {
       entry.value = feed;
       entry.expiresAt = now() + (dependencies.feedCacheTtlMs ?? FEED_CACHE_TTL_MS);
       entry.deadUntil = 0;
+      entry.lastFailurePassing = false;
+      entry.declaredWait = false;
+      // The publisher answered: the line works.
+      feedAnswers += 1;
+      noteOutsideAnswerImpl(now());
       entry.promise = null;
       entry.signal = null;
       if (feedCache.get(key) === entry) {
@@ -1078,6 +1235,8 @@ export function createGpodderAdapter(dependencies = {}) {
       // last-known-good if the newer publisher attempt then fails.
       if (!entry.value && previous?.value) entry.value = previous.value;
       entry.deadUntil = now() + feedFailureDelay(error);
+      entry.lastFailurePassing = feedFailureIsPassing(error);
+      entry.declaredWait = feedFailureDeclaresWait(error);
       entry.promise = null;
       entry.signal = null;
       if (feedCache.get(key) === entry) {
@@ -1138,11 +1297,23 @@ export function createGpodderAdapter(dependencies = {}) {
   }
 
   async function processFeedIndices(snapshot, cursor, indices, opts = {}) {
+    const answersBefore = feedAnswers;
     const results = await Promise.allSettled(indices.map((index) => (
       feedForSnapshot(snapshot, index, opts)
     )));
     const aborted = results.find((result) => result.status === 'rejected' && result.reason?.name === 'AbortError');
     if (aborted) throw aborted.reason;
+    // A passing failure counts against the retries only while the line
+    // demonstrably works: (a) another lookup of this batch came back, else
+    // (b) something outside answered within ANSWER_FRESH_MS, else (c) one
+    // small check (confirmConnection) for the batch. Asked only when needed.
+    let lineWorks = true;
+    if (results.some((result) => result.status === 'rejected' && feedFailureIsPassing(result.reason))) {
+      lineWorks = feedAnswers > answersBefore
+        || now() - lastOutsideAnswerAtImpl() < ANSWER_FRESH_MS
+        || await Promise.resolve().then(() => confirmConnectionImpl()).then((ok) => ok === true, () => false);
+      if (opts.signal?.aborted) throw abortError(opts.signal.reason);
+    }
     const explicit = showExplicit(opts);
     const currentTime = now();
     const groups = [];
@@ -1152,7 +1323,18 @@ export function createGpodderAdapter(dependencies = {}) {
       cursor.attempted[index] = true;
       const result = results[offset];
       if (result.status === 'rejected') {
-        cursor.dead[index] = true;
+        const passing = feedFailureIsPassing(result.reason);
+        // The line is down: not the feed's fault. Not counted; the feed
+        // keeps its wait and is revisited later.
+        if (passing && !lineWorks) continue;
+        // A passing failure is asked again on a later revisit, once the
+        // feed's wait in loadFeed is over, at most MAX_FEED_RETRIES times.
+        if (passing && cursor.retries[index] < MAX_FEED_RETRIES) {
+          cursor.retries[index] += 1;
+          cursor.dead[index] = false;
+        } else {
+          cursor.dead[index] = true;
+        }
         continue;
       }
       cursor.dead[index] = false;
@@ -1179,7 +1361,17 @@ export function createGpodderAdapter(dependencies = {}) {
     return items;
   }
 
-  function revisitIndices(snapshot, cursor) {
+  /** True for a feed with nothing to show that is in its wait after a
+   *  failure (loadFeed would refuse it at once); `force` asks anyway. */
+  function feedWaiting(snapshot, index, force) {
+    if (snapshot.feedPages.has(index)) return false;
+    const entry = feedEntryFor(snapshot.shows[index].feedUrl).entry;
+    // A wait the publisher asked for holds even when asked afresh.
+    if (force && entry?.declaredWait !== true) return false;
+    return Boolean(entry && !entry.value && entry.deadUntil > now());
+  }
+
+  function revisitIndices(snapshot, cursor, force = false) {
     const indices = [];
     const length = snapshot.shows.length;
     let scanned = 0;
@@ -1188,7 +1380,8 @@ export function createGpodderAdapter(dependencies = {}) {
       if (cursor.attempted[index] && !cursor.dead[index]
           && cursor.positions[index] < MAX_EPISODES_PER_FEED) {
         const feed = snapshot.feedPages.get(index) || cachedFeed(snapshot.shows[index]);
-        if (!feed || cursor.positions[index] < feed.items.length) indices.push(index);
+        if ((!feed || cursor.positions[index] < feed.items.length)
+            && !feedWaiting(snapshot, index, force)) indices.push(index);
       }
       index = (index + 1) % Math.max(1, length);
       scanned += 1;
@@ -1212,16 +1405,40 @@ export function createGpodderAdapter(dependencies = {}) {
     const snapshot = await loadToplist(opts);
     const cursor = normalizeBrowseCursor(opts.cursor, snapshot);
     const snapshotChanged = Boolean(opts.cursor && opts.cursor.snapshotId !== snapshot.id);
+    if (opts.force === true) {
+      // Asked afresh (Retry now, or the line came back): every feed whose
+      // last failure may pass leaves its wait, not just the few asked now,
+      // so the ordinary pages after this one revisit them in turn. A lasting
+      // failure keeps its wait, and so does a wait the publisher asked for.
+      for (const directoryShow of snapshot.shows) {
+        const { entry } = feedEntryFor(directoryShow.feedUrl);
+        if (entry?.lastFailurePassing === true && entry.declaredWait !== true) entry.deadUntil = 0;
+      }
+    }
+    // What a page can change besides where the revisit pass resumes.
+    const progressKey = () => JSON.stringify([
+      cursor.feedIndex, cursor.positions, cursor.attempted, cursor.dead, cursor.retries,
+    ]);
+    const before = progressKey();
     let indices = [];
     if (cursor.feedIndex < snapshot.shows.length) {
       const end = Math.min(snapshot.shows.length, cursor.feedIndex + FEEDS_PER_BATCH);
       for (let index = cursor.feedIndex; index < end; index++) indices.push(index);
       cursor.feedIndex = end;
     } else {
-      indices = revisitIndices(snapshot, cursor);
+      indices = revisitIndices(snapshot, cursor, opts.force === true);
     }
     const items = indices.length ? await processFeedIndices(snapshot, cursor, indices, opts) : [];
     const exhausted = !cursorHasRemaining(snapshot, cursor);
+    // Every feed has been asked once, and each one left failed for a passing
+    // reason and is in its wait, or failed again while the line is down:
+    // nothing moved. Not an empty page that looks like progress: the Library
+    // keeps the cursor and asks again after its back-off, by which time the
+    // waits may be over. (A first-pass page always moves on, even empty, so
+    // untried feeds never wait.)
+    if (!exhausted && progressKey() === before) {
+      throw new ProviderError('Podcast feeds could not be reached just now', { code: 'PODCAST_FEEDS_UNREACHABLE' });
+    }
     return {
       items,
       cursor: exhausted ? null : cursor,

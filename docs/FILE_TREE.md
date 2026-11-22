@@ -32,6 +32,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.12.md
 |   |-- RELEASE_NOTES_0.1.13.md
 |   |-- RELEASE_NOTES_0.1.14.md
+|   |-- RELEASE_NOTES_0.1.15.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -44,6 +45,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.12.md
 |   |-- RELEASE_RECORD_0.1.13.md
 |   |-- RELEASE_RECORD_0.1.14.md
+|   |-- RELEASE_RECORD_0.1.15.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -52,13 +54,7 @@ WorldMediaWindows/
 |-- public/
 |   `-- THIRD_PARTY_NOTICES.txt
 |-- screenshots/
-|   |-- updated screenshots/
-|   |-- v0.1.3/
-|   |-- 1.PNG
-|   |-- 2.PNG
-|   |-- 3.PNG
-|   |-- 4.PNG
-|   `-- 5.PNG
+|   `-- v0.1.14/
 |-- scripts/
 |   |-- import_psychedelia.mjs
 |   |-- look_darkness.mjs
@@ -143,7 +139,8 @@ WorldMediaWindows/
 | `src/lib/catalog-client.js` | Authenticated semantic catalog and opaque artwork control client; at most three slow catalogue requests (podcast feeds, PeerTube, Owncast) at a time. |
 | `src/lib/artwork.js` | Prioritized, deduplicated, retryable conversion from provider image metadata to opaque local asset URLs, with playback-aware concurrency. |
 | `src/modes/library/catalog-store.js` | Bounded resident catalog, stable merge/update identities, snapshot replacement, and eviction pins. |
-| `src/modes/library/snapshots.js` | Independent live-snapshot refresh (only while the list is shown), stale-cache state, reconciliation, and teardown. |
+| `src/modes/library/snapshots.js` | Independent live-snapshot refresh (read once at start, then only while the list is shown), stale-cache state, reconciliation, and teardown. |
+| `src/modes/library/line-watch.js` | Notices that the connection is back after a drop and wakes the Library sources that are waiting. |
 | `src/lib/live-load.js` | Tuner/Grid progressive source loading and per-source time limits. |
 | `src/lib/initials.js` | Initials and stable colours for items without artwork. |
 | `src/lib/playlist-drop.js` | Drag-and-drop import of local playlist files (`.m3u`, `.m3u8`, `.pls`, `.xspf`, `.json`, `.csv`); keeps other dropped files from being opened by Windows. |
@@ -231,11 +228,14 @@ WorldMediaWindows/
 | `tests/playlist-json-csv.test.js`, `tests_python/test_playlists_tables.py` | `.json` and `.csv` playlist import. |
 | `tests/best-stream.test.js`, `tests/best-stream-auto.test.js`, `tests_python/test_stream_probe.py` | Pick the best stream: ranking, the hand-over to the next stream, the Auto checks and the server's look at two streams. |
 | `tests/processor-budget.test.js`, `tests/processor-extras.test.js`, `tests/visualizer-processor-use.test.js`, `tests_python/test_processor.py` | Processor use: levels and limit, the steering, Very high and the larger simulations, and the server's reading. |
-| `tests/paging-guard.test.js` | Library catalog retries: the wait, the stop after two failures, and a refused page. |
+| `tests/paging-guard.test.js`, `tests/library-slow-retry.test.js`, `tests/library-line-watch.test.js` | Library catalog retries: the wait, the slow retry after two failures, a refused page, and the wake-up when the connection is back. |
+| `tests/http-outside-gate.test.js`, `tests/iptv-radio-robustness.test.js`, `tests/live-source-retry.test.js` | The limit of four catalog requests at a time, the iptv-org and Radio Browser loading rules, and the Tuner and Grid retry of a source that failed. |
+| `tests/adapter-playable-picks.test.js`, `tests_python/test_podcast_enclosures.py`, `tests_python/test_download_content_types.py` | Which file of an item is played: Internet Archive, Wikimedia Commons, Radio Browser and LibriVox picks, podcast episode formats, and sound downloads labelled as video. |
+| `tests_python/test_connect_first.py` | Connecting to a host with several addresses: all tried together, IPv4 first, the last good one remembered. |
 | `tests/about-credits.test.js` | The About page's Visualizer credits, and that `CREDITS.md` and the notices name every borrowed piece. |
 | `tests/helpers/audio-sim.js`, `scene-luminance.js`, `signal-harness.js`, `visualizer-fakes.js` | Test helpers: simulated music for the analyser, a CPU recompute of two scenes' brightness, a clock and timer simulation, and fake graphics, DOM and window objects. |
 | `tests/helpers/visualizer-flash-check.mjs` and `.py`, `visualizer-fx-check.mjs` and `.py`, `visualizer-fx-check-page.js` | Checks run by hand, not by `npm test`: they draw scenes, effects and overlays in Chromium and report the largest frame-to-frame step of light. |
-| `screenshots/` | Versioned README and documentation screenshots. |
+| `screenshots/` | Versioned README and documentation screenshots and short GIF demos. |
 | `build_windows.py` | Builds the signed-runtime portable folder and release ZIP. |
 | `build_single_exe.py` | Builds the classic unsigned one-file `dist\WorldMediaWindows.exe` with the current frontend, icon, and WebView bridge. |
 | `assets/` | App icon, Windows metadata, and embedded-runtime launcher assets. |
@@ -249,3 +249,5 @@ WorldMediaWindows/
 | `docs/RELEASE_RECORD_0.1.13.md` | What was checked for v0.1.13, with artifact hashes and limits. |
 | `docs/RELEASE_NOTES_0.1.14.md` | GitHub release notes for the `v0.1.14` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.14.md` | What was checked for v0.1.14, with artifact hashes and limits. |
+| `docs/RELEASE_NOTES_0.1.15.md` | GitHub release notes for the `v0.1.15` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.15.md` | What was checked for v0.1.15, with artifact hashes and limits. |

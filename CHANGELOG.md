@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.1.15 - 2026-11-21
+
+Channels, stations and episodes load faster and keep loading through a poor
+connection, more podcast episodes and recordings are listed and play, and the
+README and wiki have new screenshots.
+
+- **Radio stations load much faster:** the Library asks Radio Browser for 300
+  stations in one request where it asked for 30. On the test connection it
+  collected 14,700 stations in 104 seconds; v0.1.14 collected about 690 in the
+  same time.
+- **Lists are sent compressed:** the app asks the catalog providers for
+  compressed answers. The three iptv-org files that make up the TV list are
+  now 2.5 MB on the wire where they were 17.9 MB. Channel pictures for that
+  list are fetched beside it, so the channels appear without waiting for them
+  (at most six seconds).
+- **A server with several addresses:** many servers have more than one
+  address, and one of them can be dead or slow. The app tried them one after
+  another and waited eight seconds on a dead one for every request, so a
+  podcast file on such a server did not start within a minute. It now tries
+  the addresses together, the older address type (IPv4) first, uses the first
+  that connects, and remembers the one that answered for ten minutes. The same
+  file now starts in about seven seconds, and a directory that sent 100
+  stations in 4 to 18 seconds over one address type on the test connection is
+  read in 1.3 seconds over the other.
+- **After the connection drops:** a Library source that fails twice in a row
+  is asked again by itself after one minute, then two, four and eight, then
+  every ten minutes; its page says, for example, "LibriVox is not answering",
+  with **Retry now**. When the connection comes back, the app notices within
+  about half a minute and asks the waiting sources again at once. In the
+  Tuner and the Grid, a source that could not be loaded is tried again after
+  15 seconds, a minute, then every five minutes, and at once when the
+  connection is back, while the other sources stay in the list. A podcast feed
+  that fails for a passing reason is tried again instead of being left out
+  until the next start.
+- **Owncast and the media.ccc.de live rooms are listed from the start:** these
+  two live lists were first fetched only while a Library view that includes
+  them was open, so with the Library opened on Favorites or Radio they stayed
+  at 0. They are now fetched at start whichever view is open, and refreshed,
+  as before, only while they are shown.
+- **More podcast episodes:** an episode was listed only when its file was MP3,
+  MP4 video or HLS. Episodes published as M4A or AAC, Ogg Vorbis, Opus, FLAC,
+  WAV, WebM, M4V and MOV are now listed and play, so a show that publishes
+  only such files has episodes. An episode that offers several files still
+  plays the one it played before. Larger feeds are read (up to 16 MiB and
+  250,000 elements), and a feed with a style sheet line is no longer refused.
+- **More recordings play:** a media.ccc.de talk whose only recordings are
+  WebM, Opus or in another language than the talk's own now plays, and a talk
+  whose video file carries two languages plays as video. The Internet Archive
+  no longer picks an old Ogg Theora file over an MP4. Wikimedia Commons FLAC
+  and Opus files are listed. A Radio Browser station with only its listed
+  address, and a LibriVox book whose feed has no MP3, now play.
+- **Downloads:** a sound file that its server labels as video (an M4A sent as
+  `video/mp4`, sound-only WebM or Ogg) is downloaded when it begins the way
+  that kind of file begins, and keeps its own file ending.
+- **Other changes to loading:** at most four catalog requests are sent at a
+  time, so a request's time limit is not used up waiting for a free
+  connection; LibriVox pages are asked for without the extended details (0.4
+  seconds a page where it was 1.1); the Radio Browser mirrors are checked at
+  the same time and a mirror that failed is left out; the TV list is read
+  again after six hours; a NASA page that comes back short is asked for again
+  instead of ending the list; the Grid keeps the keyboard focus when its tiles
+  are redrawn.
+- **Screenshots:** the README and the wiki show the current application in 25
+  new screenshots and four short GIF demos (`screenshots/v0.1.14/`); the old
+  screenshots are removed.
+
 ## 0.1.14 - 2026-11-21
 
 One fix for a report in issue #6: stations on an old Shoutcast server did not

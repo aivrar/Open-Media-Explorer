@@ -72,6 +72,8 @@ The panel opens on the right. It remembers whether it was open. It has five
 sections, from the top: **Scene**, **Shuffle**, **Effects**, **Overlays** and
 **Picture**.
 
+![The settings panel with the Effects list](<../../screenshots/v0.1.14/visualizer-panel.png>)
+
 Each section starts with a title bar: an arrow, the section's name and, at the
 right, what is set, so a folded section still tells you its state:
 
@@ -244,6 +246,8 @@ flicker."
 Overlays are drawn over the picture: lasers, stage lights, fireworks,
 particles, matrix rain, spectrum bars, shapes and more. They are off by
 default.
+
+![The Overlays section with Neon Frame and Matrix Rain on](<../../screenshots/v0.1.14/visualizer-overlays.png>)
 
 - **Overlays on** (always shown), **Shuffle overlays** (on by default) and
   **New overlays now** work like the effects' switches. The controls below

@@ -14,8 +14,10 @@ import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js'
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems } from '../lib/content-rating.js';
 import {
-  mergeSourceItems, failedSourceState, liveStatusText, refreshKeepsList, createLiveRetry, runLiveLoad,
+  mergeSourceItems, failedSourceState, liveStatusText, refreshKeepsList, createLiveRetry, createSourceRetries,
+  runLiveLoad,
 } from '../lib/live-load.js';
+import { lastOutsideAnswerAt, onOutsideAnswer } from '../lib/connection-evidence.js';
 
 const ui = {};
 // An empty Grid left by a failed source tries again by itself (twice), only
@@ -24,6 +26,15 @@ const autoRetry = createLiveRetry({
   run: () => { load({ automatic: true }); },
   // A try due while the window is hidden waits until it is shown again.
   isShown: () => getState().mode === 'grid' && Boolean(ui.tilesHost?.isConnected),
+});
+// A source that failed while others answered is asked again by itself
+// (after 15 s, 60 s, then every 5 minutes, and at once when the line seems
+// back) while the Grid stays open; any new load and leaving the Grid cancel
+// it (see lib/live-load.js).
+const sourceRetries = createSourceRetries({
+  isShown: () => getState().mode === 'grid' && Boolean(ui.tilesHost?.isConnected),
+  onAnswer: onOutsideAnswer,
+  lastAnswerAt: lastOutsideAnswerAt,
 });
 const state = {
   band: 'tv',
@@ -319,6 +330,9 @@ async function load({ onlySourceIds = null, preserve = false, automatic = false 
     (state.sourceFilter === 'all' || source.id === state.sourceFilter)
     && (!onlySourceIds || onlySourceIds.has(source.id))
   ));
+  // This load asks its sources itself: their automatic tries end (all of
+  // them, unless it only asks some again: see applyContentPreference).
+  sourceRetries.stop(preserve ? candidates.map((source) => source.id) : null);
   for (const source of candidates) {
     state.sourceStates.set(source.id, refresh
       ? { state: 'loading', count: state.tiles.filter((item) => item.source === source.id).length, refreshing: true }
@@ -339,31 +353,51 @@ async function load({ onlySourceIds = null, preserve = false, automatic = false 
     if (state.category) opts.tag = state.category;
     const controller = new AbortController();
     state.requestAbort = controller;
+    // An automatic try of one source is a job of its own (`attempt`), never
+    // joined to the request that failed.
+    const ask = (source, signal, attempt = 0) => catalogScheduler.enqueue({
+      sourceId: source.id,
+      key: `grid:${gen}:${state.band}${attempt ? `:retry${attempt}` : ''}`,
+      priority: CATALOG_PRIORITY.USER,
+      signal,
+      task: ({ signal: taskSignal }) => browseLiveOne(source.id, { ...opts, signal: taskSignal }),
+    });
+    const onItems = (source, items) => {
+      state.sourceStates.set(source.id, { state: 'ready', count: items.length });
+      sourceRetries.succeeded(source.id);
+      state.tiles = mergeSourceItems(state.tiles, source.id, items, state.band);
+      renderTilesKeepingFocus();
+      renderSourceStatus();
+    };
+    const onFailed = (source, message, error) => {
+      // Its tiles from the previous load stay on screen, and it is asked
+      // again by itself while the Grid stays open.
+      state.sourceStates.set(source.id, failedSourceState(state.tiles, source.id, message));
+      renderSourceStatus();
+      sourceRetries.fail(source, retrySource, {
+        error, declaredMs: catalogScheduler.declaredCooldownRemainingMs(source.id),
+      });
+    };
+    // One source asked again: its tiles arrive as a late answer's do.
+    const retrySource = (source, signal, isCurrent, attempt) => runLiveLoad({
+      candidates: [source],
+      signal,
+      ask: (one, oneSignal) => ask(one, oneSignal, attempt),
+      isCurrent,
+      onItems,
+      onFailed,
+      onDone() {},
+    });
     // Show each source's tiles as soon as it answers; a slow or stalled
     // source no longer holds the others back, and a load overtaken by a newer
     // one changes nothing (see lib/live-load.js).
     await runLiveLoad({
       candidates,
       signal: controller.signal,
-      ask: (source, signal) => catalogScheduler.enqueue({
-        sourceId: source.id,
-        key: `grid:${gen}:${state.band}`,
-        priority: CATALOG_PRIORITY.USER,
-        signal,
-        task: ({ signal: taskSignal }) => browseLiveOne(source.id, { ...opts, signal: taskSignal }),
-      }),
+      ask,
       isCurrent: () => gen === state.loadGen,
-      onItems: (source, items) => {
-        state.sourceStates.set(source.id, { state: 'ready', count: items.length });
-        state.tiles = mergeSourceItems(state.tiles, source.id, items, state.band);
-        renderTiles();
-        renderSourceStatus();
-      },
-      onFailed: (source, message) => {
-        // Its tiles from the previous load stay on screen.
-        state.sourceStates.set(source.id, failedSourceState(state.tiles, source.id, message));
-        renderSourceStatus();
-      },
+      onItems,
+      onFailed,
       onDone: finishLoad,
     });
     return;
@@ -379,8 +413,9 @@ async function load({ onlySourceIds = null, preserve = false, automatic = false 
 function finishLoad() {
   state.requestAbort = null;
   state.loading = false;
-  autoRetry.settle(state.tiles.length === 0
-    && [...state.sourceStates.values()].some((status) => status.state === 'error'));
+  // While the whole Grid is tried again, single sources are not.
+  if (autoRetry.settle(state.tiles.length === 0
+    && [...state.sourceStates.values()].some((status) => status.state === 'error'))) sourceRetries.stop();
   renderTiles();
   renderSourceStatus();
 }
@@ -471,6 +506,17 @@ function renderTiles() {
   }
 }
 
+/** Redraw the tiles for a source that answered, keeping the keyboard focus
+ *  on the tile that had it (without scrolling to it). */
+function renderTilesKeepingFocus() {
+  const focused = globalThis.document?.activeElement;
+  const focusedId = focused && ui.tilesHost?.contains(focused) ? focused.dataset?.id || '' : '';
+  renderTiles();
+  if (!focusedId) return;
+  [...ui.tilesHost.querySelectorAll('[data-id]')]
+    .find((tile) => tile.dataset.id === focusedId)?.focus({ preventScroll: true });
+}
+
 function mountTileArtwork(tile, logoWrap, t) {
   // Which station picture this tile shows, so a new list redraws only the
   // tiles whose picture changed (syncTileStationImages).
@@ -541,6 +587,7 @@ function tearDown() {
   state.requestAbort = null;
   state.loading = false;
   autoRetry.stop();
+  sourceRetries.stop();
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
 }
 

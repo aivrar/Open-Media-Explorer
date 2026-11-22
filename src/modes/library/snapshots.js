@@ -49,6 +49,8 @@ export function createSnapshotManager(options) {
   // A live list is refreshed on its timer only while it is on screen; while
   // it is not, the refresh waits and runs when it is shown again (if due).
   const isVisible = options.isVisible || (() => true);
+  const windowHidden = options.isWindowHidden
+    || (() => globalThis.document?.visibilityState === 'hidden');
   const states = store.snapshotState || (store.snapshotState = new Map());
   const timers = new Map();
   const generations = new Map();
@@ -69,6 +71,11 @@ export function createSnapshotManager(options) {
     return next;
   };
 
+  // A list that has never arrived ('retrying' is published only then): its
+  // retries do not wait for a view that shows it, only for the window.
+  const awaitingFirst = (sourceId) => states.get(sourceId)?.state === 'retrying';
+  const shown = (sourceId) => (awaitingFirst(sourceId) ? !windowHidden() : isVisible(sourceId));
+
   function publish(sourceId, patch) {
     const previous = states.get(sourceId) || {
       state: 'idle', stale: false, failures: 0, lastGoodAt: 0, snapshotId: '',
@@ -87,13 +94,20 @@ export function createSnapshotManager(options) {
 
   function scheduleRefresh(sourceId, delayMs, scheduleOptions = {}) {
     clearRefreshTimer(sourceId);
-    if (!active || !isSourceEnabled(sourceId) || unsupported.has(sourceId) || !isVisible(sourceId)) return;
+    // A list that has never arrived keeps trying while it is not on screen
+    // (untilFirst), so its entry does not stay empty; one that has arrived
+    // is refreshed only while it is shown.
+    const untilFirst = scheduleOptions.untilFirst === true;
+    if (!active || !isSourceEnabled(sourceId) || unsupported.has(sourceId)
+        || (!untilFirst && !isVisible(sourceId))) return;
     const delay = scheduleOptions.exact === true
       ? Math.max(0, Number(delayMs) || 0)
       : refreshDelay(delayMs);
     timers.set(sourceId, setTimer(() => {
       timers.delete(sourceId);
-      if (!isVisible(sourceId)) return; // due; runs when shown again (syncVisibility)
+      if (!isVisible(sourceId) && (!untilFirst || windowHidden())) {
+        return; // due; runs when shown again (syncVisibility)
+      }
       refresh(sourceId, { force: true }).catch(() => {});
     }, delay));
   }
@@ -223,7 +237,7 @@ export function createSnapshotManager(options) {
         error: String(error?.message || error),
         retryAt: now() + retryAfterMs,
       });
-      scheduleRefresh(sourceId, retryAfterMs);
+      scheduleRefresh(sourceId, retryAfterMs, { untilFirst: !hasLastGood });
       throw error;
     } finally {
       externalSignal?.removeEventListener('abort', onExternalAbort);
@@ -278,7 +292,8 @@ export function createSnapshotManager(options) {
   /** Plan the next refresh of a known source from its last one: at its due
    *  time, or now when that has passed. Nothing while it is not on screen. */
   function wake(sourceId) {
-    if (unsupported.has(sourceId) || !isSourceEnabled(sourceId) || !isVisible(sourceId)) return;
+    if (unsupported.has(sourceId) || !isSourceEnabled(sourceId) || !shown(sourceId)) return;
+    const first = awaitingFirst(sourceId);
     const state = states.get(sourceId) || {};
     const refreshDueAt = state.lastGoodAt != null && state.refreshAfterMs != null
       ? Number(state.lastGoodAt) + Number(state.refreshAfterMs)
@@ -289,7 +304,7 @@ export function createSnapshotManager(options) {
     const dueAt = Number(state.retryAt) > 0
       ? Number(state.retryAt)
       : refreshDueAt;
-    if (dueAt > now()) scheduleRefresh(sourceId, dueAt - now(), { exact: true });
+    if (dueAt > now()) scheduleRefresh(sourceId, dueAt - now(), { exact: true, untilFirst: first });
     else refresh(sourceId, { force: true }).catch(() => {});
   }
 
@@ -304,7 +319,7 @@ export function createSnapshotManager(options) {
   function syncVisibility() {
     if (!active) return;
     for (const sourceId of new Set([...supported, ...attempted])) {
-      if (!isVisible(sourceId)) clearRefreshTimer(sourceId);
+      if (!shown(sourceId)) clearRefreshTimer(sourceId);
       else if (!timers.has(sourceId) && !inFlight.has(sourceId)) wake(sourceId);
     }
   }

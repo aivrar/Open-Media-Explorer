@@ -125,7 +125,7 @@ all enabled sources, so rapidly switching tabs cannot wipe the catalog.
 
 ### Import your own channel playlists
 
-![My Playlists and Add link with public sample channels](<../../screenshots/v0.1.3/my-playlists.png>)
+![My Playlists and Add link with public sample channels](<../../screenshots/v0.1.14/my-playlists.png>)
 
 1. Open **Library → My Playlists**.
 2. Leave **Add as** on **Auto**, or set it to **TV** or **Radio**. It decides
@@ -246,7 +246,8 @@ not limits on the continuously collected public catalog or mounted-card window.
 At startup the app fetches a page from every enabled source. It then asks ready
 sources for more pages in a fair rotation. The scroll sentinel asks for another
 page when the user nears the end of the mounted window. **Retry now** retries
-waiting sources without changing their cursor. **Check again** resets finite
+waiting sources without changing their cursor. A source that does not answer
+is tried again by itself every few minutes, and its page says so. **Check again** resets finite
 sources that completed the current catalog and starts another pass.
 
 The resident catalog is not evicted during an ordinary session. The renderer

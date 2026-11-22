@@ -40,31 +40,47 @@ adapter policies:
 
 | Adapter | Same-source policy in code | Cache/refresh highlights |
 |---|---:|---|
-| Radio Browser | Default one lane | Mirror and results coalesced for the session |
+| Radio Browser | Default one lane | Mirror and results coalesced for the session; the Library asks for 300 stations in one request |
 | iptv-org | Default one lane | Joined streams/channels/logos snapshot once per session |
 | Internet Archive | Default one lane plus a 5-request/sec metadata gate | Curated browse cursors rotate collections; item metadata is session-cached |
 | NASA | Default one lane | Search pages are finite; assets resolve lazily |
 | Wikimedia Commons | Default one lane | Audio/video searches are paged independently and may run in parallel |
 | LibriVox | Default one lane | Audiobook pages finite; RSS and cover resolution cached in session |
-| media.ccc.de | Two lanes, at least 500 ms between starts | Recent/search ~5 minutes, details ~1 hour, live ~10 seconds; the live list is read again at most every 5 minutes, and only while it is shown in the Library; after a failed read it also waits 5 minutes |
+| media.ccc.de | Two lanes, at least 500 ms between starts | Recent/search ~5 minutes, details ~1 hour, live ~10 seconds; the live list is read once at start, then again at most every 5 minutes and only while it is shown in the Library; after a failed read it also waits 5 minutes |
 | gPodder | Four lanes | Directory/feed data ~30 minutes; searches ~5 minutes; at most four feeds active globally and one per host |
 | PeerTube | Two lanes, at least 500 ms between starts | Index ~5 minutes, origin details ~10 minutes; `Retry-After` is honored |
-| Owncast | One lane | Verified snapshot refresh about every 2 minutes while the list is shown in the Library; after a failed read it also waits 2 minutes; last-known-good data can be stale |
+| Owncast | One lane | Verified snapshot read once at start whichever view is open, then about every 2 minutes while the list is shown in the Library; after a failed read it also waits 2 minutes; last-known-good data can be stale |
 
 These are provider-protection policies, not an item cap. The Library can keep
 collecting while a source has more authoritative pages. A short or empty page is
 not treated as exhaustion unless the adapter returns an explicit end marker.
 
 Since v0.1.12, a page that fails without the provider saying when to try again
-(and is not a rate limit) is asked for again after a wait that grows each time,
-and after two failures in a row the source stops loading by itself until you
-press **Retry now**. A page the provider refuses outright, such as a PeerTube
-search past the deepest page its index serves, ends that listing instead of
-being asked for again.
+(and is not a rate limit) is asked for again after a wait that grows each time.
+Since v0.1.15, after two failures in a row the source is asked again only
+slowly: after one minute, then two, four and eight, then every ten minutes,
+until it answers. While it waits, its page says that the source is not
+answering, and **Retry now** tries at once. When the connection has dropped
+and comes back, the waiting sources are asked again at once, without waiting
+for their turn. A page the provider refuses
+outright, such as a PeerTube search past the deepest page its index serves,
+ends that listing instead of being asked for again.
+
+## Which file of an item plays
+
+Since v0.1.15 a podcast episode is listed when its file is one the built-in
+player plays: MP3, M4A or AAC, Ogg Vorbis, Opus, FLAC, WAV, WebM, MP4, M4V or
+MOV video, or HLS. An episode that offers several files plays the MP3 or MP4
+when there is one. Files the player cannot be relied on to play (Ogg Theora,
+HEVC, MKV) are left out. A media.ccc.de talk plays its MP4 or MP3 in the
+talk's own language when there is one, otherwise WebM, Opus or a recording in
+another language.
 
 ## Live snapshots versus finite catalogs
 
-C3VOC and Owncast are snapshot sources. They can legitimately return an empty
+C3VOC and Owncast are snapshot sources. Since v0.1.15 each is read once at
+start whichever Library view is open, so its count is there from the start;
+after that it is refreshed only while it is shown. They can legitimately return an empty
 live set and later return new rooms/servers. The snapshot manager tracks fresh,
 refreshing, stale, retrying, and live states independently of the finite browse
 cursor. A `Done` label applies only to a finite catalog lane; it does not mean a

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import http.client
 import io
 import json
@@ -135,7 +136,10 @@ class ControlApiTests(unittest.TestCase):
         include_host: bool = True,
     ):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
-        connection.putrequest(method, path, skip_host=True)
+        connection.putrequest(
+            method, path, skip_host=True,
+            skip_accept_encoding=any(name.lower() == "accept-encoding" for name in (headers or {})),
+        )
         if include_host:
             connection.putheader("Host", f"127.0.0.1:{self.port}")
         for name, value in (headers or {}).items():
@@ -431,6 +435,9 @@ class ControlApiTests(unittest.TestCase):
             self.assertIsNone(response.getheader("Set-Cookie"))
             self.assertEqual(opened.call_args.args, (target,))
             self.assertEqual(opened.call_args.kwargs["method"], "GET")
+            # This client sent "Accept-Encoding: identity": no gzip is asked for.
+            self.assertIs(opened.call_args.kwargs["accept_gzip"], False)
+            self.assertIsNone(response.getheader("Content-Encoding"))
 
         with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=FakeUpstream()) as opened:
             response, payload = self.request(
@@ -446,6 +453,121 @@ class ControlApiTests(unittest.TestCase):
             "POST", path, headers={"Origin": self.origin}, declared_length=64 * 1024 + 1,
         )
         self.assert_api_error(response, payload, 413, "BODY_TOO_LARGE")
+
+    def proxy_upstream(self, status: int, body: bytes, headers: dict[str, str]):
+        class FakeResponse(io.BytesIO):
+            closed_by_server = False
+
+            def close(self):
+                FakeResponse.closed_by_server = True
+                super().close()
+
+        response = FakeResponse(body)
+        response.status = status
+        response.headers = headers
+        return mock.Mock(response=response, close=response.close)
+
+    def test_metadata_proxy_asks_for_gzip_and_passes_it_through_compressed(self) -> None:
+        payload = b"<rss>" + b"<item>same text again</item>" * 2000 + b"</rss>"
+        compressed = gzip.compress(payload)
+        target = "https://images-api.nasa.gov/search?q=earth"
+        path = "/api/proxy?" + urllib.parse.urlencode({"url": target})
+        upstream = self.proxy_upstream(200, compressed, {
+            "Content-Type": "application/xml",
+            "Content-Encoding": "gzip",
+            "Content-Length": str(len(compressed)),
+            "Link": '<https://images-api.nasa.gov/search?page=2>; rel="next"',
+            "Set-Cookie": "must-not-cross=1",
+        })
+        # What WebView2 sends with fetch().
+        browser = {"Accept-Encoding": "gzip, deflate, br, zstd"}
+        with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream) as opened:
+            response, body = self.request("GET", path, headers=browser)
+        self.assertIs(opened.call_args.kwargs["accept_gzip"], True)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Encoding"), "gzip")
+        self.assertEqual(response.getheader("Content-Length"), str(len(compressed)))
+        self.assertEqual(response.getheader("Cache-Control"), "no-store")
+        self.assertEqual(response.getheader("Link"), '<https://images-api.nasa.gov/search?page=2>; rel="next"')
+        self.assertIsNone(response.getheader("Set-Cookie"))
+        self.assertEqual(body, compressed)
+        self.assertEqual(gzip.decompress(body), payload)
+        self.assertLess(len(body), len(payload))
+
+        # Explicit identity behaves exactly like no Content-Encoding at all.
+        upstream = self.proxy_upstream(200, b"{}", {
+            "Content-Type": "application/json", "Content-Encoding": "identity", "Content-Length": "2",
+        })
+        with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream):
+            response, body = self.request("GET", path, headers=browser)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body, {})
+        self.assertIsNone(response.getheader("Content-Encoding"))
+        self.assertEqual(response.getheader("Content-Length"), "2")
+
+        # The LibriVox empty-search 404 still answers an empty list.
+        librivox = "https://librivox.org/api/feed/audiobooks?title=none&format=json"
+        upstream = self.proxy_upstream(404, gzip.compress(b"{}"), {
+            "Content-Type": "application/json", "Content-Encoding": "gzip",
+        })
+        with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream):
+            response, body = self.request(
+                "GET", "/api/proxy?" + urllib.parse.urlencode({"url": librivox}), headers=browser,
+            )
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body, {"books": []})
+
+    def test_metadata_proxy_asks_for_identity_when_the_client_does_not_take_gzip(self) -> None:
+        target = "https://images-api.nasa.gov/search?q=earth"
+        path = "/api/proxy?" + urllib.parse.urlencode({"url": target})
+        # (A request with no Accept-Encoding at all is covered by the unit
+        # test below; http.client always sends one.)
+        for client in ("identity", "br, deflate", "*", "gzip;q=0", "GZIP; Q=0.000, br", "x-gzip"):
+            with self.subTest(client=client):
+                upstream = self.proxy_upstream(200, b"{}", {"Content-Type": "application/json", "Content-Length": "2"})
+                with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream) as opened:
+                    response, body = self.request("GET", path, headers={"Accept-Encoding": client})
+                self.assertIs(opened.call_args.kwargs["accept_gzip"], False)
+                self.assertEqual((response.status, body), (200, {}))
+                self.assertIsNone(response.getheader("Content-Encoding"))
+        # A source that sends gzip unasked is refused, not handed on unlabelled.
+        upstream = self.proxy_upstream(200, gzip.compress(b"{}"), {
+            "Content-Type": "application/json", "Content-Encoding": "gzip",
+        })
+        with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream):
+            response, payload = self.request("GET", path, headers={"Accept-Encoding": "identity"})
+        self.assert_api_error(response, payload, 502, "PROXY_ENCODING_UNSUPPORTED")
+        self.assertTrue(upstream.response.closed_by_server)
+
+    def test_client_gzip_check_is_a_plain_token_check_that_honours_only_q_zero(self) -> None:
+        accepts = worldmedia_server.WorldMediaHandler._client_accepts_gzip
+        for values in (
+            ["gzip"], ["GZip"], [" gzip , br"], ["gzip, deflate, br, zstd"], ["br;q=1.0, gzip;q=0.5"],
+            ["gzip;q=0.001"], ["gzip; level=1"], ["identity", "gzip"],
+        ):
+            with self.subTest(values=values):
+                self.assertTrue(accepts(values))
+        for values in (
+            [], None, ["identity"], ["*"], ["*;q=1"], ["x-gzip"], ["gzipped"], ["deflate, br"],
+            ["gzip;q=0"], ["gzip;Q=0.0"], ["gzip; q = 0.000"], ["gzip;q=abc"], ["gzip;q=nan"],
+            ["gzip", "gzip;q=0"], ["gzip" + " " * 2000],
+        ):
+            with self.subTest(values=values):
+                self.assertFalse(accepts(values))
+
+    def test_metadata_proxy_refuses_an_encoding_other_than_gzip_before_any_header(self) -> None:
+        target = "https://images-api.nasa.gov/search?q=earth"
+        path = "/api/proxy?" + urllib.parse.urlencode({"url": target})
+        for encoding in ("br", "deflate", "gzip, gzip", "compress"):
+            with self.subTest(encoding=encoding):
+                upstream = self.proxy_upstream(200, b"\x00\x01binary", {
+                    "Content-Type": "application/json", "Content-Encoding": encoding, "Content-Length": "8",
+                })
+                with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream):
+                    response, payload = self.request("GET", path, headers={"Accept-Encoding": "gzip"})
+                self.assert_api_error(response, payload, 502, "PROXY_ENCODING_UNSUPPORTED")
+                self.assertIsNone(response.getheader("Content-Encoding"))
+                self.assertTrue(upstream.response.closed_by_server)
 
     def test_ffmpeg_status_and_managed_actions_are_authenticated_and_narrow(self) -> None:
         class FakeFfmpegService:

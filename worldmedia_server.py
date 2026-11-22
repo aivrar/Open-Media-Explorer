@@ -104,7 +104,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.14 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.15 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -1449,11 +1449,21 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 if content_type and len(content_type) <= 256 and not re.search(r"[\r\n\0]", content_type):
                     headers["Content-Type"] = content_type
 
-            upstream = PROXY_CONNECTOR.open(url, method=method, headers=headers, body=body)
+            # Metadata only: when the client says it takes gzip, ask for gzip
+            # and pass a gzip body on unchanged (the page's browser decodes it
+            # and bounds the decoded size). Otherwise ask for identity.
+            client_gzip = self._client_accepts_gzip(self.headers.get_all("Accept-Encoding", []))
+            upstream = PROXY_CONNECTOR.open(url, method=method, headers=headers, body=body, accept_gzip=client_gzip)
             if upstream.response.status == HTTPStatus.NOT_FOUND and self._is_expected_librivox_empty(target, upstream.response):
                 upstream.close()
                 return self._send_json({"books": []})
-            return self._stream_upstream(upstream, upstream.response.status or 200)
+            encoding = self._proxy_content_encoding(upstream.response, allow_gzip=client_gzip)
+            if encoding is None:
+                upstream.close()
+                raise ApiError(
+                    HTTPStatus.BAD_GATEWAY, "PROXY_ENCODING_UNSUPPORTED", "Metadata source answered in an unsupported encoding."
+                )
+            return self._stream_upstream(upstream, upstream.response.status or 200, content_encoding=encoding)
         except (ApiError, MediaError) as error:
             return self._send_api_error(error)
         except (TypeError, ValueError):
@@ -1470,7 +1480,54 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             and target.path.rstrip("/") == "/api/feed/audiobooks"
         )
 
-    def _stream_upstream(self, upstream, status: int) -> None:
+    @staticmethod
+    def _client_accepts_gzip(values) -> bool:
+        """True when the client's Accept-Encoding lists gzip without q=0.
+
+        A plain token check: "*" does not count, and any q-value other than
+        zero is ignored. An unreadable q-value counts as a refusal.
+        """
+        listed = False
+        for value in values or ():
+            if not isinstance(value, str) or len(value) > 1024:
+                return False
+            for token in value.split(","):
+                name, _, params = token.partition(";")
+                if name.strip().lower() != "gzip":
+                    continue
+                listed = True
+                for param in params.split(";"):
+                    key, _, raw = param.partition("=")
+                    if key.strip().lower() != "q":
+                        continue
+                    try:
+                        if not float(raw.strip()) > 0:
+                            return False
+                    except ValueError:
+                        return False
+        return listed
+
+    @staticmethod
+    def _proxy_content_encoding(response, *, allow_gzip: bool = True) -> str | None:
+        """Empty string for an uncompressed body, "gzip" for gzip (only when
+        allow_gzip), None otherwise."""
+        headers = response.headers
+        get_all = getattr(headers, "get_all", None)
+        if callable(get_all):
+            values = list(get_all("Content-Encoding") or [])
+        else:
+            values = [headers.get("Content-Encoding")]
+        values = [value for value in values if value is not None]
+        if not values:
+            return ""
+        if len(values) != 1 or not isinstance(values[0], str):
+            return None
+        value = values[0].strip().lower()
+        if value in {"", "identity"}:
+            return ""
+        return "gzip" if value == "gzip" and allow_gzip else None
+
+    def _stream_upstream(self, upstream, status: int, *, content_encoding: str = "") -> None:
         try:
             response = getattr(upstream, "response", upstream)
             content_type = response.headers.get("Content-Type", "application/octet-stream")
@@ -1481,6 +1538,10 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
 
             self.send_response(status)
             self.send_header("Content-Type", content_type)
+            if content_encoding:
+                # Compressed bytes pass through unchanged; Content-Length
+                # below is the upstream's compressed length.
+                self.send_header("Content-Encoding", content_encoding)
             if content_length and content_length.isdigit():
                 self.send_header("Content-Length", content_length)
             else:

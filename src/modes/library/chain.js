@@ -13,12 +13,14 @@ import {
   PAGE_SIZE, RENDER_LIMIT_INITIAL, AUTO_CHAIN_MIN_GAP_MS, CHAIN_RENDER_MIN_GAP_MS,
 } from './state.js';
 import {
-  createSourceProgress, isHeldProgress, recordSourceFailure, recordSourceSuccess, RETRY_AFTER_MAX_MS,
+  createSourceProgress, declaredWaitMs, isHeldProgress, isSlowRetryProgress, recordSourceFailure,
+  recordSourceSuccess, RETRY_AFTER_MAX_MS,
   settleEachSource, sourceNoticeFromError,
 } from './progress.js';
 import { filterContentItems } from '../../lib/content-rating.js';
 import { removeSourceItems } from './catalog-store.js';
 import { createSnapshotManager } from './snapshots.js';
+import { createLineWatch } from './line-watch.js';
 import {
   renderResults, renderStatus, updateSidebarCounts,
   updateSentinelStatus, setSourceStatus, expandRenderWindow, effectiveStatusSources,
@@ -36,12 +38,13 @@ function snapshotVisible(sourceId) {
 }
 
 /** Call when what the Library shows changes: hidden live lists stop
- *  refreshing; shown ones refresh when due, or are looked up the first time. */
+ *  refreshing; shown ones refresh when due. A live list that has not been
+ *  looked up yet (the window was hidden at the time) is looked up now. */
 export function syncSnapshotVisibility() {
   if (!view.catalogActive) return;
   snapshotManager.syncVisibility();
-  for (const sourceId of effectiveStatusSources()) {
-    if (view.sourceProgress.has(sourceId)) discoverSnapshot(sourceId);
+  for (const source of SOURCES) {
+    if (view.sourceProgress.has(source.id)) discoverSnapshot(source.id);
   }
 }
 
@@ -155,9 +158,9 @@ function queueChainRender() {
 function statusFromProgress(progress) {
   if (progress.inFlight) return { state: 'loading', count: progress.loaded };
   if (progress.stopped && progress.error) {
-    // Stopped after repeated failures: shown as an error with Retry.
     return {
       state: 'error', count: progress.loaded, error: progress.error, notice: progress.notice, retryAt: 0,
+      slow: false,
     };
   }
   if (progress.error) {
@@ -167,6 +170,8 @@ function statusFromProgress(progress) {
       error: progress.error,
       notice: progress.notice,
       retryAt: progress.retryAt,
+      // Quick retries used up: asked again only every few minutes.
+      slow: isSlowRetryProgress(progress),
     };
   }
   if (progress.exhausted) return { state: 'complete', count: progress.loaded };
@@ -224,7 +229,13 @@ function cursorKey(cursor) {
 }
 
 function discoverSnapshot(sourceId) {
-  if (!view.catalogActive || !sourceEnabled(sourceId) || !snapshotVisible(sourceId)) return;
+  // The first lookup of a live list does not wait for a view that lists it.
+  // Every other source is collected from the start whatever view is open;
+  // a live list that waited would sit at 0 beside them (the Library opens on
+  // Favorites when there are any) and look stuck. Only its repeated refresh
+  // is kept to the time it is on screen (snapshotVisible).
+  if (!view.catalogActive || !sourceEnabled(sourceId)
+      || globalThis.document?.visibilityState === 'hidden') return;
   if (snapshotManager.hasDiscovered(sourceId)) return;
   // Snapshot lifetime belongs to the mode/source manager, not to a finite
   // browse or text-search generation. Mode pause and source disable already
@@ -270,6 +281,7 @@ async function fetchBrowsePage(sourceId, generation, options = {}) {
     addItems(page.items, '', { kind: 'finite' });
     const sessionCount = view.sessionCounts.get(sourceId) || 0;
     recordSourceSuccess(progress, page, sessionCount);
+    progress.wokenAt = 0; // it answered: the next drop may wake it at once
     view.sourceCounts.set(sourceId, sessionCount);
     if (progress.exhausted) view.exhausted.add(sourceId);
     else view.exhausted.delete(sourceId);
@@ -284,6 +296,8 @@ async function fetchBrowsePage(sourceId, generation, options = {}) {
     recordSourceFailure(progress, error);
     view.exhausted.delete(sourceId);
     mergeBrowseStatus(sourceId, statusFromProgress(progress));
+    // The live list is another request: a failed archive page does not hold it back.
+    queueMicrotask(() => discoverSnapshot(sourceId));
   } finally {
     progress.inFlight = false;
     view.loadingMore = [...view.sourceProgress.values()].some((item) => item.inFlight);
@@ -454,6 +468,51 @@ function sourceInDeclaredHold(sourceId, now = Date.now()) {
   return catalogScheduler.declaredCooldownRemainingMs(sourceId) > 0;
 }
 
+/** A source woken because the line came back is not woken again this soon
+ *  unless it answered in between: if the sign was wrong and the provider
+ *  itself is down, it is still asked far less often than it would allow. */
+const WAKE_AGAIN_MS = 5 * 60_000;
+
+/** Sources waiting in their slow retry while the catalog is being browsed.
+ *  A source inside a wait its provider declared is not one of them. */
+function slowWaitingSourceIds(now = Date.now()) {
+  if (!view.catalogActive || (view.lastQuery || '').trim()) return [];
+  return fetchSourcesAllEnabled().filter((sourceId) => {
+    const progress = view.sourceProgress.get(sourceId);
+    return Boolean(progress) && isSlowRetryProgress(progress) && !progress.inFlight
+      && progress.retryAt > now && !sourceInDeclaredHold(sourceId, now)
+      && !(progress.wokenAt > 0 && now - progress.wokenAt < WAKE_AGAIN_MS);
+  });
+}
+
+/** The line dropped and is back (line-watch.js): the waiting sources are
+ *  asked again now. Their failure count stays, so one that fails again goes
+ *  straight back to its long wait. */
+function wakeWaitingSources() {
+  const sourceIds = slowWaitingSourceIds();
+  if (sourceIds.length === 0) return;
+  for (const sourceId of sourceIds) {
+    catalogScheduler.resetSource(sourceId);
+    const progress = ensureProgress(sourceId);
+    progress.retryAt = 0;
+    progress.wokenAt = Date.now();
+    // Ask afresh, as Retry now does: a podcast feed that failed while the line
+    // was down is not left to wait out its own pause (fetchBrowsePage).
+    progress.forceNext = true;
+    mergeFiniteStatus(sourceId, statusFromProgress(progress));
+  }
+  renderChainState();
+  scheduleNextLoad(0);
+}
+
+const lineWatch = createLineWatch({
+  waitingCount: () => slowWaitingSourceIds().length,
+  wake: wakeWaitingSources,
+});
+
+/** Tests: what the Library does when the line comes back. */
+export { slowWaitingSourceIds, wakeWaitingSources };
+
 /**
  * What the user is looking at goes first. For the sources of the selected
  * view, queued work jumps ahead of background prefetch, and a browse first
@@ -481,7 +540,7 @@ export function focusViewSources(sourceIds) {
 function recordSearchFailure(id, error, count) {
   // A cooldown the source declared covers the whole source, so the
   // browse cursor must not knock again before it ends either.
-  const declared = Number(error?.retryAfterMs);
+  const declared = declaredWaitMs(error);
   const progress = ensureProgress(id);
   if (Number.isFinite(declared) && declared > 0 && !progress.inFlight) {
     recordSourceFailure(progress, error);
@@ -731,6 +790,7 @@ export function resumeCatalogWork() {
     unbindSnapshotVisibility = () => globalThis.document.removeEventListener('visibilitychange', onVisibility);
   }
   restoreBrowseStatuses();
+  lineWatch.start();
   scheduleNextLoad(0);
 }
 
@@ -738,6 +798,7 @@ export function pauseCatalogWork() {
   if (!view.catalogActive && !unbindVisibility) return;
   view.catalogActive = false;
   view.searchGen += 1;
+  lineWatch.stop();
   clearChainTimer();
   if (renderTimer != null) clearTimeout(renderTimer);
   renderTimer = null;

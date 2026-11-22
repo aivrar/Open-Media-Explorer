@@ -18,6 +18,8 @@ import {
   itemTypes,
   selectPodcastEnclosure,
 } from '../src/adapters/gpodder.js';
+import { ControlApiError } from '../src/lib/capture-client.js';
+import { forgetConnectionEvidence, lastOutsideAnswerAt } from '../src/lib/connection-evidence.js';
 import { HttpError, ProviderError } from '../src/lib/http.js';
 import { validateItem } from '../src/lib/item-model.js';
 import { resolveMediaAction } from '../src/lib/media-capabilities.js';
@@ -177,6 +179,10 @@ function adapter(options = {}) {
     now: () => FIXED_NOW,
     hashText: async (value) => sha256(value),
     directoryGate: immediateDirectoryGate(),
+    // No real connection check in tests: the line works unless a test says not.
+    noteOutsideAnswer: () => {},
+    lastOutsideAnswerAt: () => 0,
+    confirmConnection: async () => true,
     ...options,
   });
 }
@@ -310,11 +316,17 @@ test('enclosure selection prefers standard/default media and rejects disagreemen
     streamKind: 'audio',
     relation: 'enclosure',
     score: 1_880,
+    fileExtension: 'mp3',
   });
+  // An MP3 type on an .mp4 name still disagrees. WebM video was refused here
+  // before; the embedded browser plays it, so it is now chosen.
+  assert.equal(selectPodcastEnclosure([
+    { url: 'https://media.example/wrong.mp4', type: 'audio/mpeg' },
+  ]), null);
   assert.equal(selectPodcastEnclosure([
     { url: 'https://media.example/wrong.mp4', type: 'audio/mpeg' },
     { url: 'https://media.example/file.webm', type: 'video/webm' },
-  ]), null);
+  ]).url, 'https://media.example/file.webm');
   assert.equal(selectPodcastEnclosure(Array.from({ length: 17 }, () => ({
     url: 'https://media.example/item.mp3', type: 'audio/mpeg',
   }))), null);
@@ -340,11 +352,206 @@ test('enclosure selection prefers standard/default media and rejects disagreemen
     streamKind: 'hls',
     relation: 'enclosure',
     score: 1_800,
+    fileExtension: '',
   });
   assert.equal(selectPodcastEnclosure([{
     url: 'https://media.example/episode.mp3?X-Amz-Signature=temporary',
     type: 'audio/mpeg',
   }]), null);
+});
+
+function pick(url, type = '', extra = {}) {
+  const selected = selectPodcastEnclosure([{ url, type, ...extra }]);
+  return selected && [selected.mediaType, selected.streamKind, selected.fileExtension];
+}
+
+test('enclosures the embedded browser plays are chosen by declared type alone', () => {
+  for (const [type, mediaType, fileExtension] of [
+    ['audio/mp4', 'audio', 'm4a'], ['audio/x-m4a', 'audio', 'm4a'], ['audio/m4a', 'audio', 'm4a'],
+    ['audio/aac', 'audio', 'aac'], ['audio/aacp', 'audio', 'aac'], ['audio/x-aac', 'audio', 'aac'],
+    ['audio/ogg', 'audio', 'ogg'], ['audio/opus', 'audio', 'opus'], ['audio/vorbis', 'audio', 'ogg'],
+    ['audio/flac', 'audio', 'flac'], ['audio/x-flac', 'audio', 'flac'],
+    ['audio/wav', 'audio', 'wav'], ['audio/x-wav', 'audio', 'wav'], ['audio/wave', 'audio', 'wav'],
+    ['audio/webm', 'audio', 'webm'],
+    ['video/x-m4v', 'video', 'mp4'], ['video/quicktime', 'video', 'mov'], ['video/webm', 'video', 'webm'],
+    ['Audio/MP4; codecs="mp4a.40.2"', 'audio', 'm4a'],
+  ]) {
+    assert.deepEqual(pick('https://media.example/episodes/42', type), [mediaType, mediaType, fileExtension], type);
+  }
+});
+
+test('enclosures the embedded browser plays are chosen by file name alone', () => {
+  for (const [suffix, mediaType, fileExtension] of [
+    ['m4a', 'audio', 'm4a'], ['aac', 'audio', 'aac'], ['ogg', 'audio', 'ogg'], ['oga', 'audio', 'oga'],
+    ['opus', 'audio', 'opus'], ['flac', 'audio', 'flac'], ['wav', 'audio', 'wav'],
+    ['m4v', 'video', 'mp4'], ['mov', 'video', 'mov'], ['webm', 'video', 'webm'],
+  ]) {
+    assert.deepEqual(pick(`https://media.example/episode.${suffix}`), [mediaType, mediaType, fileExtension], suffix);
+    assert.deepEqual(
+      pick(`https://media.example/episode.${suffix.toUpperCase()}?download=1`, 'application/octet-stream'),
+      [mediaType, mediaType, fileExtension], `${suffix} with octet-stream`,
+    );
+  }
+});
+
+test('enclosures the embedded browser plays are chosen when type and file name agree', () => {
+  for (const [type, suffix, mediaType, fileExtension] of [
+    ['audio/mp4', 'm4a', 'audio', 'm4a'], ['audio/x-m4a', 'm4a', 'audio', 'm4a'],
+    ['audio/mp4', 'mp4', 'audio', 'mp4'], ['audio/x-m4a', 'mp4', 'audio', 'mp4'],
+    ['audio/aac', 'aac', 'audio', 'aac'], ['audio/aacp', 'aac', 'audio', 'aac'],
+    ['audio/ogg', 'ogg', 'audio', 'ogg'], ['audio/ogg', 'oga', 'audio', 'oga'], ['audio/ogg', 'opus', 'audio', 'opus'],
+    ['audio/opus', 'opus', 'audio', 'opus'], ['audio/vorbis', 'ogg', 'audio', 'ogg'],
+    ['application/ogg', 'ogg', 'audio', 'ogg'], ['application/ogg', 'oga', 'audio', 'oga'],
+    ['application/ogg', 'opus', 'audio', 'opus'],
+    ['audio/flac', 'flac', 'audio', 'flac'], ['audio/x-flac', 'flac', 'audio', 'flac'],
+    ['audio/wav', 'wav', 'audio', 'wav'], ['audio/x-wav', 'wav', 'audio', 'wav'], ['audio/wave', 'wav', 'audio', 'wav'],
+    ['audio/webm', 'webm', 'audio', 'webm'],
+    ['video/x-m4v', 'm4v', 'video', 'mp4'], ['video/mp4', 'm4v', 'video', 'mp4'],
+    ['video/quicktime', 'mov', 'video', 'mov'], ['video/mp4', 'mov', 'video', 'mov'],
+    ['video/webm', 'webm', 'video', 'webm'],
+  ]) {
+    assert.deepEqual(
+      pick(`https://media.example/episode.${suffix}`, type), [mediaType, mediaType, fileExtension], `${type} ${suffix}`,
+    );
+  }
+  for (const [type, codecs, mediaType] of [
+    ['audio/mp4', 'mp4a.40.2', 'audio'], ['audio/ogg', 'opus', 'audio'], ['audio/ogg', 'vorbis', 'audio'],
+    ['audio/flac', 'flac', 'audio'], ['audio/webm', 'opus', 'audio'],
+    ['video/webm', 'vp09.00.10.08,opus', 'video'], ['video/webm', 'vp8, vorbis', 'video'],
+    ['video/mp4', 'av01.0.05M.08,mp4a.40.2', 'video'], ['video/quicktime', 'avc1.4d401f,mp4a.40.2', 'video'],
+  ]) {
+    assert.equal(pick('https://media.example/episodes/42', type, { codecs })?.[0], mediaType, `${type} ${codecs}`);
+  }
+  // HLS with Opus audio was refused before; HLS with VP9 or AV1 counts as video.
+  assert.deepEqual(pick('https://media.example/live.m3u8', 'application/vnd.apple.mpegurl', { codecs: 'mp4a.40.2,opus' }),
+    ['audio', 'hls', '']);
+  assert.deepEqual(pick('https://media.example/live.m3u8', 'application/x-mpegurl', { codecs: 'vp09.00.10.08,opus' }),
+    ['video', 'hls', '']);
+});
+
+test('enclosures whose type and file name disagree, or that the browser cannot play, stay refused', () => {
+  for (const [url, type, codecs = ''] of [
+    // Audio versus video versus HLS.
+    ['https://media.example/episode.m4v', 'audio/mp4'],
+    ['https://media.example/episode.mp4', 'audio/ogg'],
+    ['https://media.example/episode.mov', 'audio/flac'],
+    ['https://media.example/episode.mov', 'audio/webm'],
+    ['https://media.example/episode.webm', 'audio/mpeg'],
+    ['https://media.example/episode.m4a', 'video/webm'],
+    ['https://media.example/episode.ogg', 'video/quicktime'],
+    ['https://media.example/episode.opus', 'video/mp4'],
+    ['https://media.example/episode.m3u8', 'audio/x-m4a'],
+    ['https://media.example/episode.m4a', 'application/vnd.apple.mpegurl'],
+    // application/ogg needs an audio Ogg name.
+    ['https://media.example/episodes/42', 'application/ogg'],
+    ['https://media.example/episode.mp4', 'application/ogg'],
+    // Theora, HEVC, Matroska, BitTorrent, other types.
+    ['https://media.example/episode.ogv', 'video/ogg'],
+    ['https://media.example/episode.ogv', ''],
+    ['https://media.example/episode.ogv', 'application/ogg'],
+    ['https://media.example/episodes/42', 'video/ogg'],
+    ['https://media.example/episode.ogg', 'audio/ogg', 'theora, vorbis'],
+    ['https://media.example/episode.mkv', 'video/x-matroska'],
+    ['https://media.example/episode.mkv', ''],
+    ['https://media.example/episode.mkv', 'video/webm'],
+    ['https://media.example/episode.mp4', 'video/mp4', 'hvc1.1.6.L93'],
+    ['https://media.example/episode.mp4', 'video/mp4', 'hev1.1.6.L93.B0'],
+    ['https://media.example/episode.mov', 'video/quicktime', 'hvc1.2.4.L120,mp4a.40.2'],
+    ['https://media.example/live.m3u8', 'application/vnd.apple.mpegurl', 'hvc1.1.6.L93,mp4a.40.2'],
+    ['https://media.example/episode.torrent', ''],
+    ['https://media.example/episode.torrent', 'audio/ogg'],
+    ['https://media.example/episodes/42', 'application/x-bittorrent'],
+    ['https://media.example/episodes/42', 'text/html'],
+    ['https://media.example/episodes/42', 'audio/ac3'],
+    // A codecs value with no codec of the declared kind.
+    ['https://media.example/episode.m4a', 'audio/mp4', 'ac-3'],
+    ['https://media.example/episode.mp4', 'video/mp4', 'mp4a.40.2'],
+  ]) {
+    assert.equal(selectPodcastEnclosure([{ url, type, codecs }]), null, `${type} ${url} ${codecs}`);
+  }
+});
+
+test('enclosures that played before keep winning over newly listed formats', () => {
+  const choose = (values, options) => selectPodcastEnclosure(values, options).url;
+  // A default AAC alternate does not displace the MP3 that played before.
+  assert.equal(choose([
+    { url: 'https://media.example/episode.mp3', type: 'audio/mpeg', relation: 'enclosure' },
+    { url: 'https://media.example/episode.m4a', type: 'audio/mp4', relation: 'alternate', default: true },
+  ]), 'https://media.example/episode.mp3');
+  assert.equal(choose([
+    { url: 'https://media.example/episode.m4a', type: 'audio/x-m4a', relation: 'enclosure' },
+    { url: 'https://media.example/episode.mp3', type: 'audio/mpeg', relation: 'alternate' },
+  ]), 'https://media.example/episode.mp3');
+  assert.equal(choose([
+    { url: 'https://media.example/episode.webm', type: 'video/webm', relation: 'enclosure', default: true },
+    { url: 'https://media.example/episode.mp4', type: 'video/mp4', relation: 'alternate' },
+  ]), 'https://media.example/episode.mp4');
+  assert.equal(choose([
+    { url: 'https://media.example/live.ogg', type: 'audio/ogg', relation: 'enclosure' },
+    { url: 'https://media.example/live.m3u8', type: 'application/vnd.apple.mpegurl', relation: 'alternate' },
+  ], { live: true }), 'https://media.example/live.m3u8');
+  // Among the newly listed formats the usual order holds (default, then the
+  // main enclosure), and compressed files come before FLAC or WAV.
+  assert.equal(choose([
+    { url: 'https://media.example/episode.opus', type: 'audio/opus', relation: 'enclosure' },
+    { url: 'https://media.example/episode.m4a', type: 'audio/mp4', relation: 'alternate', default: true },
+  ]), 'https://media.example/episode.m4a');
+  assert.equal(choose([
+    { url: 'https://media.example/episode.flac', type: 'audio/flac', relation: 'enclosure' },
+    { url: 'https://media.example/episode.ogg', type: 'audio/ogg', relation: 'enclosure' },
+  ]), 'https://media.example/episode.ogg');
+  assert.equal(choose([
+    { url: 'https://media.example/episode.wav', type: 'audio/wav', relation: 'enclosure' },
+    { url: 'https://media.example/episode.flac', type: 'audio/flac', relation: 'enclosure' },
+    { url: 'https://media.example/episode.aac', type: 'audio/aac', relation: 'enclosure' },
+  ]), 'https://media.example/episode.aac');
+  // The publisher's choice still outranks the lossless rule.
+  assert.equal(choose([
+    { url: 'https://media.example/episode.flac', type: 'audio/flac', relation: 'enclosure' },
+    { url: 'https://media.example/episode.aac', type: 'audio/aac', relation: 'alternate' },
+  ]), 'https://media.example/episode.flac');
+  // Refused alternatives are skipped, not chosen.
+  assert.equal(choose([
+    { url: 'https://media.example/episode.mkv', type: 'video/x-matroska', relation: 'enclosure', default: true },
+    { url: 'https://media.example/episode.m4v', type: 'video/x-m4v', relation: 'alternate' },
+  ]), 'https://media.example/episode.m4v');
+});
+
+test('a show that publishes only M4A, Ogg or WebM episodes is listed, playable and downloadable', async () => {
+  const directoryShow = show(1);
+  const identity = directoryShow.url;
+  const items = [
+    episode(identity, 'aac', { type: 'audio/x-m4a', extension: 'm4a' }),
+    episode(identity, 'opus', { type: 'audio/ogg', extension: 'opus' }),
+    episode(identity, 'flac', { type: 'audio/flac', mediaUrl: 'https://media.example.test/get.php?id=7' }),
+    episode(identity, 'webm', { type: 'video/webm', extension: 'webm' }),
+    episode(identity, 'mov', { type: 'video/quicktime', extension: 'mov' }),
+    episode(identity, 'm4v', { type: 'video/x-m4v', extension: 'm4v' }),
+    episode(identity, 'live-opus', {
+      live: true, live_status: 'live', type: 'audio/ogg', mediaUrl: 'https://media.example.test/live.opus',
+    }),
+    episode(identity, 'theora', { type: 'video/ogg', extension: 'ogv' }),
+  ];
+  const source = adapter({
+    getJson: async () => [directoryShow],
+    resolvePodcastFeed: async () => feedFor(directoryShow, { items }),
+  });
+  const page = await source.browsePage();
+  assert.deepEqual(page.items.map((item) => [
+    item.title, item.type, item.stream_kind, item.delivery, item.download_name, resolveMediaAction(item),
+  ]), [
+    ['Fixture science episode aac', 'audio', 'audio', 'on-demand', 'episode-aac.m4a', 'download'],
+    ['Fixture science episode opus', 'audio', 'audio', 'on-demand', 'episode-opus.opus', 'download'],
+    ['Fixture science episode flac', 'audio', 'audio', 'on-demand', 'get.flac', 'download'],
+    ['Fixture science episode webm', 'video', 'video', 'on-demand', 'episode-webm.webm', 'download'],
+    ['Fixture science episode mov', 'video', 'video', 'on-demand', 'episode-mov.mov', 'download'],
+    ['Fixture science episode m4v', 'video', 'video', 'on-demand', 'episode-m4v.mp4', 'download'],
+    ['Fixture science episode live-opus', 'radio', 'audio', 'live', '', 'record-audio'],
+  ]);
+  assert.equal(page.items.every((item) => validateItem(item).length === 0), true);
+  assert.equal(page.items.filter((item) => item.delivery === 'on-demand')
+    .every((item) => item.download_url === item.stream_url), true);
+  source.dispose();
 });
 
 test('provider text decodes named entities and strips bidirectional controls', async () => {
@@ -504,15 +711,310 @@ test('a feed refused for what it sent (too large, too complex, unsafe) is not as
       getJson: async () => [directoryShow],
       resolvePodcastFeed: async () => {
         calls += 1;
-        throw Object.assign(new Error('feed refused'), { status: 502, code, retryable: code === 'MEDIA_DNS_FAILED' });
+        // As the app's server marks them (worldmedia_media.py, worldmedia_catalog.py).
+        const retryable = code === 'MEDIA_DNS_FAILED' || code === 'CATALOG_TOTAL_TIMEOUT';
+        const status = code === 'CATALOG_TOTAL_TIMEOUT' ? 504 : 502;
+        throw Object.assign(new Error('feed refused'), { status, code, retryable });
       },
     });
-    await source.browsePage();
+    // A passing failure keeps the feed to be asked again: the cursor goes on.
+    const passing = code === 'MEDIA_DNS_FAILED' || code === 'CATALOG_TOTAL_TIMEOUT';
+    assert.equal((await source.browsePage()).exhausted, !passing, code);
     time += 10 * 60 * 1000;
     await source.browsePage();
     assert.equal(calls, refused.includes(code) ? 1 : 2, code);
     source.dispose();
   }
+});
+
+const FEED_WAIT_MS = 5 * 60 * 1000;
+
+test('browse drops a feed whose failure lasts and keeps one whose failure may pass', async () => {
+  const lasting = [
+    new ControlApiError('MEDIA_HOST_NOT_FOUND', 'no such host', 502, true),
+    new ControlApiError('CATALOG_BODY_TOO_LARGE', 'too large', 502, false),
+    new ControlApiError('FEED_XML_TOO_COMPLEX', 'too complex', 502, false),
+    new ControlApiError('FEED_XML_UNSAFE', 'unsafe', 502, false),
+    new ControlApiError('FEED_XML_INVALID', 'malformed', 502, false),
+    new ControlApiError('CATALOG_CONTENT_TYPE', 'wrong type', 502, false),
+    new ControlApiError('CATALOG_UPSTREAM_STATUS', 'publisher said 403', 502, false),
+    new HttpError('gone', { status: 404 }),
+  ];
+  const passing = [
+    new ControlApiError('MEDIA_DNS_FAILED', 'no lookup', 502, true),
+    new ControlApiError('MEDIA_CONNECT_FAILED', 'no connection', 502, true),
+    new ControlApiError('CATALOG_TOTAL_TIMEOUT', 'too slow', 504, true),
+    new ControlApiError('CATALOG_UPSTREAM_STATUS', 'publisher said 503', 502, true),
+    new ControlApiError('CATALOG_RATE_LIMITED', 'later', 429, true, 30),
+    new ControlApiError(undefined, undefined, 500, undefined),
+    new TypeError('Failed to fetch'),
+    new HttpError('busy', { status: 503 }),
+  ];
+  for (const failure of [...lasting, ...passing]) {
+    const label = `${failure.code} ${failure.status}`;
+    const source = adapter({
+      getJson: async () => [show(1)],
+      resolvePodcastFeed: async () => { throw failure; },
+    });
+    if (lasting.includes(failure)) {
+      const page = await source.browsePage();
+      assert.equal(page.deadFeeds, 1, label);
+      assert.equal(page.exhausted, true, label);
+    } else {
+      const page = await source.browsePage();
+      assert.equal(page.deadFeeds, 0, label);
+      assert.equal(page.exhausted, false, label);
+      assert.deepEqual(page.cursor.retries, [1], label);
+      // Only that feed is left, in its wait: an error the Library backs off from.
+      await assert.rejects(source.browsePage({ cursor: page.cursor }), { code: 'PODCAST_FEEDS_UNREACHABLE', status: 0 }, label);
+    }
+    source.dispose();
+  }
+});
+
+test('a feed that failed for a passing reason is asked again after its wait, at most three times per cursor', async () => {
+  const shows = [show(1), show(2)];
+  let time = FIXED_NOW;
+  let calls = 0;
+  const source = adapter({
+    now: () => time,
+    getJson: async () => shows,
+    resolvePodcastFeed: async (url) => {
+      if (url === shows[0].url) return feedFor(shows[0], { count: 9 });
+      calls += 1;
+      throw new ControlApiError('MEDIA_DNS_FAILED', 'Media host could not be resolved.', 502, true);
+    },
+  });
+  const first = await source.browsePage();
+  assert.equal(first.items.length, 7);
+  assert.equal(first.deadFeeds, 0);
+  assert.deepEqual(first.cursor.retries, [0, 1]);
+  // The cursor stays plain data.
+  assert.deepEqual(JSON.parse(JSON.stringify(first.cursor)), first.cursor);
+  const second = await source.browsePage({ cursor: first.cursor });
+  assert.equal(second.items.length, 2, 'the good feed goes on');
+  assert.equal(calls, 1, 'the failed feed is not asked again inside its wait');
+  // Only the waiting feed is left: an error the Library retries with the same cursor.
+  await assert.rejects(source.browsePage({ cursor: second.cursor }), { code: 'PODCAST_FEEDS_UNREACHABLE' });
+  assert.equal(calls, 1);
+  let cursor = second.cursor;
+  for (const retries of [2, 3]) {
+    time += FEED_WAIT_MS + 1;
+    const page = await source.browsePage({ cursor });
+    assert.equal(page.items.length, 0);
+    assert.equal(page.exhausted, false);
+    assert.deepEqual(page.cursor.retries, [0, retries]);
+    cursor = page.cursor;
+  }
+  time += FEED_WAIT_MS + 1;
+  const last = await source.browsePage({ cursor });
+  assert.equal(calls, 4, 'asked again three times');
+  assert.equal(last.deadFeeds, 1);
+  assert.equal(last.exhausted, true, 'the cursor still finishes');
+  source.dispose();
+});
+
+test('in a complete outage the first pass asks each feed once and moves on, then waits without using up retries; when the line comes back no show is lost', async () => {
+  const shows = Array.from({ length: 6 }, (_, index) => show(index + 1));
+  const setup = () => {
+    const state = { time: FIXED_NOW, calls: 0, up: false };
+    state.source = adapter({
+      now: () => state.time,
+      getJson: async () => shows,
+      // The connection check fails while the line is down.
+      confirmConnection: async () => state.up,
+      resolvePodcastFeed: async (url) => {
+        state.calls += 1;
+        if (state.up) return feedFor(shows.find((entry) => entry.url === url), { count: 9 });
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    return state;
+  };
+  /** The first pass while everything is down: two empty pages that move on. */
+  const firstPass = async (state) => {
+    const first = await state.source.browsePage();
+    assert.deepEqual([first.items.length, first.exhausted, first.cursor.feedIndex], [0, false, 4]);
+    const second = await state.source.browsePage({ cursor: first.cursor });
+    assert.deepEqual([second.items.length, second.exhausted, second.cursor.feedIndex], [0, false, 6]);
+    assert.equal(state.calls, 6, 'one lookup per feed');
+    return second.cursor;
+  };
+
+  const line = setup();
+  const cursor = await firstPass(line);
+  assert.deepEqual(cursor.retries, [0, 0, 0, 0, 0, 0], 'failures while the line is down are not counted');
+  assert.equal(cursor.dead.some(Boolean), false);
+  // Every feed left is in its wait: an error, so the Library backs off with the same cursor.
+  await assert.rejects(line.source.browsePage({ cursor }), { code: 'PODCAST_FEEDS_UNREACHABLE' });
+  await assert.rejects(line.source.browsePage({ cursor }), { code: 'PODCAST_FEEDS_UNREACHABLE' });
+  assert.equal(line.calls, 6, 'nothing is asked inside the waits');
+  // A long outage: each wait over, the feeds are asked again and fail again;
+  // nothing moves, so the page stays an error and no retry is used up.
+  for (let round = 0; round < 10; round++) {
+    line.time += FEED_WAIT_MS + 1;
+    await assert.rejects(line.source.browsePage({ cursor }), { code: 'PODCAST_FEEDS_UNREACHABLE' }, `round ${round}`);
+  }
+  assert.ok(line.calls > 6, 'the feeds were asked again during the outage');
+  assert.deepEqual(cursor.retries, [0, 0, 0, 0, 0, 0]);
+
+  // The line comes back: the Library asks with force, then ordinary pages.
+  line.up = true;
+  const items = [];
+  let page = await line.source.browsePage({ cursor, force: true });
+  items.push(...page.items);
+  assert.equal(page.items.length, 28);
+  while (!page.exhausted) {
+    page = await line.source.browsePage({ cursor: page.cursor });
+    assert.ok(page.items.length > 0, 'every page after it brings episodes');
+    items.push(...page.items);
+  }
+  assert.equal(new Set(items.map((item) => item.id)).size, 6 * 9, 'no show was lost');
+  assert.equal(page.deadFeeds, 0);
+  line.source.dispose();
+});
+
+test('feeds at dead addresses are still dropped after three counted failures when the line works and nothing else answers', async () => {
+  const shows = Array.from({ length: 5 }, (_, index) => show(index + 1));
+  let time = FIXED_NOW;
+  const calls = new Map();
+  let checks = 0;
+  const source = adapter({
+    now: () => time,
+    getJson: async () => shows,
+    lastOutsideAnswerAt: () => 0,
+    confirmConnection: async () => { checks += 1; return true; },
+    resolvePodcastFeed: async (url) => {
+      calls.set(url, (calls.get(url) || 0) + 1);
+      if (url === shows[0].url) return feedFor(shows[0], { count: 9 });
+      throw new ControlApiError('MEDIA_DNS_FAILED', 'Media host could not be resolved.', 502, true);
+    },
+  });
+  let page = await source.browsePage();
+  assert.equal(checks, 0, 'another lookup of the batch came back: no check needed');
+  assert.deepEqual(page.cursor.retries, [0, 1, 1, 1, 0]);
+  let cursor = page.cursor;
+  let exhausted = false;
+  for (let step = 0; step < 50 && !exhausted; step++) {
+    try {
+      page = await source.browsePage({ cursor });
+      exhausted = page.exhausted;
+      cursor = page.cursor;
+    } catch (error) {
+      assert.equal(error.code, 'PODCAST_FEEDS_UNREACHABLE');
+      time += FEED_WAIT_MS + 1;
+    }
+  }
+  assert.equal(exhausted, true, 'the cursor finishes');
+  assert.equal(page.deadFeeds, 4);
+  assert.ok(checks > 0, 'with nothing else answering, the connection check decided');
+  for (const dead of shows.slice(1)) assert.equal(calls.get(dead.url), 4, 'a first lookup and three counted retries');
+  source.dispose();
+});
+
+test('a forced page lets every feed whose failure may pass out of its wait, not only the four it asks; a lasting failure keeps its wait', async () => {
+  const shows = Array.from({ length: 7 }, (_, index) => show(index + 1));
+  const lastingShow = shows[6];
+  const time = FIXED_NOW;
+  const calls = new Map();
+  let up = false;
+  const source = adapter({
+    now: () => time,
+    getJson: async () => shows,
+    confirmConnection: async () => up,
+    resolvePodcastFeed: async (url) => {
+      calls.set(url, (calls.get(url) || 0) + 1);
+      if (url === lastingShow.url) throw new ControlApiError('CATALOG_CONTENT_TYPE', 'wrong type', 502, false);
+      if (!up) throw new TypeError('Failed to fetch');
+      return feedFor(shows.find((entry) => entry.url === url), { count: 9 });
+    },
+  });
+  const first = await source.browsePage();
+  const second = await source.browsePage({ cursor: first.cursor });
+  assert.equal(second.deadFeeds, 1, 'the lasting failure is dropped');
+  // Every other feed is in its wait (the clock does not move in this test).
+  await assert.rejects(source.browsePage({ cursor: second.cursor }), { code: 'PODCAST_FEEDS_UNREACHABLE' });
+
+  up = true;
+  const forced = await source.browsePage({ cursor: second.cursor, force: true });
+  assert.equal(forced.items.length, 28, 'the four it asks');
+  // An ordinary page next: shows 5 and 6 were not asked by the forced page,
+  // yet they are out of their waits and asked now.
+  const next = await source.browsePage({ cursor: forced.cursor });
+  assert.equal(calls.get(shows[4].url), 2);
+  assert.equal(calls.get(shows[5].url), 2);
+  assert.ok(next.items.some((item) => item._extra?.showTitle === shows[5].title));
+  // The lasting failure still waits: a new cursor gets the cooldown, not a lookup.
+  const fresh = await source.browsePage();
+  await source.browsePage({ cursor: fresh.cursor });
+  assert.equal(calls.get(lastingShow.url), 1);
+  source.dispose();
+});
+
+test('a forced page keeps a wait the publisher asked for', async () => {
+  const shows = [show(1), show(2)];
+  const calls = new Map();
+  const source = adapter({
+    now: () => FIXED_NOW,
+    getJson: async () => shows,
+    resolvePodcastFeed: async (url) => {
+      calls.set(url, (calls.get(url) || 0) + 1);
+      if (url === shows[0].url) {
+        throw Object.assign(new ControlApiError('CATALOG_RATE_LIMITED', 'later', 429, true), { retryAfter: 600 });
+      }
+      return feedFor(shows[1], { count: 9 });
+    },
+  });
+  const first = await source.browsePage();
+  assert.equal(calls.get(shows[0].url), 1);
+  // Retry now, twice: the feed that asked for ten minutes is not asked again
+  // and is not dropped for it.
+  const forced = await source.browsePage({ cursor: first.cursor, force: true });
+  if (forced.cursor) await source.browsePage({ cursor: forced.cursor, force: true }).catch(() => {});
+  assert.equal(calls.get(shows[0].url), 1);
+  assert.equal(forced.deadFeeds, 0);
+  assert.equal(forced.exhausted, false, 'it is still to come when its wait is over');
+  source.dispose();
+});
+
+test('a feed that answers is noted as an outside answer in the real connection evidence when nothing is injected', async () => {
+  forgetConnectionEvidence();
+  const directoryShow = show(1);
+  const answeredAt = Date.now();
+  const source = createGpodderAdapter({
+    now: () => answeredAt,
+    hashText: async (value) => sha256(value),
+    directoryGate: immediateDirectoryGate(),
+    getJson: async () => [directoryShow],
+    resolvePodcastFeed: async () => feedFor(directoryShow, { count: 9 }),
+  });
+  try {
+    assert.equal((await source.browsePage()).items.length, 7);
+    assert.equal(lastOutsideAnswerAt(), answeredAt);
+  } finally {
+    source.dispose();
+    forgetConnectionEvidence();
+  }
+});
+
+test('a browse cursor without retries (from before) is accepted; malformed retries are refused', async () => {
+  const shows = Array.from({ length: 5 }, (_, index) => show(index + 1));
+  const source = adapter({
+    getJson: async () => shows,
+    resolvePodcastFeed: async (url) => feedFor(shows.find((entry) => entry.url === url), { count: 9 }),
+  });
+  const first = await source.browsePage();
+  const { retries, ...older } = first.cursor;
+  assert.deepEqual(retries, [0, 0, 0, 0, 0]);
+  const next = await source.browsePage({ cursor: older });
+  assert.equal(next.items.length, 7);
+  assert.deepEqual(next.cursor.retries, [0, 0, 0, 0, 0]);
+  for (const bad of [[0], [0, 0, 0, 0, 4], [0, 0, 0, 0, -1], [0, 0, 0, 0, 1.5], 'none', null]) {
+    await assert.rejects(source.browsePage({ cursor: { ...first.cursor, retries: bad } }), TypeError, JSON.stringify(bad));
+  }
+  const unattempted = { ...older, retries: [0, 0, 0, 0, 1] };
+  await assert.rejects(source.browsePage({ cursor: unattempted }), TypeError);
+  source.dispose();
 });
 
 test('Play resolves a podcast feed at once, past browse lookups waiting their turn, and says so to the catalogue client', async () => {

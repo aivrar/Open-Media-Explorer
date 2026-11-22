@@ -458,6 +458,78 @@ test('lazy VOD resolution falls back to original MP3, suppresses translated enco
   assert.equal(resolveMediaAction(none), 'unavailable');
 });
 
+test('lazy VOD resolution plays WebM, Opus, multi-track and translated recordings when nothing better exists', async () => {
+  const cdn = 'https://cdn.media.ccc.de/congress/2024';
+  const talks = {
+    // Shapes taken from api.media.ccc.de event details (2026-11-21).
+    'webm-only': [
+      { mime_type: 'video/webm;codecs=av01', language: 'eng', high_quality: true, width: 1920, height: 1080, recording_url: `${cdn}/av1-hd/talk-av1-hd.webm` },
+      { mime_type: 'video/webm', language: 'eng', high_quality: false, width: 720, height: 576, recording_url: `${cdn}/webm-sd/talk-webm-sd.webm` },
+      { mime_type: 'audio/opus', language: 'eng', recording_url: `${cdn}/opus/talk.opus` },
+    ],
+    'av1-only': [
+      { mime_type: 'video/webm;codecs=av01', language: 'eng', high_quality: true, width: 1920, height: 1080, recording_url: `${cdn}/av1-hd/talk-av1-hd.webm` },
+      { mime_type: 'audio/opus', language: 'eng', recording_url: `${cdn}/opus/talk.opus` },
+    ],
+    'opus-only': [
+      { mime_type: 'application/x-subrip', language: 'eng', recording_url: `${cdn}/talk.en.srt` },
+      { mime_type: 'audio/opus', language: 'eng', recording_url: `${cdn}/opus/talk.opus` },
+    ],
+    // A German talk whose video carries both sound tracks, German first.
+    'lead-track': [
+      { mime_type: 'video/mp4', language: 'eng', high_quality: true, width: 1920, height: 1080, recording_url: `${cdn}/h264-hd/talk-eng.mp4` },
+      { mime_type: 'audio/mpeg', language: 'deu', recording_url: `${cdn}/mp3/talk-deu.mp3` },
+      { mime_type: 'video/mp4', language: 'deu-eng', high_quality: true, width: 1920, height: 1080, recording_url: `${cdn}/h264-hd/talk-deu-eng-hd.mp4` },
+      { mime_type: 'video/mp4', language: 'deu-eng', high_quality: false, width: 720, height: 576, recording_url: `${cdn}/h264-sd/talk-deu-eng-sd.mp4` },
+    ],
+    // Both kinds of original-language MP4: the single-track one stays first.
+    'exact-first': [
+      { mime_type: 'video/mp4', language: 'deu-eng', high_quality: true, width: 1920, height: 1080, recording_url: `${cdn}/h264-hd/talk-deu-eng-hd.mp4` },
+      { mime_type: 'video/mp4', language: 'deu', high_quality: true, width: 1920, height: 1080, recording_url: `${cdn}/h264-hd/talk-deu.mp4` },
+    ],
+    'translated-only': [
+      { mime_type: 'audio/opus', language: 'eng', recording_url: `${cdn}/opus-translation/talk-eng.opus` },
+      { mime_type: 'audio/mpeg', language: 'eng', recording_url: `${cdn}/mp3-translated/talk-eng.mp3` },
+    ],
+    'unplayable-only': [
+      { mime_type: 'application/x-subrip', language: 'deu', recording_url: `${cdn}/talk.de.srt` },
+      { mime_type: 'video/mp4', language: 'deu', recording_url: `${cdn}/h264-hd/talk.mkv` },
+    ],
+  };
+  const source = adapter({
+    postJson: async () => ({ data: { lectureSearch: Object.keys(talks)
+      .map((guid) => ({ guid, title: guid, slug: guid })) } }),
+    getJson: async (url) => {
+      const guid = url.split('/').pop();
+      const german = ['lead-track', 'exact-first', 'translated-only', 'unplayable-only'].includes(guid);
+      return { guid, original_language: german ? 'deu' : 'eng', recordings: talks[guid] };
+    },
+  });
+  const items = Object.fromEntries((await source.search('talks')).map((item) => [item._extra.guid, item]));
+  for (const item of Object.values(items)) await source.resolveStream(item);
+
+  assert.equal(items['webm-only'].stream_url, `${cdn}/webm-sd/talk-webm-sd.webm`, 'VP8/VP9 WebM before AV1');
+  assert.equal(items['webm-only'].type, 'video');
+  assert.equal(items['av1-only'].stream_url, `${cdn}/av1-hd/talk-av1-hd.webm`, 'AV1 video before Opus audio');
+  assert.equal(items['av1-only'].type, 'video');
+  assert.equal(items['opus-only'].stream_url, `${cdn}/opus/talk.opus`);
+  assert.equal(items['opus-only'].type, 'audio');
+  assert.equal(items['opus-only'].stream_kind, 'audio');
+  assert.equal(items['opus-only'].download_name, 'talk.opus');
+  assert.equal(items['lead-track'].stream_url, `${cdn}/h264-hd/talk-deu-eng-hd.mp4`,
+    'an MP4 led by the original sound track beats an original MP3 and a translated MP4');
+  assert.equal(items['exact-first'].stream_url, `${cdn}/h264-hd/talk-deu.mp4`);
+  assert.equal(items['translated-only'].stream_url, `${cdn}/mp3-translated/talk-eng.mp3`,
+    'a translation plays when the talk has no recording in its own language, MP3 first');
+  for (const guid of Object.keys(talks).filter((key) => key !== 'unplayable-only')) {
+    assert.equal(items[guid]._extra.resolutionStatus, 'playable', guid);
+    assert.equal(items[guid].download_url, items[guid].stream_url, guid);
+    assert.equal(resolveMediaAction(items[guid]), 'download', guid);
+  }
+  assert.equal(items['unplayable-only'].stream_url, '');
+  assert.equal(items['unplayable-only']._extra.resolutionStatus, 'unavailable');
+});
+
 test('invalid saved VOD identity settles unavailable instead of checking forever', async () => {
   const source = adapter();
   const item = {

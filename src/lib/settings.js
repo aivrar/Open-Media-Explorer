@@ -32,7 +32,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.14';
+const VERSION = '0.1.15';
 
 function buildModal() {
   const state = getState();
