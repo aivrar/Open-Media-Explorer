@@ -2,7 +2,7 @@
  * Tuner Mode — skeuomorphic dial for live radio + live TV.
  *
  * v1 simplification: dial rotation maps linearly to a 1D index into the current
- * station array. Mouse-drag or the mouse wheel rotates the dial. Arrow keys also work. Each station
+ * station array. Mouse-drag or the mouse wheel (over the dial or the strip of cards) rotates the dial. Arrow keys also work. Each station
  * shows its honest position in the current list ("12 of 80"), not a made-up
  * frequency that would change whenever the list reloads.
  *
@@ -29,8 +29,16 @@ import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorite
 import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
 import { attachTunerBackground } from './tuner-background.js';
+import {
+  TUNER_BACKGROUND_RELEASED, tunerBackgroundLevelPatch, tunerBackgroundShownLevel,
+} from '../lib/tuner-background.js';
+import { bindVolumeStepper } from '../lib/volume-stepper.js';
 import { onDidNotPlayChange } from '../lib/did-not-play.js';
 import { didNotPlayNote } from '../lib/did-not-play-view.js';
+import {
+  compactStreamLabel, onPlayedStreamChange, stationStreamFacts, streamTooltipLine,
+} from '../lib/played-streams.js';
+import { formatStreamQuality } from '../lib/stream-quality.js';
 import { lastOutsideAnswerAt, onOutsideAnswer } from '../lib/connection-evidence.js';
 
 const COUNTRIES = [
@@ -168,6 +176,7 @@ function buildShell() {
   });
   filter.appendChild(el('label', { text: 'Source:', style: { color: 'var(--text-dim)', fontSize: '12px' } }));
   filter.appendChild(ui.sourceSel);
+  if (TUNER_BACKGROUND_RELEASED) filter.appendChild(buildVizLevel());
   controls.appendChild(filter);
   root.appendChild(controls);
 
@@ -197,18 +206,85 @@ function buildShell() {
   ui.strip = el('div', { className: 'tuner-strip' });
   // Scrolling the strip by hand waits again before pictures load.
   ui.strip.addEventListener('scroll', () => { if (cardPictures()) cardArt.poke(); }, { passive: true });
+  // The wheel over the strip is the wheel over the dial: the same handler,
+  // so the same station per notch and the same tune once it rests, and the
+  // page and the strip do not scroll for it (the strip follows the station).
+  ui.strip.addEventListener('wheel', ui.dialWheel, { passive: false });
   root.appendChild(ui.strip);
   ui.status = el('div', { className: 'tuner-source-status', attrs: { role: 'status', 'aria-live': 'polite' } });
   root.appendChild(ui.status);
 
   // Keyboard
   root.addEventListener('keydown', (e) => {
+    // The Visualizer strength stepper has its own arrow keys, Enter and Space.
+    if (ui.vizLevel?.contains?.(e.target)) return;
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); step(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tuneCurrent(); }
   });
 
   return root;
+}
+
+/** How strongly the Visualizer shows behind the Tuner: down, the level
+ *  (0-100, the layer's opacity in percent) and up, the player bar's volume
+ *  stepper in a row (lib/volume-stepper.js: a click 1, held repeats, the
+ *  wheel 2 a notch, arrow keys). 0 is the Settings switch off; up from 0
+ *  turns it on (lib/tuner-background.js tunerBackgroundLevelPatch). */
+function buildVizLevel() {
+  const chevron = (d) => `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const down = el('button', {
+    className: 'volume-step',
+    attrs: { type: 'button', 'aria-label': 'Visualizer behind the Tuner fainter', title: 'Fainter' },
+    html: chevron('M2 3.5 5 6.5 8 3.5'),
+  });
+  const readout = el('output', { className: 'volume-led', attrs: { 'aria-live': 'polite' } });
+  const up = el('button', {
+    className: 'volume-step',
+    attrs: { type: 'button', 'aria-label': 'Visualizer behind the Tuner stronger', title: 'Stronger' },
+    html: chevron('M2 6.5 5 3.5 8 6.5'),
+  });
+  const group = el('div', {
+    className: 'volume-stepper is-row',
+    attrs: { role: 'group', 'aria-label': 'Visualizer behind the Tuner' },
+  }, down, readout, up);
+  // It can take focus (not in the Tab order; the buttons are): a click on
+  // the label or the number leaves the keys here. Without it the click put
+  // focus on the Tuner itself, and the arrow keys then changed the station
+  // instead of the level.
+  const wrap = el('div', { className: 'tuner-viz-level', attrs: { tabindex: '-1' } },
+    el('span', { className: 'tuner-viz-level-label', text: 'Visualizer:', attrs: { 'aria-hidden': 'true' } }),
+    group);
+  ui.vizLevel = wrap;
+  ui.vizLevelGroup = group;
+  ui.vizLevelReadout = readout;
+  // Keys and the wheel anywhere on it, the label too.
+  subs.push(bindVolumeStepper({
+    group: wrap, down, up,
+    getVolume: () => tunerBackgroundShownLevel(getState().settings),
+    setVolume: (level) => {
+      const patch = tunerBackgroundLevelPatch(getState().settings, level);
+      if (patch) saveSettings(patch);
+    },
+  }));
+  syncVizLevel();
+  return wrap;
+}
+
+/** The stepper shows the saved state (it changes here or in Settings). */
+function syncVizLevel(settings = getState().settings) {
+  if (!ui.vizLevelReadout) return;
+  const level = tunerBackgroundShownLevel(settings);
+  const text = String(level);
+  if (ui.vizLevelReadout.textContent !== text) ui.vizLevelReadout.textContent = text;
+  ui.vizLevelReadout.setAttribute('aria-label', level ? `Visualizer behind the Tuner ${level}` : 'Visualizer behind the Tuner off');
+  ui.vizLevel.classList.toggle('is-off', level === 0);
+  const when = settings.visualizerNoticeSeen === true
+    ? 'shown while sound plays'
+    : 'shown while sound plays, once its notice about flashing has been accepted in the Visualizer tab';
+  ui.vizLevelGroup.title = level
+    ? `Visualizer behind the Tuner: ${level} of 100 (0 turns it off), ${when}`
+    : `Visualizer behind the Tuner: off. Up turns it on, ${when}`;
 }
 
 function buildDialSvg() {
@@ -284,10 +360,14 @@ const WHEEL_TUNE_DELAY_MS = 250;
 
 /** Whole station steps for one wheel event. Mouse wheels send about 100 px
  *  per notch and touchpads send many small values, so movement is pooled in
- *  `pool.px` and one step is taken per notch-sized amount. */
+ *  `pool.px` and one step is taken per notch-sized amount. A sideways
+ *  gesture (tilt wheel, touchpad swipe) counts too: whichever of deltaX and
+ *  deltaY is larger, right or down being the next station. */
 export function wheelSteps(pool, event) {
   const unit = event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 100 : 1;
-  pool.px += (Number(event.deltaY) || 0) * unit;
+  const across = Number(event.deltaX) || 0;
+  const down = Number(event.deltaY) || 0;
+  pool.px += (Math.abs(across) > Math.abs(down) ? across : down) * unit;
   const steps = Math.trunc(pool.px / WHEEL_NOTCH_PX);
   pool.px -= steps * WHEEL_NOTCH_PX;
   return steps;
@@ -329,6 +409,8 @@ function bindDialEvents(wrap) {
   // start and abandon a stream for every station it passes.
   function onWheel(e) {
     if (state.stations.length === 0) return;
+    // Ctrl + wheel (or a touchpad pinch) is the window's zoom: left alone.
+    if (e.ctrlKey) return;
     e.preventDefault();
     if (!dialCanTurn(state.stations.length)) return;
     const steps = wheelSteps(wheelPool, e);
@@ -352,6 +434,8 @@ function bindDialEvents(wrap) {
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
   wrap.addEventListener('wheel', onWheel, { passive: false });
+  // The strip of cards under the dial turns it the same way (buildUi).
+  ui.dialWheel = onWheel;
   wrap.addEventListener('touchstart', onDown, { passive: false });
   window.addEventListener('touchmove', onMove, { passive: false });
   window.addEventListener('touchend', onUp);
@@ -857,6 +941,7 @@ function renderStrip() {
     const s = state.stations[i];
     const rating = contentBadgeText(s);
     const saved = isFavorite(s.id);
+    const sourceLine = el('small', { text: getSourceLabel(s.source) });
     const pill = el('button', {
       className: 'station-pill' + (i === state.index ? ' is-active' : '') + (saved ? ' is-favorite' : '')
         + (pictures ? ' has-art' : ''),
@@ -866,8 +951,9 @@ function renderStrip() {
     // Medium and large cards: the station's picture box (reused across steps).
     pictures ? cardArt.box(s) : null,
     el('span', { text: saved ? `★ ${s.title}` : s.title }),
-    el('small', { text: getSourceLabel(s.source) }),
+    sourceLine,
     rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
+    pill.__sourceLine = sourceLine;
     pill.__station = s;
     pill.__saved = saved;
     setPillTrouble(pill);
@@ -884,9 +970,11 @@ function setPillTrouble(pill) {
   const s = pill.__station;
   if (!s) return;
   const trouble = didNotPlayNote(s);
+  const stream = streamTooltipLine(setPillStream(pill));
   pill.classList.toggle('has-trouble', Boolean(trouble));
   pill.setAttribute('title',
-    `${pill.__saved ? '★ Favorite · ' : ''}${s.title} · ${getSourceLabel(s.source)}${trouble ? `\n${trouble}` : ''}`);
+    `${pill.__saved ? '★ Favorite · ' : ''}${s.title} · ${getSourceLabel(s.source)}${stream ? `\n${stream}` : ''}`
+    + `${trouble ? `\n${trouble}` : ''}`);
   let mark = pill.__trouble || null;
   if (!trouble) {
     mark?.remove();
@@ -902,7 +990,37 @@ function setPillTrouble(pill) {
   if (mark.getAttribute('aria-label') !== trouble) mark.setAttribute('aria-label', trouble);
 }
 
-/** The marks changed: update the cards in the strip, nothing else. */
+/** With "Show technical source details" on, a card's second line reads
+ *  "AAC 128k · Radio Browser" once the format or bitrate is known (a short
+ *  form, so it fits in the width a source name gives; tuner.css); otherwise
+ *  it is the plain source name. Changed in place. Returns the full label for
+ *  the tooltip ("AAC · 128 kbps", '' when nothing is known). */
+function setPillStream(pill) {
+  const facts = stationStreamFacts(pill.__station);
+  const label = formatStreamQuality(facts);
+  let node = pill.__quality || null;
+  if (!label || !pill.__sourceLine) {
+    node?.remove();
+    pill.__sourceLine?.classList?.remove('pill-with-quality');
+    pill.__quality = null;
+    return label;
+  }
+  if (!node) {
+    // With technical details on it stands in for the plain source text,
+    // which stays (unseen) only to size the card: never wider than before,
+    // and cut short at its end, so the source goes first (tuner.css).
+    node = el('span', { className: 'pill-quality' });
+    pill.__sourceLine.classList?.add('pill-with-quality');
+    pill.__sourceLine.appendChild(node);
+    pill.__quality = node;
+  }
+  const text = `${compactStreamLabel(facts)} · ${getSourceLabel(pill.__station.source)}`;
+  if (node.textContent !== text) node.textContent = text;
+  return label;
+}
+
+/** The marks or stream labels changed: update the cards in the strip,
+ *  nothing else. */
 export function syncTunerMarks(strip = ui.strip) {
   for (const pill of Array.from(strip?.children || [])) setPillTrouble(pill);
 }
@@ -973,6 +1091,7 @@ export function renderTuner(host) {
   root.focus();
   subs.push(subscribe('settings-change', (settings) => {
     if (getState().mode !== 'tuner') return;
+    syncVizLevel(settings);
     const nextSignature = enabledSignature(settings);
     const nextPreference = settings.showExplicitContent === true;
     const sourcesChanged = nextSignature !== state.enabledSignature;
@@ -1004,6 +1123,10 @@ export function renderTuner(host) {
   }));
   // A station's "Did not play last time" mark came or went.
   subs.push(onDidNotPlayChange(() => {
+    if (getState().mode === 'tuner') syncTunerMarks();
+  }));
+  // A station played with a new format or bitrate.
+  subs.push(onPlayedStreamChange(() => {
     if (getState().mode === 'tuner') syncTunerMarks();
   }));
   // A wider window shows more cards: wait, then load the ones now in view.

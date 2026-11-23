@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.15` behavior in this repository: how to
+It describes the shipped `0.1.16` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -20,6 +20,29 @@ providers at run time and can change without an app update.
 ![Ten-band equalizer with presets](<../../screenshots/v0.1.14/equalizer.png>)
 
 ![Visualizer - Black Hole with Lasers and Tron Hex Grid](<../../screenshots/v0.1.14/visualizer-black-hole.jpg>)
+
+## New in 0.1.16
+
+- A station's stream format and bitrate show for stations from any source once
+  they have played, not only for those Radio Browser lists. See [Playback, EQ,
+  downloads, and
+  recording](04-playback-eq-downloads-recording.md#stream-format-and-other-streams).
+- The volume slider is a compact control (up, a number, down) and the player
+  bar is one row, with no line of text under the buttons. See [Using the
+  application](02-using-the-application.md#window-layout).
+- The mouse wheel over the Tuner's station strip moves one station, and a
+  **Visualizer:** control in the Tuner's top bar sets how strongly the
+  Visualizer shows behind it. See [Using the
+  application](02-using-the-application.md#tuner) and
+  [Visualizer](09-visualizer.md#the-visualizer-behind-the-tuner).
+- A live AAC stream starts at its first whole sound frame, which fixes failed
+  starts on some Shoutcast stations. See [Architecture and runtime
+  reference](08-architecture-and-runtime-reference.md#stream-facts-and-the-start-of-a-live-stream).
+- One copy runs per data folder: starting the app again brings the open window
+  to the front. See
+  [Troubleshooting](06-troubleshooting.md#starting-world-media-a-second-time)
+  and [Architecture and runtime
+  reference](08-architecture-and-runtime-reference.md#one-copy-per-data-folder).
 
 ## New in 0.1.15
 
@@ -212,6 +235,8 @@ providers at run time and can change without an app update.
   The dial shows the station's place in the list, not a broadcast frequency,
   and can be limited to your starred stations or one of your categories. Its
   station cards come in three sizes; Medium and Large show station pictures.
+  The mouse wheel over the dial or the station cards moves one station, and the
+  **Visualizer:** control sets how strongly the Visualizer shows behind it.
 - **Grid** is a guide-style view for live TV and radio. It uses the same live
   adapters as Tuner but presents tiles, category/country/source filters, and a
   text filter.

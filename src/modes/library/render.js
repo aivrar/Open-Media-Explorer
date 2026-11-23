@@ -23,7 +23,7 @@ import {
 import { SOURCES, getSourceLabel } from '../../lib/sources.js';
 import { el } from './utils.js';
 import { artworkInitials, initialsHue } from '../../lib/initials.js';
-import { streamQualityLabel } from '../../lib/stream-quality.js';
+import { stationStreamLabel, streamTooltipLine } from '../../lib/played-streams.js';
 import { shownLicense } from '../../lib/item-model.js';
 import {
   view, renderedIds,
@@ -240,6 +240,7 @@ export function renderResults() {
   syncFavoriteCategoryControls();
   syncFavoriteOrderControls(filtered);
   syncDidNotPlayMarks();
+  syncStreamLabels();
   refocus?.();
 }
 
@@ -289,6 +290,49 @@ export function syncDidNotPlayMarks() {
   if (!ui.resultsHost?.children) return;
   for (const card of ui.resultsHost.children) {
     if (card.dataset?.id) setCardTroubleMark(card);
+  }
+}
+
+/* ============ Stream format and bitrate ============ */
+
+/** The card's technical column: the license and, under it, the stream's
+ *  format and bitrate (played-streams.js). Like the license, the card shows
+ *  them only with "Show technical source details" on (library.css). */
+function cardLicenseNode(license, quality) {
+  if (!quality) {
+    return license ? el('span', { className: 'card-license', text: license, attrs: { title: license } }) : null;
+  }
+  return el('span', {
+    className: 'card-license has-quality' + (license ? '' : ' is-quality-only'),
+    attrs: { title: [license, streamTooltipLine(quality)].filter(Boolean).join('\n') },
+  }, license ? el('span', { text: license }) : null, el('span', { className: 'card-quality', text: quality }));
+}
+
+/** Give a card its stream format and bitrate: in the technical column, and
+ *  in the tooltip under the name, which shows whatever the setting. Changed in
+ *  place when a station played with new values; the card stays. */
+function setCardStream(card) {
+  const item = card?.__item;
+  if (!item || !card.__meta) return;
+  const quality = stationStreamLabel(item);
+  const title = item.title || 'Untitled';
+  if (card.__streamShown && card.__streamShown.quality === quality && card.__streamShown.title === title) return;
+  card.__streamShown = { quality, title };
+  const license = shownLicense(item);
+  card.__license?.remove?.();
+  card.__license = cardLicenseNode(license, quality);
+  if (card.__license) card.__meta.appendChild(card.__license);
+  const tooltip = [title, streamTooltipLine(quality)].filter(Boolean).join('\n');
+  card.__open?.setAttribute?.('title', tooltip);
+  card.__titleNode?.setAttribute?.('title', tooltip);
+}
+
+/** Bring every mounted card's stream format and bitrate in line with what
+ *  is remembered. */
+export function syncStreamLabels() {
+  if (!ui.resultsHost?.children) return;
+  for (const card of ui.resultsHost.children) {
+    if (card.dataset?.id) setCardStream(card);
   }
 }
 
@@ -838,7 +882,7 @@ function renderCard(item, opts = {}) {
   openButton.appendChild(thumb);
 
   const body = el('div', { className: 'card-body' });
-  body.appendChild(el('div', {
+  const titleNode = body.appendChild(el('div', {
     className: 'card-title',
     text: item.title || 'Untitled',
     attrs: { title: item.title || 'Untitled' },
@@ -859,19 +903,6 @@ function renderCard(item, opts = {}) {
     text: item.country,
   }));
   if (facts.childElementCount > 0) meta.appendChild(facts);
-  const license = shownLicense(item);
-  // Stream format and bitrate share the technical column with the license,
-  // so like it they show only with "Show technical source details" on.
-  const quality = streamQualityLabel(item);
-  if (license && !quality) meta.appendChild(el('span', {
-    className: 'card-license',
-    text: license,
-    attrs: { title: license },
-  }));
-  if (quality) meta.appendChild(el('span', {
-    className: 'card-license has-quality',
-    attrs: { title: [license, quality].filter(Boolean).join(' \u00B7 ') },
-  }, license ? el('span', { text: license }) : null, el('span', { className: 'card-quality', text: quality })));
   body.appendChild(meta);
   openButton.appendChild(body);
   card.appendChild(openButton);
@@ -881,6 +912,9 @@ function renderCard(item, opts = {}) {
   card.__star = star;
   card.__thumb = thumb;
   card.__open = openButton;
+  card.__meta = meta;
+  card.__titleNode = titleNode;
+  setCardStream(card);
   setCardTroubleMark(card);
   rememberShown(card, item);
   return card;

@@ -105,6 +105,18 @@ event (the station closed the connection) is taken as a lost connection and
 reconnected by `src/lib/live-resume.js`, even though the element reports the
 time played as its duration just before the end.
 
+The volume is set through `src/lib/volume-stepper.js`, which wires the up and
+down buttons (a click, a hold with one timer at a time, the wheel, the keys) and
+works out what a media element's own controls changed (`elementVolumeChange`).
+The hidden `#player-volume` input still holds the user's level; `setVolume`
+writes it to the audio and video elements (to `data-pre-fade-vol` instead while
+a sleep-timer fade runs, so that is the level that comes back) and saves it, and
+`adoptElementVolume` takes the video's own volume and mute changes (the volume
+not during a fade). `src/lib/capture-ui.js` shows the Record button's full hint
+as its hover text and its `aria-describedby` description and, beside it, only a
+notice (`notice` in `src/lib/capture-view.js`): a capture's progress, result or
+error.
+
 **Auto (verified).** `src/lib/best-stream-auto.js` runs the checks and
 `src/lib/stream-verify.js` holds the rules. Nothing is looked up before a
 start. After about 45 seconds of playing (`VERIFY_AFTER_MS`, counted from the
@@ -282,6 +294,17 @@ station's relay artwork). A card that leaves the strip stops its load; the last
 120 finished boxes are kept so the dial can come back to them without a new
 request.
 
+The wheel over the strip is the dial's own wheel handler (`ui.dialWheel` in
+`src/modes/tuner.js`), so a notch is the same station step and the same tune
+once the wheel rests; a mainly sideways gesture counts too, and Ctrl with the
+wheel is left to the window's zoom. The **Visualizer:** control (`buildVizLevel`)
+is the volume stepper laid in a row. Its number is `tunerVisualizerLevel` (1 to
+100, inside the existing settings value; 8 by default), which
+`src/modes/tuner-background.js` turns into the layer's opacity in percent
+without starting the Visualizer again; 0 is `tunerVisualizerBackground` off
+(`tunerBackgroundLevelPatch` in `src/lib/tuner-background.js`), and the Settings
+switch follows the control through `settings-change`.
+
 A user's own station picture carries the `is-station-image` class (set by
 `artwork.js` and the player bar only once it has loaded) and is shown with
 `object-fit: contain` on a plain surface in every view, so it is never
@@ -320,6 +343,37 @@ while it plays that token (`src/lib/now-playing.js`) and shows the title in the
 player bar and the Windows media overlay. `src/lib/song-log.js` adds each new
 title to the song log.
 
+## Stream facts and the start of a live stream
+
+Three things apply to a plain live audio reply (the GET of a playback root, never
+a capture job's, never HLS or DASH):
+
+- **Stream facts.** `stream_facts` in `worldmedia_server.py` reads the audio
+  `Content-Type` and the `icy-br` bitrate from the station's reply (and nothing
+  else; they are never forwarded). `MediaRegistry.note_stream_facts` keeps them
+  on the playback root, and the now-playing reply the page already polls
+  carries them as `stream` (`content_type`, `bitrate`) next to the title. The
+  page tells them to `src/lib/played-streams.js` (`onStream` in
+  `src/lib/now-playing.js`), which remembers them for the item once the start
+  has played for a second, in `worldmedia.playedstreams.v1` (a cache of at most
+  1,000 items, removed by Clear cache). A start that does not play records
+  nothing, and no request is added.
+- **First whole frame.** A live AAC stream (`audio/aac`, `audio/aacp`,
+  `audio/x-aac`, `audio/x-aacp`; a GET from the start, answered 200 with no
+  length, range or content encoding) goes through `AdtsAligner` in
+  `worldmedia_icy.py`, after the song-title blocks are removed when there are
+  any. A station starts a new listener wherever its buffer is, often inside a
+  frame. The aligner holds the first bytes until it finds a frame header that
+  the next two headers confirm (each right where the one before says it ends,
+  all with the same fixed fields), drops what came before it, and passes
+  everything after that unchanged. If no such frame is found within 64 KB or
+  1.5 seconds, or the stream ends first, what it holds is passed on unchanged.
+- **Passed as it arrives.** An endless audio reply (`audio/*` or
+  `application/ogg`, status 200, no length or range) is relayed as its bytes
+  arrive (`relay_passes_as_available`); a 64 KiB read holds a 32 kbps stream for
+  16 seconds before the player gets anything. Files with a length, video,
+  manifests, segments, ranged replies and HEAD keep full reads.
+
 ## Local port at start
 
 `worldmedia_native.py` chooses the port (`choose_port`). A forced port
@@ -337,6 +391,30 @@ its port exclusively (`SO_EXCLUSIVEADDRUSE`, with no `SO_REUSEADDR`), so two
 copies can no longer listen on the same port and split the page's requests. The
 `listening` line in `native.log` shows the port, the process id and a note on how
 the port was chosen.
+
+## One copy per data folder
+
+`worldmedia_single_instance.py` makes only one copy run per data folder.
+`main()` in `worldmedia_native.py` works out the data folder first and claims it
+before anything is written, migrated or listened on. The claim is a Windows
+named mutex whose name holds a hash of the normalised data-folder path, so
+copies with different data folders get different names and run side by side. The
+operating system removes it when the process ends, so a crash or a kill never
+leaves a lock behind. The copy that owns the folder keeps it until its shutdown
+has finished (`instance.release()` runs after the server and services have
+stopped). A start that does not get it:
+
+- with a window asks the running copy, through a named event, to bring its window
+  to the front, and exits. The running copy waits for the event in one thread
+  (a blocking wait, no polling); the event carries no data and no session token,
+  and exists only while that copy has a window. If the running copy has no window
+  to show (it is closing), the new start waits up to 15 seconds for the folder
+  and starts as usual once it is free; if it stays held, the start ends without
+  a window.
+- without a window (`WORLDMEDIA_NO_BROWSER=1`) prints one line to standard error
+  and exits with code 3, starting no server.
+
+Everything in the module does nothing off Windows.
 
 ## Capture jobs
 

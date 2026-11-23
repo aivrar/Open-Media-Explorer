@@ -438,6 +438,33 @@ class IcyRelayTests(RelayTestBase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["data"]["title"], "Don't Stop; Believin'")
         self.assertLessEqual(abs(payload["data"]["changed_at"] - time.time()), 30)
+        # What the station said its stream is, for the page to remember once it played.
+        self.assertEqual(payload["data"]["stream"], {"content_type": "audio/mpeg", "bitrate": 128})
+
+    def test_stream_facts_are_kept_only_from_a_good_reply_of_the_root(self) -> None:
+        self.station.routes["/odd"] = lambda method, headers: reply(b"HTTP/1.0 200 OK", {
+            "Content-Type": "text/html; charset=utf-8", "icy-br": "96,96",
+        }, AUDIO, method)
+        self.station.routes["/gone"] = lambda method, headers: reply(b"HTTP/1.0 404 Not Found", {
+            "Content-Type": "audio/mpeg", "icy-br": "128",
+        }, b"", method)
+        self.station.routes["/silly"] = lambda method, headers: reply(b"HTTP/1.0 200 OK", {
+            "Content-Type": "audio/mpeg; codecs=x", "icy-br": "999999",
+        }, AUDIO, method)
+        odd = self.register(f"{self.station.base_url}/odd")
+        self.request("GET", odd["relay_url"])
+        self.assertEqual(self.now_playing(odd["media_id"])[1]["data"]["stream"], {"content_type": "", "bitrate": 96})
+        gone = self.register(f"{self.station.base_url}/gone")
+        self.request("GET", gone["relay_url"])
+        self.assertNotIn("stream", self.now_playing(gone["media_id"])[1]["data"])
+        silly = self.register(f"{self.station.base_url}/silly")
+        self.request("HEAD", silly["relay_url"])
+        self.assertNotIn("stream", self.now_playing(silly["media_id"])[1]["data"], "a HEAD is no playback")
+        self.request("GET", silly["relay_url"])
+        self.assertEqual(self.now_playing(silly["media_id"])[1]["data"]["stream"], {"content_type": "audio/mpeg", "bitrate": 0})
+        # A released root says nothing any more.
+        self.registry.release_root(silly["media_id"], grace_seconds=0)
+        self.assertEqual(self.now_playing(silly["media_id"])[1]["data"], {"title": None, "changed_at": None})
 
     def burst_then_trickle(
         self, target: str, *, trickle_seconds: float, pieces=(1, 7, 100, 3, 250, 16, 2), audio_size: int = 80_000,
@@ -508,7 +535,9 @@ class IcyRelayTests(RelayTestBase):
         }, body if headers.get("icy-metadata") == "1" else AUDIO, method)
         media = self.register(f"{self.station.base_url}/named", title="Test FM")
         self.assertEqual(self.request("GET", media["relay_url"])[1], AUDIO)
-        self.assertEqual(self.now_playing(media["media_id"])[1]["data"], {"title": None, "changed_at": None})
+        self.assertEqual(self.now_playing(media["media_id"])[1]["data"], {
+            "title": None, "changed_at": None, "stream": {"content_type": "audio/mpeg", "bitrate": 0},
+        })
 
     def test_reply_without_metaint_passes_through_exactly(self) -> None:
         self.station.routes["/plain"] = lambda method, headers: reply(b"HTTP/1.0 200 OK", {
@@ -557,6 +586,7 @@ class IcyRelayTests(RelayTestBase):
         self.assertNotIn("icy-metaint", headers)
         self.assertEqual(self.station.asked("/old"), [True])  # one request, no repeat
         self.assertEqual(self.now_playing(media["media_id"])[1]["data"]["title"], "Don't Stop; Believin'")
+        self.assertEqual(self.now_playing(media["media_id"])[1]["data"]["stream"], {"content_type": "audio/aacp", "bitrate": 320})
         # Not put on the do-not-ask list: the next playback asks for the song again.
         self.assertTrue(worldmedia_server.ICY_REFUSED_HOSTS.should_ask(f"{self.station.base_url}/old"))
         # A request that does not ask (not from the start) gets the plain sound.

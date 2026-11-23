@@ -26,6 +26,17 @@
  *   dark theme, all black in the light one). At 0.08 the faintest, --text-mute,
  *   keeps 4.6:1 (5.5:1 to 6.2:1 without the layer), --text-dim 6.5:1 and
  *   --text 13.4:1 or more.
+ * - Its strength: the Tuner tab's stepper (0-100) is the layer's opacity in
+ *   percent, so the default level, 8, is exactly the 0.08 above, and 100 is
+ *   no dimming at all (the user's choice; the 4.5:1 above holds up to the
+ *   default). 0 is the setting off, as its Settings switch: the switch and
+ *   the level are two settings (tunerVisualizerBackground and
+ *   tunerVisualizerLevel), so switching it off and on in Settings brings back
+ *   the level it had; turned down to 0 on the Tuner it comes back at the
+ *   default (tunerBackgroundLevelPatch), and up from 0 there starts at 1.
+ *   Only crossing 0 starts or stops it; any other level only changes the
+ *   layer's opacity. The flash limiter and the notice are the same at every
+ *   level.
  *
  * Measured (tests/helpers/visualizer-flash-check.py --realtime, the test
  * machine's graphics card): five scenes, each drawn alone by the measuring
@@ -53,8 +64,54 @@ export const TUNER_BACKGROUND_COST = 'light';
 export const TUNER_BACKGROUND_SCENE = DEFAULT_VISUALIZER_SCENE;
 export const TUNER_BACKGROUND_TEXT = Object.freeze({
   label: 'Show the Visualizer behind the Tuner',
-  description: 'While sound plays, the Visualizer is drawn faintly behind the Tuner, without overlays or effects, once its notice about flashing has been accepted in the Visualizer tab.',
+  description: 'While sound plays, the Visualizer is drawn faintly behind the Tuner (how strongly is set on the Tuner tab), without overlays or effects, once its notice about flashing has been accepted in the Visualizer tab.',
 });
+
+/** The level a new user (or one from before the level existed) gets:
+ *  TUNER_BACKGROUND_OPACITY in percent, the look it always had. */
+export const TUNER_BACKGROUND_DEFAULT_LEVEL = 8;
+export const TUNER_BACKGROUND_LEVEL_MAX = 100;
+
+/** The saved level: a whole number from 1 to 100 (0 is the switch off, so
+ *  it is never the saved level); anything else is the default. */
+export function normalizeTunerBackgroundLevel(value) {
+  // Only a number, or a string of plain digits (true, [100] and the like are
+  // not levels, though Number() would make them one).
+  const plain = typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value.trim()));
+  if (!plain) return TUNER_BACKGROUND_DEFAULT_LEVEL;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n < 1) return TUNER_BACKGROUND_DEFAULT_LEVEL;
+  return Math.min(TUNER_BACKGROUND_LEVEL_MAX, n);
+}
+
+/** The layer's opacity for a level: the level in percent. */
+export function tunerBackgroundOpacity(level) {
+  const n = Math.round(Number(level));
+  if (!Number.isFinite(n)) return TUNER_BACKGROUND_OPACITY;
+  return Math.max(0, Math.min(TUNER_BACKGROUND_LEVEL_MAX, n)) / 100;
+}
+
+/** The level the Tuner's stepper shows: 0 while the setting is off. */
+export function tunerBackgroundShownLevel(settings = {}) {
+  return settings.tunerVisualizerBackground === true
+    ? normalizeTunerBackgroundLevel(settings.tunerVisualizerLevel)
+    : 0;
+}
+
+/** The settings to save for the stepper set to `level`, or null for none:
+ *  0 turns the setting off, as the Settings switch does; above 0 sets the
+ *  level and, from off, turns the setting on. Turned down to 0 here, the
+ *  last level on the way was 1, which would be all but invisible when the
+ *  Settings switch turns it on again, so the default is kept instead (the
+ *  Settings switch itself keeps whatever level was set). */
+export function tunerBackgroundLevelPatch(settings = {}, level) {
+  const n = Math.max(0, Math.min(TUNER_BACKGROUND_LEVEL_MAX, Math.round(Number(level)) || 0));
+  if (n === tunerBackgroundShownLevel(settings)) return null;
+  if (n === 0) return { tunerVisualizerBackground: false, tunerVisualizerLevel: TUNER_BACKGROUND_DEFAULT_LEVEL };
+  return settings.tunerVisualizerBackground === true
+    ? { tunerVisualizerLevel: n }
+    : { tunerVisualizerBackground: true, tunerVisualizerLevel: n };
+}
 
 /** Whether the background should be drawn now (the Tuner showing aside). */
 export function tunerBackgroundWanted(appState) {

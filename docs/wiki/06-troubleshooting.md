@@ -51,6 +51,19 @@ moves to a fallback port at once. The line that starts with `listening` in
 `native.log` shows the port, the process id and a short note on how the port
 was chosen.
 
+## Starting World Media a second time
+
+Since v0.1.16 only one copy runs per data folder. Starting the app again while
+it runs with the same `WorldMediaWindows-data` folder brings the open window to
+the front (and restores it if it was minimized) instead of opening a second
+window and a second server. The one-file EXE needs a few seconds before it can
+hand over, because it unpacks first. A start made at the very moment the open
+window is closing may open nothing; start the app again. A copy with another
+data folder, such as a second portable folder, runs beside this one. A start
+without a window (`WORLDMEDIA_NO_BROWSER=1`) on a folder that is in use exits at
+once with code 3 and starts no server. After a crash or a killed process the
+next start opens normally.
+
 ## Favorites or settings appear missing
 
 Usually the app is using a different profile/origin, not that the records were
@@ -320,6 +333,20 @@ reasons for none:
   the song. World Media shows what the station sends.
 - A title can take a few seconds to appear, and again to change.
 
+## A station shows no format or bitrate
+
+A station shows its stream format and bitrate in its tooltip and in its details,
+and on its card with **Show technical source details** on.
+
+- Radio Browser lists them for its stations. Any other station shows them after
+  it has played once; before that, nothing is known.
+- A station delivered as HLS shows none, and neither does a station whose
+  server sends neither an audio type nor a bitrate.
+- **Clear local cache** removes what the app remembered, so the stations show
+  nothing again until they play.
+- With **Show technical source details** off, the card itself shows nothing, but
+  the tooltip and the details still do.
+
 ## The sound meter does not move
 
 The bars beside **EQ** in the player bar move only while sound is playing:
@@ -395,7 +422,8 @@ See [Visualizer](09-visualizer.md) for every control. Common causes:
 
 ## Recording does not start or will not stop
 
-- Turn Recorder on and install/repair FFmpeg from Settings.
+- Turn Recorder on and install/repair FFmpeg from Settings. With it off, the
+  Record button says **Recorder off**; point at it to read where to turn it on.
 - Verify both `ffmpeg` and `ffprobe` are marked capable.
 - Wait through **Preparing…** for a slow HLS manifest; preparation is bounded
   and cancellable.

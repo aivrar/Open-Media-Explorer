@@ -33,6 +33,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.13.md
 |   |-- RELEASE_NOTES_0.1.14.md
 |   |-- RELEASE_NOTES_0.1.15.md
+|   |-- RELEASE_NOTES_0.1.16.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -46,6 +47,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.13.md
 |   |-- RELEASE_RECORD_0.1.14.md
 |   |-- RELEASE_RECORD_0.1.15.md
+|   |-- RELEASE_RECORD_0.1.16.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -103,6 +105,7 @@ WorldMediaWindows/
 |-- worldmedia_recording.py
 |-- worldmedia_runtime.py
 |-- worldmedia_security.py
+|-- worldmedia_single_instance.py
 |-- worldmedia_songlog.py
 |-- worldmedia_starred.py
 |-- worldmedia_station_images.py
@@ -116,7 +119,8 @@ WorldMediaWindows/
 
 | Path | Purpose |
 |---|---|
-| `worldmedia_native.py` | Windows desktop entry point. Chooses the local port (waiting up to 8 seconds for a busy port that answers as World Media), starts the local server and opens WebView2. |
+| `worldmedia_native.py` | Windows desktop entry point. Claims the data folder (one copy per data folder), chooses the local port (waiting up to 8 seconds for a busy port that answers as World Media), starts the local server and opens WebView2. |
+| `worldmedia_single_instance.py` | One running copy per data folder: a named mutex per folder, the request that brings the running copy's window to the front, and the wait for a copy that is closing. |
 | `worldmedia_theme.py` | Validated pywebview bridge and Windows DWM caption-color integration. |
 | `worldmedia_server.py` | Local HTTP server, static frontend host, allowlisted CORS proxy, shutdown API. |
 | `worldmedia_security.py` | Local control authentication, bounded JSON, safe filenames, and redaction. |
@@ -127,7 +131,7 @@ WorldMediaWindows/
 | `worldmedia_ffmpeg.py` | Verified FFmpeg discovery, capability probes, managed acquisition, and lifecycle. |
 | `worldmedia_downloads.py` | Original finite-media downloads, safe resume, atomic publication, and folder access. |
 | `worldmedia_backup.py` | Settings backup ZIP: copies of the saved state files plus universal `.m3u8` playlists, written to the downloads folder. |
-| `worldmedia_icy.py` | Shoutcast/Icecast song titles: when the relay asks a station for them, removing the metadata blocks from the audio, and cleaning the title. |
+| `worldmedia_icy.py` | Shoutcast/Icecast song titles: when the relay asks a station for them, removing the metadata blocks from the audio, and cleaning the title; and the aligner that starts a live AAC stream at its first whole frame. |
 | `worldmedia_songlog.py` | The song log file (`state/song-log.json`): ordered writes, safe handling of an unreadable file, and the CSV export. |
 | `worldmedia_station_images.py` | The user's `station-images` folder: safe listing (with the files that were not used and why), station-name matching, and serving verified pictures. |
 | `worldmedia_starred.py` | Starred songs (`state/starred-songs.json`): ordered writes, safe handling of an unreadable file, and the **Save as text** and **Save as CSV** exports. |
@@ -164,7 +168,9 @@ WorldMediaWindows/
 | `src/lib/startup-tidy.js` | Once per start, after the profile is restored and before it is first saved: drops names and category assignments of stations that are no longer favorites. |
 | `src/styles/song-log.css` | Styles for the Song log panel. |
 | `src/lib/station-images.js` | Station images: the list from the backend, name matching, and the Settings controls. |
-| `src/lib/stream-quality.js` | The format and bitrate label for Radio Browser stations. |
+| `src/lib/stream-quality.js` | The format and bitrate label, and the audio types a station's reply names. |
+| `src/lib/played-streams.js` | The format and bitrate each station played with (a cache of at most 1,000, removed by Clear cache), and the label shown for a station from them and from its directory. |
+| `src/lib/volume-stepper.js` | The volume control (up, number, down) and the Tuner's Visualizer control: clicks, a held button, the wheel and the keys; and what a video's own volume controls changed. |
 | `src/lib/other-streams.js` | The rule that decides which Radio Browser entries are listed as other streams of a station. |
 | `src/modes/library/other-streams.js` | The **Other streams** button and list in the Library detail panel, and the **Auto (verified)** line. |
 | `src/lib/best-stream.js`, `src/lib/media-failover.js`, `src/lib/start-failover.js` | **Pick the best stream**: ranking a station's listed streams, the best one's head start, and handing a stream that never begins to the next. |
@@ -232,6 +238,11 @@ WorldMediaWindows/
 | `tests/http-outside-gate.test.js`, `tests/iptv-radio-robustness.test.js`, `tests/live-source-retry.test.js` | The limit of four catalog requests at a time, the iptv-org and Radio Browser loading rules, and the Tuner and Grid retry of a source that failed. |
 | `tests/adapter-playable-picks.test.js`, `tests_python/test_podcast_enclosures.py`, `tests_python/test_download_content_types.py` | Which file of an item is played: Internet Archive, Wikimedia Commons, Radio Browser and LibriVox picks, podcast episode formats, and sound downloads labelled as video. |
 | `tests_python/test_connect_first.py` | Connecting to a host with several addresses: all tried together, IPv4 first, the last good one remembered. |
+| `tests/played-streams.test.js` | The format and bitrate stations played with: reading them from the relay's reply, remembering them once a start has played, the label, and where it shows. |
+| `tests/volume-stepper.test.js`, `tests/volume-sleep-fade.test.js` | The volume control (clicks, hold, wheel, keys, limits), a video's own volume controls, and the volume set during a sleep-timer fade. |
+| `tests/tuner-strip-wheel.test.js`, `tests/tuner-viz-level.test.js` | The mouse wheel over the Tuner's station strip, and the Visualizer strength control with its Settings switch. |
+| `tests_python/test_adts_align.py` | Starting a live AAC stream at its first whole frame, and passing live audio on as it arrives. |
+| `tests_python/test_single_instance.py` | One copy per data folder: the claim, the request to bring the window forward, a killed copy, racing starts, and the window and windowless starts. |
 | `tests/about-credits.test.js` | The About page's Visualizer credits, and that `CREDITS.md` and the notices name every borrowed piece. |
 | `tests/helpers/audio-sim.js`, `scene-luminance.js`, `signal-harness.js`, `visualizer-fakes.js` | Test helpers: simulated music for the analyser, a CPU recompute of two scenes' brightness, a clock and timer simulation, and fake graphics, DOM and window objects. |
 | `tests/helpers/visualizer-flash-check.mjs` and `.py`, `visualizer-fx-check.mjs` and `.py`, `visualizer-fx-check-page.js` | Checks run by hand, not by `npm test`: they draw scenes, effects and overlays in Chromium and report the largest frame-to-frame step of light. |
@@ -251,3 +262,5 @@ WorldMediaWindows/
 | `docs/RELEASE_RECORD_0.1.14.md` | What was checked for v0.1.14, with artifact hashes and limits. |
 | `docs/RELEASE_NOTES_0.1.15.md` | GitHub release notes for the `v0.1.15` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.15.md` | What was checked for v0.1.15, with artifact hashes and limits. |
+| `docs/RELEASE_NOTES_0.1.16.md` | GitHub release notes for the `v0.1.16` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.16.md` | What was checked for v0.1.16, with artifact hashes and limits. |

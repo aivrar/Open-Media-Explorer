@@ -79,7 +79,9 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --topbar-h: 56px;
-  --player-h: 96px;
+  /* The player bar: one 56 px row, 8 px above and below, and its 1 px top
+     border (73 px), with 1 px to spare. */
+  --player-h: 74px;
   /* Floating video: 320 px wide on a 1080p-wide window, growing in step with
      wider windows (640 px at 4K) so it covers the same share of the screen. */
   --video-w: min(32vw, clamp(320px, calc(100vw / 6), 640px));
@@ -103,7 +105,7 @@
   --accent-deep: #075f58;
   --accent-contrast: #001311;
   --chrome: #dfeaf1;
-  /* Seek and volume track: 3.2:1 against the player bar (--chrome). */
+  /* Seek track: 3.2:1 against the player bar (--chrome). */
   --slider-track: #738290;
   --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
   --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
@@ -524,16 +526,17 @@ html, body {
    1.5), and on wide windows at least 75vw - 760px (680 px at 1920 px wide,
    1160 px at 2560 px, at most 1400 px), so a long song is not cut short
    while the bar has room. Below about 1500 px the share is the larger, so
-   nothing changes there. */
+   nothing changes there.
+   One row: every control sits on the same centre line. A capture's progress,
+   result or error is shown in that row too (.player-capture-status, beside
+   the Record button); standing hints are on the button's hover only. */
 .player-bar {
   display: grid;
   grid-template-columns: minmax(clamp(190px, 75vw - 760px, 1400px), 1.1fr) auto auto minmax(180px, 1.5fr) auto;
-  grid-template-areas:
-    "meta controls actions progress volume"
-    "meta controls status status volume";
-  grid-template-rows: minmax(56px, auto) 18px;
+  grid-template-areas: "meta controls actions progress volume";
+  grid-template-rows: minmax(56px, auto);
   align-items: center;
-  gap: 4px 10px;
+  gap: 0 8px;
   padding: 8px 14px;
   background: color-mix(in srgb, var(--chrome) 98%, transparent);
   border-top: 1px solid var(--border);
@@ -706,11 +709,13 @@ html, body {
 .player-song-star.is-starred { color: var(--accent); }
 .player-song-star.is-starred svg { fill: var(--accent); }
 
+/* One even 8 px gap between the bar's controls: between its columns and
+   inside each group (the speaker and its volume column are one control). */
 .player-controls {
   grid-area: controls;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .player-btn {
@@ -747,7 +752,7 @@ html, body {
   grid-area: actions;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -772,13 +777,16 @@ html, body {
   cursor: pointer;
   transition: border-color .12s ease, background .12s ease, color .12s ease, transform .06s ease;
 }
-.player-action:hover:not(:disabled),
+/* The Record button in a state that has only a hint is aria-disabled but not
+   disabled (lib/capture-ui.js: it keeps the focus for its hover text): it
+   looks and responds as disabled. */
+.player-action:hover:not(:disabled):not([aria-disabled="true"]),
 .player-action-secondary:hover:not(:disabled),
 .player-eq:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--bg-elev-3);
 }
-.player-action:active:not(:disabled),
+.player-action:active:not(:disabled):not([aria-disabled="true"]),
 .player-action-secondary:active:not(:disabled),
 .player-eq:active:not(:disabled) { transform: scale(.97); }
 
@@ -831,6 +839,7 @@ html, body {
 .video-size-btn[aria-pressed="true"] .icon-smaller { display: block; }
 .video-dock video[hidden] + .video-size-btn { display: none; }
 .player-action:disabled,
+.player-action[aria-disabled="true"],
 .player-action-secondary:disabled,
 .player-eq:disabled { opacity: .52; cursor: not-allowed; }
 .player-action[data-state="stop-recording"] {
@@ -867,8 +876,10 @@ html, body {
   text-overflow: ellipsis;
   background: transparent;
 }
+/* One width for every state (Flat, Active, Bypassed, Suspended, Unavailable),
+   so the bar does not shift when it changes. */
 .player-eq {
-  min-width: 56px;
+  width: 68px;
   padding-inline: 8px;
   flex-direction: column;
   gap: 0;
@@ -896,9 +907,9 @@ html, body {
      120 px or more; the title, the buttons and the volume never move for it.
      With less room it is simply not there.
    - Stacked bar (1000 px and under): #player-meter-compact ends the actions
-     row. Its block wants 96 px but needs none (min-content 0) and gives way
-     before any button (flex-shrink 1000); squeezed below 96 px its canvas is
-     not shown. The -6px margin cancels the row's flex gap.
+     row. Its block wants 98 px but needs none (min-content 0) and gives way
+     before any button (flex-shrink 1000); squeezed below 98 px its canvas is
+     not shown. The -8px margin cancels the row's flex gap.
    Nothing plays while the bar only shows a capture, so it is hidden then. */
 .player-meter { display: none; }
 /* Switched off in Settings (the hidden attribute): neither copy is laid out at
@@ -935,29 +946,34 @@ html, body {
 @media (max-width: 1000px) {
   #player-meter-compact {
     display: grid;
-    grid-template-columns: minmax(0, 96px);
+    grid-template-columns: minmax(0, 98px);
     flex: 0 1000 auto;
     min-width: 0;
-    margin-left: -6px;
+    margin-left: -8px;
     overflow: hidden;
   }
   .player-meter-well {
     container-type: inline-size;
     min-width: 0;
   }
-  .player-meter-well > .player-meter-canvas { margin-left: 6px; }
+  .player-meter-well > .player-meter-canvas { margin-left: 8px; }
 }
-@container (max-width: 95.98px) {
+@container (max-width: 97.98px) {
   .player-meter-well > .player-meter-canvas { display: none; }
 }
 .player-bar.is-capture-only .player-meter { display: none !important; }
 
+/* A capture's progress, result or error, in the buttons' row right after
+   the Record button: one line of text with the progress line under it,
+   centred on the row. A long message is cut short; all of it is on hover. */
 .player-capture-status {
-  grid-area: status;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 200px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
   color: var(--text-dim);
   font-size: 11px;
   line-height: 1;
@@ -969,14 +985,14 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* Room for descenders (g, y, p): the row around it is a fixed 18 px (or
-     more), so the player bar keeps its height. */
+  /* Room for descenders (g, y, p). */
   line-height: 1.4;
 }
 .player-capture-progress {
   position: relative;
-  width: 72px;
-  height: 4px;
+  width: 100%;
+  max-width: 120px;
+  height: 3px;
   overflow: hidden;
   border-radius: 99px;
   background: var(--bg-elev-3);
@@ -1000,7 +1016,7 @@ html, body {
   grid-area: progress;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .player-time {
@@ -1011,7 +1027,7 @@ html, body {
   text-align: center;
 }
 
-.player-seek, #player-volume {
+.player-seek {
   appearance: none;
   -webkit-appearance: none;
   width: 100%;
@@ -1023,20 +1039,17 @@ html, body {
 }
 /* --slider-track is set only by the light palettes (Light, and System on a
    light Windows), where --bg-elev-3 is almost the player bar's own colour. */
-.player-seek::-webkit-slider-runnable-track,
-#player-volume::-webkit-slider-runnable-track {
+.player-seek::-webkit-slider-runnable-track {
   height: 4px;
   background: var(--slider-track, var(--bg-elev-3));
   border-radius: 2px;
 }
-.player-seek::-moz-range-track,
-#player-volume::-moz-range-track {
+.player-seek::-moz-range-track {
   height: 4px;
   background: var(--slider-track, var(--bg-elev-3));
   border-radius: 2px;
 }
-.player-seek::-webkit-slider-thumb,
-#player-volume::-webkit-slider-thumb {
+.player-seek::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 14px;
@@ -1048,8 +1061,7 @@ html, body {
   cursor: pointer;
   margin-top: -5px;                 /* recenter 14px thumb on the 4px track inside the 24px tall input */
 }
-.player-seek::-moz-range-thumb,
-#player-volume::-moz-range-thumb {
+.player-seek::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -1087,10 +1099,137 @@ html, body {
   grid-area: volume;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+}
+/* The level is held by the hidden #player-volume input (lib/player.js). */
+#player-volume[hidden] { display: none; }
+
+/* Volume (lib/volume-stepper.js): up, the level and down in one narrow
+   column beside the speaker, to save the bar's width. Up is on top; the
+   two buttons are thin 16 px strips as wide as the column. The column is
+   54 px tall, inside the wide bar's 56 px row and on its centre; the speaker
+   (38 px) stays beside it, as four in a column would not fit comfortably.
+   The stacked bar (1000 px and under) gives the volume a 24 px row of its
+   own, so there they lie in a row, down - level - up (see the media rule).
+   The level is an LED readout in the sound meter's lit colour (--accent),
+   three digits wide so 9, 83 and 100 take the same room, and centred on
+   the arrows' axis (tabular digits, no letter spacing, even padding);
+   the light palettes use --accent-strong so the digits read. No unlit
+   digits behind it: they made 83 read as 883. */
+.volume-stepper {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elev-2);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
 }
 
-#player-volume { width: 100px; }
+.volume-stepper:focus-within {
+  border-color: var(--border-strong);
+}
+/* Focused by a click on the number (tabindex -1, lib/volume-stepper.js):
+   no ring for that; the border above shows it has the keys. */
+.volume-stepper:focus:not(:focus-visible),
+.tuner-viz-level:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.volume-step {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  height: 16px;
+  background: transparent;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+
+.volume-step svg {
+  display: block;
+  pointer-events: none;
+}
+
+.volume-step:hover {
+  background: var(--bg-elev-3);
+  color: var(--text);
+}
+
+.volume-step:active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.volume-step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.volume-led {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  box-sizing: content-box;
+  width: 3ch;
+  height: 18px;
+  padding: 0 4px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--accent);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+:root[data-theme='light'] .volume-led {
+  color: var(--accent-strong);
+  text-shadow: none;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .volume-led {
+    color: var(--accent-strong);
+    text-shadow: none;
+  }
+}
+
+/* Muted (or at 0): the level dims, like the crossed speaker beside it. */
+.player-volume:has(#player-mute[data-silent="true"]) .volume-led {
+  color: var(--text-dim);
+  text-shadow: none;
+}
+
+/* The same stepper in a row, in its markup order down - level - up (the
+   Tuner's Visualizer strength, modes/tuner.js): 24 px tall. */
+.volume-stepper.is-row {
+  flex-direction: row;
+  height: 24px;
+  box-sizing: border-box;
+}
+.volume-stepper.is-row .volume-step { width: 18px; height: auto; }
+.volume-stepper.is-row .volume-led {
+  height: auto;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
 
 /* ============ Modal ============ */
 
@@ -1527,7 +1666,9 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
 @media (max-width: 1000px) {
-  :root { --player-h: 198px; }
+  /* Rows 44 + 36 + 24 + 24, three 6 px gaps, 10 px above and below and the
+     1 px border (167 px), with 1 px to spare. */
+  :root { --player-h: 168px; }
 
   .topbar {
     grid-template-columns: 1fr auto;
@@ -1558,15 +1699,25 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
     grid-template-areas:
       "meta controls"
       "actions actions"
-      "status status"
       "progress progress"
       "volume volume";
-    grid-template-rows: 44px 36px 18px 24px 24px;
+    grid-template-rows: 44px 36px 24px 24px;
     gap: 6px 12px;
     padding: 10px 12px;
   }
   .player-actions { justify-content: flex-end; }
   .player-volume { justify-content: flex-end; }
+  /* The volume's own 24 px row: down - level - up in a row (the markup is
+     up, level, down, so the column reads top to bottom). */
+  .player-volume .volume-stepper { flex-direction: row-reverse; height: 24px; box-sizing: border-box; }
+  .player-volume .volume-step { width: 18px; height: auto; }
+  .player-volume .volume-led {
+    height: auto;
+    border-top: 0;
+    border-bottom: 0;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
   .player-art-box {
     width: 44px;
     height: 44px;
@@ -1576,7 +1727,6 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 }
 
 @media (max-width: 560px) {
-  :root { --player-h: 198px; }
 
   .brand-name { font-size: 13px; }
   .topbar-tools { gap: 4px; }
@@ -1593,11 +1743,10 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .player-title { font-size: 13px; }
   .player-source { font-size: 11px; }
   .player-source.is-song { font-size: 13px; }
-  #player-volume { width: 88px; }
   .player-actions { justify-content: stretch; }
   .player-action { flex: 1 1 auto; min-width: 40px; }
   .player-action-secondary { max-width: 112px; }
-  .player-eq { flex: 0 0 52px; }
+  .player-eq { flex: none; }
   .player-capture-status { font-size: 10px; }
   .modal { width: min(96vw, 680px); max-height: 92vh; }
   .modal-body { padding: 14px; }
@@ -1616,12 +1765,14 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 
 #app.has-capture-only { --player-h: 72px; }
 .player-bar.is-capture-only {
-  grid-template-columns: auto minmax(240px, 1fr);
-  grid-template-areas: "actions status";
+  grid-template-columns: auto;
+  grid-template-areas: "actions";
   grid-template-rows: 44px;
   justify-content: center;
+  align-content: center;
   gap: 12px;
 }
+.player-bar.is-capture-only .player-capture-status { max-width: 360px; }
 .player-bar.is-capture-only .player-meta,
 .player-bar.is-capture-only .player-controls,
 .player-bar.is-capture-only .player-progress,
@@ -1629,11 +1780,9 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 .player-bar.is-capture-only .player-actions { justify-content: flex-start; }
 
 @media (max-width: 560px) {
-  #app.has-capture-only { --player-h: 108px; }
   .player-bar.is-capture-only {
-    grid-template-columns: 1fr;
-    grid-template-areas: "actions" "status";
-    grid-template-rows: 40px 18px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 40px;
   }
 }
 

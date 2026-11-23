@@ -1066,6 +1066,10 @@
 }
 :root[data-tech-details="on"] .library-root.is-personal-view .card-facts { flex: 0 0 auto; }
 :root[data-tech-details="on"] .library-root.is-personal-view .card-license { flex: 1 1 62px; max-width: 100%; }
+/* The stream's format and bitrate alone stay on the badge's line, in the room
+   left beside it (cut short when that is little; the whole text is on hover),
+   so the card keeps its height. */
+:root[data-tech-details="on"] .library-root.is-personal-view .card-license.is-quality-only { flex: 1 1 0; min-width: 0; }
 :root[data-tech-details="on"] .library-root.is-personal-view .card-license:not(.has-quality) {
   display: block;
   white-space: nowrap;

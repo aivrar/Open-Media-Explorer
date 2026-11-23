@@ -17,7 +17,7 @@ import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import { resolveItemArtwork } from './thumbnails.js';
 import { createBestStreamStatus, createOtherStreams } from './other-streams.js';
-import { streamQualityLabel } from '../../lib/stream-quality.js';
+import { stationStreamLabel } from '../../lib/played-streams.js';
 import {
   contentBadgeText, favoriteForContentView, isContentAllowed,
 } from '../../lib/content-rating.js';
@@ -34,6 +34,7 @@ let detailReturnFocus = null;
 // The item the open panel shows, for the parts that change in place.
 let detailItem = null;
 let detailTrouble = null;
+let detailQuality = null;
 let detailPicture = null;
 let detailKeyHandler = null;
 let detailArtworkAbort = null;
@@ -194,12 +195,11 @@ export function openDetail(item, options = {}) {
   if (item.country) meta.appendChild(el('span', { text: item.country }));
   if (item.language) meta.appendChild(el('span', { text: item.language }));
   if (shownLicense(item)) meta.appendChild(el('span', { text: shownLicense(item) }));
-  const qualityLabel = streamQualityLabel(item);
-  if (qualityLabel) {
-    meta.appendChild(el('span', {
-      className: 'detail-quality', text: qualityLabel, attrs: { title: 'Stream format and bitrate' },
-    }));
-  }
+  // The stream's format and bitrate (played-streams.js), kept current: a
+  // station played while the panel is open fills it in.
+  detailQuality = meta.appendChild(el('span', {
+    className: 'detail-quality', attrs: { title: 'Stream format and bitrate' },
+  }));
   const ratingLabel = contentBadgeText(item);
   if (ratingLabel && item.__contentHidden !== true) {
     meta.appendChild(el('span', { className: 'content-rating-badge', text: ratingLabel }));
@@ -210,6 +210,7 @@ export function openDetail(item, options = {}) {
   detailTrouble = el('p', { className: 'detail-trouble', attrs: { role: 'note' } });
   ui.detailPanel.appendChild(detailTrouble);
   refreshDetailTrouble();
+  refreshDetailQuality();
   // Auto (verified): what the check knows of this station, kept up to date.
   if (item.__contentHidden !== true) {
     detailBestStream = createBestStreamStatus(item);
@@ -428,6 +429,15 @@ export function refreshDetailTrouble() {
   return true;
 }
 
+/** The stream format and bitrate of the open panel, kept current. */
+export function refreshDetailQuality() {
+  if (!detailQuality || !detailItem) return false;
+  const text = stationStreamLabel(detailItem);
+  if (detailQuality.textContent !== text) detailQuality.textContent = text;
+  detailQuality.hidden = !text;
+  return true;
+}
+
 /** Tests: the open panel's picture controls. */
 export function detailPictureControls() { return detailPicture; }
 
@@ -437,6 +447,7 @@ export function closeDetail({ preserveSelection = false } = {}) {
   detailArtworkShown = null;
   detailItem = null;
   detailTrouble = null;
+  detailQuality = null;
   detailPicture = null;
   stopOtherStreams();
   if (ui.detailPanel) {

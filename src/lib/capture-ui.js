@@ -18,6 +18,12 @@ import { isContentAllowed } from './content-rating.js';
 
 const ACTIVE_JOB_STATES = new Set(['queued', 'preparing', 'running', 'stopping', 'finalizing']);
 
+// Recorder switched off in Settings: the Record button's hover text says
+// where to switch it on (the gear at the top of the window).
+export const RECORDER_OFF_HINT = 'Recorder is off, so playback has priority. To record, turn on '
+  + 'Recorder in Settings (the gear at the top), under Capture & storage.';
+const RECORDER_OFF_REASON = 'Turn on Recorder in Settings (the gear at the top) to record live media.';
+
 function byId(id) { return document.getElementById(id); }
 
 function installConfirmation(destination) {
@@ -36,7 +42,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     statusText: byId('player-capture-status-text'), progress: byId('player-capture-progress'),
     progressBar: byId('player-capture-progress-bar'), eq: byId('player-eq'),
     eqState: byId('player-eq-state'), bar: byId('player-bar'), app: byId('app'),
-    announcement: byId('player-capture-announcement'),
+    announcement: byId('player-capture-announcement'), hint: byId('player-capture-hint'),
   };
   if (Object.values(elements).some((element) => !element)) return null;
 
@@ -121,12 +127,13 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
       (job) => job.item_id === item?.id && ACTIVE_JOB_STATES.has(job.state),
     );
     if (!recorderEnabled && capability.startsWith('record-') && !activeRecording) {
+      // A standing hint: on the button's hover and description only.
       view = {
         state: 'unavailable', label: 'Recorder off', action: '', disabled: true,
-        disabledReason: 'Turn Recorder on in Settings to record live media.',
-        status: 'Recorder is off so playback has priority.', tone: 'muted',
+        disabledReason: RECORDER_OFF_REASON,
+        status: RECORDER_OFF_HINT, notice: '', tone: 'muted',
         progress: null, indeterminate: false, jobId: '',
-        secondaryAction: 'settings', secondaryLabel: 'Open Settings',
+        secondaryAction: null, secondaryLabel: '',
       };
     }
     if (actionError && actionError.itemId === (item?.id || '') && !activeRecording && !relevantActive) {
@@ -137,9 +144,9 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
       view = {
         state: 'failed', label: labels[actionError.retryAction] || 'Retry',
         action: actionError.retryAction || 'retry', disabled: false,
-        disabledReason: '', status: actionError.message, tone: 'danger',
+        disabledReason: '', status: actionError.message, notice: actionError.message, tone: 'danger',
         progress: null, indeterminate: false, jobId: actionError.jobId || '',
-        secondaryAction: 'settings', secondaryLabel: 'Open Settings',
+        secondaryAction: null, secondaryLabel: '',
       };
     }
     return view;
@@ -163,14 +170,21 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     elements.bar.classList.toggle('was-capture-only', captureOnly);
     elements.primary.dataset.state = view.state;
     elements.primary.dataset.action = view.action || '';
-    elements.primary.disabled = busy || view.disabled || !view.action;
+    const inactive = busy || view.disabled || !view.action;
+    // A state that only has a hint (Recorder off, not playing, unavailable,
+    // checking) stays focusable and in the tab order, so a keyboard user can
+    // reach its hover text and description: aria-disabled only, and a press
+    // does nothing (see the click handler). Other inactive states (a press
+    // being handled, a capture step under way) use the disabled attribute.
+    const hintOnly = inactive && !busy && Boolean(view.status) && !view.notice;
+    elements.primary.disabled = inactive && !hintOnly;
     elements.label.textContent = view.label;
     const reason = view.disabledReason || view.label;
     elements.primary.title = view.status || reason;
     elements.primary.setAttribute(
       'aria-label', view.disabledReason ? `${view.label}. ${view.disabledReason}` : view.label,
     );
-    elements.primary.setAttribute('aria-disabled', elements.primary.disabled ? 'true' : 'false');
+    elements.primary.setAttribute('aria-disabled', inactive ? 'true' : 'false');
 
     elements.secondary.hidden = !view.secondaryAction;
     elements.secondary.dataset.action = view.secondaryAction || '';
@@ -179,9 +193,15 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     elements.secondary.setAttribute('aria-label', view.secondaryLabel || 'Secondary capture action');
     elements.secondary.disabled = busy && view.secondaryAction !== 'cancel-install';
 
-    elements.status.hidden = !view.status;
+    // The full sentence is the button's description (aria-describedby); the
+    // bar shows only a notice (progress, a result or an error) beside it,
+    // with the whole of it on hover when it is cut short.
+    elements.hint.textContent = view.status;
+    const notice = view.notice ?? view.status;
+    elements.status.hidden = !notice;
     elements.status.dataset.tone = view.tone;
-    elements.statusText.textContent = view.status;
+    elements.status.title = notice;
+    elements.statusText.textContent = notice;
     const showProgress = view.indeterminate || Number.isFinite(view.progress);
     elements.progress.hidden = !showProgress;
     elements.progress.classList.toggle('is-indeterminate', view.indeterminate);
@@ -200,7 +220,12 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     // The visual progressbar can update frequently, but the polite live region
     // announces only state transitions. Screen readers can inspect the
     // progressbar value on demand without hearing download/recording chatter.
-    const announcementKey = `${view.state}:${view.jobId}:${view.status ? 'status' : 'empty'}`;
+    // A hint is part of the key, so a changed hint ("Live media can be
+    // recorded." to "Recording is available once this item plays.", the
+    // state and job staying the same) is announced once. A notice is not:
+    // its time and size change on every refresh.
+    const announcementKey = `${view.state}:${view.jobId}:${
+      view.notice ? 'notice' : (view.status ? `hint:${view.status}` : 'empty')}`;
     if (view.status && announcementKey !== lastAnnouncementKey) {
       elements.announcement.textContent = view.status;
       lastAnnouncementKey = announcementKey;
@@ -404,8 +429,6 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
         transient = null;
         actionError = null;
         await startNewCapture();
-      } else if (action === 'settings') {
-        byId('settings-btn')?.click();
       }
     } catch (error) {
       transient = null;
@@ -427,7 +450,11 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     }
   }
 
-  elements.primary.addEventListener('click', () => perform(elements.primary.dataset.action));
+  elements.primary.addEventListener('click', () => {
+    // Inactive but focusable (aria-disabled only): a click, Enter or Space does nothing.
+    if (elements.primary.disabled || elements.primary.getAttribute('aria-disabled') === 'true') return;
+    perform(elements.primary.dataset.action);
+  });
   elements.secondary.addEventListener('click', () => perform(elements.secondary.dataset.action));
   elements.eq.addEventListener('click', () => {
     const item = currentItem();

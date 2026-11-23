@@ -49,6 +49,24 @@ export function cleanCodec(value) {
   return first.replace(/[^A-Z0-9+.\- ]/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_CODEC_LENGTH).trim();
 }
 
+// The format a station's audio Content-Type stands for. Shoutcast and Icecast
+// say "audio/aacp" for AAC+.
+const CONTENT_TYPE_CODECS = new Map([
+  ['audio/mpeg', 'MP3'], ['audio/mp3', 'MP3'], ['audio/x-mpeg', 'MP3'], ['audio/mpeg3', 'MP3'], ['audio/x-mp3', 'MP3'],
+  ['audio/aac', 'AAC'], ['audio/x-aac', 'AAC'], ['audio/mp4', 'AAC'], ['audio/x-m4a', 'AAC'], ['audio/m4a', 'AAC'],
+  ['audio/aacp', 'AAC+'], ['audio/x-aacp', 'AAC+'],
+  ['audio/ogg', 'OGG'], ['application/ogg', 'OGG'], ['audio/vorbis', 'OGG'],
+  ['audio/opus', 'OPUS'],
+  ['audio/flac', 'FLAC'], ['audio/x-flac', 'FLAC'],
+  ['audio/wav', 'WAV'], ['audio/x-wav', 'WAV'], ['audio/wave', 'WAV'],
+]);
+
+/** The format label ("MP3", "AAC+", ...) for an audio Content-Type, or ''. */
+export function codecFromContentType(value) {
+  if (typeof value !== 'string') return '';
+  return CONTENT_TYPE_CODECS.get(value.split(';', 1)[0].trim().toLowerCase()) || '';
+}
+
 /** Radio Browser sends the HLS flag as 1, "1" or true depending on the mirror. */
 export function isHlsFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true';

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { EQ_STORAGE_KEY } from '../src/lib/eq-store.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
+import { loadVolume } from '../src/lib/state.js';
 import { createPlayerDom } from './helpers/fake-dom.js';
 
 class Param {
@@ -147,6 +148,80 @@ test('player routes relayed audio/video/HLS through one engine without breaking 
     player.setVolume(35);
     assert.equal(elements['audio-el'].volume, 0.35);
     assert.equal(elements['video-el'].volume, 0.35);
+    // The stepper shows the level and sets it through setVolume.
+    assert.equal(elements['player-volume-readout'].textContent, '35');
+    assert.equal(elements['player-volume-readout'].getAttribute('aria-label'), 'Volume 35');
+    elements['player-volume-up'].dispatchEvent(new Event('click'));
+    assert.equal(elements['audio-el'].volume, 0.36);
+    assert.equal(elements['player-volume'].value, '36');
+    assert.equal(elements['player-volume-readout'].textContent, '36');
+    elements['player-volume-down'].dispatchEvent(new Event('click'));
+    assert.equal(elements['audio-el'].volume, 0.35);
+
+    // The video's own controls: its volume becomes the user's volume, as if
+    // the buttons had been used (store, readout, the audio element, saved).
+    const video = elements['video-el'];
+    let videoWrites = 0;
+    const videoVolume = Object.getOwnPropertyDescriptor(video, 'volume');
+    Object.defineProperty(video, 'volume', {
+      configurable: true,
+      get: () => videoVolume.value,
+      set: (value) => { videoWrites += 1; videoVolume.value = value; },
+    });
+    video.volume = 0.4537;
+    videoWrites = 0;
+    video.emit('volumechange');
+    assert.equal(elements['player-volume'].value, '45');
+    assert.equal(elements['player-volume-readout'].textContent, '45');
+    assert.equal(elements['player-volume-readout'].getAttribute('aria-label'), 'Volume 45');
+    assert.equal(elements['player-volume-control'].title, 'Volume 45%');
+    assert.equal(elements['audio-el'].volume, 0.45);
+    assert.equal(loadVolume(), 45);
+    // Not written back: no rounding drift on the element being dragged.
+    assert.equal(videoWrites, 0);
+    assert.equal(video.volume, 0.4537);
+    // Our own change echoing back as a volumechange changes nothing.
+    video.emit('volumechange');
+    elements['audio-el'].emit('volumechange');
+    assert.equal(videoWrites, 0);
+    assert.equal(elements['player-volume'].value, '45');
+    // The buttons still move both elements from there.
+    elements['player-volume-up'].dispatchEvent(new Event('click'));
+    assert.equal(video.volume, 0.46);
+    assert.equal(elements['audio-el'].volume, 0.46);
+    video.volume = 0;
+    video.emit('volumechange');
+    assert.equal(elements['player-volume-readout'].textContent, '0');
+    assert.equal(elements['player-mute'].dataset.silent, 'true');
+    video.volume = 0.7;
+    video.emit('volumechange');
+    assert.equal(elements['player-mute'].dataset.silent, 'false');
+    // Its mute button: the player's mute follows, both elements and the icon.
+    video.muted = true;
+    video.emit('volumechange');
+    assert.equal(elements['player-mute'].getAttribute('aria-pressed'), 'true');
+    assert.equal(elements['player-mute'].dataset.silent, 'true');
+    assert.equal(elements['audio-el'].muted, true);
+    assert.equal(player.isMuted(), true);
+    video.muted = false;
+    video.emit('volumechange');
+    assert.equal(elements['player-mute'].getAttribute('aria-pressed'), 'false');
+    assert.equal(elements['audio-el'].muted, false);
+    // A sleep-timer fade lowers the elements; that is not the user's volume.
+    video.dataset.preFadeVol = '0.7';
+    elements['audio-el'].dataset.preFadeVol = '0.7';
+    video.volume = 0.1;
+    video.emit('volumechange');
+    assert.equal(elements['player-volume'].value, '70');
+    assert.equal(loadVolume(), 70);
+    delete video.dataset.preFadeVol;
+    delete elements['audio-el'].dataset.preFadeVol;
+    video.volume = 0.7;
+    video.emit('volumechange');
+    assert.equal(elements['player-volume'].value, '70');
+    delete video.volume;
+    video.volume = videoVolume.value;
+    player.setVolume(35);
     player.setMuted(true);
     assert.equal(elements['audio-el'].muted, true);
     assert.equal(elements['video-el'].muted, true);

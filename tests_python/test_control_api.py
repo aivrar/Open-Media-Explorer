@@ -5,6 +5,7 @@ import http.client
 import io
 import json
 import threading
+import time
 import unittest
 import urllib.parse
 from unittest import mock
@@ -24,9 +25,8 @@ class ControlApiTests(unittest.TestCase):
             self.assertIsNone(payload['data']['graceful'])
             cleanup.assert_not_called()  # The response handler never waits for cleanup.
             # HTTP response can win the race with finally on the request thread.
-            for _ in range(100):
-                if schedule.called:
-                    break
+            deadline = time.monotonic() + 5
+            while not schedule.called and time.monotonic() < deadline:
                 threading.Event().wait(0.001)
             schedule.assert_called_once_with()
         order = []
@@ -349,16 +349,21 @@ class ControlApiTests(unittest.TestCase):
             response, payload = self.request(
                 "POST", "/api/shutdown", headers=self.mutation_headers(), body=b"{}"
             )
-            self.assertTrue(scheduled.wait(1), "shutdown response won the race with its exit scheduler")
+            self.assertTrue(scheduled.wait(5), "shutdown response won the race with its exit scheduler")
         self.assertEqual(response.status, 202)
         self.assertTrue(payload["ok"])
         schedule.assert_called_once()
 
+        scheduled = threading.Event()
         with mock.patch("worldmedia_server.shutdown_services", return_value=False), \
-             mock.patch("worldmedia_server.schedule_process_exit") as schedule:
+             mock.patch("worldmedia_server.schedule_process_exit",
+                        side_effect=lambda: scheduled.set()) as schedule:
             response, payload = self.request(
                 "POST", "/api/shutdown", headers=self.mutation_headers(), body=b"{}"
             )
+            # The handler schedules the exit after its response; leaving the
+            # patch first would let the real scheduler end the test process.
+            self.assertTrue(scheduled.wait(5), "shutdown response won the race with its exit scheduler")
         self.assertEqual(response.status, 202)
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["data"]["graceful"])

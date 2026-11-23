@@ -13,7 +13,10 @@ newer. Starred songs, **Rename** for favorites, dragging favorites in **My
 order**, `.json` and `.csv` import, **Pick the best stream** and **Processor
 use** require v0.1.12 or newer. The **Now Playing** tab, the "!" mark on a
 station that did not play, **Choose picture…** and dropping a picture on a
-station's card require v0.1.13 or newer.
+station's card require v0.1.13 or newer. The stream format and bitrate of
+a station that has played, the volume control, the one-row player bar, the
+mouse wheel over the Tuner's station strip, the Tuner's **Visualizer:** control
+and one running copy per data folder require v0.1.16 or newer.
 
 ## Window layout
 
@@ -36,9 +39,23 @@ and a larger size; the choice is remembered. Audio keeps the bar visible
 without showing a video element, including radio stations that stream in a
 video format (HLS or DASH) but carry no picture.
 
+In a window wider than 1000 px the bar is one row, 74 px high, with every
+control on one centre line; in a window 1000 px wide or narrower its rows are
+stacked (168 px). Nothing is written under the buttons: why the **Record**
+button is unavailable is its hover text (with **Recorder** off it says where to
+turn it on: Settings, Capture & storage), and a capture's progress, result or
+error shows beside the button. The gear at the top opens Settings.
+
 The speaker button shows a crossed-out speaker when the sound is muted or the
-volume is at zero. Point at the volume slider to see the volume as a
-percentage: it starts at 80%, and 100% is full volume (there is no boost).
+volume is at zero. The volume control beside it is an up button, the volume as
+a number from 0 to 100, and a down button (in a window 1000 px wide or narrower
+it has a row of its own: down, number, up). Point at it to see the volume as a
+percentage: it starts at 80%, and 100% is full volume (there is no boost). A
+click on a button changes the volume by 1, a held button repeats after 0.4
+seconds, the mouse wheel over the control changes it by 2 per notch, and with
+the control focused the arrow keys change it by 1, Page Up and Page Down by 10,
+and Home and End set 0 and 100. The number and the speaker also follow a
+video's own volume and mute controls.
 When a radio station sends the title of its current song, the bar shows it
 under the station name with a note sign, and a star beside it stars that song;
 see **Song log** below. The song is shown larger and brighter than the rest of
@@ -261,8 +278,9 @@ Each card can contain artwork, title, source, year/country, license, and a star.
 Artwork is lazy: the first visible/nearby cards are prioritized and off-screen
 cards wait for the viewport. An item without artwork shows its initials on a
 colored square (the same color every time); a logo that fails can be retried
-without affecting the catalog item. Source badges and license notes are shown
-when technical source details are switched on. Channels from your own
+without affecting the catalog item. Source badges, license notes and the
+stream's format and bitrate are shown on the card when technical source details
+are switched on. Channels from your own
 playlists show no license note: the same "See provider terms" on every card
 told you nothing about a stream you added yourself.
 
@@ -276,10 +294,18 @@ show:
 - **Record audio/video** when the item is live and FFmpeg is ready;
 - a link to the provider's **Source** page.
 
-Radio Browser stations also show the stream format and bitrate the directory
-lists, for example "MP3 · 128 kbps": in the detail panel, on the card when
-technical source details are on, and in the player bar's tooltip. Their detail
-panel has an **Other streams** button that lists other Radio Browser entries for
+A station's stream format and bitrate show as one short label, for example
+"MP3 · 128 kbps": in the detail panel, in the tooltip of its card in the
+Library and the Tuner ("Stream: MP3 · 128 kbps"), on the Library card when
+technical source details are on (on the Tuner card in a short form, such as
+"AAC+ 320k · My Playlists"), and in the player bar's tooltip. Radio Browser
+lists them for its stations. Since v0.1.16 the app also remembers what a
+station's own stream said the last time it played, so a station from another
+source, a playlist station for example, shows them after it has played once; a
+station delivered as HLS does not (see
+[Playback](04-playback-eq-downloads-recording.md#stream-format-and-other-streams)).
+The detail panel of a Radio Browser station has an **Other streams** button that
+lists other Radio Browser entries for
 the same station (same name and same homepage) with a **Play** button each.
 A station without a homepage lists stations with the same name, which may be
 different stations. **Pick the best stream** set to **Auto (verified)** (see
@@ -425,8 +451,9 @@ Tuner provides a radio-style way to step through live media:
    of your favorites categories that has stations appears on the list after it,
    named like **★ Rock**. These dials follow the order chosen in Favorites
    (**My order** or **A-Z**).
-3. Drag the dial, scroll the mouse wheel over it (one station per notch), use
-   Left/Up or Right/Down, or focus the dial and use arrow keys.
+3. Drag the dial, scroll the mouse wheel over it or over the strip of station
+   cards under it (one station per notch), use Left/Up or Right/Down, or focus
+   the dial and use arrow keys.
 4. Press Enter or Space to play the selected item.
 
 With **My favorites** (or one of your categories) as the source, the status
@@ -460,6 +487,19 @@ for the cards you can see, and only after the strip has stopped moving, so
 turning the dial quickly through many stations asks for nothing until it
 rests. Bigger cards leave less room for the dial in a short window; when the
 dial gets too small, the station name and then the count are left off the knob.
+
+At the right of the Tuner's top bar, after **Country** and **Source**, the
+**Visualizer:** control (a down button, a number and an up button, the same kind
+of control as the volume) sets how strongly the Visualizer shows behind the
+Tuner, from 0 to 100. The default, 8, is a faint picture; 100 shows it at full
+strength, and above the default the picture can make text on the Tuner harder
+to read. A click changes the level by 1, a held button repeats, the mouse wheel over the control
+changes it by 2 per notch, and with the control focused the arrow keys change it
+by 1. 0 turns **Show the Visualizer behind the Tuner** off, and pressing up from
+0 turns it on; the switch in Settings and the control follow each other, and
+turning the switch off in Settings keeps the level for when it is turned on
+again. Nothing is drawn until the notice about flashing pictures has been
+accepted in the Visualizer tab, at any level.
 
 The dial keeps the same size while you use it: it does not change between
 stations, while a list is loading or empty, or when the player bar appears on
@@ -542,12 +582,16 @@ restart; the local server port is explicitly marked **for next launch**.
 - **Sound meter in the player bar:** on by default. Shows the small bars beside
   EQ that move with the sound. Updates immediately.
 - **Show the Visualizer behind the Tuner:** off by default. While sound plays,
-  the Visualizer is drawn faintly behind the Tuner, without overlays or
-  effects, once its notice about flashing has been accepted in the Visualizer
-  tab. See [Visualizer](09-visualizer.md).
+  the Visualizer is drawn faintly behind the Tuner (how strongly is set with
+  the **Visualizer:** control on the Tuner tab), without overlays or effects,
+  once its notice about flashing has been accepted in the Visualizer tab. See
+  [Visualizer](09-visualizer.md).
 - **Show technical source details:** off by default. Turn it on to see the
-  per-source status words (Pull, Wait, Done, Live, Stale), boxed source badges,
-  and license notes on cards.
+  per-source status words (Pull, Wait, Done, Live, Stale), boxed source badges
+  and license notes on cards, and on station cards the stream format and
+  bitrate (such as MP3 · 128 kbps) once a station has played or its directory
+  lists them. With it off, a source's status and a station's format and bitrate
+  still show on hover.
 
 The native title bar starts in the saved theme and follows theme changes
 immediately, including on Windows 10 (where only its dark/light mode can be
@@ -899,12 +943,15 @@ starts a new one, says so, and keeps the old file in the same folder.
 The Sleep selector offers Off, 1 minute, 15 minutes, 30 minutes, 1 hour,
 2 hours, and Custom (0.1–720 minutes). Ten seconds before expiry it fades both
 audio and video volume, pauses playback, restores the pre-fade volume, and
-cancels itself.
+cancels itself. A volume you set with the volume control while it fades is the
+one that is restored, when the timer ends or is cancelled.
 
 ## Keyboard and accessibility
 
-Cards, sidebar rows, dialogs, the tuner dial, sliders, and buttons expose
-keyboard focus and ARIA labels. Enter/Space activates focused cards and tuner
-selection; arrow keys navigate sidebar/tuner controls; Escape closes Settings
-and EQ dialogs. Reduced-motion and forced-colors behavior is covered by the
+Cards, sidebar rows, dialogs, the tuner dial, sliders, the volume control, and
+buttons expose keyboard focus and ARIA labels. Enter/Space activates focused
+cards and tuner selection; arrow keys navigate sidebar/tuner controls; Escape
+closes Settings and EQ dialogs. On the volume control and on the Tuner's
+**Visualizer:** control, the arrow keys change the level by 1, Page Up and Page
+Down by 10, and Home and End set the lowest and the highest level. Reduced-motion and forced-colors behavior is covered by the
 frontend accessibility tests.

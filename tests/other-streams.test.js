@@ -210,9 +210,12 @@ test('the label shows in the detail panel, on technical cards, and only on hover
     read('src/modes/library/detail.js'), read('src/modes/library/render.js'),
     read('src/lib/player.js'), read('src/styles/library.css'),
   ]);
-  assert.match(detail, /const qualityLabel = streamQualityLabel\(item\);[\s\S]*?className: 'detail-quality', text: qualityLabel/);
+  // The listed label, or the one the station played with (played-streams.js).
+  assert.match(detail, /className: 'detail-quality', attrs: \{ title: 'Stream format and bitrate' \}/);
+  assert.match(detail, /const text = stationStreamLabel\(detailItem\);\s+if \(detailQuality\.textContent !== text\) detailQuality\.textContent = text;/);
   // Cards: inside the technical column, which the simple view hides.
-  assert.match(render, /const quality = streamQualityLabel\(item\);[\s\S]*?className: 'card-license has-quality'[\s\S]*?className: 'card-quality', text: quality/);
+  assert.match(render, /className: 'card-license has-quality'[\s\S]*?className: 'card-quality', text: quality/);
+  assert.match(render, /const quality = stationStreamLabel\(item\);[\s\S]*?card\.__license = cardLicenseNode\(license, quality\);/);
   assert.match(css, /:root:not\(\[data-tech-details="on"\]\) \.card-license \{ display: none; \}/);
   // Player: in the hover title after the normal line, never in the visible meta line.
   // The player bar shows the format and bitrate of the stream that plays.

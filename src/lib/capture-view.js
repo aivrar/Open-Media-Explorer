@@ -24,10 +24,16 @@ function bytes(value) {
   return `${(size / 1024 ** 3).toFixed(1)} GB`;
 }
 
+// `status` is the full sentence: the Record button's hover text and
+// description, and what the polite live region announces. `notice` is what
+// the player bar shows beside the button: only progress, a result or an
+// error (a capture under way, done or failed). A standing hint ("Live media
+// can be recorded.") has no notice; it is on the button's hover only.
 function base(state, label, options = {}) {
   return {
     state, label, action: options.action || null, disabled: Boolean(options.disabled),
     disabledReason: options.disabledReason || '', status: options.status || '',
+    notice: options.notice ?? (options.hint ? '' : (options.status || '')),
     tone: options.tone || 'neutral', progress: options.progress ?? null,
     indeterminate: Boolean(options.indeterminate), jobId: options.jobId || '',
     secondaryAction: options.secondaryAction || null,
@@ -136,7 +142,7 @@ export function deriveCaptureView({
   let view;
   if (capability === 'download') {
     view = base('download', 'Download', {
-      action: 'download', status: 'Original media can be downloaded.',
+      action: 'download', status: 'Original media can be downloaded.', hint: true,
     });
   } else if ((capability === 'record-audio' || capability === 'record-video') && unplayable) {
     // `unplayable`: the start of this item failed before any stream was
@@ -144,23 +150,24 @@ export function deriveCaptureView({
     // to record until it plays.
     view = base('record', capability === 'record-video' ? 'Record video' : 'Record audio', {
       disabled: true, disabledReason: 'This item is not playing.',
-      status: 'Recording is available once this item plays.',
+      status: 'Recording is available once this item plays.', hint: true,
     });
   } else if (capability === 'record-audio' || capability === 'record-video') {
     // `recording`: the player found the media to be a recording with a set
     // length (a playlist entry that points at an MP3), so it is not called live.
     view = base('record', capability === 'record-video' ? 'Record video' : 'Record audio', {
       action: 'record', status: recording ? 'This stream can be recorded.' : 'Live media can be recorded.',
+      hint: true,
     });
   } else if (capability === 'checking') {
     view = base('checking', 'Checking…', {
       disabled: true, disabledReason: 'The media source is still being resolved.',
-      status: 'Checking media capability…', indeterminate: true,
+      status: 'Checking media capability…', indeterminate: true, hint: true,
     });
   } else {
     view = base('unavailable', 'Unavailable', {
       disabled: true, disabledReason: 'This item has no downloadable original or recordable stream.',
-      status: item ? 'Download and recording are unavailable for this item.' : '',
+      status: item ? 'Download and recording are unavailable for this item.' : '', hint: true,
     });
   }
 
@@ -168,7 +175,10 @@ export function deriveCaptureView({
     (job) => job.kind === 'download' && ACTIVE_STATES.has(job.state),
   ).length;
   if (backgroundDownloads) {
-    view.status += `${view.status ? ' ' : ''}${backgroundDownloads} download${backgroundDownloads === 1 ? '' : 's'} ${backgroundDownloads === 1 ? 'continues' : 'continue'} in the background.`;
+    const plural = backgroundDownloads === 1 ? '' : 's';
+    view.status += `${view.status ? ' ' : ''}${backgroundDownloads} download${plural} ${backgroundDownloads === 1 ? 'continues' : 'continue'} in the background.`;
+    // Work under way, so it is shown (in short) beside the button.
+    view.notice = `${backgroundDownloads} download${plural} in the background`;
   }
   return view;
 }

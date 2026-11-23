@@ -979,13 +979,17 @@ test('the bar keeps its height and controls: the meter only uses spare room', as
   assert.match(block, /\.player-progress \{ container: player-progress \/ inline-size; \}/);
   assert.match(block, /@media \(min-width: 1001px\) \{\s+@container player-progress \(min-width: 330px\) \{\s+#player-meter \{ display: block; flex: none; \}/);
   // Stacked bar: after EQ, needs no width, gives way first, hides when squeezed.
-  assert.match(block, /@media \(max-width: 1000px\) \{\s+#player-meter-compact \{\s+display: grid;\s+grid-template-columns: minmax\(0, 96px\);\s+flex: 0 1000 auto;\s+min-width: 0;\s+margin-left: -6px;\s+overflow: hidden;/);
-  assert.match(block, /@container \(max-width: 95\.98px\) \{\s+\.player-meter-well > \.player-meter-canvas \{ display: none; \}/);
+  // (98 px: the 8 px gap the -8px margin cancels, then the 90 px canvas.)
+  assert.match(block, /@media \(max-width: 1000px\) \{\s+#player-meter-compact \{\s+display: grid;\s+grid-template-columns: minmax\(0, 98px\);\s+flex: 0 1000 auto;\s+min-width: 0;\s+margin-left: -8px;\s+overflow: hidden;/);
+  assert.match(block, /\.player-meter-well > \.player-meter-canvas \{ margin-left: 8px; \}/);
+  assert.match(block, /@container \(max-width: 97\.98px\) \{\s+\.player-meter-well > \.player-meter-canvas \{ display: none; \}/);
   assert.match(block, /\.player-bar\.is-capture-only \.player-meter \{ display: none !important; \}/);
   // Its rows are untouched: 36 px fits the 36 px actions row and the 56 px row.
-  assert.match(css, /grid-template-rows: minmax\(56px, auto\) 18px;/);
-  assert.match(css, /grid-template-rows: 44px 36px 18px 24px 24px;/);
-  assert.match(css, /--player-h: 96px;/);
+  assert.match(css, /grid-template-rows: minmax\(56px, auto\);/);
+  assert.match(css, /grid-template-rows: 44px 36px 24px 24px;/);
+  assert.match(css, /--player-h: 74px;/);
+  // The flex gap the compact meter's margin cancels is the actions row's.
+  assert.match(css, /\.player-actions \{\s+grid-area: actions;\s+display: flex;\s+align-items: center;\s+gap: 8px;/);
   // Colours come from the theme tokens; Light gets a darker hot colour.
   assert.match(block, /color: var\(--accent\);\s+border: 0 solid var\(--warm\);/);
   assert.match(block, /:root\[data-theme='light'\] \.player-meter-canvas \{\s+border-color: #b86a00;/);

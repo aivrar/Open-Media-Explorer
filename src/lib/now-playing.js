@@ -16,6 +16,7 @@
  */
 
 import { controlRequest } from './capture-client.js';
+import { sameStreamFacts, streamFactsFromRelay } from './played-streams.js';
 
 export const NOW_PLAYING_EVENT = 'now-playing-change';
 export const NOW_PLAYING_POLL_MS = 5_000;
@@ -64,10 +65,14 @@ export function fetchNowPlaying(mediaId, options = {}) {
  * @param {(mediaId: string, options: object) => Promise<object>} [options.fetchTitle]
  * @param {(state: object) => void} [options.onChange]  called with
  *   { ...info, mediaId, title, changedAt } whenever the title changes
+ * @param {(state: object) => void} [options.onStream]  called with
+ *   { ...info, mediaId, stream: { codec, bitrate } } when a reply first says
+ *   what the stream is, or says something else (played-streams.js)
  */
 export function createNowPlayingPoller({
   fetchTitle = fetchNowPlaying,
   onChange = () => {},
+  onStream = () => {},
   setTimer = backgroundTimer,
   clearTimer = (timer) => clearTimeout(timer),
   now = () => Date.now(),
@@ -116,6 +121,12 @@ export function createNowPlayingPoller({
     if (myGeneration !== generation || !current || current.mediaId !== mediaId) return;
     if (controller === request) controller = null;
     if (data !== undefined) {
+      const stream = streamFactsFromRelay(data?.stream);
+      if (stream && !sameStreamFacts(stream, current.stream)) {
+        current = { ...current, stream };
+        try { onStream({ ...current.info, mediaId, stream: { ...stream } }); } catch (_) { /* never stops polling */ }
+        if (myGeneration !== generation || !current) return; // The listener stopped or switched.
+      }
       const title = normalizeSongTitle(data?.title) || null;
       if (title !== current.title) {
         const changed = Number(data?.changed_at);

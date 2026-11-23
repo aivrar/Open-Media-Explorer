@@ -51,7 +51,11 @@ test('every strip card has the same height whatever script its name is in', asyn
 test('a card holds only its name, its source and an optional badge', async () => {
   const tuner = await read('src/modes/tuner.js');
   const strip = tuner.match(/function renderStrip\(\) \{[\s\S]*?\n\}/)[0];
-  assert.match(strip, /el\('span', \{ text: saved \? `\u2605 \$\{s\.title\}` : s\.title \}\),\s+el\('small', \{ text: getSourceLabel\(s\.source\) \}\),\s+rating \? el\('span', \{ className: 'content-rating-badge', text: rating \}\) : null\);/);
+  assert.match(strip, /const sourceLine = el\('small', \{ text: getSourceLabel\(s\.source\) \}\);/);
+  assert.match(strip, /el\('span', \{ text: saved \? `\u2605 \$\{s\.title\}` : s\.title \}\),\s+sourceLine,\s+rating \? el\('span', \{ className: 'content-rating-badge', text: rating \}\) : null\);/);
+  // The stream's format and bitrate go inside the source line, not in a row of their own.
+  const stream = tuner.match(/function setPillStream\(pill\) \{[\s\S]*?\n\}/)[0];
+  assert.match(stream, /pill\.__sourceLine\.appendChild\(node\);/);
   // And, laid over its corner, the "Did not play last time" mark: added last
   // (also when it comes later), so it takes no place in the card's grid.
   assert.match(strip, /setPillTrouble\(pill\);\s+ui\.strip\.appendChild\(pill\);/);

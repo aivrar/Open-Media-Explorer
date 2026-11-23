@@ -118,6 +118,106 @@ class IcyStripper:
             pass  # Metadata must never break the audio.
 
 
+# Content types of raw AAC in ADTS frames, as live stations send them.
+ADTS_CONTENT_TYPES = frozenset({"audio/aac", "audio/aacp", "audio/x-aac", "audio/x-aacp"})
+# How far into a stream, and for how long after its first bytes, the first
+# whole frame is looked for before giving up. The time cap keeps a slow
+# stream (32 kbps is 4 KB/s) from being held for long.
+MAX_ALIGN_BYTES = 64 * 1024
+MAX_ALIGN_SECONDS = 1.5
+# A start is a header followed by this many more, all alike: three frames in a row.
+CONFIRMING_HEADERS = 2
+_ADTS_HEADER = 7
+
+
+def _adts_frame(data, at: int) -> tuple[int, tuple[int, int, int]] | None:
+    """(frame length, fixed header fields) of an ADTS header at `at`, or None."""
+    if at + _ADTS_HEADER > len(data):
+        return None
+    b1, b2, b3 = data[at + 1], data[at + 2], data[at + 3]
+    if data[at] != 0xFF or b1 & 0xF6 != 0xF0 or (b2 >> 2) & 0x0F > 12:
+        return None
+    length = ((b3 & 0x03) << 11) | (data[at + 4] << 3) | (data[at + 5] >> 5)
+    # A frame carries sound after its header (7 bytes, 9 with a CRC).
+    if length <= (_ADTS_HEADER if b1 & 0x01 else _ADTS_HEADER + 2):
+        return None
+    # Sync, MPEG version, layer, protection, profile, sampling rate and
+    # channels are the same in every frame of a stream.
+    return length, (b1, b2 & 0xFD, b3 & 0xC0)
+
+
+class AdtsAligner:
+    """Start a live AAC stream at its first whole frame.
+
+    A station starts a new listener wherever its buffer is, often in the
+    middle of a frame. The partial frame can hold bytes that look like a frame
+    header; a decoder that starts there fails (Chromium then reports a decode
+    error and the start fails). The first header that the next two headers
+    confirm (each right where the one before says it ends, all with the same
+    fixed fields) is where the stream starts; the bytes before it are
+    dropped. A candidate whose following headers have not arrived yet does not
+    stop the search: a later candidate confirmed first wins. Nothing else is
+    changed. If none is confirmed in the first MAX_ALIGN_BYTES, within
+    MAX_ALIGN_SECONDS of the first bytes, or before the stream ends,
+    everything held is passed on unchanged.
+    """
+
+    __slots__ = ("_buffer", "_done", "_limit", "_seconds", "_clock", "_started")
+
+    def __init__(
+        self, limit: int = MAX_ALIGN_BYTES, seconds: float = MAX_ALIGN_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._buffer = bytearray()
+        self._done = False
+        self._limit = limit
+        self._seconds = seconds
+        self._clock = clock
+        self._started: float | None = None
+
+    def feed(self, chunk: bytes) -> bytes:
+        if self._done:
+            return chunk
+        if self._started is None:
+            self._started = self._clock()
+        self._buffer += chunk
+        data = self._buffer
+        at = data.find(b"\xff")
+        while at != -1:
+            if self._confirmed(data, at):
+                return self._release(at)
+            at = data.find(b"\xff", at + 1)
+        if len(data) >= self._limit or self._clock() - self._started >= self._seconds:
+            return self._release(0)
+        return b""
+
+    @staticmethod
+    def _confirmed(data, at: int) -> bool:
+        """True when a header at `at` is followed by two more with the same
+        fixed fields; False when not, or not yet known."""
+        frame = _adts_frame(data, at)
+        if frame is None:
+            return False
+        position, length, fields = at, frame[0], frame[1]
+        for _ in range(CONFIRMING_HEADERS):
+            position += length
+            following = _adts_frame(data, position)
+            if following is None or following[1] != fields:
+                return False  # no match, or not arrived yet: try later candidates
+            length = following[0]
+        return True
+
+    def finish(self) -> bytes:
+        """What is still held when the stream ends (passed on unchanged)."""
+        return b"" if self._done else self._release(0)
+
+    def _release(self, start: int) -> bytes:
+        self._done = True
+        out = bytes(self._buffer[start:])
+        self._buffer = bytearray()
+        return out
+
+
 def parse_stream_title(block: bytes) -> str | None:
     """The raw StreamTitle value of one metadata block, or None if it has none."""
     if not isinstance(block, (bytes, bytearray)):

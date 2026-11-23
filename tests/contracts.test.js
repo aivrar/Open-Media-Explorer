@@ -54,14 +54,53 @@ test('capture status is isolated from player title and source metadata', async (
   assert.match(capture, /current-item/);
 });
 
-test('the status line under the player has room for descenders; the bar keeps its height', async () => {
-  const css = await read('src/styles/base.css');
+test('the player bar is one row: no status line under the buttons, and a lower bar', async () => {
+  const css = (await read('src/styles/base.css')).replace(/\r\n/g, '\n');
+  const html = (await read('src/index.html')).replace(/\r\n/g, '\n');
+  const bar = css.match(/\n\.player-bar \{([^}]*)\}/)[1];
+  assert.match(bar, /grid-template-areas: "meta controls actions progress volume";/);
+  assert.match(bar, /grid-template-rows: minmax\(56px, auto\);/);
+  assert.match(bar, /align-items: center;/);
+  assert.match(bar, /gap: 0 8px;/);
+  assert.doesNotMatch(css, /"status|status"/, 'no status area in any layout');
+  // 56 px row + 2 x 8 px padding + 1 px border = 73 px; the stacked bar
+  // 44 + 36 + 24 + 24 + 3 x 6 + 2 x 10 + 1 = 167 px.
+  assert.match(css, /--player-h: 74px;/);
+  assert.match(css, /@media \(max-width: 1000px\) \{\n[^]*?:root \{ --player-h: 168px; \}/);
+  assert.doesNotMatch(css, /--player-h: (96|198|108)px/);
+  // The capture notice sits in the actions row, after Record, and its text
+  // has room for descenders.
+  const actions = html.match(/<div class="player-actions"[\s\S]*?<span id="player-capture-announcement"/)[0];
+  assert.ok(actions.indexOf('id="player-capture"') < actions.indexOf('id="player-capture-status"'));
+  assert.ok(actions.indexOf('id="player-capture-status"') < actions.indexOf('id="player-eq"'));
+  const notice = css.match(/\n\.player-capture-status \{([^}]*)\}/)[1];
+  assert.doesNotMatch(notice, /grid-area/);
+  assert.match(notice, /min-width: 0;/);
+  assert.match(notice, /max-width: 200px;/);
   const text = css.match(/#player-capture-status-text \{([^}]*)\}/)[1];
   assert.match(text, /overflow: hidden;/);
-  // 1.4 x 11 px = 15.4 px (14 px at the 10 px narrow size): inside the 18 px row.
+  assert.match(text, /text-overflow: ellipsis;/);
   assert.match(text, /line-height: 1\.4;/);
-  assert.match(css, /\.player-bar \{[^}]*grid-template-rows: minmax\(56px, auto\) 18px;/);
-  assert.match(css, /--player-h: 96px;/);
+  // The Record button's hint is its description; there is no Open Settings action.
+  assert.match(html, /id="player-capture"[^>]*aria-describedby="player-capture-hint"/);
+  assert.match(html, /<span id="player-capture-hint" hidden><\/span>/);
+  const capture = await read('src/lib/capture-ui.js');
+  assert.doesNotMatch(capture, /Open Settings|'settings'|settings-btn/);
+});
+
+test('even 8 px gaps between the bar controls; EQ keeps one width in every state', async () => {
+  const css = (await read('src/styles/base.css')).replace(/\r\n/g, '\n');
+  for (const selector of ['.player-controls', '.player-actions', '.player-progress']) {
+    const rule = css.match(new RegExp(`\\n${selector.replace('.', '\\.')} \\{\\n  grid-area:([^}]*)\\}`))[1];
+    assert.match(rule, /gap: 8px;/, selector);
+  }
+  // (The first "\n.player-eq {" is the rule it shares with the Record button.)
+  const eq = css.match(/\n\.player-eq \{\n  width: 68px;([^}]*)\}/);
+  assert.ok(eq, 'EQ is 68 px wide');
+  assert.doesNotMatch(eq[1], /min-width/);
+  // Every button in the row is 36 px tall (Record, its second action, EQ).
+  const buttons = css.match(/\n\.player-action,\n\.player-action-secondary,\n\.player-eq \{([^}]*)\}/)[1];
+  assert.match(buttons, /height: 36px;/);
 });
 
 test('the EQ graph shows "0 dB" above its flat line, not across it', async () => {

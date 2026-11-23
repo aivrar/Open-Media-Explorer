@@ -17,6 +17,21 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
+**New in v0.1.16:** a station's stream format and bitrate now show for stations
+from any source once they have played, not only for those Radio Browser lists:
+the app remembers what the station's own stream said and shows it in the
+station's tooltip ("Stream: AAC+ · 320 kbps"), in its details and, with **Show
+technical source details** on, on its card. Some live AAC stations on Shoutcast
+servers failed to start about one time in five or six; such a stream now starts
+at its first whole sound frame. The volume slider is replaced by a compact
+control (up, a number, down), and the player bar is one row, 74 px high where it
+was 96. The mouse wheel over the Tuner's station cards moves one station, and a
+**Visualizer:** control at the right of the Tuner's top bar sets how strongly the
+Visualizer shows behind the Tuner. Starting the app again while it runs brings
+its open window to the front instead of opening a second one. The missing
+stream details were reported in
+[issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6).
+
 **New in v0.1.15:** channels, stations and episodes load faster and keep
 loading through a poor connection: Radio Browser stations arrive 300 at a time,
 lists are sent compressed, a server with a dead or slow address no longer holds
@@ -122,7 +137,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.15-portable.zip
+WorldMediaWindows-0.1.16-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -140,6 +155,11 @@ there once to preserve favorites; the legacy source is not deleted automatically
 The classic single EXE uses the Windows temporary directory only for its
 transient startup extraction and cleans its `_MEI...` directory on normal
 shutdown. Persistent app data always remains beside the EXE.
+
+Only one copy runs per data folder. Starting the app again while it runs with
+the same `WorldMediaWindows-data` folder brings the open window to the front
+(restored if it was minimized) and does not open a second window. Copies with
+different data folders, such as two portable folders, run side by side.
 
 Users do not need Python, Node, Rust, Git, Docker, or WSL.
 
@@ -161,12 +181,16 @@ LibriVox, media.ccc.de/C3VOC, gPodder Podcasts, PeerTube, and Owncast.
 ![Library - Favorites in categories, with a station's details open](screenshots/v0.1.14/favorites.png)
 
 **Tuner** - a radio-style dial for live radio and live TV. Drag the dial,
-scroll the mouse wheel, or use arrow keys; the dial shows each station's place
+scroll the mouse wheel over it or over the station cards under it (one station
+per notch), or use arrow keys; the dial shows each station's place
 in the list ("12 of 80"). Pick **★ My favorites**, or one of your own
 categories, as the source to spin through only those stations, in the order of
 your Favorites. **Settings > Appearance > Tuner card size** makes the station
 cards under the dial Small, Medium or Large; Medium and Large show each
-station's picture.
+station's picture. The **Visualizer:** control at the right of the top bar (down,
+a number, up) sets how strongly the Visualizer shows behind the Tuner when
+**Settings > Appearance > Show the Visualizer behind the Tuner** is on: 0 turns
+it off, and the default, 8, is a faint picture.
 
 ![Tuner - the dial moving from station to station](screenshots/v0.1.14/demo-tuner.gif)
 
@@ -270,9 +294,14 @@ in the `station-images` folder (**Settings → Station images → Open folder**)
 press **Refresh**, and it replaces that station's artwork, shown whole and
 never cut off. A name Windows cannot use in a file, such as the "/" in
 "AC/DC Radio", is written with `-`, `_`, a space or nothing in its place.
-Settings lists the pictures that were not used and why. Radio Browser
-stations show their format and bitrate in the detail panel, and **Other
-streams** lists other listings of the same station to pick from by hand.
+Settings lists the pictures that were not used and why. A station's format and
+bitrate (for example "AAC+ · 320 kbps") show in its detail panel, in the tooltip
+of its card in the Library and the Tuner, and on its card with **Show technical
+source details** on. Radio Browser lists them for its stations; any other
+station shows them once it has played, as its own stream says them (a station
+delivered as HLS does not). **Clear local cache** removes what the app
+remembered. **Other streams** lists other listings of the same Radio Browser
+station to pick from by hand.
 **Settings > Content > Pick the best stream** tries a station's or channel's
 best listed stream first. Its **Auto (verified)** choice also checks other
 listings of a radio station in the background and switches to a better one
@@ -320,6 +349,16 @@ exact palette color; Windows 10 uses the matching dark or light caption style.
 Video plays in a movable overlay with fullscreen support. Live radio and TV
 that lose their connection reconnect by themselves for up to ten minutes; the
 player bar says "Connection lost. Retrying..." meanwhile.
+
+The player bar is one row in a window wider than 1000 px. The volume has its
+own control beside the speaker (mute) button: an up button, the volume as a
+number from 0 to 100, and a down button. A click changes the volume by 1, a held
+button repeats, the mouse wheel over the control changes it by 2 per notch, and
+with the control focused the arrow keys change it by 1 (Page Up and Page Down by
+10, Home and End set 0 and 100). Changing the volume with a video's own controls
+moves the number too. When the **Record** button is unavailable, point at it to
+read why (with Recorder off, it says where to turn it on); a capture's progress,
+result or error shows beside it.
 
 A small LED-style sound meter beside **EQ** moves with the sound, so you can see
 that a station is really playing. It only reads the sound, rests while nothing
@@ -422,6 +461,9 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - If the Visualizer is slow, set **Quality** to Low, **Frame rate** to 15 or 30,
   and choose Light scenes; effects and overlays are off by default, and
   **Settings > Processor use** starts at Low.
+- Starting World Media again while it runs with the same data folder brings the
+  open window to the front; it does not open a second one. A start made at the
+  very moment that window is closing may open nothing: start it again.
 - Runtime diagnostics are under `WorldMediaWindows-data\logs\` beside the
   launcher and do
   not contain upstream media URLs or authentication secrets.
@@ -448,7 +490,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.15-portable.zip
+dist\WorldMediaWindows-0.1.16-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

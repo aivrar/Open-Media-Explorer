@@ -21,7 +21,8 @@
 import { getState, subscribe } from '../lib/state.js';
 import { getAudioSignal } from '../lib/player.js';
 import {
-  TUNER_BACKGROUND_RELEASED, TUNER_BACKGROUND_STOP_GRACE_MS, tunerBackgroundSettings, tunerBackgroundWanted,
+  TUNER_BACKGROUND_RELEASED, TUNER_BACKGROUND_STOP_GRACE_MS, tunerBackgroundOpacity, tunerBackgroundSettings,
+  tunerBackgroundShownLevel, tunerBackgroundWanted,
 } from '../lib/tuner-background.js';
 import { claimVisualizer } from '../lib/visualizer-slot.js';
 
@@ -67,12 +68,21 @@ export function attachTunerBackground(root, {
     root.classList.remove('has-viz-bg');
   }
 
+  // How strongly it shows (the Tuner's stepper): only the layer's opacity
+  // follows a new level; the Visualizer in it is not started again.
+  function applyLevel() {
+    if (!layer?.style) return;
+    const opacity = String(tunerBackgroundOpacity(tunerBackgroundShownLevel(state().settings || {})));
+    if (layer.style.opacity !== opacity) layer.style.opacity = opacity;
+  }
+
   function start() {
     const mine = ++token;
     layer = doc.createElement('div');
     layer.className = 'tuner-viz-bg';
     layer.setAttribute('aria-hidden', 'true');
     layer.inert = true;
+    applyLevel();
     root.classList.add('has-viz-bg');
     root.append(layer);
     load().then(({ mountVisualizer, sceneCost }) => {
@@ -103,6 +113,7 @@ export function attachTunerBackground(root, {
     if (tunerBackgroundWanted(appState)) {
       clearStop();
       if (!layer) start();
+      else applyLevel();
       return;
     }
     if (!layer) return;

@@ -83,7 +83,12 @@ The browser profile stores:
 - which stations did not play the last time you tried them
   (`worldmedia.didnotplay.v1`, at most 2,000). This is a cache too: it is not
   copied to the data folder or into backups, and **Clear local cache** removes
-  it.
+  it;
+- the format and bitrate each station played with
+  (`worldmedia.playedstreams.v1`, at most 1,000, the oldest go first). This is
+  a cache as well: it is not copied to the data folder or into backups, and
+  **Clear local cache** removes it. The strength of the Visualizer behind the
+  Tuner is a field inside the existing settings.
 
 Short-lived artwork and playback relay IDs are not persisted as usable URLs.
 They are re-resolved from stable adapter metadata at the next launch. Live

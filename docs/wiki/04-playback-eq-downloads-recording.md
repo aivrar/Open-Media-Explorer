@@ -40,8 +40,16 @@ API. Local relay IDs are short-lived and are removed from persisted favorites.
   no end, or when its length keeps growing with the clock.
 - **Mute** and **volume** affect playback only. Volume is persisted locally.
   The speaker button shows a crossed-out speaker when the sound is muted or the
-  volume is at zero. Point at the slider to see the volume as a percentage: it
-  starts at 80%, and 100% is full volume (there is no boost).
+  volume is at zero. Beside it, the volume control has an up button, the volume
+  as a number from 0 to 100, and a down button. Point at it to see the volume as
+  a percentage: it starts at 80%, and 100% is full volume (there is no boost).
+  A click changes the volume by 1; holding a button repeats after a 0.4 second
+  pause (about 14 steps in the first second); the mouse wheel over the control
+  changes it by 2 per notch; with the control focused, the arrow keys change it by 1, Page Up and
+  Page Down by 10, and Home and End set 0 and 100. In a window 1000 px wide or
+  narrower the control has its own row and reads down, number, up. Changing the
+  volume or mute with a video's own controls moves the number and the speaker
+  icon too, and that volume is the one that is saved.
 - The player star changes the same favorite record as a card star.
 - The small video overlay sits above the bottom player and supports the browser
   media element's full-screen controls.
@@ -114,11 +122,25 @@ See [Using the application](02-using-the-application.md) for the log.
 
 ### Stream format and other streams
 
-Radio Browser stations list the format and bitrate of their stream. World
-Media shows it as one short label, for example "MP3 · 128 kbps", in the detail
-panel, on the card when **Show technical source details** is on, and when you
-point at the source line in the player bar. It is what the directory says, not
-a measurement of the stream. A station with no such information has no label.
+A station's stream format and bitrate show as one short label, for example
+"MP3 · 128 kbps": in the detail panel, in the tooltip of its card in the
+Library and the Tuner ("Stream: MP3 · 128 kbps"), on the Library card when
+**Show technical source details** is on (the Tuner card then reads, in a short
+form, "MP3 128k · Radio Browser"), and when you point at the source line in the
+player bar.
+
+Radio Browser stations list the format and bitrate of their stream, and that is
+what is shown for them: what the directory says, not a measurement. Since
+v0.1.16 the app also remembers what a station's own stream said the last time it
+played: the audio type of its reply (MP3, AAC, AAC+, Ogg, Opus, FLAC or WAV) and,
+when the station sends one, its bitrate. It is remembered for each station once
+the station has played for a second, and it fills in only what the directory
+leaves out; so a station from your own playlists, or from any other source,
+shows its label after it has played once. Nothing is probed or asked for to get
+it. The values are a cache in the browser storage (at most 1,000 stations, the
+oldest go first), are not in backups, and **Clear local cache** removes them. A
+station delivered as HLS does not get a format this way, and a station whose
+server sends neither shows no label.
 
 The detail panel of a Radio Browser station also has an **Other streams**
 button. It lists other Radio Browser entries for the same station (the same
@@ -264,6 +286,11 @@ FFmpeg and writes its own file.
 5. Press **Stop recording**. FFmpeg is asked to flush and finalize; only after
    validation is the finished file published.
 
+The **Record** button's hover text, which screen readers also read as its
+description, says why it cannot be pressed (for example "Recording is available
+once this item plays."); nothing is written under the buttons. A capture's
+progress, result or error shows beside the button.
+
 The app chooses audio/video recording kind from the item or a bounded FFprobe
 inspection. Video recordings require H.264/AAC-compatible output; audio uses
 MP3. Output names are sanitized and collision-safe.
@@ -293,7 +320,9 @@ Settings → Capture & storage → **Recorder** off prevents new recordings. If 
 recording is running or FFmpeg is installing for one, the UI requests a stop or
 cancel once; the recording is finalized/cancelled through the normal job state
 machine. Downloads remain enabled. Re-enable the switch before starting a new
-recording.
+recording. With Recorder off, the Record button says **Recorder off**, and its
+hover text says where to turn it on: Settings (the gear at the top), under
+Capture & storage.
 
 ## FFmpeg management
 

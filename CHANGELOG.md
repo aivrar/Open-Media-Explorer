@@ -1,5 +1,87 @@
 # Changelog
 
+## 0.1.16 - 2026-11-23
+
+A station's stream format and bitrate show for stations from any source once
+they have played, live AAC stations on Shoutcast servers that failed on some
+starts now start at a whole sound frame, the volume has a compact control, the
+player bar is one row, the Tuner gets the mouse wheel over its station strip and
+a strength control for the Visualizer behind it, and starting the app again
+brings the open window to the front.
+
+- **Stream format and bitrate on any station that has played (issue #6):**
+  reported by TaxicabMessiah: with **Show technical source details** on, a
+  station from a playlist showed no format and bitrate, because only Radio
+  Browser lists them. The app now remembers the format and bitrate a station
+  played with, as its own stream says them (the audio type of its reply and,
+  when it sends one, its bitrate), for each station, once it has played for a
+  second. They show as "Stream: AAC+ · 320 kbps" in the tooltip of a station in
+  the Library and the Tuner, as a tag in the station's details and, with
+  **Show technical source details** on, on the Library card and in a short form
+  on the Tuner card (for example "AAC+ 320k · My Playlists"). What Radio
+  Browser lists is shown as before; a played value only fills in what the
+  listing leaves out. The values are kept on this computer in the browser
+  storage (at most 1,000 stations), are not in backups, and **Clear local
+  cache** removes them. The description of **Show technical source details**
+  in Settings now says what it shows. A station shows its format and bitrate
+  after it has played once, unless Radio Browser lists them; a station
+  delivered as HLS does not get them this way.
+- **Live AAC stations start at a whole sound frame (issue #6):** a Shoutcast
+  server starts a new listener wherever its buffer is, often in the middle of a
+  sound frame, and then the player could stop with a decode error. About one
+  start in five or six of Radio Caprice - Trip Hop, the station from issue #6,
+  failed this way; v0.1.14 and v0.1.15 did too. A live AAC stream now starts at
+  its first whole frame: the first frame header that the next two headers
+  confirm. The bytes before it are dropped and nothing else is changed; if no
+  such frame is found within 64 KB or 1.5 seconds, the stream is passed on
+  unchanged. A saved start that failed 3 times out of 3 in the window's browser
+  engine played 3 times out of 3 with this change, and in the real window of
+  the release build 12 of 12 starts of that station played.
+- **Live audio starts a little sooner:** a live audio reply that comes without a
+  length is now passed on as it arrives; before, the app waited until it had
+  read 64 KiB. On four stations that take this path the first bytes came 0.3 to
+  0.5 seconds sooner.
+- **Compact volume control:** the volume slider is replaced by a control beside
+  the speaker (mute) button: an up button, the volume as a number from 0 to 100,
+  and a down button, in a narrow column (in a window 1000 px wide or narrower,
+  in a row of its own: down, number, up). A click changes the volume by 1;
+  holding a button repeats after a 0.4 second pause (about 14 steps in the first
+  second); the mouse wheel over the control changes it by 2 per notch; with the control focused,
+  the arrow keys change it by 1, Page Up and Page Down by 10, and Home and End
+  set 0 and 100. The volume area of the bar is 69 px wide where the slider's
+  was 138. Changing the volume or mute with a video's own controls now updates
+  the bar's number and speaker icon and is saved, and a volume you set while the
+  sleep timer fades the sound is kept when the timer is cancelled.
+- **Tuner:** the mouse wheel over the strip of station cards under the dial moves
+  one station per notch, like the wheel over the dial. A new **Visualizer:**
+  control at the right of the Tuner's top bar (a down button, a number and an up
+  button, the same kind of control as the volume) sets how strongly the
+  Visualizer shows behind the Tuner, from 0 to 100. The default, 8, is the look
+  it had before; 100 shows it at full strength. 0 turns **Show the Visualizer
+  behind the Tuner** off and pressing up from 0 turns it on; the switch in
+  Settings and the control follow each other, and turning the switch off in
+  Settings keeps the level. Nothing is drawn until the notice about flashing
+  pictures has been accepted, as before, and the flash limiter works at every
+  level. Processor use measured the same at 8 and at 100.
+- **Player bar in one row:** in a window wider than 1000 px the bar is one row
+  with every control on one centre line, 74 px high where it was 96 (168 where
+  it was 198 in a window 1000 px wide or narrower, where its rows are stacked).
+  The line of text under the buttons is gone: why the **Record** button is
+  unavailable is its hover text and its description for screen readers (with
+  Recorder off, it says where to turn it on: Settings, Capture & storage), and
+  a capture's progress, result or error shows beside the button. The **Open
+  Settings** button that appeared beside it with Recorder off or after a failed
+  capture is removed; the gear at the top opens Settings. A Record button that
+  only carries a hint can still be reached with the keyboard.
+- **One copy per data folder:** starting the app again while it runs with the
+  same data folder brings the running window to the front (restored if it was
+  minimized) and does not open a second window or a second server. Copies with
+  different data folders, such as two portable folders, still run side by side.
+  After a crash the next start opens normally. A start without a window
+  (`WORLDMEDIA_NO_BROWSER=1`) on a data folder that is in use exits with code 3.
+  The one-file EXE takes a few seconds before a second start hands over,
+  because it unpacks first.
+
 ## 0.1.15 - 2026-11-21
 
 Channels, stations and episodes load faster and keep loading through a poor

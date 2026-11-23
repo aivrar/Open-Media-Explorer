@@ -52,6 +52,8 @@ test('every backend job state has an unmistakable action and recovery mapping', 
     assert.equal(view.action, action, backendState);
     assert.equal(view.secondaryAction, secondary, backendState);
     assert.ok(view.status, backendState);
+    // Progress, a result or an error: shown in the bar, beside the button.
+    assert.equal(view.notice, view.status, backendState);
   }
 
   const download = deriveCaptureView({
@@ -77,10 +79,42 @@ test('active recording remains global while downloads stay associated with the s
   const idle = deriveCaptureView({ item, capability: 'record-audio', jobs: [backgroundDownload] });
   assert.equal(idle.state, 'record');
   assert.match(idle.status, /1 download continues in the background/);
+  assert.equal(idle.notice, '1 download in the background');
 
   const captureOnly = deriveCaptureView({ item: null, capability: 'unavailable', jobs: [backgroundDownload] });
   assert.equal(captureOnly.state, 'downloading');
   assert.equal(captureOnly.action, 'cancel');
+});
+
+test('standing hints are hover text only; progress, results and errors are shown in the bar', () => {
+  const hints = [
+    deriveCaptureView({ item, capability: 'download' }),
+    deriveCaptureView({ item, capability: 'record-audio' }),
+    deriveCaptureView({ item, capability: 'record-audio', recording: true }),
+    deriveCaptureView({ item, capability: 'record-video', unplayable: true }),
+    deriveCaptureView({ item, capability: 'checking' }),
+    deriveCaptureView({ item, capability: 'unavailable' }),
+  ];
+  for (const view of hints) {
+    assert.ok(view.status, view.label);
+    assert.equal(view.notice, '', view.status);
+  }
+  assert.equal(deriveCaptureView({ item: null, capability: 'unavailable' }).notice, '');
+  const shown = [
+    deriveCaptureView({ item, capability: 'download', transient: 'checking' }),
+    deriveCaptureView({ item, capability: 'record-audio', transient: 'installing' }),
+    deriveCaptureView({ item, capability: 'record-audio', jobs: [job('failed', { error: { message: 'Stream closed.' } })] }),
+    deriveCaptureView({ item, capability: 'record-audio', jobs: [job('completed')] }),
+  ];
+  assert.deepEqual(shown.map((view) => view.notice), [
+    'Preparing download…', 'Installing and verifying FFmpeg…', 'Stream closed.',
+    'Recording complete • 2.0 KB • 0:12',
+  ]);
+  // Two downloads elsewhere: the hint keeps the full sentence; the bar a short note.
+  const two = [1, 2].map((n) => job('running', { id: `job_bg_${n}_1234567890`, item_id: `archive:${n}`, kind: 'download' }));
+  const view = deriveCaptureView({ item, capability: 'record-audio', jobs: two });
+  assert.equal(view.status, 'Live media can be recorded. 2 downloads continue in the background.');
+  assert.equal(view.notice, '2 downloads in the background');
 });
 
 test('ignored terminal jobs permit explicit repeat and EQ indication distinguishes flat from active', () => {

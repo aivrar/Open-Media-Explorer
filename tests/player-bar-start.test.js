@@ -282,13 +282,21 @@ test('a live start that failed shows no seek bar, says why, and keeps a working 
 test('a start that failed offers no recording until the item plays; playing or paused media keeps it', { timeout: TEST_TIMEOUT_MS }, async (t) => {
   const { player, elements, server } = await setup(t);
   const record = elements['player-capture'];
-  const status = () => elements['player-capture-status-text'].textContent;
+  // A standing hint: the Record button's description and hover text, not
+  // shown in the bar.
+  const status = () => {
+    assert.equal(elements['player-capture-status'].hidden, true, 'no notice in the bar');
+    assert.equal(record.title, elements['player-capture-hint'].textContent);
+    return elements['player-capture-hint'].textContent;
+  };
   const station = item('radio-browser:bar-start-dead-record');
   server.failWith = 'MEDIA_HOST_NOT_FOUND';
   await player.playItem(station);
   await settle();
   assert.equal(elements['player-capture-label'].textContent, 'Record audio');
-  assert.equal(record.disabled, true, 'nothing attached, nothing to record');
+  // Nothing attached, nothing to record: inactive, but focusable for its hint.
+  assert.equal(record.getAttribute('aria-disabled'), 'true', 'nothing attached, nothing to record');
+  assert.equal(record.disabled, false, 'focusable');
   assert.equal(record.dataset.action, '');
   assert.equal(status(), 'Recording is available once this item plays.');
 
@@ -298,6 +306,7 @@ test('a start that failed offers no recording until the item plays; playing or p
   await settle();
   assert.equal(elements['audio-el'].paused, false, 'it plays');
   assert.equal(record.disabled, false);
+  assert.equal(record.getAttribute('aria-disabled'), 'false');
   assert.equal(record.dataset.action, 'record');
   assert.equal(status(), 'Live media can be recorded.');
 
@@ -331,7 +340,8 @@ test('an address that does not exist is worded for a station, an episode, or ano
 
 test('a playlist entry listed as a station that plays an MP3 is not called live once it is a recording', { timeout: TEST_TIMEOUT_MS }, async (t) => {
   const { player, elements } = await setup(t);
-  const status = () => elements['player-capture-status-text'].textContent;
+  // The Record button's hint (its description and hover text).
+  const status = () => elements['player-capture-hint'].textContent;
   const entry = item('playlist:bar-start-mp3', {
     source: 'playlist', stream_url: 'https://media.example/shows/chapter-two.mp3',
   });

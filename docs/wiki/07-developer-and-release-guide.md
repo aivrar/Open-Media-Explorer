@@ -85,7 +85,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.15-portable.zip
+dist\WorldMediaWindows-0.1.16-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -109,11 +109,15 @@ Before replacing the EXE:
 4. Launch and verify Settings runtime paths, Favorites count, a Library source,
    Grid artwork, playback, and Shutdown.
 
+Since v0.1.16 a second start with the same data folder only brings the first
+window to the front, so the old process must have exited (step 1) before the new
+EXE is tried; a test copy with its own data folder runs beside it.
+
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For v0.1.15 evidence and limitations, see the
-[release record](../RELEASE_RECORD_0.1.15.md). The optional
+For v0.1.16 evidence and limitations, see the
+[release record](../RELEASE_RECORD_0.1.16.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review

@@ -30,6 +30,7 @@
  *     visualizerQualityPicked: bool,   // a Visualizer quality was picked by hand, default off
  *     visualizerShuffleCostPicked: bool,   // the shuffle's cost filter was picked by hand, default off
  *     tunerVisualizerBackground: bool,   // the dimmed Visualizer behind the Tuner (lib/tuner-background.js), default off
+ *     tunerVisualizerLevel: number,   // how strongly it shows, 1-100 (% opacity), kept while it is off, default 8
  *     visualizerDebug: bool,   // developer strip with the sound values, default off
  *     visualizerLooks: object,   // Visualizer look chosen per scene, { sceneId: number }, default {}
  *     visualizerPanelOpen, visualizerShuffle, visualizerShufflePool, visualizerShuffleCost,
@@ -46,6 +47,7 @@ import { DEFAULT_BEST_STREAM_MODE, bestStreamMode } from './best-stream.js';
 import { DEFAULT_PROCESSOR_USE, normalizeProcessorLimit, normalizeProcessorUse } from './processor-budget.js';
 import { clearStreamVerifications } from './stream-verify.js';
 import { clearDidNotPlayCache } from './did-not-play.js';
+import { clearPlayedStreams } from './played-streams.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
   addFavoritesEq, saveEqState,
@@ -61,6 +63,7 @@ import {
   DEFAULT_VISUALIZER_SCENE, DEFAULT_VISUALIZER_SHOW_FPS, normalizeVisualizerBrightness, normalizeVisualizerFps,
   normalizeVisualizerQuality, normalizeVisualizerScene, normalizeVisualizerLooks, normalizeVisualizerExtras,
 } from './visualizer-settings.js';
+import { TUNER_BACKGROUND_DEFAULT_LEVEL, normalizeTunerBackgroundLevel } from './tuner-background.js';
 import { songLog } from './song-log.js';
 import { FAVORITE_NAMES_KEY, withoutFavoriteName } from './favorite-names.js';
 import { tidyStorageAtStart } from './startup-tidy.js';
@@ -127,6 +130,7 @@ const DEFAULT_SETTINGS = {
   visualizerQualityPicked: false,
   visualizerShuffleCostPicked: false,
   tunerVisualizerBackground: false,
+  tunerVisualizerLevel: TUNER_BACKGROUND_DEFAULT_LEVEL,
   visualizerDebug: DEFAULT_VISUALIZER_DEBUG,
   enabledSources: Object.fromEntries(SOURCE_IDS.map((id) => [id, true])),
 };
@@ -186,6 +190,8 @@ export function normalizeSettings(value) {
     visualizerQualityPicked: source.visualizerQualityPicked === true,
     visualizerShuffleCostPicked: source.visualizerShuffleCostPicked === true,
     tunerVisualizerBackground: source.tunerVisualizerBackground === true,
+    // Settings saved before the level existed get the default: today's look.
+    tunerVisualizerLevel: normalizeTunerBackgroundLevel(source.tunerVisualizerLevel),
     visualizerDebug: source.visualizerDebug === true,
     ...normalizeVisualizerExtras(source),
     enabledSources,
@@ -651,6 +657,7 @@ export function clearCache() {
     clearStreamLookups();
     clearStreamVerifications();
     clearDidNotPlayCache(); // "Did not play last time" marks (a cache)
+    clearPlayedStreams(); // the format and bitrate stations played with (a cache)
     clearEqState(localStorage);
   } catch (_) {}
   cancelScheduledProfileHandoff();

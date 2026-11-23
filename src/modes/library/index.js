@@ -29,11 +29,12 @@ import {
 } from './chain.js';
 import {
   renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus, syncCardStars, syncDidNotPlayMarks,
+  syncStreamLabels,
 } from './render.js';
 import { cancelThumbnailHydration, resetThumbnailHydrationScope } from './thumbnails.js';
 import {
   openDetail, closeDetail, getRestorableDetailItem, refreshDetailArtwork, refreshDetailPictureControls,
-  refreshDetailTrouble,
+  refreshDetailTrouble, refreshDetailQuality,
 } from './detail.js';
 import { filterItems } from './filter.js';
 import { libraryPool } from './personal.js';
@@ -48,6 +49,7 @@ import { closeCategoryMenu } from './card-category.js';
 import { FAVORITE_GROUPS_EVENT } from '../../lib/favorite-groups.js';
 import { onStationImagesChange } from '../../lib/station-images.js';
 import { onDidNotPlayChange } from '../../lib/did-not-play.js';
+import { onPlayedStreamChange } from '../../lib/played-streams.js';
 
 const subs = [];
 
@@ -191,6 +193,9 @@ export function renderLibrary(host) {
   // "Did not play last time" changed (a start's result, or Clear cache): only
   // the marks on the cards and the sentence in the open panel change.
   subs.push(onDidNotPlayChange(() => { syncDidNotPlayMarks(); refreshDetailTrouble(); }));
+  // A station played with a new format or bitrate (or Clear cache): only
+  // that text on the cards and in the open panel changes.
+  subs.push(onPlayedStreamChange(() => { syncStreamLabels(); refreshDetailQuality(); }));
   subs.push(subscribe('playlists-change', () => {
     syncPersonalControls(); updateSidebarCounts();
     if (view.activeSource === 'playlists') { renderResults(); renderStatus(); updateSentinelStatus(); }

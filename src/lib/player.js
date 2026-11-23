@@ -27,6 +27,7 @@ import { createRelayMemory } from './relay-memory.js';
 import { resolveFailureMessage } from './resolve-message.js';
 import { createAudioEngine } from './audio-engine.js';
 import { createAudioSignal } from './audio-signal.js';
+import { bindVolumeStepper, clampVolume, elementVolumeChange } from './volume-stepper.js';
 import { getEffectiveEq, loadEqState } from './eq-store.js';
 import { createDashPlayback } from './dash-player.js';
 import {
@@ -37,6 +38,7 @@ import { isContentAllowed } from './content-rating.js';
 import { expectsPicture, hasPicture } from './video-picture.js';
 import { createNowPlayingPoller, NOW_PLAYING_EVENT, songLine } from './now-playing.js';
 import { playedQualityLabel } from './stream-quality.js';
+import { createPlayedStreamNote } from './played-streams.js';
 import { favoriteName } from './favorite-names.js';
 import { bestStreamOn } from './best-stream.js';
 import {
@@ -229,8 +231,15 @@ function plainLiveStream() {
 // plain live audio that is sounding through the relay is followed; anything
 // else, a pause, an error or a reconnect wait stops it. A reconnect plays a
 // new relay token, which is followed from then on.
+// The format and bitrate the relay read from the station's reply come with
+// the same poll; they are remembered once the start has played
+// (played-streams.js).
+const playedStreamNote = createPlayedStreamNote();
 const nowPlaying = createNowPlayingPoller({
   onChange: (state) => onSongChange(state),
+  onStream: ({ itemId, stream }) => {
+    if (itemId && itemId === currentItem?.id) playedStreamNote.heard(itemId, stream);
+  },
   now: () => Date.now(),
 });
 let metaLineShowsItem = false; // the meta line shows the item's own line, not a status
@@ -358,6 +367,10 @@ function bindElements() {
     time:     $('player-time'),
     dur:      $('player-dur'),
     vol:      $('player-volume'),
+    volControl: $('player-volume-control'),
+    volDown:  $('player-volume-down'),
+    volUp:    $('player-volume-up'),
+    volReadout: $('player-volume-readout'),
     mute:     $('player-mute'),
     nextBroken: $('player-next-broken'),
     fav:      $('player-fav'),
@@ -914,6 +927,8 @@ function notePlaybackProgress(el) {
     startWatch.end();
     // It plays: a "Did not play last time" mark goes.
     startOutcome.played(currentItem?.id);
+    // ...and what the stream said it is may be remembered.
+    playedStreamNote.played(currentItem?.id);
   }
 }
 
@@ -1582,6 +1597,7 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
   // not show its song (or put it in Media Session) under the new station.
   nowPlaying.stop();
   playSession = newPlaySession(myToken);
+  playedStreamNote.begin();
   stallWatchdog.stop();
   setMediaPriority(true);
   cancelPendingResolution();
@@ -1860,11 +1876,37 @@ export function stop() {
 
 export function setVolume(pct) {
   const v = Math.max(0, Math.min(1, pct / 100));
-  elements.audio.volume = v;
-  elements.video.volume = v;
-  elements.vol.value = String(Math.round(v * 100));
+  const level = Math.round(v * 100);
+  for (const el of [elements.audio, elements.video]) {
+    // A sleep-timer fade is running (lib/sleep-timer.js): it lowers the
+    // element from the level it started at and, when it ends or is
+    // cancelled, puts back the level in data-pre-fade-vol. The new level goes
+    // there, so that is what comes back; the fade keeps the live volume.
+    if (el.dataset?.preFadeVol) { el.dataset.preFadeVol = String(v); continue; }
+    // An element already at this level (the video whose own control was just
+    // moved) is left as it is: no write back, no rounding drift, no loop.
+    if (clampVolume(Number(el.volume) * 100) !== level) el.volume = v;
+  }
+  elements.vol.value = String(level);
   saveVolume(v * 100);
   syncVolumeUi();
+}
+
+/** A media element's volume or mute changed (its volumechange event). Our
+ *  own setVolume and setMuted leave it matching the store, so they change
+ *  nothing here; the video's native controls do. A sleep-timer fade (the
+ *  elements carry data-pre-fade-vol while it runs) is not the user's volume. */
+function adoptElementVolume(el) {
+  const change = elementVolumeChange({
+    volume: el.volume,
+    muted: el.muted,
+    storedPct: elements.vol.value,
+    storedMuted: elements.mute.getAttribute('aria-pressed') === 'true',
+    fading: [elements.audio, elements.video].some((media) => media?.dataset?.preFadeVol),
+  });
+  if (!change) return;
+  if (change.muted !== null) setMuted(change.muted);
+  if (change.pct !== null) setVolume(change.pct);
 }
 
 // Silent means nothing can be heard: muted, or the volume turned all the way down.
@@ -1878,11 +1920,18 @@ export function volumeText(volumePct) {
 
 function syncVolumeUi() {
   // The slider holds the user's volume; a sleep-timer fade only changes the media elements.
+  // (It is hidden: the stepper's buttons, wheel and keys set it through setVolume.)
   const pct = Number(elements.vol.value);
   const text = volumeText(pct);
   elements.vol.title = `Volume ${text}`;
   elements.vol.setAttribute('aria-valuetext', text);
   elements.mute.dataset.silent = isSilent(elements.audio.muted, pct) ? 'true' : 'false';
+  if (elements.volReadout) {
+    const level = String(clampVolume(pct));
+    elements.volReadout.textContent = level;
+    elements.volReadout.setAttribute('aria-label', `Volume ${level}`);
+  }
+  if (elements.volControl) elements.volControl.title = `Volume ${text}`;
 }
 
 export function getCurrentItem() { return currentItem; }
@@ -1925,6 +1974,14 @@ function bindControls() {
   elements.stop.addEventListener('click', () => stop());
   elements.mute.addEventListener('click', () => setMuted(!isMuted()));
   elements.vol.addEventListener('input', (e) => setVolume(+e.target.value));
+  // Down, the level and up: a click is one step, a held button repeats, the
+  // wheel and the arrow keys work over the whole control.
+  if (elements.volControl && elements.volDown && elements.volUp) {
+    bindVolumeStepper({
+      group: elements.volControl, down: elements.volDown, up: elements.volUp,
+      getVolume: () => Number(elements.vol.value), setVolume,
+    });
+  }
   elements.seek.addEventListener('input', (e) => {
     const el = getActiveEl();
     if (!el) return;
@@ -1999,6 +2056,9 @@ export function initPlayer() {
   // ...and only while it can be heard: muting or volume 0 rests it.
   for (const el of [elements.audio, elements.video]) {
     el?.addEventListener?.('volumechange', () => audioSignal.refresh());
+    // The video's own controls change its volume and mute: take that as the
+    // user's volume, as the buttons would (store, readout, icon, saved).
+    el?.addEventListener?.('volumechange', () => adoptElementVolume(el));
   }
   subscribe('content-policy-change', ({ current, currentItem: changedItem } = {}) => {
     if (current !== true && changedItem?.id === currentItem?.id

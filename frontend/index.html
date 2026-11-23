@@ -8,8 +8,8 @@
     <script>
       window.WORLDMEDIA_PROXY = "/api/proxy?url=";
     </script>
-    <script type="module" crossorigin src="/assets/index-BJHB-qmC.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CUDcwf5k.css">
+    <script type="module" crossorigin src="/assets/index-0MdG43pW.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-f5g_wCVd.css">
   </head>
   <body>
     <div id="app">
@@ -93,7 +93,7 @@
           <button id="player-next-broken" class="player-btn" hidden title="Try next source">Try next</button>
         </div>
         <div class="player-actions" aria-label="Media actions">
-          <button id="player-capture" class="player-action" type="button" data-state="unavailable" disabled aria-disabled="true">
+          <button id="player-capture" class="player-action" type="button" data-state="unavailable" disabled aria-disabled="true" aria-describedby="player-capture-hint">
             <span class="capture-icon" aria-hidden="true">
               <svg class="capture-icon-download" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
               <svg class="capture-icon-record" viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>
@@ -101,7 +101,17 @@
             </span>
             <span id="player-capture-label" class="player-action-label">Unavailable</span>
           </button>
+          <!-- The Record button's full hint (its hover text too); lib/capture-ui.js. -->
+          <span id="player-capture-hint" hidden></span>
           <button id="player-capture-secondary" class="player-action-secondary" type="button" hidden></button>
+          <!-- Shown only while a capture is under way, done or failed: its
+               progress, result or error, on the same line as the buttons. -->
+          <div id="player-capture-status" class="player-capture-status" hidden>
+            <span id="player-capture-status-text"></span>
+            <div id="player-capture-progress" class="player-capture-progress" role="progressbar" aria-label="Capture progress" aria-valuemin="0" aria-valuemax="100" hidden>
+              <span id="player-capture-progress-bar"></span>
+            </div>
+          </div>
           <button id="player-eq" class="player-eq" type="button" aria-pressed="false" disabled>
             <span class="player-eq-label">EQ</span>
             <span id="player-eq-state" class="player-eq-state">Bypassed</span>
@@ -110,12 +120,6 @@
             <div class="player-meter-well">
               <canvas class="player-meter-canvas" width="90" height="36"></canvas>
             </div>
-          </div>
-        </div>
-        <div id="player-capture-status" class="player-capture-status" hidden>
-          <span id="player-capture-status-text"></span>
-          <div id="player-capture-progress" class="player-capture-progress" role="progressbar" aria-label="Capture progress" aria-valuemin="0" aria-valuemax="100" hidden>
-            <span id="player-capture-progress-bar"></span>
           </div>
         </div>
         <span id="player-capture-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
@@ -132,7 +136,19 @@
             <svg class="icon-sound" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05a4.5 4.5 0 0 0 2.5-4.02z"/></svg>
             <svg class="icon-silent" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="m15.5 9.5 5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
-          <input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Volume" />
+          <!-- The volume: up, the level (0-100) and down, in a column on the
+               wide bar (lib/volume-stepper.js). The hidden input holds the
+               user's level for lib/player.js. -->
+          <div id="player-volume-control" class="volume-stepper" role="group" aria-label="Volume" title="Volume 80%" tabindex="-1">
+            <button id="player-volume-up" class="volume-step" type="button" aria-label="Volume up" title="Volume up">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 6.5 5 3.5 8 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <output id="player-volume-readout" class="volume-led" aria-live="polite" aria-label="Volume 80">80</output>
+            <button id="player-volume-down" class="volume-step" type="button" aria-label="Volume down" title="Volume down">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Volume" hidden />
         </div>
       </footer>
 

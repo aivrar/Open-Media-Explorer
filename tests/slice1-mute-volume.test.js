@@ -33,7 +33,8 @@ test('the mute button carries a speaker and a crossed speaker swapped by the sil
   assert.match(button, /<svg class="icon-sound" viewBox="0 0 24 24"[^>]*aria-hidden="true">/);
   assert.match(button, /<svg class="icon-silent" viewBox="0 0 24 24"[^>]*aria-hidden="true">/);
   // The default of 80 is unchanged.
-  assert.match(html, /<input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Volume" \/>/);
+  // The hidden input still holds the level the stepper shows.
+  assert.match(html, /<input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Volume" hidden \/>/);
   const css = await read('src/styles/base.css');
   assert.match(css, /#player-mute \.icon-silent,\s+#player-mute\[data-silent="true"\] \.icon-sound \{ display: none; \}/);
   assert.match(css, /#player-mute\[data-silent="true"\] \.icon-silent \{ display: block; \}/);

@@ -22,6 +22,12 @@ from worldmedia_runtime import (
     migrate_legacy_state,
     normalize_server_port,
 )
+from worldmedia_single_instance import (
+    ALREADY_RUNNING_EXIT_CODE,
+    bring_own_window_to_front,
+    claim_data_folder,
+    wait_for_folder,
+)
 from worldmedia_theme import NativeThemeBridge, saved_theme
 
 
@@ -210,9 +216,39 @@ def unblock_bundled_assemblies(root: Path | None = None) -> int:
 
 
 def main() -> int:
+    # Only the data folder is worked out before the single-copy check; nothing
+    # is written, migrated, or listened on until this copy holds the folder.
+    paths = get_runtime_paths()
+    headless = os.environ.get("WORLDMEDIA_NO_BROWSER") == "1"
+    instance = claim_data_folder(paths.state_root, listen=not headless)
+    if not instance.owned:
+        if headless:
+            # Callers of a windowless start wait for its server, so they are
+            # told plainly (exit code) that none was started.
+            try:
+                print(f"World Media is already running with the data folder {paths.state_root}; "
+                      "a second server was not started.", file=sys.stderr, flush=True)
+            except (AttributeError, OSError, ValueError):
+                pass  # no console (pythonw, the windowed EXE)
+            return ALREADY_RUNNING_EXIT_CODE
+        # The running copy is asked to come forward. If it has no window to
+        # show (it is closing, or it is windowless), this start waits for the
+        # folder to come free and then starts as usual; if it stays held, this
+        # start ends quietly.
+        instance, _outcome = wait_for_folder(paths.state_root)
+        if not instance.owned:
+            return 0
+    # The folder is held until this copy's work is fully done (after the
+    # server and services have shut down).
+    try:
+        return _run(paths, instance, headless=headless)
+    finally:
+        instance.release()
+
+
+def _run(paths, instance, *, headless: bool) -> int:
     global _LOG_HANDLE
 
-    paths = get_runtime_paths()
     migrate_legacy_state(paths)
     paths = ensure_state_directories(paths)
     preferred = configured_server_port(paths)
@@ -257,7 +293,7 @@ def main() -> int:
     note = f" ({'; '.join(notes)})" if notes else ""
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] listening {url} pid={os.getpid()}{note}", flush=True)
 
-    if os.environ.get("WORLDMEDIA_NO_BROWSER") == "1":
+    if headless:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
@@ -288,6 +324,10 @@ def main() -> int:
             if window is None:
                 raise RuntimeError("pywebview did not create the native window")
             theme_bridge._bind_window(window)
+            # Another start with this data folder asks this window to come
+            # forward; the wait begins once the window exists (a request made
+            # earlier is kept until then).
+            window.events.shown += lambda: instance.listen(bring_own_window_to_front)
             webview.start(
                 gui="edgechromium",
                 debug=False,
@@ -308,6 +348,9 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        # The window is closed: later starts find no window to show and wait
+        # for the folder, which main() gives back once shutdown has finished.
+        instance.stop_listening()
         worldmedia_server.shutdown_services(timeout=5.0)
         httpd.shutdown()
         httpd.server_close()

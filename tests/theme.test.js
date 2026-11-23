@@ -80,7 +80,7 @@ function contrast(a, b) {
   return (high + 0.05) / (low + 0.05);
 }
 
-test('the seek and volume tracks stand out from the player bar in the light palettes (3:1)', async () => {
+test('the seek track stands out from the player bar in the light palettes (3:1)', async () => {
   const css = await readFile(new URL('../src/styles/base.css', import.meta.url), 'utf8');
   const token = (block, name) => block.match(new RegExp(`${name}: (#[0-9a-f]{6});`))?.[1];
   const light = css.match(/:root\[data-theme='light'\]\s*\{([^}]*)\}/s)[1];
@@ -93,7 +93,7 @@ test('the seek and volume tracks stand out from the player bar in the light pale
   // The dark palettes keep their track: only the light ones set the token.
   assert.equal(css.match(/--slider-track:/g).length, 2);
   for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
-    const rule = css.match(new RegExp(`\\.player-seek${pseudo},\\s*#player-volume${pseudo} \\{([^}]*)\\}`))[1];
+    const rule = css.match(new RegExp(`\\.player-seek${pseudo} \\{([^}]*)\\}`))[1];
     assert.match(rule, /background: var\(--slider-track, var\(--bg-elev-3\)\);/);
     assert.match(rule, /height: 4px;/);
   }

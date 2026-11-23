@@ -11,7 +11,7 @@
       "player-mute", "player-volume", "player-fav",
       "player-capture", "player-capture-label", "player-capture-secondary",
       "player-capture-status", "player-capture-status-text", "player-capture-progress", "player-capture-announcement",
-      "player-capture-progress-bar", "player-eq", "player-eq-state"
+      "player-capture-progress-bar", "player-capture-hint", "player-eq", "player-eq-state"
     ],
     "layouts": {
       "desktop": {
@@ -19,7 +19,7 @@
       },
       "compact": {
         "maxWidthPx": 1000,
-        "areas": ["meta controls", "actions actions", "status status", "progress progress", "volume volume"]
+        "areas": ["meta controls", "actions actions", "progress progress", "volume volume"]
       },
       "narrow": {
         "maxWidthPx": 560

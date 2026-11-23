@@ -35,7 +35,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.15"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.16"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096
@@ -767,6 +767,10 @@ class MediaRegistration:
     # A stream verified by "Pick the best stream: Auto": it must still end on
     # https after redirects, or it does not play (the server's relay checks).
     require_https: bool = False
+    # Set on a live audio root when the relay opened its stream: what the
+    # station said the stream is (its audio Content-Type and icy-br in kbps).
+    stream_content_type: str = ""
+    stream_bitrate: int = 0
 
     def public_data(self) -> dict:
         return {
@@ -1638,6 +1642,20 @@ class MediaRegistry:
             while len(self._now_playing) > MAX_NOW_PLAYING:
                 self._now_playing.popitem(last=False)
 
+    def note_stream_facts(self, token: str, content_type: str, bitrate: int) -> None:
+        """Record what the station said its stream is when the relay opened
+        this playback root (see now_playing()). Nothing known changes nothing;
+        a released or expired root is left alone."""
+        if not content_type and not bitrate:
+            return
+        now = time.time()
+        with self._lock:
+            root = self._live_root_locked(token, now)
+            if root is None:
+                return
+            root.stream_content_type = content_type
+            root.stream_bitrate = bitrate
+
     def now_playing(self, token: str) -> dict:
         """The latest song title of a live playback root; nothing if unknown, released or expired.
 
@@ -1645,18 +1663,25 @@ class MediaRegistry:
         relay connection makes no further requests, so a poll counts as use:
         it slides the lease exactly as get() does (_renew_live_locked), so the
         title, and the root a reconnect needs, outlive the first lease. A
-        released or expired root is never revived.
+        released or expired root is never revived. Once the relay has opened
+        the stream, "stream" says what the station said it is (content type
+        and kbps) when it said anything.
         """
         now = time.time()
         with self._lock:
             self._prune_locked(now)
-            if self._live_root_locked(token, now) is None:
+            root = self._live_root_locked(token, now)
+            if root is None:
                 return {"title": None, "changed_at": None}
             self._renew_live_locked(token, now)
             record = self._now_playing.get(token)
             if record is None or record[0] is None:
-                return {"title": None, "changed_at": None}
-            return {"title": record[0], "changed_at": record[1]}
+                result = {"title": None, "changed_at": None}
+            else:
+                result = {"title": record[0], "changed_at": record[1]}
+            if root.stream_content_type or root.stream_bitrate:
+                result["stream"] = {"content_type": root.stream_content_type, "bitrate": root.stream_bitrate}
+            return result
 
     def expire_item(self, item_id: str, *, grace_seconds: float = 5.0) -> None:
         deadline = time.time() + max(0.0, min(float(grace_seconds), 30.0))

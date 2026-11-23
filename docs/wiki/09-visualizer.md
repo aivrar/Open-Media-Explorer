@@ -6,7 +6,9 @@ The Visualizer tab requires v0.1.11 or newer. The scene families listed under
 panel require v0.1.12 or newer. The scenes DIFS Tunnel Flight, Quaternion Julia
 Flight, Fourier Epicycles and 4D Polytopes, the overlays Ripples, Fireflies and
 Orbits, the **Lighten** and **Color** blends, **Extra glow** and the setting
-that shows the Visualizer behind the Tuner require v0.1.13 or newer.
+that shows the Visualizer behind the Tuner require v0.1.13 or newer. The
+**Visualizer:** control on the Tuner tab, which sets how strongly it shows there,
+requires v0.1.16 or newer.
 
 The Visualizer shows pictures that move with the sound of whatever is playing.
 It is the tab between **Now Playing** and **About**. It is ported from [Psychedelia
@@ -356,6 +358,20 @@ in the Visualizer is not Light, Plasma is drawn instead, and your choice is not
 changed. With the shuffle on, it picks Light scenes only. There are no overlays
 and no effects, the picture is drawn at Low quality and at most 30 frames a
 second, and the flash limiter still applies.
+
+How strongly it shows is set with the **Visualizer:** control at the right of the
+Tuner's top bar (a down button, a number and an up button), from 0 to 100. The
+number is the picture's opacity in percent: the default, 8, is the faint look it
+had before this control existed, and 100 shows it at full strength. 0 is the setting off, and
+pressing up from 0 turns it on; the switch in Settings and the control follow
+each other, and turning the switch off in Settings keeps the level. Only
+crossing 0 starts or stops the picture; any other level only changes how
+strongly it shows. The notice, the flash limiter, the Light scenes, Low quality
+and the 30 frames a second are the same at every level, and nothing is drawn
+before the notice has been accepted. The text on the Tuner is kept readable
+(4.5:1 or more against the picture, in every theme) up to the default level;
+above it the picture can make text harder to read. Processor use measured the
+same at 8 and at 100.
 
 ## Keep it light on a weak computer
 

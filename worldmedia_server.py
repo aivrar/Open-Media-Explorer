@@ -36,6 +36,8 @@ from worldmedia_jobs import (
     JobStateError,
 )
 from worldmedia_icy import (
+    ADTS_CONTENT_TYPES,
+    AdtsAligner,
     ICY_REQUEST_HEADER,
     IcyStripper,
     RefusedIcyHosts,
@@ -104,7 +106,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.15 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.16 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -302,6 +304,89 @@ def _open_without_icy(registration: MediaRegistration, method: str, headers: dic
     if upstream.response.status < 400:
         ICY_REFUSED_HOSTS.refuse(registration.url)
     return upstream
+
+
+_STREAM_AUDIO_TYPE = re.compile(r"audio/[a-z0-9.+-]{1,40}|application/ogg")
+_STREAM_BITRATE = re.compile(r"[0-9]{1,6}")
+
+
+def stream_facts(response) -> tuple[str, int]:
+    """What a station's reply says its stream is: the audio content type
+    (lower case, no parameters) and the icy-br bitrate in kbps; "" and 0 for
+    anything missing or odd. Only read, never forwarded."""
+    raw_type = str(response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
+    content_type = raw_type if _STREAM_AUDIO_TYPE.fullmatch(raw_type) else ""
+    raw_bitrate = str(response.getheader("icy-br") or "").split(",", 1)[0].strip()
+    bitrate = int(raw_bitrate) if _STREAM_BITRATE.fullmatch(raw_bitrate) else 0
+    return content_type, bitrate if 0 < bitrate <= 100_000 else 0
+
+
+def note_stream_facts(registration: MediaRegistration, method: str, response, *, dash: bool) -> None:
+    """Keep the stream facts of plain live audio on its playback root, for
+    the page's now-playing poll (MediaRegistry.now_playing)."""
+    if (
+        method == "GET"
+        and not dash
+        and registration.media_type == "audio"
+        and registration.token == registration.root_token
+        and 200 <= response.status < 300
+    ):
+        MEDIA_REGISTRY.note_stream_facts(registration.root_token, *stream_facts(response))
+
+
+def relay_frame_aligner(
+    registration: MediaRegistration, method: str, response, *, dash: bool, range_value: str = "",
+) -> AdtsAligner | None:
+    """An AdtsAligner for the start of a live AAC stream the player opens:
+    a GET from the start (no Range, or "bytes=0-") of a live audio playback
+    root (never a capture job's), answered 200 with an ADTS content type, no
+    length, no range and no content encoding. Anything else: None, and the
+    body is relayed exactly as before."""
+    if not (
+        method == "GET"
+        and not dash
+        and range_value in {"", "bytes=0-"}
+        and registration.media_type == "audio"
+        and registration.delivery != "on-demand"
+        and registration.token == registration.root_token
+        and not registration.capture
+        and response.status == HTTPStatus.OK
+    ):
+        return None
+    content_type = str(response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
+    encoding = str(response.getheader("Content-Encoding") or "identity").strip().lower()
+    if (
+        content_type not in ADTS_CONTENT_TYPES
+        or encoding != "identity"
+        or response.getheader("Content-Length") is not None
+        or response.getheader("Content-Range") is not None
+    ):
+        return None
+    return AdtsAligner()
+
+
+def relay_passes_as_available(
+    registration: MediaRegistration, method: str, response, *, dash: bool,
+) -> bool:
+    """True for an endless live audio reply relayed without icy blocks: a GET
+    of a playback root (never a capture job's, never a DASH template)
+    answered 200 with an audio/* or application/ogg type and no length or
+    range. Its bytes are passed on as they arrive; a 64 KiB read would hold
+    a 32 kbps stream for 16 s before the player got anything. Everything else
+    (files with a length, video, manifests, segments, ranged replies, HEAD)
+    keeps full reads."""
+    if not (
+        method == "GET"
+        and not dash
+        and registration.token == registration.root_token
+        and not registration.capture
+        and response.status == HTTPStatus.OK
+        and response.getheader("Content-Length") is None
+        and response.getheader("Content-Range") is None
+    ):
+        return False
+    content_type = str(response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
+    return content_type.startswith("audio/") or content_type == "application/ogg"
 
 
 def stream_title_recorder(registration: MediaRegistration, response) -> Callable[[bytes], None]:
@@ -1229,6 +1314,8 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     is_hls = registration.media_type == "hls" or "mpegurl" in content_type_lower
                     is_dash = registration.media_type == "dash" or "dash+xml" in content_type_lower
                     is_manifest = is_hls or is_dash
+                    if not is_manifest:
+                        note_stream_facts(registration, method, upstream.response, dash=dash_query is not None)
                     if is_manifest and method == "GET" and 200 <= upstream.response.status < 300:
                         encoding = (upstream.response.getheader("Content-Encoding") or "identity").lower()
                         if encoding != "identity":
@@ -1275,14 +1362,23 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         self.end_headers()
                         response_started = True
                         stripper = IcyStripper(metaint, stream_title_recorder(registration, upstream.response))
+                        aligner = relay_frame_aligner(
+                            registration, method, upstream.response,
+                            dash=dash_query is not None, range_value=range_value,
+                        )
                         # Forward audio as it arrives (iter_available), not in full
                         # 64 KiB reads: the stripped first chunk is a few bytes
                         # short, and the element would wait a whole further read.
                         for chunk in upstream.iter_available(chunk_size=RELAY_CHUNK_SIZE):
                             audio = stripper.feed(chunk)
+                            if aligner is not None and audio:
+                                audio = aligner.feed(audio)
                             if audio:
                                 self.wfile.write(audio)
                                 self.wfile.flush()
+                        if aligner is not None and (rest := aligner.finish()):
+                            self.wfile.write(rest)
+                            self.wfile.flush()
                         return None
                     self.send_response(upstream.response.status)
                     self.send_header("Content-Type", content_type)
@@ -1299,8 +1395,23 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     response_started = True
                     if method == "HEAD":
                         return None
-                    for chunk in upstream.iter_chunks(chunk_size=RELAY_CHUNK_SIZE):
+                    aligner = relay_frame_aligner(
+                        registration, method, upstream.response,
+                        dash=dash_query is not None, range_value=range_value,
+                    )
+                    live = relay_passes_as_available(
+                        registration, method, upstream.response, dash=dash_query is not None,
+                    )
+                    chunks = upstream.iter_available if live else upstream.iter_chunks
+                    for chunk in chunks(chunk_size=RELAY_CHUNK_SIZE):
+                        if aligner is not None:
+                            chunk = aligner.feed(chunk)
+                            if not chunk:
+                                continue
                         self.wfile.write(chunk)
+                        self.wfile.flush()
+                    if aligner is not None and (rest := aligner.finish()):
+                        self.wfile.write(rest)
                         self.wfile.flush()
                     return None
                 finally:

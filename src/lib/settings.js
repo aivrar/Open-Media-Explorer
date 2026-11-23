@@ -3,7 +3,7 @@
  */
 
 import {
-  getState, saveSettings, setShowExplicitContent, setSourceEnabled, clearCache,
+  getState, saveSettings, setShowExplicitContent, setSourceEnabled, clearCache, subscribe,
 } from './state.js';
 import { SOURCES } from './sources.js';
 import { openDownloadsFolder } from './download-client.js';
@@ -32,7 +32,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.15';
+const VERSION = '0.1.16';
 
 function buildModal() {
   const state = getState();
@@ -99,7 +99,7 @@ function buildModal() {
           <div class="row">
             <div>
               <label for="settings-tech-details">Show technical source details</label>
-              <span class="description">Shows per-source status labels (Pull, Wait, Done, Live, Stale), full source badges, and license notes on cards. Off keeps the screen simpler; hover a source for its status either way.</span>
+              <span class="description">Shows per-source status labels (Pull, Wait, Done, Live, Stale), boxed source names and license notes, and on station cards the stream format and bitrate (such as MP3 · 128 kbps) once a station has played or its directory lists them. Off keeps the screen simpler; a source's status and a station's format and bitrate still show on hover.</span>
             </div>
             <input id="settings-tech-details" type="checkbox" class="switch" data-field="showTechnicalDetails" />
           </div>
@@ -306,9 +306,15 @@ function buildModal() {
   cardSizeSel.addEventListener('change', () => saveSettings({ tunerCardSize: cardSizeSel.value }));
 
   const tunerVisualizerToggle = root.querySelector('input[data-field="tunerVisualizerBackground"]');
+  let unsubscribeTunerVisualizer = null;
   if (tunerVisualizerToggle) {
     tunerVisualizerToggle.checked = state.settings.tunerVisualizerBackground === true;
+    // On again brings back its last level (tunerVisualizerLevel is kept).
     tunerVisualizerToggle.addEventListener('change', () => saveSettings({ tunerVisualizerBackground: tunerVisualizerToggle.checked }));
+    // The Tuner's stepper turns it off at 0 and on from 0: the switch follows.
+    unsubscribeTunerVisualizer = subscribe('settings-change', (settings) => {
+      tunerVisualizerToggle.checked = settings.tunerVisualizerBackground === true;
+    });
   }
 
   const meterToggle = root.querySelector('input[data-field="soundMeter"]');
@@ -596,6 +602,7 @@ function buildModal() {
     if (disposed) return;
     disposed = true;
     window.clearTimeout(ffmpegTimer);
+    unsubscribeTunerVisualizer?.();
     const app = document.getElementById('app');
     if (app) app.inert = false;
     root.remove();

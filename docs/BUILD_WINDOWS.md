@@ -5,7 +5,7 @@ The classic single-file artifact and signed-runtime portable fallback are:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.15-portable.zip
+dist\WorldMediaWindows-0.1.16-portable.zip
 ```
 
 `dist\WorldMediaWindows.exe` is the owner-preferred one-file PyInstaller build.
@@ -98,6 +98,11 @@ Expected behavior:
 - Native desktop window opens.
 - Local server responds on `127.0.0.1`.
 - Runtime logs appear under `dist\WorldMediaWindows-data\logs\` beside the EXE.
+- One copy runs per data folder. Starting the EXE again with the same data
+  folder brings the open window to the front and exits; a headless start
+  (`WORLDMEDIA_NO_BROWSER=1`) whose data folder is in use exits with code 3
+  without starting a server. Copies with different data folders (for example
+  a separate `WORLDMEDIA_STATE_ROOT`) run side by side.
 - Single-EXE startup extraction uses the Windows temporary directory and its
   `_MEI...` directory is removed on normal shutdown. This makes the EXE
   relocatable across computers and drive letters.

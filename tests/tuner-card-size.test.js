@@ -38,7 +38,7 @@ test('the knob shows the station name only, never its source', async () => {
   // The source is still on every card: its second line and its tooltip.
   const strip = tuner.match(/function renderStrip\(\) \{[\s\S]*?\n\}/)[0];
   const tooltip = tuner.match(/function setPillTrouble\(pill\) \{[\s\S]*?\n\}/)[0];
-  assert.match(tooltip, /`\$\{pill\.__saved \? '\u2605 Favorite \u00b7 ' : ''\}\$\{s\.title\} \u00b7 \$\{getSourceLabel\(s\.source\)\}\$\{trouble \? `\\n\$\{trouble\}` : ''\}`/);
+  assert.match(tooltip, /`\$\{pill\.__saved \? '\u2605 Favorite \u00b7 ' : ''\}\$\{s\.title\} \u00b7 \$\{getSourceLabel\(s\.source\)\}\$\{stream \? `\\n\$\{stream\}` : ''\}`\s+\+ `\$\{trouble \? `\\n\$\{trouble\}` : ''\}`/);
   assert.match(strip, /el\('small', \{ text: getSourceLabel\(s\.source\) \}\)/);
 });
 

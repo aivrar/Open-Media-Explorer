@@ -113,10 +113,12 @@ export function createPlayerDom() {
     'app', 'player-bar', 'player-title', 'player-source', 'player-art',
     'player-play', 'icon-play', 'icon-pause', 'player-stop', 'player-seek',
     'player-time', 'player-dur', 'player-volume', 'player-mute',
+    'player-volume-control', 'player-volume-down', 'player-volume-up', 'player-volume-readout',
     'player-next-broken', 'player-fav',
     'player-capture', 'player-capture-label', 'player-capture-secondary',
     'player-capture-status', 'player-capture-status-text', 'player-capture-progress',
-    'player-capture-progress-bar', 'player-capture-announcement', 'player-eq', 'player-eq-state',
+    'player-capture-progress-bar', 'player-capture-announcement', 'player-capture-hint',
+    'player-eq', 'player-eq-state',
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement(id)]));
   elements['audio-el'] = new FakeMediaElement('audio-el', 'audio');
