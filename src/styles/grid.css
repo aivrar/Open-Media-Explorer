@@ -19,7 +19,7 @@
 
 .grid-tiles {
   overflow-y: auto;
-  padding: 18px;
+  padding: 18px 18px calc(18px + var(--video-clearance));
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 16px;
@@ -112,7 +112,7 @@
   }
 
   .grid-tiles {
-    padding: 12px;
+    padding: 12px 12px calc(12px + var(--video-clearance));
     grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
     gap: 12px;
   }

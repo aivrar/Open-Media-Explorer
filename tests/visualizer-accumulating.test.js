@@ -827,7 +827,7 @@ test('IFS / L-System Lab builds and uploads its geometry once a look, stops draw
   });
 });
 
-test('the lab-wide lifts: FLAM3 Density Lab starts at gamma 1.8 (no look sets it); IFS / L-System Lab at least Nebula Glow, glow 1.8 and line width 2.6', () => {
+test('the lab-wide lifts: FLAM3 Density Lab starts at gamma 1.8 (no look sets it); IFS / L-System Lab at least Nebula Glow, glow 1.8, width 3.2 and exposure 2.4', () => {
   const flam3 = entryOf('flam3_density_lab');
   assert.deepEqual({ ...flam3.defaults }, { flam3_gamma: 1.8 });
   const presets = read('src', 'visualizer', 'vendor', 'psychedelia', 'effects', 'flam3-density-lab.js').split(/\r?\n/).filter((line) => /preset\('/.test(line));
@@ -841,12 +841,12 @@ test('the lab-wide lifts: FLAM3 Density Lab starts at gamma 1.8 (no look sets it
   assert.match(attractorLooks, /name: 'attractor_density_curve'[^}]*default: 0\.72/, 'its own curve');
   assert.equal((attractorLooks.match(/attractor_density_curve/g) || []).length, 2, 'read once and declared once: no look sets its curve');
   const held = ACCUMULATING_HELD.ifs_lsystem_lab;
-  assert.deepEqual({ ...held.least }, { ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 2.6 });
+  assert.deepEqual({ ...held.least }, { ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 3.2, ifs_exposure: 2.4 });
   let values = { ifs_background: 0, ifs_glow: 1.2, ifs_thickness: 1 };
   const controls = heldControls({ getValues: () => values }, held);
-  assert.deepEqual({ ...controls.getValues() }, { ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 2.6, ifs_motion_rate: 0 });
-  values = { ifs_background: 5, ifs_glow: 2.2, ifs_thickness: 4 };
-  assert.deepEqual({ ...controls.getValues() }, { ifs_background: 2, ifs_glow: 2.2, ifs_thickness: 4, ifs_motion_rate: 0 }, 'more is kept; the background no brighter than Nebula Glow');
+  assert.deepEqual({ ...controls.getValues() }, { ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 3.2, ifs_motion_rate: 0, ifs_exposure: 2.4 });
+  values = { ifs_background: 5, ifs_glow: 2.2, ifs_thickness: 4, ifs_exposure: 3 };
+  assert.deepEqual({ ...controls.getValues() }, { ifs_background: 2, ifs_glow: 2.2, ifs_thickness: 4, ifs_motion_rate: 0, ifs_exposure: 3 }, 'more is kept; the background no brighter than Nebula Glow');
   values = {};
   assert.equal(controls.getValues().ifs_glow, 1.8, 'missing: the least');
 });

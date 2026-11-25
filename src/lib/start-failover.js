@@ -13,7 +13,7 @@
  * does not are the next streams tried. A `playing` with no movement at all
  * leaves the start time limit as it was. A stream that plays for a second
  * ends the watch for good (later stalls are the player's recovery), and so do
- * a pause, Stop and another station. With the setting off, nothing here runs.
+ * a pause, Stop and another station. Saved backups also work with the setting off.
  */
 
 import { HLS_STARTUP_BUFFER_TIMEOUT_MS } from './hls-recovery.js';
@@ -26,9 +26,9 @@ export const START_CONFIRM_MS = 10_000;
 
 /** The streams of `item` still to try after the addresses in `tried`, in
  *  the order a start with "Pick the best stream" tries them. */
-export function untriedStreams(item, { extraStreams = [], tried = [] } = {}) {
+export function untriedStreams(item, { addresses, extraStreams = [], tried = [] } = {}) {
   const done = new Set(tried);
-  return streamCandidatesForItem(item, { preferBest: true, extraStreams }).filter((stream) => !done.has(stream.url));
+  return streamCandidatesForItem(item, { preferBest: true, extraStreams, addresses }).filter((stream) => !done.has(stream.url));
 }
 
 /** One watch at a time. arm(token, item, tried) after a stream connected;

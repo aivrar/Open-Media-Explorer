@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { EQ_STORAGE_KEY } from '../src/lib/eq-store.js';
+import { EQ_STORAGE_KEY, loadEqState, saveEqState, setStationEqPreset } from '../src/lib/eq-store.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import { loadVolume } from '../src/lib/state.js';
 import { createPlayerDom } from './helpers/fake-dom.js';
@@ -144,6 +144,15 @@ test('player routes relayed audio/video/HLS through one engine without breaking 
     assert.equal(player.getAudioEngineStatus().sourceCount, 1);
     assert.equal(player.getAudioEngineStatus().curve.preamp, -2);
     assert.equal(elements['audio-el'].paused, false);
+
+    const assignedStation = item('preset.mp3', 'audio', 'radio');
+    saveEqState(setStationEqPreset(loadEqState(storage), [assignedStation.id], 'bass-boost'), storage);
+    await player.playItem(assignedStation);
+    assert.equal(player.getAudioEngineStatus().curve.presetId, 'bass-boost');
+    assert.equal(player.getAudioEngineStatus().curve.preamp, -6);
+    assert.equal(player.getAudioEngineStatus().sourceCount, 1);
+    await player.playItem(item('radio.mp3', 'audio'));
+    assert.equal(player.getAudioEngineStatus().curve.preamp, -2);
 
     player.setVolume(35);
     assert.equal(elements['audio-el'].volume, 0.35);

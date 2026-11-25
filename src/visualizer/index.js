@@ -15,8 +15,8 @@
  * with a note saying so; the saved settings stay as chosen.
  *
  * Every visible change of picture (scene or look, by hand, from the settings
- * or from the shuffle) goes through transition.js: a cross-fade, or a dip to
- * black and back where the browser cannot cross-fade, one at a time (changes
+ * or from the shuffle) goes through transition.js: a warped dissolve,
+ * cross-fade, or dip to black and back, one at a time (changes
  * asked for meanwhile wait, the latest wins), each charged to the flash
  * limiter's budget (slower when it is full). Never a hard cut, except with
  * reduced motion, while hidden or paused.
@@ -27,7 +27,7 @@
  * (mood.js) biases the shuffle and the strength of the reaction.
  *
  * Post effects (off by default): Psychedelia's FX passes over the scene
- * (fx-chain.js; bypassed entirely while none are on), chosen by hand from the
+ * (fx-chain.js; also used by Color travel and transitions), chosen by hand from the
  * panel's list or by the FX shuffle (fx-shuffle.js) with the scene or every
  * few bars, with the global beat reactions (fx-reactions.js) as their last
  * pass. Their library is a chunk of its own, loaded the first time effects
@@ -52,7 +52,7 @@
  * A mount that throws part-way runs the same teardown on what it had made
  * before the error goes on to the caller (nothing is left running).
  *
- * The music's readings (mood.js, and the held tone.js and structure.js)
+ * The music's readings (mood.js, tone.js and structure.js)
  * describe one stretch of listening: they start afresh on another station or
  * item and on a resume after a gap in the sound (a pause, a hidden window,
  * mute), never on a change of scene.
@@ -73,7 +73,7 @@ import { americanText } from './spelling.js';
 import { createReactorBridge } from './reactor.js';
 import { createFlashLedger } from './flash-limiter.js';
 import {
-  DEFAULT_SCENE, SCENES, drawableScenes, orderedScenes, sceneCappedParams, sceneCaps, sceneMaxPixels, sceneSimRate, stepScene,
+  DEFAULT_SCENE, drawableScenes, scenesForVisualizer, orderedScenes, sceneCappedParams, sceneCaps, sceneMaxPixels, sceneSimRate, stepScene,
 } from './scenes.js';
 import {
   DRIFT_FADE_S, createDriftClock, driftScale, sceneDriftPlan,
@@ -92,7 +92,10 @@ import {
 import {
   MOOD_CALM_BELOW, MOOD_ENERGETIC_ABOVE, MOOD_STRENGTH, createMoodTracker,
 } from './mood.js';
-import { SONG_STRUCTURE_RELEASED, createStructureDetector, structureDriftScale } from './structure.js';
+import { SONG_STRUCTURE_RELEASED, bringDropForward, createStructureDetector, structureDriftScale } from './structure.js';
+import { COLOUR_TRAVEL_RELEASED, colourTravelAllowed, createColourTravel } from './colour-travel.js';
+import { WARP_DISSOLVE_RELEASED } from './warp-dissolve.js';
+import { readVisualizerDevFlags } from './dev-flags.js';
 import { MOOD_TONE_RELEASED, createToneTracker } from './tone.js';
 import { lookDarkness } from './look-darkness.js';
 import {
@@ -323,7 +326,7 @@ function buildVisualizer(root, {
   doc = globalThis.document,
   createContext = createWebglContext,
   createRenderer = createSceneRenderer,
-  scenes = SCENES,
+  scenes = null,
   loopOptions = {},
   random = null,
   loadFxLibrary = () => import('./vendor/psychedelia/engine/post-fx-library.js'),
@@ -379,12 +382,17 @@ function buildVisualizer(root, {
     root.classList?.remove('viz-panel-open');
   }
   unfinished.teardown = teardown;
+  const dev = background ? null : readVisualizerDevFlags(win);
+  scenes ||= scenesForVisualizer(dev?.tryHeld);
+  const colourTravelEnabled = COLOUR_TRAVEL_RELEASED && dev?.colorTravel;
   const initial = getSettings?.() || {};
   const extras = normalizeVisualizerExtras(initial);
   let quality = normalizeVisualizerQuality(initial.visualizerQuality);
   let fps = normalizeVisualizerFps(initial.visualizerFps);
   let brightness = normalizeVisualizerBrightness(initial.visualizerBrightness);
-  let sceneAsked = normalizeVisualizerScene(initial.visualizerScene);
+  let savedScene = normalizeVisualizerScene(initial.visualizerScene);
+  let sceneAsked = savedScene;
+  let automaticScene = null;
   let looks = normalizeVisualizerLooks(initial.visualizerLooks);
   let showFps = initial.visualizerShowFps === true;
   let debug = initial.visualizerDebug === true;
@@ -409,6 +417,8 @@ function buildVisualizer(root, {
   let fxTiming = extras.visualizerFxTiming;
   let fxFlash = extras.visualizerFxFlash;
   let driftOn = extras.visualizerDrift;
+  let colourTravelChoice = extras.visualizerColorTravel;
+  let colourTravelOn = colourTravelChoice;
   let fxSet = extras.visualizerFxSet;
   let overlaysOn = extras.visualizerOverlays;
   let overlayShuffleOn = extras.visualizerOverlayShuffle;
@@ -460,6 +470,12 @@ function buildVisualizer(root, {
   };
   const entryOf = (id) => scenes.find((scene) => scene.id === id) || null;
   const sceneName = (id) => entryOf(id)?.name || id;
+  const sceneForChoice = (id) => entryOf(id)?.devOnly ? id : normalizeVisualizerScene(id);
+  function saveScene() {
+    if (entryOf(sceneAsked)?.devOnly) return;
+    savedScene = sceneAsked;
+    saveSettings?.({ visualizerScene: sceneAsked });
+  }
   // Favourites as read: the whole list from the two saved fields, each
   // one's effects and overlays as its scene draws them (a calm scene leaves
   // lively ones out), so the star matches what is drawn and can always take
@@ -488,7 +504,9 @@ function buildVisualizer(root, {
   // cannot make (float targets: sim-host.js simSupport, two extension
   // queries, asked once here) are left out of the list, previous / next and
   // the shuffle altogether, as if this build had none; no error is shown.
-  const made = createContext(canvas);
+  // A compile can finish between animation frames. Keep the last presented
+  // picture readable so the handoff never has to draw the old scene again.
+  const made = createContext(canvas, { preserveDrawingBuffer: true });
   parts.context = made;
   parts.canvases.push(canvas);
   if (made) scenes = drawableScenes(scenes, simSupport(made.gl, made.mode));
@@ -617,6 +635,10 @@ function buildVisualizer(root, {
   driftField.box.title = 'Scene and effect settings wander slowly with the music';
   driftField.box.checked = driftOn;
   sceneSection.body.append(driftField.field);
+  const colourTravelField = checkField('Color travel', 'viz-color-travel');
+  colourTravelField.box.title = 'Colors shift slowly with the music';
+  colourTravelField.box.checked = colourTravelChoice;
+  if (colourTravelEnabled) fxSection.body.append(colourTravelField.field);
   const fxLine = el('p', 'viz-fx-line', { 'aria-live': 'polite' });
   fxLine.hidden = true;
   const fxNote = el('p', 'viz-fx-note', { 'aria-live': 'polite' });
@@ -994,7 +1016,12 @@ function buildVisualizer(root, {
       const drawing = (status.mode === LOOP_MODES.live || status.mode === LOOP_MODES.idle) && !status.throttled;
       if (!drawing) suspendDensityWorker();
     }
-    if (status.mode === LOOP_MODES.still) say(MESSAGES.stillMotion);
+    if (status.mode === LOOP_MODES.rest && transition?.showingWarp) transition.finishNow({ keepFade: true });
+    if (status.mode === LOOP_MODES.still) {
+      transition?.finishNow();
+      cancelAutomaticScene();
+      say(MESSAGES.stillMotion);
+    }
     else if (!lost && message.textContent === MESSAGES.stillMotion) say('');
     const text = fpsText(status);
     if (text !== lastReadout) {
@@ -1009,7 +1036,8 @@ function buildVisualizer(root, {
   // Its plans come from the ids alone: it draws no random numbers.
   const driftClock = createDriftClock();
   // Song structure (structure.js): only while released.
-  const structure = SONG_STRUCTURE_RELEASED ? createStructureDetector() : null;
+  const structure = SONG_STRUCTURE_RELEASED && dev?.structure ? createStructureDetector() : null;
+  const colourClock = colourTravelEnabled ? createColourTravel() : null;
   // The deepest drift the flash check measured: a loud swell at the
   // energetic mood's strength.
   const driftMost = driftScale(1, Math.max(...Object.values(MOOD_STRENGTH)));
@@ -1044,6 +1072,7 @@ function buildVisualizer(root, {
       driftAt = state.time;
       const music = bridge.music();
       driftClock.step(dt, music.live ? music.bpm : 0);
+      colourClock?.step(driftClock.bars, state.live && mood.tempo.sure);
     }
     const target = driftOn ? 1 : 0;
     if (state.still) driftFade = target;
@@ -1128,11 +1157,14 @@ function buildVisualizer(root, {
 
   /** The scene, through the FX chain when effects are on (else straight to
    *  the screen: the chain is bypassed). */
+  let travelAllowed = false;
+  let heldPreview = false;
   let reactionsAt = Number.NaN;
   let overlayAt = Number.NaN; // the frame the overlays were last drawn for
   let overlayClock = Number.NaN; // their real time then (s)
   let overlayDepth = 0; // their sheets' motion depth (drift's scale), held while still
-  function drawFrame(state) {
+  let hasPresented = false;
+  function drawFrame(state, advanceWarp = false) {
     if (!renderer) return false;
     // The overlays move once a frame (not again for the old scene under a
     // cross-fade), in real time, and only while the picture moves.
@@ -1152,17 +1184,34 @@ function buildVisualizer(root, {
       // Their settings drift too (overlay-drift.js OVERLAY_VALUE_DRIFT_RELEASED).
       if (OVERLAY_VALUE_DRIFT_RELEASED) overlayLayer.drift(driftState.bars, overlayDepth);
     }
+    if (colourClock) {
+      const angle = colourTravelOn && !loop?.reducedMotion && travelAllowed ? colourClock.angle : 0;
+      fxChain?.setColourTravel(angle);
+    }
+    const showingWarp = transition?.showingWarp;
+    const warpFrameAt = showingWarp && advanceWarp ? clock() : null;
+    const warpProgress = showingWarp
+      ? (warpFrameAt === null ? transition.warpProgress : transition.nextWarpProgress(warpFrameAt)) : null;
+    if (warpProgress !== null) fxChain?.setWarpProgress(warpProgress);
     if (fxChain && !fxChain.active && fxChain.holding) fxChain.release();
     const target = fxChain?.active && !lost ? fxChain.begin(renderer.width, renderer.height) : null;
-    if (!target) return renderer.draw(state);
+    // Keep the last drawn picture if the dissolve cannot be composited.
+    if (!target) {
+      const presented = warpProgress === null && renderer.draw(state);
+      hasPresented ||= presented;
+      return presented;
+    }
     // Flash and pump are slew-limited per second: a frame drawn twice (the
     // old scene under a cross-fade) moves them once.
     const fresh = state.time !== reactionsAt;
     reactionsAt = state.time;
     fxChain.setReactions(reactions.step(state.sources, fxIntensity, fxFlash, fresh ? state.dt : 0));
     const drawn = renderer.draw(state, target);
-    if (drawn) fxChain.finish(state);
-    return drawn;
+    const composited = drawn && fxChain.finish(state);
+    const presented = composited || (!hasPresented && warpProgress === 0 && fxChain.drawFrozenWarp());
+    hasPresented ||= presented;
+    if (showingWarp && presented) transition.presentWarp(warpProgress, composited ? warpFrameAt : null);
+    return composited;
   }
 
   /* ---- Developer strip (off unless asked for; never touched while off) ---- */
@@ -1196,7 +1245,7 @@ function buildVisualizer(root, {
   }
 
   /* ---- Shuffle state ---- */
-  const shuffle = createShuffle({ scenes, random: random || seededRandom(Math.floor(clock() * 1000) ^ 0x5eed) });
+  const shuffle = createShuffle({ scenes: scenes.filter((entry) => !entry.devOnly), random: random || seededRandom(Math.floor(clock() * 1000) ^ 0x5eed) });
   const shuffleTimer = createShuffleTimer({ bars: shuffleBars });
   // The looks the shuffle chose (this visit only; a look chosen by hand is
   // saved as before and takes over), and the scenes it still has to choose a
@@ -1324,7 +1373,8 @@ function buildVisualizer(root, {
         if (!sized) return false;
         lastState = state;
         stepDrift(state);
-        const drawn = drawFrame(state);
+        // Redraws reuse the last blend. Only a new animation frame advances it.
+        const drawn = drawFrame(state, !state.still && state.dt > 0);
         if (debug && debugEl) tickDebug();
         // Frame intervals only: nothing is read back from the GPU.
         // Not while another scene is being prepared: the one being drawn is
@@ -1392,13 +1442,20 @@ function buildVisualizer(root, {
     // has shown its minimum time; never an extra change). Its bar clock is
     // the mood's own beat count, which runs only while that tempo is sure.
     const structureEvent = structure ? structure.step(mood.beats, bridge.adapter.levelDb) : null;
-    if (structureEvent === 'drop' && shuffleOn && started && !lost) shuffleTimer.bringForward();
     bridge.setStrength(mood.strength);
     showMood();
     fxStep(nowSec, music);
-    if (!shuffleOn || !started || lost || !switcher?.current) return;
+    if (!shuffleOn || !started || lost || loop.reducedMotion || !switcher?.current || heldPreview) return;
     if (!nextPick) chooseNext();
-    if (!shuffleTimer.step(nowSec, music.beats, music.confidence)) return;
+    const due = shuffleTimer.step(nowSec, music.beats, music.confidence);
+    if (!due) {
+      // A drop only brings a ready scene forward. An unready scene or full
+      // flash budget leaves the regular shuffle on its own schedule.
+      if (structureEvent !== 'drop' || fxOnlyPick || !nextPick || nextPick === switcher.current
+        || switcher.busy || transition.busy || !switcher.staged(nextPick) || !eligible(nextPick)
+        || !bridge.limiter.room(nowSec)
+        || !bringDropForward(shuffleTimer, { shuffleOn, reducedMotion: loop.reducedMotion })) return;
+    }
     if (!nextPick || switcher.busy || transition.busy) return;
     if (fxOnlyPick) {
       const id = nextPick;
@@ -1428,8 +1485,7 @@ function buildVisualizer(root, {
     if (!eligible(nextPick)) { forgetNext(); return; }
     const id = nextPick;
     nextPick = null;
-    shuffleStats.changes += 1;
-    showScene(id);
+    showScene(id, { automatic: true });
   }
 
   /** The pool's rules now (one object, filled in again). */
@@ -1551,7 +1607,19 @@ function buildVisualizer(root, {
       // The change of picture: now (0), or in that many ms (one in progress).
       // Into a density lab: the cross-fade waits for its picture (up to
       // CROSSFADE_STRETCH_MS), judged by its mean brightness as shown.
-      beforeInstall: (id) => transition.begin(densityFadeFor(id)),
+      beforeInstall: (id) => {
+        const from = switcher.current;
+        let dissolve = false;
+        if (!background && from && id !== from) {
+          if (!WARP_DISSOLVE_RELEASED || !dev?.warpDissolve) dissolve = 'disabled';
+          else if (loop.reducedMotion) dissolve = 'reduced-motion';
+          else if (loop.mode === LOOP_MODES.rest) dissolve = 'at-rest';
+          else if (loop.throttled) dissolve = 'throttled';
+          else if (entryOf(id)?.devOnly || entryOf(from)?.devOnly) dissolve = 'held-preview';
+          else dissolve = true;
+        }
+        return transition.begin({ ...densityFadeFor(id), dissolve });
+      },
       timers: { setTimer: loopOptions.setTimer, clearTimer: loopOptions.clearTimer, clock: loopOptions.clock },
       onChange: ({ state, id, current }) => {
         if (destroyed) return;
@@ -1566,9 +1634,14 @@ function buildVisualizer(root, {
           const wasVeryHigh = drawsAtVeryHigh(entryOf(sizedScene));
           const levelChanged = stepDown.newScene(id);
           budgetSteer.reset();
+          if (sizedScene !== id) shuffleTimer.restart();
           sizedScene = id;
+          heldPreview = entryOf(id)?.devOnly === true;
+          travelAllowed = Boolean(colourClock && colourTravelAllowed(entryOf(id)));
           if (levelChanged || wasPixels !== sceneMaxPixels(id, tq())
-            || (stepDown.quality === VISUALIZER_QUALITY_VERY_HIGH && wasVeryHigh !== drawsAtVeryHigh(entryOf(id)))) applySize(true);
+            || (stepDown.quality === VISUALIZER_QUALITY_VERY_HIGH && wasVeryHigh !== drawsAtVeryHigh(entryOf(id)))) {
+            applySize(true, { keepDissolve: true });
+          }
           showQualityNote();
           if (levelChanged) loop?.setFps(stepDown.fps);
           transition.applied();
@@ -1604,7 +1677,16 @@ function buildVisualizer(root, {
           if (message.textContent === MESSAGES.sceneFailed || message.textContent === MESSAGES.noScene) say('');
           if (!started) drawStill();
           redrawIfHeld();
+          if (automaticScene === id) {
+            automaticScene = null;
+            shuffleStats.changes += 1;
+            saveScene();
+          }
         } else if (state === SWITCH_STATES.failed) {
+          if (automaticScene === id) {
+            automaticScene = null;
+            sceneAsked = current || savedScene;
+          }
           stopPreparing();
           if (current) {
             sceneList.setCurrent(current);
@@ -1658,11 +1740,29 @@ function buildVisualizer(root, {
       brightness: () => (brightness >= VISUALIZER_BRIGHTNESS_MAX ? 1 : brightness / 100),
       // Only over a moving, seen picture that has something to change from.
       enabled: () => Boolean(started && !isHidden() && sized && !lost && loop
-        && loop.mode !== LOOP_MODES.still && renderer?.definition),
-      drawOld: () => Boolean(drawFrame(lastState || STILL_STATE)),
+        && !loop.reducedMotion && renderer?.definition),
+      drawOld: () => made.gl.getContextAttributes?.()?.preserveDrawingBuffer
+        ? hasPresented : drawFrame(lastState || STILL_STATE),
       charge: () => !bridge || bridge.limiter.transition(clock() / 1000),
+      debug: dev?.debug,
+      warp: WARP_DISSOLVE_RELEASED && dev?.warpDissolve && fxChain ? {
+        capture: (drawOld) => fxChain.captureWarp(renderer.width, renderer.height, drawOld),
+        release: () => fxChain.endWarp(),
+        redraw: () => {
+          if (destroyed || lost || isHidden()) return;
+          if (started) loop.redraw();
+          else drawStill();
+        },
+      } : null,
     });
     cleanups.push(() => transition.finishNow());
+    if (dev?.debug) {
+      const counters = transition.dissolveStats;
+      win.__worldmediaVizDebug = counters;
+      cleanups.push(() => {
+        if (win.__worldmediaVizDebug === counters) delete win.__worldmediaVizDebug;
+      });
+    }
   }
   /** The stretch for a change to scene `id`: { ready } into a density lab
    *  (the pictures made after now), else none. */
@@ -1766,12 +1866,16 @@ function buildVisualizer(root, {
     if (!current) return;
     const count = current.list.length;
     const index = current.list[(((current.at + step) % count) + count) % count].number;
-    shuffleLooks.delete(current.id); // chosen by hand: saved, and it counts
-    looks = withLook(looks, current.id, index, current.start, knownIds);
+    const preview = entryOf(current.id)?.devOnly;
+    if (preview) shuffleLooks.set(current.id, index);
+    else {
+      shuffleLooks.delete(current.id);
+      looks = withLook(looks, current.id, index, current.start, knownIds);
+    }
     showLookValues();
     showLook();
     showStar();
-    saveSettings?.({ visualizerLooks: looks });
+    if (!preview) saveSettings?.({ visualizerLooks: looks });
   }
   /** Looks changed in the settings (another window, or a reset). */
   function followLooks(nextLooks) {
@@ -1788,7 +1892,7 @@ function buildVisualizer(root, {
    *  { scene, look, fx, overlays } or null. */
   function shownFavourite() {
     const id = switcher?.current;
-    if (!id) return null;
+    if (!id || entryOf(id)?.devOnly) return null;
     const current = lookState();
     // Only what is drawn: on a calm scene, not the effects it leaves out;
     // the overlays with the blend-in they are drawn with.
@@ -2203,7 +2307,7 @@ function buildVisualizer(root, {
       if (fxReady()) { if (started) startFx(); } else if (started) ensureFx();
     } else {
       fxScene = null;
-      if (fxChain?.active || fxChosen.length) changeFx(null);
+      if (fxChain?.count || fxChosen.length) changeFx(null);
     }
     showFx();
     if (save) saveSettings?.({ visualizerFx: fxOn });
@@ -2274,7 +2378,7 @@ function buildVisualizer(root, {
     const failed = overlayFailedIds();
     const made = overlaysOn && overlayCombo ? overlayCombo.items.filter((item) => !failed.includes(item.id)) : [];
     const values = new Map(made.map((item) => [item.id, item.values]));
-    const allowed = overlaysDrawnFor(entry, made).map((item) => ({ ...item, values: values.get(item.id) || {} }));
+    const allowed = (entry?.devOnly ? [] : overlaysDrawnFor(entry, made)).map((item) => ({ ...item, values: values.get(item.id) || {} }));
     const most = Math.max(0, overlayDrawMax());
     if (allowed.length <= most) return { allowed, drawn: allowed };
     const keep = new Set([...allowed]
@@ -2673,25 +2777,40 @@ function buildVisualizer(root, {
   /** Show scene `id` (shuffle, or previous / next through its trail). The
    *  transition charges the flash budget; when it is full a change by hand
    *  still happens, more slowly. */
-  function showScene(id) {
+  function showScene(id, { automatic = false } = {}) {
     sceneAsked = normalizeVisualizerScene(id);
-    shuffleTimer.restart();
+    automaticScene = automatic ? sceneAsked : null;
+    shuffleTimer.restart({ hold: !automatic });
     if (nextPick === sceneAsked) nextPick = null;
     if (started) switcher?.request(sceneAsked);
-    saveSettings?.({ visualizerScene: sceneAsked });
+    if (!automatic) saveScene();
+  }
+
+  /** A shuffle install can still be waiting for the fallback dip. */
+  function cancelAutomaticScene() {
+    if (!automaticScene || !switcher?.current) return;
+    automaticScene = null;
+    sceneAsked = switcher.current;
+    transition?.finishNow({ keepFade: true });
+    switcher.request(sceneAsked);
   }
 
   /** Show scene `id` (remembered by the caller in the settings). Before the
    *  picture moves (the notice, or paused) it is only remembered: nothing
    *  is loaded or compiled until then. */
-  function askScene(id) {
-    sceneAsked = normalizeVisualizerScene(id);
+  function askScene(id, { manual } = {}) {
+    sceneAsked = sceneForChoice(id);
+    if (manual && automaticScene && sceneAsked === switcher?.current) {
+      // Reselecting the current scene cancels a shuffle waiting in its dip.
+      transition.finishNow({ keepFade: true });
+    }
+    automaticScene = null;
+    if (started || manual) shuffleTimer.restart({ hold: manual });
     if (!started) return;
     // The shuffle may pick heavier scenes again. The step-down is the
     // scene's own, set when it is installed (stepDown.newScene).
     setCostCap(null);
     stepDown.restart();
-    shuffleTimer.restart();
     if (nextPick === sceneAsked) nextPick = null;
     switcher?.request(sceneAsked);
   }
@@ -2703,7 +2822,7 @@ function buildVisualizer(root, {
    *  favourites shuffle, what was starred is shown, not chosen anew. */
   function chooseScene(id, { favourite = false } = {}) {
     if (!id) return;
-    const sceneId = normalizeVisualizerScene(id);
+    const sceneId = sceneForChoice(id);
     const showing = started && switcher?.current === sceneId;
     const shown = favourite && showing ? shownFavourite() : null;
     const entry = favourite
@@ -2715,9 +2834,9 @@ function buildVisualizer(root, {
     // onChange); this one: in place, after the request (which would drop a
     // look's new compile asked for before it).
     recall = entry && !showing ? entry : null;
-    askScene(id);
+    askScene(id, { manual: true });
     if (entry && showing) recallFavourite(entry, sceneId, { inPlace: true });
-    saveSettings?.({ visualizerScene: sceneAsked });
+    saveScene();
   }
   /** Favourite `entry` picked by hand (chooseScene), for scene `id` now
    *  shown: its effects and overlays, each when that part is on. With a new
@@ -2783,6 +2902,7 @@ function buildVisualizer(root, {
     shufflePool = pool;
     showShuffleChoice();
     if (changed) {
+      cancelAutomaticScene();
       forgetNext();
       poolEmpty = false;
       nothingNew = false;
@@ -2832,6 +2952,7 @@ function buildVisualizer(root, {
     started = false;
     loop.stop();
     hud.setActive(false);
+    cancelAutomaticScene();
     forgetNext();
     // A scene still loading or compiling is dropped (asked again on Continue).
     if (switcher.busy && switcher.current) switcher.request(switcher.current);
@@ -2926,18 +3047,25 @@ function buildVisualizer(root, {
       else switcher.request(switcher.current, { reload: true });
     }, 'size');
   }
-  function applySize(now = false) {
-    if (!renderer || lost) return;
+  function applySize(now = false, { keepDissolve = false } = {}) {
+    if (!renderer || lost || destroyed) return;
     const size = sizeNow();
     if (!size.width) return;
+    const resized = size.width !== renderer.width || size.height !== renderer.height;
+    // The outgoing snapshot uses normalized coordinates, so the incoming
+    // scene can start the dissolve at its own drawing size.
+    if (resized && transition?.showingWarp && !keepDissolve) {
+      if (!transition.beforeResize(() => applySize(true))) return;
+      now = true; // The fallback is already covering this change.
+    }
     const def = renderer.definition;
     if (!now && started && def && ownsPasses(def)
-      && (size.width !== renderer.width || size.height !== renderer.height
-        || JSON.stringify(renderer.caps) !== JSON.stringify(simCapsWithExtras(def.name, tq(), sceneCaps(def.name, tq()), budget.level)))) {
+      && (resized || JSON.stringify(renderer.caps) !== JSON.stringify(simCapsWithExtras(def.name, tq(), sceneCaps(def.name, tq()), budget.level)))) {
       guardedChange(() => applySize(true), 'size');
       return;
     }
     const changed = renderer.resize(size.width, size.height);
+    if (changed) hasPresented = false;
     // A lower quality also lowers the heaviest scenes' own detail (scenes.js SCENE_QUALITY_CAPS).
     renderer.setQuality?.(tq());
     overlayLayer?.resize(renderer.width, renderer.height, tq());
@@ -2963,6 +3091,25 @@ function buildVisualizer(root, {
         deviceHeight = size.height;
       }
     } catch (_) {}
+  }
+
+  function setColourTravel(on) {
+    if (on === colourTravelChoice) return;
+    colourTravelChoice = on;
+    colourTravelField.box.checked = on;
+    if (!travelAllowed || loop?.reducedMotion) {
+      pendingChanges.delete('color-travel');
+      colourTravelOn = on;
+      return;
+    }
+    if (on === colourTravelOn) {
+      pendingChanges.delete('color-travel');
+      return;
+    }
+    guardedChange(() => {
+      colourTravelOn = on;
+      redrawIfHeld();
+    }, 'color-travel');
   }
 
   function applySettings(settings) {
@@ -3035,6 +3182,7 @@ function buildVisualizer(root, {
     if (more.visualizerFxIntensity !== fxIntensity) fxIntensity = more.visualizerFxIntensity;
     fxFlash = more.visualizerFxFlash;
     if (more.visualizerDrift !== driftOn) setDrift(more.visualizerDrift);
+    setColourTravel(more.visualizerColorTravel);
     fxSet = more.visualizerFxSet;
     if (more.visualizerFx !== fxOn) setFxOn(more.visualizerFx, { save: false });
     showFxChoice();
@@ -3050,7 +3198,10 @@ function buildVisualizer(root, {
       if (!everStarted && renderer) acceptNotice();
     }
     const nextScene = normalizeVisualizerScene(settings?.visualizerScene);
-    if (nextScene !== sceneAsked) askScene(nextScene);
+    if (nextScene !== sceneAsked && (!(automaticScene || entryOf(sceneAsked)?.devOnly) || nextScene !== savedScene)) {
+      askScene(nextScene);
+    }
+    savedScene = nextScene;
     const nextLooks = normalizeVisualizerLooks(settings?.visualizerLooks);
     if (JSON.stringify(nextLooks) !== JSON.stringify(looks)) followLooks(nextLooks);
   }
@@ -3079,6 +3230,7 @@ function buildVisualizer(root, {
     listen(canvas, 'webglcontextlost', (event) => {
       event.preventDefault(); // ask for the context back
       lost = true;
+      hasPresented = false;
       transition.finishNow();
       if (nextPick) lookToPick.delete(nextPick);
       nextPick = null;
@@ -3195,6 +3347,10 @@ function buildVisualizer(root, {
       setDrift(driftField.box.checked);
       saveSettings?.({ visualizerDrift: driftOn });
     });
+    if (colourTravelEnabled) listen(colourTravelField.box, 'change', () => {
+      setColourTravel(colourTravelField.box.checked);
+      saveSettings?.({ visualizerColorTravel: colourTravelChoice });
+    });
     listen(shuffleBarsField.select, 'change', () => {
       shuffleBars = normalizeVisualizerExtras({ visualizerShuffleBars: shuffleBarsField.select.value }).visualizerShuffleBars;
       shuffleTimer.setBars(shuffleBars);
@@ -3274,8 +3430,9 @@ function buildVisualizer(root, {
     get favourites() { return favourites; },
     get costCap() { return costCap; },
     get shuffleCostMax() { return shuffleCostMax(); },
-    get fading() { return transition?.phase === 'fading'; },
+    get fading() { return transition?.phase === 'fading' || transition?.phase === 'warping'; },
     get transition() { return transition; },
+    ...(dev?.debug ? { dissolveStats: transition?.dissolveStats } : {}),
     /** Post effects: the chain, the shuffle (once loaded), what is on. */
     /** Slow drift: the clock, what the picture reads now, on or off. */
     drift: {
@@ -3357,6 +3514,7 @@ function buildVisualizer(root, {
       fxIntensity: fxIntensityField.select,
       fxFlash: fxFlashField.box,
       drift: driftField.box,
+      colorTravel: colourTravelField.box,
       fxLine,
       fxList: fxListEl,
       sectionHeads: [...sections.values()].map((part) => part.head),

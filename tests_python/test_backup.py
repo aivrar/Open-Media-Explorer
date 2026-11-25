@@ -20,8 +20,8 @@ from worldmedia_backup import (
     playlist_export_text,
     safe_export_name,
 )
-from worldmedia_playlists import PlaylistStore, parse_playlist
-from worldmedia_runtime import RuntimePaths
+from worldmedia_playlists import BACKUP_STREAM_TAG, PlaylistStore, parse_playlist
+from worldmedia_runtime import RuntimePaths, save_profile_transfer
 
 NOW = datetime(2026, 11, 14, 22, 15, 0)
 TOKEN = "session-token-" + "Q" * 50
@@ -77,7 +77,69 @@ class BackupTestCase(unittest.TestCase):
         return sorted(path.name for path in folder.iterdir()) if folder.exists() else []
 
 
+class BackupExportTests(unittest.TestCase):
+    def test_backup_only_favorite_promotes_its_first_usable_address(self) -> None:
+        item = favorite(stream_url="")
+        first = "https://radio.example.org/first.mp3"
+        second = "https://radio.example.org/second.mp3"
+        edits = {item["id"]: {"main": "", "backups": ["invalid", first, second]}}
+
+        exports, written, skipped = build_favorite_exports([item], edits=edits)
+        self.assertEqual((written, skipped), (1, 0))
+        radio, = parse_playlist(exports["favorites-radio.m3u8"], "radio")["items"]
+        self.assertEqual(radio["stream_url"], first)
+        self.assertEqual(radio["_extra"]["backupStreamUrls"], [second])
+
+
 class BackupContentsTests(BackupTestCase):
+    def test_picture_settings_go_only_in_extra_profile_and_are_backed_up(self) -> None:
+        key = "worldmedia.picture.v1"
+        picture = json.dumps({"main": {"brightness": 115}, "channels": {"tv:one": {"fit": "zoom-125"}}})
+        save_profile_transfer({"worldmedia.favorites.v1": "[]", key: picture}, self.paths)
+
+        _, archive = self.backup()
+        legacy = json.loads(self.text(archive, DATA + "profile-preferences.json"))
+        extra = json.loads(self.text(archive, DATA + "profile-preferences-extra.json"))
+        self.assertEqual(legacy["values"], {"worldmedia.favorites.v1": "[]"})
+        self.assertEqual(extra["values"], {key: picture})
+
+    def test_stream_edits_and_imported_backups_round_trip_through_m3u(self) -> None:
+        original = "https://tv.example.org/original.m3u8"
+        imported_backup = "https://tv.example.org/imported.m3u8"
+        replacement = "https://tv.example.org/edited.m3u8"
+        backup1 = "https://backup.example.org/first.m3u8"
+        backup2 = "https://backup.example.org/second.m3u8"
+        tagged = f"{BACKUP_STREAM_TAG}{imported_backup}\n"
+        imported = self.store.import_file({"name": "Edited TV", "default_type": "tv", "text": (
+            f"#EXTM3U\n#EXTINF:-1,Edited\n{tagged}{original}\n"
+            f"#EXTINF:-1,Kept\n{tagged}https://tv.example.org/kept.m3u8\n"
+            f"#EXTINF:-1,Removed backups\n{tagged}https://tv.example.org/no-backups.m3u8\n"
+        )})
+        edited, _, removed = imported["playlist"]["items"]
+        saved_radio = favorite(stream_url="")
+        radio_main = "https://radio.example.org/now.mp3"
+        radio_backup = "https://radio.example.org/fallback.mp3"
+        save_profile_transfer({
+            "worldmedia.favorites.v1": json.dumps([saved_radio]),
+            "worldmedia.stationstreams.v1": json.dumps({"version": 1, "stations": {
+                edited["id"]: {"main": replacement, "backups": [backup2, backup1]},
+                removed["id"]: {"main": "", "backups": []},
+                saved_radio["id"]: {"main": radio_main, "backups": [radio_backup]},
+            }}),
+        }, self.paths)
+
+        _, archive = self.backup()
+        text = self.text(archive, "exports/Edited TV.m3u8")
+        self.assertNotIn(original, text)
+        round_trip = parse_playlist(text, "tv")["items"]
+        self.assertEqual(round_trip[0]["stream_url"], replacement)
+        self.assertEqual(round_trip[0]["_extra"]["backupStreamUrls"], [backup2, backup1])
+        self.assertEqual(round_trip[1]["_extra"]["backupStreamUrls"], [imported_backup])
+        self.assertNotIn("backupStreamUrls", round_trip[2]["_extra"])
+        radio = parse_playlist(self.text(archive, "exports/favorites-radio.m3u8"), "radio")["items"][0]
+        self.assertEqual(radio["stream_url"], radio_main)
+        self.assertEqual(radio["_extra"]["backupStreamUrls"], [radio_backup])
+
     def test_layout_state_copies_and_summary(self) -> None:
         self.store.import_file({"name": "My TV", "text": "#EXTM3U\n#EXTINF:-1,News\nhttps://tv.example.org/news.m3u8\n",
                                 "default_type": "tv"})

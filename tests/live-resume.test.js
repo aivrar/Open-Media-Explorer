@@ -61,6 +61,14 @@ function harness(outcome = () => 'retry') {
   return { clock, log, resume };
 }
 
+async function playFor(clock, resume, ms) {
+  for (let elapsed = 0; elapsed < ms; elapsed += 1000) {
+    const step = Math.min(1000, ms - elapsed);
+    await clock.advance(step);
+    resume.noteProgress(step);
+  }
+}
+
 test('the backoff grows 2, 4, 8, 16 s and then stays at 30 s', async () => {
   assert.deepEqual(RECONNECT_DELAYS_MS, [2000, 4000, 8000, 16000, 30000]);
   assert.deepEqual([0, 1, 2, 3, 4, 5, 9].map(reconnectDelay), [2000, 4000, 8000, 16000, 30000, 30000, 30000]);
@@ -111,27 +119,65 @@ test('the deadline ends the episode with the give-up callback and bounded attemp
   assert.equal(log.attempts.length, count);
 });
 
+test('a moving stream gets probation beyond the reconnect deadline', async () => {
+  const clock = fakeClock();
+  const log = { gaveUp: 0, recovered: 0 };
+  const resume = createLiveResume({
+    runAttempt: async () => 'ok',
+    onGiveUp: () => { log.gaveUp++; },
+    onRecovered: () => { log.recovered++; },
+    setTimer: clock.setTimer, clearTimer: clock.clearTimer, now: clock.now,
+    delays: [5_000], windowMs: 10_000,
+  });
+  resume.failed();
+  await clock.advance(5_000);
+  await playFor(clock, resume, 6_000);
+  assert.equal(log.gaveUp, 0);
+  assert.equal(resume.active, true);
+  await playFor(clock, resume, 24_000);
+  assert.equal(log.recovered, 1);
+  assert.equal(clock.pending, 0);
+
+  resume.failed();
+  await clock.advance(5_000 + RECONNECT_RESUME_MS);
+  assert.equal(log.gaveUp, 1, 'a restart with no progress still gives up');
+  assert.equal(clock.pending, 0);
+});
+
+test('sparse playback at the probation deadline retries within the same episode', async () => {
+  const { clock, log, resume } = harness(() => 'ok');
+  resume.failed();
+  const deadline = resume.deadline;
+  await clock.advance(2000);
+  for (const gap of [17_000, 18_000, 14_000]) {
+    await clock.advance(gap);
+    resume.noteProgress(1000);
+  }
+  await clock.advance(1000);
+  assert.equal(log.recovered, 0);
+  assert.equal(resume.deadline, deadline);
+  assert.equal(resume.waiting, true);
+  await clock.advance(4000);
+  assert.deepEqual(log.attempts, [2000, 56_000]);
+});
+
 test('30 s of stable playback ends the episode; a brief playing does not', async () => {
   const { clock, log, resume } = harness(() => 'ok');
   resume.failed();
   await clock.advance(2000);
   assert.equal(log.attempts.length, 1);
-  resume.notePlaying();
-  await clock.advance(5000);
+  await playFor(clock, resume, 5000);
   // Dropped again after only 5 s: the same episode continues with the next delay.
   resume.failed();
   assert.equal(resume.active, true);
   assert.deepEqual(log.waits, [2000, 4000]);
   await clock.advance(4000);
   assert.equal(log.attempts.length, 2);
-  resume.notePlaying();
-  await clock.advance(20_000);
-  resume.noteInterrupted(); // brief buffering pauses the count, it does not reset it
-  await clock.advance(3000);
-  resume.notePlaying();
-  await clock.advance(10_000 - 1);
+  await playFor(clock, resume, 20_000);
+  await clock.advance(3000); // brief buffering pauses the count
+  await playFor(clock, resume, 10_000 - 1);
   assert.equal(resume.active, true);
-  await clock.advance(1);
+  await playFor(clock, resume, 1);
   assert.equal(resume.active, false, '30 s of playing time in total');
   assert.equal(log.recovered, 1);
   assert.equal(log.gaveUp, 0);
@@ -203,9 +249,8 @@ test('an interrupted recovery that never plays again is retried, never left idle
   const { clock, log, resume } = harness(() => 'ok');
   resume.failed();
   await clock.advance(2000);
-  resume.notePlaying();
-  await clock.advance(10_000);
-  resume.noteInterrupted(); // stalled; no error and no further playing
+  await playFor(clock, resume, 10_000);
+  // The playhead stops here without an error.
   assert.ok(resume.pendingWork > 0, 'something is always pending while active');
   await clock.advance(RECONNECT_RESUME_MS - 1);
   assert.equal(log.waits.length, 1);
@@ -213,21 +258,18 @@ test('an interrupted recovery that never plays again is retried, never left idle
   assert.deepEqual(log.waits, [2000, 4000], 'treated as a failure: the next delay is queued');
   await clock.advance(4000);
   assert.equal(log.attempts.length, 2);
-  // Playing again within the window cancels it.
-  resume.notePlaying();
-  resume.noteInterrupted();
+  // Progress resumes just before the playback timeout.
   await clock.advance(RECONNECT_RESUME_MS - 1);
-  resume.notePlaying();
-  await clock.advance(RECONNECT_RESUME_MS);
+  resume.noteProgress(1);
+  await playFor(clock, resume, RECONNECT_STABLE_MS - 1);
   assert.equal(log.waits.length, 2);
-  await clock.advance(RECONNECT_STABLE_MS);
   assert.equal(resume.active, false);
   assert.equal(log.recovered, 1);
 });
 
 test('an active episode always has exactly one timer, whatever order events arrive in', async () => {
   // Attempts take a few seconds and end ok, retry, or hang until their
-  // timeout; playing/waiting/failures arrive at pseudo-random moments,
+  // timeout; progress and failures arrive at pseudo-random moments,
   // including in the middle of attempts.
   let seed = 12345;
   const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
@@ -239,13 +281,12 @@ test('an active episode always has exactly one timer, whatever order events arri
     }));
     resume.failed();
     for (let step = 0; step < 2000 && resume.active; step++) {
-      // Exactly one: a stable timer armed beside a running attempt would show as 2.
+      // Exactly one: a probation timer beside a running attempt would show as 2.
       assert.equal(resume.pendingWork, 1, `run ${run} step ${step} at ${clock.now()} ms`);
       const roll = random();
-      if (roll < 0.25) resume.notePlaying();
-      else if (roll < 0.45) resume.noteInterrupted();
-      else if (roll < 0.5) resume.failed();
-      else if (roll < 0.53) resume.networkBack();
+      if (roll < 0.25) resume.noteProgress(500);
+      else if (roll < 0.3) resume.failed();
+      else if (roll < 0.33) resume.networkBack();
       assert.equal(resume.pendingWork, resume.active ? 1 : 0, `after event, run ${run} step ${step}`);
       await clock.advance(250 + Math.floor(random() * 2000));
     }
@@ -260,9 +301,8 @@ test('playing during a slow attempt cannot finish the episode or escape the atte
   resume.failed();
   await clock.advance(2000);
   assert.equal(resume.inFlight, true);
-  resume.notePlaying(); // e.g. the stream plays while click tracking still runs
+  await playFor(clock, resume, RECONNECT_STABLE_MS + 5000);
   assert.equal(resume.pendingWork, 1, 'only the attempt timeout is armed');
-  await clock.advance(RECONNECT_STABLE_MS + 5000);
   assert.equal(log.recovered, 0, 'no recovery while the attempt is still running');
   assert.equal(resume.inFlight, true);
   await clock.advance(RECONNECT_ATTEMPT_TIMEOUT_MS - (RECONNECT_STABLE_MS + 5000));
@@ -275,14 +315,13 @@ test('playing time seen during an attempt counts once it settles ok', async () =
   const { clock, log, resume } = harness(() => new Promise((resolve) => { finish = resolve; }));
   resume.failed();
   await clock.advance(2000);
-  resume.notePlaying();
-  await clock.advance(20_000);
+  await playFor(clock, resume, 20_000);
   finish('ok');
   await flush();
   assert.equal(resume.pendingWork, 1);
-  await clock.advance(10_000 - 1);
+  await playFor(clock, resume, 10_000 - 1);
   assert.equal(log.recovered, 0);
-  await clock.advance(1);
+  await playFor(clock, resume, 1);
   assert.equal(log.recovered, 1);
 });
 
@@ -291,8 +330,7 @@ test('an interruption during an attempt is kept: ok then waits for playback to c
   const { clock, log, resume } = harness(() => new Promise((resolve) => { finish = resolve; }));
   resume.failed();
   await clock.advance(2000);
-  resume.notePlaying();
-  resume.noteInterrupted(); // stalled again before the attempt reported back
+  await playFor(clock, resume, 1000); // stalled again before the attempt reported back
   finish('ok');
   await flush();
   assert.equal(resume.active, true);
@@ -307,12 +345,9 @@ test('a mostly-working stream recovers; flapping between reconnects does not add
   const steady = harness(() => 'ok');
   steady.resume.failed();
   await steady.clock.advance(2000);
-  steady.resume.notePlaying();
-  await steady.clock.advance(25_000);
-  steady.resume.noteInterrupted();
+  await playFor(steady.clock, steady.resume, 25_000);
   await steady.clock.advance(2000);
-  steady.resume.notePlaying();
-  await steady.clock.advance(5000);
+  await playFor(steady.clock, steady.resume, 5000);
   assert.equal(steady.resume.active, false);
   assert.equal(steady.log.recovered, 1);
 
@@ -326,8 +361,7 @@ test('a mostly-working stream recovers; flapping between reconnects does not add
       await flapping.clock.advance(1000);
     }
     if (!flapping.resume.active) break;
-    flapping.resume.notePlaying();
-    await flapping.clock.advance(5000);
+    await playFor(flapping.clock, flapping.resume, 5000);
     flapping.resume.failed();
   }
   assert.equal(flapping.log.recovered, 0);

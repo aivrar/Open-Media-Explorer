@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FakeElement, createPlayerDom } from './helpers/fake-dom.js';
-import { emit, getState, subscribe } from '../src/lib/state.js';
+import { addFavorite, emit, getState, subscribe } from '../src/lib/state.js';
+import { saveStationStreams } from '../src/lib/station-stream-edit.js';
+import { didNotPlayAt, markDidNotPlay } from '../src/lib/did-not-play.js';
+import { forgetLoadedPlayedStreams, playedStreamOf, stationStreamLabel } from '../src/lib/played-streams.js';
+import Hls from '../src/vendor/hls.js';
+import { loadDashLibrary, resetDashLibraryForTests } from '../src/lib/dash-player.js';
 import { FAVORITE_NAMES_KEY } from '../src/lib/favorite-names.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import { RECONNECTING_TEXT } from '../src/lib/live-resume.js';
@@ -58,7 +63,7 @@ async function setup(t) {
   };
   const { elements, document } = createPlayerDom();
   elements['player-art-initials'] = document.register(new FakeElement('player-art-initials'));
-  const net = { registrations: 0, titles: new Map(), polls: [], held: [], hold: false };
+  const net = { registrations: 0, titles: new Map(), polls: [], held: [], hold: false, media: [], refuseUrl: '' };
   const mediaSession = {
     playbackState: 'none', metadata: 'metadata-before-song', setActionHandler() {},
   };
@@ -71,6 +76,9 @@ async function setup(t) {
     if (path === '/api/v1/session') return envelope(200, { token: 'song-token' });
     if (path === '/api/v1/media/register') {
       net.registrations++;
+      const media = JSON.parse(options.body);
+      net.media.push(media);
+      if (media.url === net.refuseUrl) return envelope(502, null, { code: 'MEDIA_CONNECT_FAILED' });
       const id = mediaId(net.registrations);
       return envelope(201, { media_id: id, relay_url: `/api/v1/media/${id}` });
     }
@@ -83,6 +91,12 @@ async function setup(t) {
       const answer = () => envelope(200, net.titles.get(match[1]) || { title: null, changed_at: null });
       if (net.hold) return new Promise((resolve) => net.held.push({ id: match[1], resolve: () => resolve(answer()) }));
       return answer();
+    }
+    if (options.headers?.Range) {
+      if (net.media.at(-1)?.media_type === 'hls') {
+        return new Response('#EXTM3U\n#EXT-X-ENDLIST\n', { headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } });
+      }
+      return new Response(null, { status: 206 });
     }
     throw new Error(`Unexpected request: ${path}`);
   };
@@ -117,6 +131,55 @@ async function setup(t) {
   };
   return { player, elements, audio, source, net, mediaSession, events, tick, progress };
 }
+
+test('saved backups take over after connection and player failures with best-stream off', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const { settings, favorites } = getState();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() });
+  getState().settings = { ...settings, bestStreamMode: 'off' };
+  getState().favorites = [];
+  t.after(() => {
+    if (storage) Object.defineProperty(globalThis, 'localStorage', storage);
+    else delete globalThis.localStorage;
+    getState().settings = settings;
+    getState().favorites = favorites;
+  });
+  const { player, net, audio, tick, progress } = await setup(t);
+  const original = liveItem('edited', { stream_url: 'https://radio.example/original.m3u8', stream_kind: 'hls' });
+  const main = 'https://radio.example/new.aac';
+  const backups = ['https://radio.example/backup1.aac', 'https://radio.example/backup2.aac'];
+  addFavorite(original);
+  const request = async () => {};
+  await saveStationStreams(original, { main, backups }, { request });
+  net.refuseUrl = main;
+  const play = audio.play.bind(audio);
+  audio.play = async () => {
+    if (audio.src.endsWith(mediaId(2))) throw new Error('Unsupported audio');
+    return play();
+  };
+  await player.playItem(original);
+  await settle();
+  assert.deepEqual(net.media.map(({ url, media_type }) => [url, media_type]),
+    [main, ...backups].map((url) => [url, 'audio']));
+  assert.equal(audio.src, `/api/v1/media/${mediaId(3)}`);
+  assert.equal(player.getCurrentItem().stream_url, original.stream_url);
+  net.titles.set(mediaId(3), { title: 'Backup signal', stream: { content_type: 'audio/aac', bitrate: 96 } });
+  await tick(NOW_PLAYING_FIRST_POLL_MS);
+  progress();
+  assert.equal(player.getNowPlaying().title, 'Backup signal');
+  assert.match(stationStreamLabel(original), /AAC.*96 kbps/);
+
+  markDidNotPlay(original.id);
+  const changed = 'https://radio.example/changed.mp3';
+  await saveStationStreams(original, { main: changed, backups: [] }, { request });
+  assert.equal(didNotPlayAt(original.id), 0);
+  assert.equal(stationStreamLabel(original), '');
+  await tick(NOW_PLAYING_POLL_MS);
+  assert.equal(stationStreamLabel(original), '');
+  await player.togglePlay();
+  await player.togglePlay();
+  assert.equal(net.media.at(-1).url, changed, 'Play from Now Playing starts with the edited address');
+});
 
 test('a playing station shows its song with the source line on hover, and Stop ends it', { timeout: TEST_TIMEOUT_MS }, async (t) => {
   const { player, source, net, mediaSession, events, tick } = await setup(t);
@@ -188,6 +251,191 @@ test('pause stops polling and clears the song; Play brings it back', { timeout: 
   player.stop();
 });
 
+test('the dock reports its rendered height and clears its visible state for audio', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const previousObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  let observeResize;
+  let watched;
+  let boxOptions;
+  globalThis.ResizeObserver = class {
+    constructor(callback) { observeResize = callback; }
+    observe(element, options) {
+      watched = element;
+      boxOptions = options;
+    }
+  };
+  t.after(() => {
+    if (previousObserver) Object.defineProperty(globalThis, 'ResizeObserver', previousObserver);
+    else delete globalThis.ResizeObserver;
+  });
+
+  const { player, elements } = await setup(t);
+  const cssValues = new Map();
+  elements.app.style.setProperty = (name, value) => cssValues.set(name, value);
+  assert.equal(watched, elements['video-el']);
+  assert.deepEqual(boxOptions, { box: 'border-box' });
+
+  await player.playItem(liveItem('dock', { type: 'tv', stream_kind: 'video', stream_url: 'https://tv.example/dock.mp4' }));
+  assert.ok(elements.app.classList.contains('has-video'));
+  for (const blockSize of [180.5, 270.875, 224]) {
+    observeResize([{ borderBoxSize: [{ blockSize }] }]);
+    assert.equal(cssValues.get('--video-height'), `${blockSize}px`);
+  }
+  await player.playItem(liveItem('dock-audio'));
+  assert.equal(elements['video-el'].hidden, true);
+  assert.equal(elements.app.classList.contains('has-video'), false);
+});
+
+test('audio-only HLS listed as TV keeps the dock and waits before saving a new rendition', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, elements, net, tick } = await setup(t);
+  const storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() });
+  forgetLoadedPlayedStreams();
+  t.after(() => {
+    if (storage) Object.defineProperty(globalThis, 'localStorage', storage);
+    else delete globalThis.localStorage;
+    forgetLoadedPlayedStreams();
+  });
+
+  let hls;
+  const levels = [
+    { audioCodec: 'mp4a.40.2', attrs: { BANDWIDTH: '128000' } },
+    { audioCodec: 'mp4a.40.5', attrs: { BANDWIDTH: '64000' } },
+  ];
+  t.mock.method(Hls, 'isSupported', () => true);
+  t.mock.method(Hls.prototype, 'loadSource', function () { hls = this; });
+  t.mock.method(Hls.prototype, 'attachMedia', () => {});
+  t.mock.getter(Hls.prototype, 'levels', () => levels);
+  const video = elements['video-el'];
+  video.buffered = { length: 1, start: () => 0, end: () => 20 };
+
+  const station = liveItem('hls', { type: 'tv', stream_url: 'https://radio.example/live.m3u8', stream_kind: 'hls' });
+  await player.playItem(station);
+  assert.ok(hls, 'the HLS engine was attached');
+  assert.equal(video.hidden, false, 'the TV listing supplies the startup hint');
+  hls.emit(Hls.Events.LEVEL_SWITCHED, Hls.Events.LEVEL_SWITCHED, { level: 1 });
+  video.emit('loadedmetadata');
+  assert.equal(video.hidden, false, 'zero-size metadata leaves the TV dock visible');
+  assert.equal(elements.app.classList.contains('has-video'), true);
+  assert.equal(playedStreamOf(station.id), null, 'the start has not played a second');
+  for (const time of [0.5, 1]) {
+    video.currentTime = time;
+    video.emit('timeupdate');
+  }
+  assert.equal(stationStreamLabel(station), 'HLS \u00B7 AAC+ \u00B7 64 kbps');
+  for (let index = 0; index < 6; index += 1) {
+    hls.emit(Hls.Events.LEVEL_SWITCHED, Hls.Events.LEVEL_SWITCHED, { level: index % 2 });
+    video.currentTime += 1;
+    video.emit('timeupdate');
+    assert.equal(stationStreamLabel(station), 'HLS \u00B7 AAC+ \u00B7 64 kbps');
+  }
+  hls.emit(Hls.Events.LEVEL_SWITCHED, Hls.Events.LEVEL_SWITCHED, { level: 0 });
+  for (let index = 0; index < 5; index += 1) {
+    await tick(1000);
+    video.currentTime += 1;
+    video.emit('timeupdate');
+  }
+  assert.equal(stationStreamLabel(station), 'HLS \u00B7 AAC \u00B7 128 kbps');
+  assert.equal(video.hidden, false, 'the TV dock stays visible during audio-only playback');
+  await tick(NOW_PLAYING_FIRST_POLL_MS);
+  assert.deepEqual(net.polls, []);
+});
+
+test('TV video facts use the playing element size and active HLS level', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, elements, tick } = await setup(t);
+  const storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() });
+  forgetLoadedPlayedStreams();
+  t.after(() => {
+    if (storage) Object.defineProperty(globalThis, 'localStorage', storage);
+    else delete globalThis.localStorage;
+    forgetLoadedPlayedStreams();
+  });
+  let hls;
+  t.mock.method(Hls, 'isSupported', () => true);
+  t.mock.method(Hls.prototype, 'loadSource', function () { hls = this; });
+  t.mock.method(Hls.prototype, 'attachMedia', () => {});
+  t.mock.getter(Hls.prototype, 'levels', () => [
+    { width: 1280, height: 720, videoCodec: 'avc1.4d401f', attrs: { BANDWIDTH: '4200000', 'FRAME-RATE': '30' } },
+  ]);
+  const video = elements['video-el'];
+  video.buffered = { length: 1, start: () => 0, end: () => 20 };
+  const station = liveItem('tv-video-facts', {
+    type: 'tv', stream_url: 'https://tv.example/live.m3u8', stream_kind: 'hls',
+  });
+  await player.playItem(station);
+  hls.emit(Hls.Events.LEVEL_SWITCHED, Hls.Events.LEVEL_SWITCHED, { level: 0 });
+  const advance = async (seconds) => {
+    for (let second = 0; second < seconds; second++) {
+      await tick(1000);
+      video.currentTime += 1;
+      video.emit('timeupdate');
+    }
+  };
+  await advance(6);
+  assert.equal(playedStreamOf(station.id), null);
+  video.videoWidth = 1920;
+  video.videoHeight = 1080;
+  video.emit('resize');
+  await advance(5);
+  assert.equal(playedStreamOf(station.id), null);
+  await advance(1);
+  assert.equal(stationStreamLabel(station), ['HLS', '1080p', '30 fps', 'H.264', '4.2 Mbps'].join(' \u00b7 '));
+});
+
+test('DASH saves the rendered codec and frame rate after five stable seconds', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, elements, tick } = await setup(t);
+  const storage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() });
+  forgetLoadedPlayedStreams();
+  t.after(() => {
+    resetDashLibraryForTests();
+    if (storage) Object.defineProperty(globalThis, 'localStorage', storage);
+    else delete globalThis.localStorage;
+    forgetLoadedPlayedStreams();
+  });
+  let downloading = { codecs: 'avc1.4d401f', frameRate: '30' };
+  const events = new Map();
+  const dash = {
+    on: (name, handler) => events.set(name, handler),
+    off: (name) => events.delete(name),
+    initialize() {},
+    isDynamic: () => true,
+    getCurrentRepresentationForType: (type) => type === 'video' ? downloading : null,
+  };
+  await loadDashLibrary({ importer: async () => ({ MediaPlayer: () => ({ create: () => dash }) }) });
+  const video = elements['video-el'];
+  video.buffered = { length: 1, start: () => 0, end: () => 20 };
+  const station = liveItem('dash-facts', {
+    type: 'tv', stream_url: 'https://tv.example/live.mpd', stream_kind: 'dash',
+  });
+  await player.playItem(station);
+  video.videoWidth = 1920;
+  video.videoHeight = 1080;
+  video.emit('loadedmetadata');
+  const advance = async (seconds) => {
+    for (let second = 0; second < seconds; second++) {
+      await tick(1000);
+      video.currentTime += 1;
+      video.emit('timeupdate');
+    }
+  };
+  const rendered = events.get('qualityChangeRendered');
+  rendered({ mediaType: 'video', newRepresentation: downloading });
+  await advance(4);
+  downloading = { codecs: 'hvc1.1.6', frameRate: '60000/1001' };
+  await advance(5);
+  const originalFacts = { codec: '', bitrate: 0, width: 1920, height: 1080, videoCodec: 'H.264', frameRate: 30 };
+  assert.deepEqual(playedStreamOf(station.id, station.stream_url), originalFacts);
+
+  rendered({ mediaType: 'video', newRepresentation: downloading });
+  await advance(5);
+  assert.deepEqual(playedStreamOf(station.id, station.stream_url), originalFacts);
+  await advance(1);
+  forgetLoadedPlayedStreams();
+  assert.deepEqual(playedStreamOf(station.id, station.stream_url),
+    { ...originalFacts, videoCodec: 'HEVC', frameRate: 59.94 });
+});
+
 test('switching stations follows the new token and a late reply for the old one is ignored', { timeout: TEST_TIMEOUT_MS }, async (t) => {
   const { player, source, net, events, tick } = await setup(t);
   await player.playItem(liveItem('old'));
@@ -212,6 +460,30 @@ test('switching stations follows the new token and a late reply for the old one 
   assert.equal(source.textContent, `${NOTE} New Song`);
   assert.deepEqual(events.map((event) => [event.itemId, event.title]), [['test-song:new', 'New Song']]);
   player.stop();
+});
+
+test('a muted station switch clears advancing before the next station is published', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, audio } = await setup(t);
+  await player.playItem(liveItem('first-muted'));
+  player.setMuted(true);
+  assert.equal(player.isMediaAdvancing(), true);
+  assert.equal(player.isPlayerSilent(), true);
+
+  const next = liveItem('next-muted');
+  const published = [];
+  const unsubscribe = subscribe('current-item', (item) => {
+    if (item?.id === next.id) published.push(player.isMediaAdvancing());
+  });
+  t.after(unsubscribe);
+  audio.autoEvents = false;
+  const starting = player.playItem(next);
+  assert.deepEqual(published, [false], 'the first publication cannot inherit the old playback state');
+  await starting;
+  audio.emit('play');
+  assert.equal(player.isMediaAdvancing(), false, 'the new source is still loading');
+  audio.emit('playing');
+  assert.equal(player.isMediaAdvancing(), true);
+  assert.equal(player.isPlayerSilent(), true);
 });
 
 test('a switch, Play or Stop drops the song before any await, so a pending poll cannot leak', { timeout: TEST_TIMEOUT_MS }, async (t) => {

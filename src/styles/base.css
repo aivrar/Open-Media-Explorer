@@ -85,7 +85,8 @@
   /* Floating video: 320 px wide on a 1080p-wide window, growing in step with
      wider windows (640 px at 4K) so it covers the same share of the screen. */
   --video-w: min(32vw, clamp(320px, calc(100vw / 6), 640px));
-  --video-clearance: calc(var(--video-w) * 0.5625 + 80px);
+  --video-gap: 8px;
+  --video-clearance: 0px;
 }
 
 :root[data-theme='light'] {
@@ -105,8 +106,8 @@
   --accent-deep: #075f58;
   --accent-contrast: #001311;
   --chrome: #dfeaf1;
-  /* Seek track: 3.2:1 against the player bar (--chrome). */
-  --slider-track: #738290;
+  /* Slider tracks use the light palette's higher-contrast text colour. */
+  --slider-track: var(--text-mute);
   --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
   --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
   --source-radio-browser: #0b63b6;
@@ -222,7 +223,7 @@
     --accent-deep: #075f58;
     --accent-contrast: #001311;
     --chrome: #dfeaf1;
-    --slider-track: #738290;
+    --slider-track: var(--text-mute);
     --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
     --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
     --source-radio-browser: #0b63b6;
@@ -718,6 +719,43 @@ html, body {
   gap: 8px;
 }
 
+.player-part-slot {
+  display: flex;
+  flex: 0 0 32px;
+  height: 38px;
+}
+
+.player-part-slot .player-part-button { width: 32px; }
+.player-part-button:disabled { opacity: 0.4; cursor: default; }
+
+.player-resume-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.player-text:has(> .player-resume-actions:not([hidden])) > .player-title { display: none; }
+.player-meta:has(.player-resume-actions:not([hidden])) > :is(.player-art-box, .player-fav) { display: none; }
+
+.player-resume-actions .btn {
+  padding: 5px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#player-resume-part {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#player-start-over { flex: none; }
+
+@media (min-width: 1001px) {
+  .player-bar:has(.player-resume-actions:not([hidden])) {
+    grid-template-columns: minmax(270px, 1.1fr) auto auto minmax(180px, 1.5fr) auto;
+  }
+}
+
 .player-btn {
   appearance: none;
   background: transparent;
@@ -756,8 +794,27 @@ html, body {
   min-width: 0;
 }
 
+/* Reserve the action row before capture starts. At 1280px it has room for
+   Record, a recording status, EQ and the Picture slot. */
+@media (min-width: 1001px) {
+  .player-bar:not(.is-capture-only) .player-actions {
+    width: clamp(330px, 75vw - 520px, 440px);
+  }
+
+  .player-bar:not(.is-capture-only) .player-actions:not(:has(> .player-action[data-state="completed"])) > :is(.player-action, .player-eq) {
+    order: -1;
+    flex-shrink: 0;
+  }
+
+  /* Let the grid fit both file actions and as much of the Saved text as it can. */
+  .player-bar:not(.is-capture-only) .player-actions:has(> .player-action[data-state="completed"]) {
+    width: auto;
+  }
+}
+
 .player-action,
 .player-action-secondary,
+.player-picture,
 .player-eq {
   appearance: none;
   border: 1px solid var(--border);
@@ -782,23 +839,57 @@ html, body {
    looks and responds as disabled. */
 .player-action:hover:not(:disabled):not([aria-disabled="true"]),
 .player-action-secondary:hover:not(:disabled),
+.player-picture:hover,
 .player-eq:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--bg-elev-3);
 }
 .player-action:active:not(:disabled):not([aria-disabled="true"]),
 .player-action-secondary:active:not(:disabled),
+.player-picture:active,
 .player-eq:active:not(:disabled) { transform: scale(.97); }
+
+.player-picture-slot { display: flex; flex: none; }
+.player-picture-slot[inert] { visibility: hidden; }
+
+.picture-panel {
+  position: fixed;
+  inset: auto auto calc(var(--player-h) + 8px) max(12px, calc(100% - var(--video-w) - 348px));
+  margin: 0;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - var(--player-h) - 20px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-2);
+  background: var(--bg-elev-1);
+  color: var(--text);
+  font-size: 13px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: center;
+}
+.picture-panel:popover-open { display: grid; }
+.picture-panel h2, .picture-panel p { grid-column: 1 / -1; margin: 0; }
+.picture-panel h2 { font-size: 16px; }
+.picture-panel p { color: var(--text-mute); }
+.picture-panel select, .picture-panel input { width: 100%; min-width: 0; }
+.picture-panel input { margin: 0; accent-color: var(--accent); }
+.picture-panel button { grid-column: 1 / -1; justify-self: start; }
+.picture-panel #picture-feedback:empty { position: absolute; }
 
 /* Floating video (bottom-right, above the player bar). The dock has no look
    of its own, so it takes no space while the video is hidden. */
 #app.video-large {
   --video-w: min(calc(100vw - 32px), clamp(480px, 40vw, 1400px));
-  --video-clearance: calc(var(--video-w) * 0.5625 + 80px);
+}
+#app.has-video {
+  --video-clearance: calc(var(--video-height, 0px) + var(--video-gap));
 }
 .video-dock {
   position: absolute;
-  bottom: calc(var(--player-h) + 8px);
+  bottom: calc(var(--player-h) + var(--video-gap));
   right: 16px;
   width: var(--video-w);
   z-index: 20;
@@ -814,6 +905,23 @@ html, body {
   box-shadow: var(--shadow-2);
 }
 .video-dock video:fullscreen { border: 0; border-radius: 0; }
+
+.video-dock video.video-fit-fill { object-fit: cover; }
+.video-dock video:is(.video-fit-zoom-110, .video-fit-zoom-125, .video-fit-zoom-133) {
+  object-fit: contain;
+  overflow: clip;
+  overflow-clip-margin: content-box;
+}
+/* Inset each edge by half the difference between 100% and the inverse zoom. */
+.video-dock video.video-fit-zoom-110 { object-view-box: inset(4.54545%); }
+.video-dock video.video-fit-zoom-125 { object-view-box: inset(10%); }
+.video-dock video.video-fit-zoom-133 { object-view-box: inset(12.40602%); }
+
+.video-dock video.is-live-video::-webkit-media-controls-timeline,
+.video-dock video.is-live-video::-webkit-media-controls-current-time-display,
+.video-dock video.is-live-video::-webkit-media-controls-time-remaining-display {
+  display: none !important;
+}
 .video-size-btn {
   position: absolute;
   top: 8px;
@@ -899,7 +1007,7 @@ html, body {
 }
 .player-eq.is-unavailable .player-eq-state { color: var(--danger); }
 
-/* Sound meter (lib/player-meter.js), right after EQ. The same small canvas
+/* Sound meter (lib/player-meter.js), after the action buttons. The same small canvas
    exists twice, once for each bar layout; at most one is laid out, and only
    a laid-out one listens to the sound.
    - Wide bar (over 1000 px): #player-meter opens the progress cell. It shows
@@ -963,9 +1071,8 @@ html, body {
 }
 .player-bar.is-capture-only .player-meter { display: none !important; }
 
-/* A capture's progress, result or error, in the buttons' row right after
-   the Record button: one line of text with the progress line under it,
-   centred on the row. A long message is cut short; all of it is on hover. */
+/* Capture progress, result or error in the buttons' row: one line of text
+   with the progress line under it. The full message is on hover. */
 .player-capture-status {
   flex: 0 1 auto;
   min-width: 0;
@@ -1130,6 +1237,11 @@ html, body {
   touch-action: none;
 }
 
+/* Outline the visible volume control in the light palettes as well. */
+.player-volume > .volume-stepper:not(:focus-within) {
+  border-color: var(--slider-track, var(--border));
+}
+
 .volume-stepper:focus-within {
   border-color: var(--border-strong);
 }
@@ -1244,13 +1356,17 @@ html, body {
   backdrop-filter: blur(2px);
 }
 
+#app.has-player + #modal-host .modal-backdrop {
+  padding-block: 10px calc(var(--player-h) + 10px);
+}
+
 .modal {
   background: var(--bg-elev-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
   width: min(680px, 92vw);
-  max-height: 85vh;
+  max-height: min(85vh, 100%);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1277,12 +1393,26 @@ html, body {
   color: var(--text-mute);
 }
 
+.settings-tabs-shown {
+  min-inline-size: 0;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+.settings-tabs-shown legend { padding: 0; font-weight: 600; }
+
 /* ============ Equalizer overlay ============ */
 
 .eq-modal {
   width: min(1040px, 96vw);
-  max-height: min(88vh, 760px);
+  max-height: min(88vh, 760px, 100%);
 }
+.eq-content {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.eq-header { flex: none; }
+.eq-modal [hidden] { display: none; }
 .eq-header p {
   margin: 3px 0 0;
   color: var(--text-dim);
@@ -1419,15 +1549,91 @@ html, body {
   outline-offset: 3px;
   border-radius: 4px;
 }
-.eq-auto-note {
-  margin: 0;
-  padding: 5px 18px 14px;
-  color: var(--text-mute);
-  font-size: 11px;
+.eq-assigned,
+.eq-station-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
+.eq-assigned {
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.eq-stations,
+.eq-advanced {
+  padding: 8px 18px;
+}
+.eq-stations { border-bottom: 1px solid var(--border); }
+.eq-stations > summary,
+.eq-advanced > summary {
+  width: fit-content;
+  padding-block: 3px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.eq-station-controls {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.eq-station-controls input[type="search"] {
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: inherit;
+}
+.eq-station-controls select { max-width: 100%; }
+.eq-station-count,
+.eq-station-message,
+.eq-advanced p {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.eq-station-list {
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 13rem;
+  overflow-y: auto;
+  list-style: none;
+}
+.eq-station-list label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(7rem, 30%);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 3px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  cursor: pointer;
+}
+.eq-station-assignment { color: var(--text-dim); }
+.eq-widths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 6px 14px;
+  padding-bottom: 6px;
+}
+.eq-width {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px;
+  font-size: 12px;
+}
+.eq-width input {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+}
+.eq-width output { grid-column: 2; grid-row: 1; }
 
 @media (max-width: 720px), (max-height: 620px) {
-  .eq-modal { max-height: 94vh; }
+  .eq-modal { max-height: min(94vh, 100%); }
   .eq-response { height: 78px; margin-top: 9px; }
   .eq-bands { min-height: 215px; padding-top: 9px; }
   .eq-band { grid-template-rows: 22px 145px 20px; }
@@ -1548,6 +1754,7 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 /* Settings: a button keeps its size and stays on one line; the text beside
    it wraps instead (a long description used to squeeze "Clear cache"). */
 .modal[aria-labelledby="settings-title"] .btn { white-space: nowrap; flex-shrink: 0; }
+.modal[aria-labelledby="settings-title"] [data-act="clear-cache"] { min-inline-size: max-content; }
 /* Settings: what cannot be changed now (the limit at Low, the recording
    quality while recording is off, FFmpeg buttons while busy) is grayed, as
    elsewhere in the app. */
@@ -1744,16 +1951,21 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .player-source { font-size: 11px; }
   .player-source.is-song { font-size: 13px; }
   .player-actions { justify-content: stretch; }
-  .player-action { flex: 1 1 auto; min-width: 40px; }
   .player-action-secondary { max-width: 112px; }
   .player-eq { flex: none; }
   .player-capture-status { font-size: 10px; }
-  .modal { width: min(96vw, 680px); max-height: 92vh; }
+  .modal { width: min(96vw, 680px); max-height: min(92vh, 100%); }
   .modal-body { padding: 14px; }
   .row { align-items: flex-start; }
   .row > div { min-width: 0; }
   .runtime-path { grid-template-columns: 1fr; gap: 2px; }
   .runtime-card-footer { align-items: stretch; flex-direction: column; }
+}
+
+/* Stop recording: 17px icon + 6px gap + 81px text + 20px padding + 2px borders. */
+@media (width < 1001px), (width > 1080px) {
+  .player-action { flex: none; width: 126px; }
+  .player-action-label { overflow: hidden; text-overflow: ellipsis; }
 }
 
 @media (max-width: 1080px) and (min-width: 1001px) {
@@ -1763,6 +1975,26 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .player-eq { min-width: 38px; width: 38px; padding: 0; }
 }
 
+/* A failed multipart item can show Try next alongside both part buttons. */
+@media (min-width: 1001px) and (max-width: 1100px) {
+  #app.has-player:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) + #modal-host,
+  #app.has-player:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) {
+    --player-h: 120px;
+  }
+  .player-bar:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 1fr) auto;
+    grid-template-areas:
+      "meta controls controls"
+      "actions progress volume";
+    grid-template-rows: 56px 40px;
+    row-gap: 6px;
+  }
+  .player-bar:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) .player-actions {
+    width: auto;
+  }
+}
+
+#app.has-capture-only + #modal-host,
 #app.has-capture-only { --player-h: 72px; }
 .player-bar.is-capture-only {
   grid-template-columns: auto;

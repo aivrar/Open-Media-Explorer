@@ -6,6 +6,7 @@ import functools
 import http.client
 import heapq
 import ipaddress
+import io
 import re
 import secrets
 import select
@@ -35,7 +36,7 @@ DEFAULT_TTL_SECONDS = 6 * 60 * 60
 LIVE_TTL_MULTIPLIER = 4
 # A capture job's own relay root stays usable this long after the job ends.
 CAPTURE_RELEASE_GRACE_SECONDS = 5.0
-RELAY_USER_AGENT = "WorldMediaWindows/0.1.16"
+RELAY_USER_AGENT = "WorldMediaWindows/0.1.17"
 # One root may hold at most half the registry, so a long VOD playlist (more
 # than 2,048 segments) or several live renditions with long windows still fit.
 MAX_CHILDREN_PER_ROOT = 4096
@@ -261,12 +262,52 @@ class _IcyStatusLineReader:
         return getattr(self._reader, name)
 
 
+class _RelaySocketReader(io.RawIOBase):
+    """Handle a startup deadline below the buffered HTTP reader."""
+
+    def __init__(self, raw, sock) -> None:
+        self._raw = raw
+        self._sock = sock
+        self.deadline = None
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer) -> int:
+        if self.deadline is None:
+            return self._raw.readinto(buffer)
+        time_left, on_deadline = self.deadline
+        remaining = time_left()
+        if remaining is None:
+            return self._raw.readinto(buffer)
+        idle = self._sock.gettimeout()
+        if remaining > 0:
+            if idle is not None and idle <= remaining:
+                return self._raw.readinto(buffer)
+            self._sock.settimeout(remaining)
+            try:
+                # SocketIO treats a timeout as terminal. Catch this tick before
+                # it reaches SocketIO or interrupts an in-progress chunk read.
+                return self._sock.recv_into(buffer)
+            except socket.timeout:
+                pass
+            finally:
+                self._sock.settimeout(idle)
+        self.deadline = None
+        on_deadline()
+        return self._raw.readinto(buffer)
+
+    def close(self) -> None:
+        self._raw.close()
+        super().close()
+
+
 class _RelayResponse(http.client.HTTPResponse):
     """http.client's reply that also takes an old Shoutcast "ICY 200 OK" first line."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.fp = _IcyStatusLineReader(self.fp)
+    def __init__(self, sock, *args, **kwargs) -> None:
+        super().__init__(sock, *args, **kwargs)
+        self.fp = _IcyStatusLineReader(io.BufferedReader(_RelaySocketReader(self.fp.detach(), sock)))
 
 
 # A host often has several addresses, and one of them can be dead while the
@@ -335,6 +376,7 @@ def _connect_first(
     port: int,
     timeout: float,
     cancelled: Callable[[], bool] | None = None,
+    on_socket: Callable[[socket.socket], None] | None = None,
 ) -> tuple[socket.socket, str]:
     """Connect to whichever address answers first; the whole attempt has one time limit.
 
@@ -361,6 +403,8 @@ def _connect_first(
                 attempt: socket.socket | None = None
                 try:
                     attempt = socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET, socket.SOCK_STREAM)
+                    if on_socket is not None:
+                        on_socket(attempt)
                     attempt.setblocking(False)
                     code = attempt.connect_ex((address, port))
                 except OSError as error:
@@ -418,17 +462,27 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         *,
         candidates: Iterable[str] = (),
         cancelled: Callable[[], bool] | None = None,
+        on_socket: Callable[[socket.socket], None] | None = None,
+        count_dial: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(target.host, target.port, timeout=timeout)
+        self._on_socket = on_socket
+        self._count_dial = count_dial
         self._selected_ip = target.ip
         self._candidates = tuple(candidates)
         self._cancelled = cancelled
         self.dialled = False
 
     def connect(self) -> None:
-        if len(self._candidates) > 1:
+        if len(self._candidates) > 1 or self._on_socket is not None or self._count_dial is not None:
+            def watch(sock: socket.socket) -> None:
+                if self._count_dial is not None:
+                    self._count_dial()
+                if self._on_socket is not None:
+                    self._on_socket(sock)
+
             self.sock, self._selected_ip = _connect_first(
-                self._candidates, self.port, self.timeout, self._cancelled,
+                self._candidates or (self._selected_ip,), self.port, self.timeout, self._cancelled, watch,
             )
         else:
             self.sock = socket.create_connection((self._selected_ip, self.port), self.timeout)
@@ -444,15 +498,26 @@ class _PinnedHTTPSConnection(_PinnedHTTPConnection):
         *,
         candidates: Iterable[str] = (),
         cancelled: Callable[[], bool] | None = None,
+        on_socket: Callable[[socket.socket], None] | None = None,
+        count_dial: Callable[[], None] | None = None,
     ) -> None:
-        super().__init__(target, timeout, candidates=candidates, cancelled=cancelled)
+        super().__init__(
+            target, timeout, candidates=candidates, cancelled=cancelled, on_socket=on_socket, count_dial=count_dial,
+        )
         self._context = context
         self._server_hostname = target.host
 
     def connect(self) -> None:
         super().connect()
         assert self.sock is not None
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=self._server_hostname)
+        if self._on_socket:
+            self.sock = self._context.wrap_socket(
+                self.sock, server_hostname=self._server_hostname, do_handshake_on_connect=False,
+            )
+            self._on_socket(self.sock)
+            self.sock.do_handshake()
+        else:
+            self.sock = self._context.wrap_socket(self.sock, server_hostname=self._server_hostname)
 
 
 @dataclass(slots=True)
@@ -492,6 +557,12 @@ class Upstream:
                     )
                 return
             yield chunk
+
+    def set_read_deadline(
+        self, time_left: Callable[[], float | None], on_deadline: Callable[[], None],
+    ) -> None:
+        if isinstance(self.response, _RelayResponse) and self.response.fp is not None:
+            self.response.fp.raw.deadline = (time_left, on_deadline)
 
     def iter_available(
         self,
@@ -578,6 +649,8 @@ class SafeConnector:
         body: bytes | None = None,
         cancel: threading.Event | None = None,
         accept_gzip: bool = False,
+        on_socket: Callable[[socket.socket], None] | None = None,
+        max_dials: int | None = None,
     ) -> Upstream:
         """Open url, following approved redirects.
 
@@ -585,6 +658,7 @@ class SafeConnector:
         accept_gzip=True is for metadata callers that decode or pass on a gzip
         body themselves; it asks for gzip instead. Callers cannot set
         Accept-Encoding through headers, so exactly one such header goes out.
+        max_dials bounds TCP attempts across the whole request, including redirects.
         """
         accept_encoding = "gzip" if accept_gzip else "identity"
         safe_headers: dict[str, str] = {}
@@ -617,6 +691,14 @@ class SafeConnector:
             raise ValueError("connector body must be bytes")
         if current_method != "POST" and current_body:
             raise ValueError("connector body is only valid for POST")
+        dials = 0
+
+        def count_dial() -> None:
+            nonlocal dials
+            dials += 1
+
+        dial_counter = count_dial if max_dials is not None else None
+
         for redirect_count in range(MAX_REDIRECTS + 1):
             if cancel and cancel.is_set():
                 raise _media_error(HTTPStatus.REQUEST_TIMEOUT, "MEDIA_CANCELLED", "Media request was cancelled.")
@@ -646,17 +728,22 @@ class SafeConnector:
             remaining = _dial_order(target)
             cancelled = cancel.is_set if cancel else None
             while remaining:
+                if max_dials is not None:
+                    remaining = remaining[:max(0, max_dials - dials)]
+                    if not remaining:
+                        break
                 if cancel and cancel.is_set():
                     raise _media_error(HTTPStatus.REQUEST_TIMEOUT, "MEDIA_CANCELLED", "Media request was cancelled.")
                 dial_target = target if remaining[0] == target.ip else replace(target, ip=remaining[0])
                 if target.scheme == "https":
                     connection = _PinnedHTTPSConnection(
                         dial_target, self.connect_timeout, self.ssl_context,
-                        candidates=remaining, cancelled=cancelled,
+                        candidates=remaining, cancelled=cancelled, on_socket=on_socket, count_dial=dial_counter,
                     )
                 else:
                     connection = _PinnedHTTPConnection(
-                        dial_target, self.connect_timeout, candidates=remaining, cancelled=cancelled,
+                        dial_target, self.connect_timeout,
+                        candidates=remaining, cancelled=cancelled, on_socket=on_socket, count_dial=dial_counter,
                     )
                 request_sent = False
                 try:
@@ -735,8 +822,12 @@ class SafeConnector:
                     current_method = "GET"
                     current_body = None
                 continue
-            if connection.sock:
-                connection.sock.settimeout(self.idle_timeout)
+            try:
+                if connection.sock:
+                    connection.sock.settimeout(self.idle_timeout)
+            except OSError:
+                Upstream(response, connection, target.url).close()
+                raise
             return Upstream(response, connection, target.url)
         raise _media_error(HTTPStatus.BAD_GATEWAY, "TOO_MANY_MEDIA_REDIRECTS", "Media source redirected too many times.")
 
@@ -754,6 +845,7 @@ class MediaRegistration:
     title: str = "Media"
     source: str = ""
     download_name: str = ""
+    download_part: str = ""
     recording_kind: str = ""
     content_type: str | None = None
     content_length: int | None = None
@@ -968,14 +1060,16 @@ class MediaRegistry:
         # Per root token: (latest song title or None, wall-clock time it changed),
         # least recently updated first; at most MAX_NOW_PLAYING entries.
         self._now_playing: OrderedDict[str, tuple[str | None, float]] = OrderedDict()
+        self._playing_relays: dict[str, int] = {}
         self._lock = threading.RLock()
 
-    def register(self, payload: object) -> MediaRegistration:
+    def prepare_registration(self, payload: object, *, resolve: bool = True) -> MediaRegistration:
+        """Validate registration fields. A one-shot caller can resolve on open."""
         if not isinstance(payload, dict):
             raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_REGISTRATION", "Media registration must be an object.")
         allowed = {
             "item_id", "url", "delivery", "media_type", "capture_headers",
-            "title", "source", "download_name", "recording_kind", "require_https",
+            "title", "source", "download_name", "download_part", "recording_kind", "require_https",
         }
         if set(payload) - allowed:
             raise _media_error(HTTPStatus.BAD_REQUEST, "UNEXPECTED_FIELDS", "Media registration contains unsupported fields.")
@@ -986,6 +1080,7 @@ class MediaRegistry:
         title = payload.get("title", item_id)
         source = payload.get("source", "")
         download_name = payload.get("download_name", "")
+        download_part = payload.get("download_part", "")
         recording_kind = payload.get("recording_kind", "")
         require_https = payload.get("require_https", False)
         if not isinstance(require_https, bool):
@@ -1002,19 +1097,26 @@ class MediaRegistry:
             raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_SOURCE", "Media source is invalid.")
         if not isinstance(download_name, str) or len(download_name) > 512 or re.search(r"[\r\n\0]", download_name):
             raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_DOWNLOAD_NAME", "Media download name is invalid.")
+        if not isinstance(download_part, str) or (
+            download_part and (delivery != "on-demand" or not re.fullmatch(r"[0-9a-f]{16}", download_part))
+        ):
+            raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_DOWNLOAD_PART", "Download part is invalid.")
         if recording_kind not in {"", "audio", "video"}:
             raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_RECORDING_KIND", "Media recording kind is invalid.")
         if media_type == "audio":
             recording_kind = "audio"
         elif media_type == "video":
             recording_kind = "video"
-        target = self.connector.resolve(url)
+        if resolve:
+            url = self.connector.resolve(url).url
+        elif not isinstance(url, str) or not url or len(url) > 8192:
+            raise _media_error(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_URL", "Media URL is invalid.")
         now = time.time()
         token = secrets.token_urlsafe(32)
-        registration = MediaRegistration(
+        return MediaRegistration(
             token=token,
             item_id=item_id.strip(),
-            url=target.url,
+            url=url,
             delivery=delivery,
             media_type=media_type,
             headers=sanitize_capture_headers(payload.get("capture_headers")),
@@ -1023,9 +1125,15 @@ class MediaRegistry:
             title=title.strip(),
             source=source,
             download_name=download_name.strip(),
+            download_part=download_part,
             recording_kind=recording_kind,
             require_https=require_https,
         )
+
+    def register(self, payload: object) -> MediaRegistration:
+        registration = self.prepare_registration(payload)
+        now = time.time()
+        token = registration.token
         with self._lock:
             self._prune_locked(now)
             if len(self._entries) + len(self._dash_templates) >= MAX_REGISTRATIONS:
@@ -1620,6 +1728,34 @@ class MediaRegistry:
         if root is None or root.root_token != token or root.released or root.expires_at <= now:
             return None
         return root
+
+    def begin_playing_relay(self, token: str) -> None:
+        with self._lock:
+            self._playing_relays[token] = self._playing_relays.get(token, 0) + 1
+
+    def end_playing_relay(self, token: str) -> None:
+        with self._lock:
+            remaining = self._playing_relays.get(token, 0) - 1
+            if remaining > 0:
+                self._playing_relays[token] = remaining
+            else:
+                self._playing_relays.pop(token, None)
+
+    def playing_relay_title(self, registration: MediaRegistration) -> dict | None:
+        """A snapshot of an active relay, including when it has no title yet."""
+        with self._lock:
+            now = time.time()
+            latest = None
+            active = False
+            for token in self._playing_relays:
+                root = self._live_root_locked(token, now)
+                if root is None or (root.item_id != registration.item_id and root.url != registration.url):
+                    continue
+                active = True
+                title = self._now_playing.get(token)
+                if title and (latest is None or title[1] > latest[1]):
+                    latest = title
+            return {"title": latest[0] if latest else None} if active else None
 
     def note_stream_title(self, token: str, title: str | None) -> None:
         """Record the latest song title the relay read for this playback root.

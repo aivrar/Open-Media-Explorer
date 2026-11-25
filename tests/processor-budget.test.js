@@ -6,7 +6,7 @@ import {
   BUDGET_BOUNCE_MS, BUDGET_HEADROOM, BUDGET_OVER_MS, BUDGET_READ_MS, BUDGET_SETTLE_MS, BUDGET_UNDER_MS,
   DEFAULT_PROCESSOR_USE, PROCESSOR_LIMIT_MAX, PROCESSOR_LIMIT_MIN, PROCESSOR_LIMIT_PRESETS, PROCESSOR_USE_LEVELS,
   createBudgetSteer, createUseReader, isSoftwareRenderer, normalizeProcessorLimit, normalizeProcessorUse,
-  processorBudget, rendererName, soundComparisonAllowed,
+  processorBudget, rendererName,
 } from '../src/lib/processor-budget.js';
 import { normalizeSettings } from '../src/lib/state.js';
 import { PROFILE_STORAGE_KEYS } from '../src/lib/profile-transfer.js';
@@ -57,7 +57,6 @@ test('what each level allows', () => {
   assert.deepEqual({ ...processorBudget({ processorUse: 'high', processorLimit: 70 }) }, {
     level: 'high', limit: 70, limitShare: 0.7, readsUse: true, stepsUp: true, softwareQuality: null,
   });
-  assert.equal(soundComparisonAllowed(processorBudget({ processorUse: 'high' })), false, 'not built');
 });
 
 /* ---- Light is today's behaviour ---- */

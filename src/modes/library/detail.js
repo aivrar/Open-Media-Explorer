@@ -5,18 +5,20 @@
  * when closed — no persistent DOM cost when nothing is selected.
  */
 
-import { getState, isFavorite, addFavorite, removeFavorite } from '../../lib/state.js';
+import { getState, isFavorite, addFavorite, removeFavorite, subscribe } from '../../lib/state.js';
 import { getSourceLabel } from '../../lib/sources.js';
 import { safeExternalUrl, shownLicense } from '../../lib/item-model.js';
 import {
   artworkSourceFor, isArtworkRelayUrl, isStationImageSource, loadArtworkImage, stationImageSourceFor,
 } from '../../lib/artwork.js';
-import { playItem } from '../../lib/player.js';
+import { getCurrentPart, playItem } from '../../lib/player.js';
+import { hasPartsSource, loadParts, partKind, partTime } from '../../lib/media-parts.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import { resolveItemArtwork } from './thumbnails.js';
 import { createBestStreamStatus, createOtherStreams } from './other-streams.js';
+import { createStreamAddressEditor } from './stream-addresses.js';
 import { stationStreamLabel } from '../../lib/played-streams.js';
 import {
   contentBadgeText, favoriteForContentView, isContentAllowed,
@@ -41,6 +43,8 @@ let detailArtworkAbort = null;
 let detailArtworkShown = null;
 let detailOtherStreams = null;
 let detailBestStream = null;
+let detailStreamEditor = null;
+let detailPartsCleanup = null;
 
 function stopOtherStreams() {
   detailOtherStreams?.abort();
@@ -149,6 +153,10 @@ export function openDetail(item, options = {}) {
     return;
   }
   stopOtherStreams();
+  detailPartsCleanup?.();
+  detailPartsCleanup = null;
+  detailStreamEditor?.destroy();
+  detailStreamEditor = null;
   // A saved favorite is shown under the name the user gave it, wherever the
   // panel was opened from (favorite-names.js).
   if (isFavorite(item.id)) item = withFavoriteName(withoutFavoriteName(item));
@@ -266,12 +274,76 @@ export function openDetail(item, options = {}) {
     actions.appendChild(detailPicture.input);
     refreshDetailPictureControls();
   }
+  if ((item.type === 'radio' || item.type === 'tv') && item.__contentHidden !== true) {
+    detailStreamEditor = createStreamAddressEditor(item, { onSaved: () => {
+      refreshDetailQuality();
+      refreshDetailTrouble();
+    } });
+    actions.appendChild(detailStreamEditor.button);
+  }
   ui.detailPanel.appendChild(actions);
+  if (item.__contentHidden !== true && hasPartsSource(item)) {
+    detailPartsCleanup = showDetailParts(item, ui.detailPanel);
+  }
+  if (detailStreamEditor) ui.detailPanel.appendChild(detailStreamEditor.form);
   if (detailPicture) ui.detailPanel.appendChild(detailPicture.message);
   if (rename) ui.detailPanel.appendChild(rename.form);
   if (otherStreams.section) ui.detailPanel.appendChild(otherStreams.section);
   if (otherStreams.note) ui.detailPanel.appendChild(otherStreams.note);
   if (options.focus === true) queueMicrotask(() => closeBtn.isConnected && closeBtn.focus());
+}
+
+function showDetailParts(item, panel) {
+  const kind = partKind(item);
+  const heading = kind + 's';
+  const section = el('section', { className: 'detail-parts', attrs: { 'aria-label': heading } });
+  const status = el('p', { text: 'Loading ' + heading.toLowerCase() + '...', attrs: { role: 'status' } });
+  section.appendChild(el('h3', { text: heading }));
+  section.appendChild(status);
+  // Archive audio items only get a list when there is more than one track.
+  section.hidden = kind === 'Track';
+  panel.appendChild(section);
+  let active = true;
+  let buttons = [];
+  const markCurrent = () => {
+    const selection = getCurrentPart(item.id);
+    const current = selection?.parts[selection.index].key;
+    for (const [button, part] of buttons) {
+      if (part.key === current) button.setAttribute('aria-current', 'true');
+      else button.removeAttribute('aria-current');
+    }
+  };
+  const unsubscribe = subscribe('current-item', markCurrent);
+  loadParts(item).then((parts) => {
+    if (!active) return;
+    if (!parts.length || (kind === 'Track' && parts.length === 1)) {
+      section.hidden = true;
+      return;
+    }
+    const list = el('ol');
+    buttons = parts.map((part, index) => {
+      const button = el('button', {
+        className: 'btn detail-part',
+        attrs: { type: 'button' },
+        on: { click: () => playItem(item, { parts, index }).catch(() => {}) },
+      });
+      button.appendChild(el('span', { text: part.title }));
+      if (part.duration !== null) button.appendChild(el('span', { text: partTime(part.duration) }));
+      const row = el('li');
+      row.appendChild(button);
+      list.appendChild(row);
+      return [button, part];
+    });
+    status.hidden = true;
+    section.appendChild(list);
+    section.hidden = false;
+    markCurrent();
+  }).catch(() => {
+    if (!active) return;
+    status.textContent = 'Could not load ' + heading.toLowerCase() + '.';
+    section.hidden = false;
+  });
+  return () => { active = false; unsubscribe(); };
 }
 
 /** "Rename" for a saved favorite: a small form under the buttons with the
@@ -449,7 +521,11 @@ export function closeDetail({ preserveSelection = false } = {}) {
   detailTrouble = null;
   detailQuality = null;
   detailPicture = null;
+  detailStreamEditor?.destroy();
+  detailStreamEditor = null;
   stopOtherStreams();
+  detailPartsCleanup?.();
+  detailPartsCleanup = null;
   if (ui.detailPanel) {
     ui.detailPanel.remove();
     ui.detailPanel = null;

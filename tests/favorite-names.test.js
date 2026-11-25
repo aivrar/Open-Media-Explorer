@@ -393,8 +393,10 @@ function withPanel(favorites, fn, names) {
     ui.detailPanel = null;
     const find = (cls) => ui.detailPanel.all().find((node) => node.className === cls) || null;
     const act = (name) => ui.detailPanel.querySelector(`[data-act="${name}"]`);
+    const formNamed = (name) => ui.detailPanel.all().find((node) =>
+      node.tagName === 'FORM' && node.getAttribute('aria-label') === name);
     try {
-      return fn({ ...context, find, act });
+      return fn({ ...context, find, act, formNamed });
     } finally {
       closeDetail();
       ui.root = previous.root;
@@ -407,18 +409,18 @@ function withPanel(favorites, fn, names) {
 }
 
 test('details: Rename opens a form; Save renames, Escape and Cancel close it, focus stays on Rename', () => {
-  withPanel([fav('a', 'Radio One')], ({ find, act, saved }) => {
+  withPanel([fav('a', 'Radio One')], ({ find, act, formNamed, saved }) => {
     openDetail(getState().favorites[0]);
     assert.equal(find('detail-title').textContent, 'Radio One');
     assert.equal(find('detail-original-name'), null);
     assert.equal(act('reset-favorite-name'), null);
     const rename = act('rename-favorite');
-    const form = find('detail-rename');
+    const form = formNamed('Rename favorite');
     assert.equal(form.hidden, true);
     rename.dispatchEvent(new Event('click'));
     assert.equal(form.hidden, false);
     assert.equal(rename.getAttribute('aria-expanded'), 'true');
-    const input = find('detail-rename-input');
+    const input = form.all().find((node) => node.tagName === 'INPUT');
     assert.equal(input.value, 'Radio One');
     assert.equal(globalThis.document.activeElement, input);
     assert.equal(input.getAttribute('maxlength'), '80');
@@ -430,6 +432,16 @@ test('details: Rename opens a form; Save renames, Escape and Cancel close it, fo
     assert.ok(ui.detailPanel);
 
     rename.dispatchEvent(new Event('click'));
+    input.value = 'Discard this';
+    const cancel = form.all().find((node) => node.tagName === 'BUTTON' && node.textContent === 'Cancel');
+    cancel.dispatchEvent(new Event('click'));
+    assert.equal(form.hidden, true);
+    assert.equal(rename.getAttribute('aria-expanded'), 'false');
+    assert.equal(globalThis.document.activeElement, rename);
+    assert.equal(saved(), null);
+
+    rename.dispatchEvent(new Event('click'));
+    assert.equal(input.value, 'Radio One');
     input.value = 'Morning';
     form.dispatchEvent(new Event('submit'));
     assert.deepEqual(saved(), { a: 'Morning' });
@@ -445,17 +457,23 @@ test('details: Rename opens a form; Save renames, Escape and Cancel close it, fo
 });
 
 test('details: Rename names the form it opens, the name field is described by its hint, and Escape on Save or Cancel closes the form too', () => {
-  withPanel([fav('a', 'Radio One')], ({ find, act }) => {
+  withPanel([fav('a', 'Radio One')], ({ act, formNamed }) => {
     openDetail(getState().favorites[0]);
     const rename = act('rename-favorite');
-    const form = find('detail-rename');
+    const form = formNamed('Rename favorite');
+    const streamForm = formNamed('Stream addresses');
+    const controls = form.all();
+    const input = controls.find((node) => node.tagName === 'INPUT');
+    const hint = controls.find((node) => node.className === 'detail-rename-hint');
     assert.equal(rename.getAttribute('aria-controls'), form.getAttribute('id'));
-    assert.equal(find('detail-rename-input').getAttribute('aria-describedby'), find('detail-rename-hint').getAttribute('id'));
-    const buttons = form.all().filter((node) => node.tagName?.toUpperCase?.() === 'BUTTON');
+    assert.notEqual(rename.getAttribute('aria-controls'), streamForm.getAttribute('id'));
+    assert.equal(input.getAttribute('aria-describedby'), hint.getAttribute('id'));
+    const buttons = controls.filter((node) => node.tagName === 'BUTTON');
     assert.deepEqual(buttons.map((node) => node.textContent), ['Save', 'Cancel']);
     for (const button of buttons) {
       rename.dispatchEvent(new Event('click'));
       assert.equal(form.hidden, false);
+      assert.equal(streamForm.hidden, true);
       button.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape' }));
       assert.equal(form.hidden, true, `Escape on ${button.textContent}`);
       assert.equal(rename.getAttribute('aria-expanded'), 'false');
@@ -466,13 +484,16 @@ test('details: Rename names the form it opens, the name field is described by it
 });
 
 test('details: a failed save says so in the form; non-favorites have no Rename', () => {
-  withPanel([fav('a', 'Radio One')], ({ find, act, storage }) => {
+  withPanel([fav('a', 'Radio One')], ({ find, act, formNamed, storage }) => {
     openDetail(getState().favorites[0]);
     act('rename-favorite').dispatchEvent(new Event('click'));
-    find('detail-rename-input').value = 'Morning';
+    const form = formNamed('Rename favorite');
+    const controls = form.all();
+    controls.find((node) => node.tagName === 'INPUT').value = 'Morning';
     storage.fail = true;
-    find('detail-rename').dispatchEvent(new Event('submit'));
-    const message = find('detail-rename-message');
+    form.dispatchEvent(new Event('submit'));
+    const message = controls.find((node) => node.getAttribute('role') === 'alert');
+    assert.equal(form.hidden, false);
     assert.equal(message.hidden, false);
     assert.match(message.textContent, /could not be saved/);
     assert.equal(find('detail-title').textContent, 'Radio One');

@@ -5,7 +5,7 @@ The classic single-file artifact and signed-runtime portable fallback are:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.16-portable.zip
+dist\WorldMediaWindows-0.1.17-portable.zip
 ```
 
 `dist\WorldMediaWindows.exe` is the owner-preferred one-file PyInstaller build.
@@ -137,9 +137,9 @@ Fixed metadata hosts use the DNS-pinned HTTPS allowlist in
 `worldmedia_server.py`. Dynamic publisher feeds, PeerTube origins, and Owncast
 instances use semantic handlers in `worldmedia_catalog.py`; they never widen the
 generic proxy. Artwork and media enter separate opaque registries. The catalog
-cache is versioned and bounded to 64 MiB, and Clear cache never touches user
-favorites, settings, EQ curves, downloads, or recordings. See
-`docs/PROVIDERS.md` for every endpoint and refresh policy.
+cache is versioned and bounded to 64 MiB. **Clear local cache** also resets
+saved preferences such as favorites and EQ. See `docs/PROVIDERS.md` for
+every endpoint and refresh policy.
 
 Deterministic catalog tests use local fixtures. Public-provider probes are
 opt-in and their volatile failures must be recorded separately from release

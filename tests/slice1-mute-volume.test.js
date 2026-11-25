@@ -48,7 +48,7 @@ test('volume, mute and startup all keep the icon and the volume text up to date'
   assert.doesNotMatch(sync, /elements\.(audio|video)\.volume/);
   assert.match(sync, /elements\.vol\.title = `Volume \$\{text\}`;/);
   assert.match(sync, /elements\.vol\.setAttribute\('aria-valuetext', text\);/);
-  assert.match(sync, /elements\.mute\.dataset\.silent = isSilent\(elements\.audio\.muted, pct\)/);
+  assert.match(sync, /elements\.mute\.dataset\.silent = String\(isSilent\(elements\.audio\.muted, pct\)\);/);
   // aria-pressed still means "muted" only.
   assert.doesNotMatch(sync, /aria-pressed/);
   const setVolume = player.match(/export function setVolume\(pct\) \{[\s\S]*?\n\}/)[0];

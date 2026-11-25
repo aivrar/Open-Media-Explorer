@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPlayerDom } from './helpers/fake-dom.js';
+import { createPlayerDom, FakeElement } from './helpers/fake-dom.js';
 import { LIVE_GROWTH, hasSeekableLength, mediaTimeline, trackLengthGrowth } from '../src/lib/player.js';
+import Hls from '../src/vendor/hls.js';
 import { createDashPlayback } from '../src/lib/dash-player.js';
 import { playClock } from '../src/lib/play-clock.js';
 
@@ -50,8 +51,6 @@ test('an item listed as live and played directly is live while its length is unk
   const direct = { delivery: 'live', type: 'radio', direct: true };
   assert.deepEqual(mediaTimeline({ ...direct, duration: Number.NaN }), LIVE);
   assert.deepEqual(mediaTimeline({ ...direct, duration: Infinity }), LIVE);
-  // A live stream reports the time played as its length when it ends: still live.
-  assert.deepEqual(mediaTimeline({ ...direct, duration: 312.4, unbounded: true }), LIVE);
   assert.deepEqual(mediaTimeline({ ...direct, duration: 167, durationGrowing: true }), LIVE);
   // A playlist entry listed as a station that points at an MP3.
   assert.deepEqual(mediaTimeline({ ...direct, duration: 245.3 }), RECORDING);
@@ -63,7 +62,6 @@ test('an item listed neither way follows hls.js and dash.js, an endless length, 
   assert.deepEqual(mediaTimeline({ duration: 4000, type: 'video', dashLive: true }), LIVE);
   assert.deepEqual(mediaTimeline({ duration: 4000, type: 'video', hlsLive: false, durationGrowing: true }), RECORDING);
   assert.deepEqual(mediaTimeline({ duration: Infinity, type: 'audio' }), LIVE);
-  assert.deepEqual(mediaTimeline({ duration: 312.4, type: 'audio', unbounded: true }), LIVE);
   assert.deepEqual(mediaTimeline({ duration: 167, type: 'video', durationGrowing: true }), LIVE);
   assert.deepEqual(mediaTimeline({ duration: 125, type: 'video' }), RECORDING);
   assert.deepEqual(mediaTimeline({ duration: Number.NaN, type: 'video' }), { live: false, seekable: false });
@@ -133,6 +131,12 @@ test('in the player bar: live radio never shows a seek bar, a playlist MP3 liste
   t.mock.method(console, 'warn', () => {});
   t.mock.timers.enable({ apis: ['Date'], now: 1_795_228_000_000 });
   const { elements, document } = createPlayerDom();
+  const pictureSlot = document.register(new FakeElement('player-picture-slot'));
+  pictureSlot.setAttribute('inert', '');
+  for (const id of [
+    'picture-panel', 'picture-scope', 'picture-scope-channel', 'picture-fit', 'picture-session-note',
+    'picture-feedback', 'picture-brightness', 'picture-contrast', 'picture-saturation', 'picture-hue', 'picture-reset',
+  ]) document.register(new FakeElement(id));
   globalThis.document = document;
   globalThis.window = {};
   globalThis.fetch = async (path, options = {}) => {
@@ -145,6 +149,9 @@ test('in the player bar: live radio never shows a seek bar, a playlist MP3 liste
       });
     }
     if (String(path).endsWith('/expire')) return apiResponse(202, { ok: true, data: { state: 'expired' }, error: null });
+    if (options.headers?.Range && String(path).startsWith('/api/v1/media/')) {
+      return new Response('#EXTM3U\n#EXT-X-ENDLIST\n', { headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } });
+    }
     throw new Error(`Unexpected request: ${path}`);
   };
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
@@ -152,6 +159,7 @@ test('in the player bar: live radio never shows a seek bar, a playlist MP3 liste
   player.initPlayer();
   const video = elements['video-el'];
   const seekShown = () => !elements['player-seek'].classList.contains('is-no-length');
+  const nativeTimelineHidden = () => video.classList.contains('is-live-video');
   const report = (length, position) => {
     video.duration = length;
     if (position !== undefined) video.currentTime = position;
@@ -164,6 +172,8 @@ test('in the player bar: live radio never shows a seek bar, a playlist MP3 liste
   await player.playItem(radio);
   const audio = elements['audio-el'];
   assert.equal(seekShown(), false, 'live from the start');
+  assert.equal(nativeTimelineHidden(), false, 'live audio leaves the video class unset');
+  assert.equal(pictureSlot.hasAttribute('inert'), true, 'audio keeps Picture out of the focus order');
   audio.duration = Infinity;
   audio.currentTime = 4000;
   audio.emit('durationchange');
@@ -202,18 +212,29 @@ test('in the player bar: live radio never shows a seek bar, a playlist MP3 liste
   // that is known, and it stays so with every later length.
   const channel = item('iptv-org:timeline-tv', { source: 'iptv-org', type: 'tv', delivery: 'live' });
   await player.playItem(channel);
+  assert.equal(nativeTimelineHidden(), true, 'live TV starts without native seeking');
+  assert.equal(pictureSlot.hasAttribute('inert'), false);
   report(30, 1795228000); // the channel's own clock: a position no listener means
   for (let step = 1; step <= 3; step += 1) {
     t.mock.timers.tick(6_000);
     report(30 + 6 * step);
   }
   assert.equal(seekShown(), false, 'growing: live');
+  assert.equal(nativeTimelineHidden(), true);
   t.mock.timers.tick(6_000);
   report(54);
   t.mock.timers.tick(60_000);
   report(54);
   assert.equal(seekShown(), false, 'stays live');
   assert.notEqual(elements['player-time'].textContent, '498674:13:20');
+
+  // A channel listed as live that plays a finite video file gets its seek controls back.
+  video.duration = Number.NaN;
+  await player.playItem({ ...channel, id: 'iptv-org:finite-tv' });
+  assert.equal(nativeTimelineHidden(), true);
+  report(150, 8);
+  assert.equal(nativeTimelineHidden(), false);
+  assert.equal(seekShown(), true);
 
   // A file listed neither way, its length corrected upward once by 5 s.
   await player.playItem(item('internet-archive:timeline-file', {}));
@@ -242,5 +263,34 @@ test('in the player bar: live radio never shows a seek bar, a playlist MP3 liste
   report(3906);
   assert.equal(seekShown(), true);
   assert.equal(elements['player-dur'].textContent, '1:05:06');
+  assert.equal(nativeTimelineHidden(), false);
+  assert.equal(pictureSlot.hasAttribute('inert'), false, 'on-demand video can also be adjusted');
+  video.duration = Number.NaN;
+  await player.playItem(channel);
+  assert.equal(nativeTimelineHidden(), true);
+
+  // A native HLS event stream can end its playlist while playback continues.
+  t.mock.method(Hls, 'isSupported', () => false);
+  video.canPlayType = () => 'maybe';
+  video.seekable = { length: 0 };
+  await player.playItem({ ...channel, id: 'iptv-org:native-event', stream_kind: 'hls', _extra: { streamCandidates: [] },
+    stream_url: 'https://media.example/event.m3u8' });
+  assert.equal(video.paused, false);
+  report(Infinity, 4);
+  assert.equal(nativeTimelineHidden(), true);
+  assert.equal(seekShown(), false);
+  report(150, 8);
+  assert.equal(seekShown(), false, 'wait for a seekable range');
+  video.seekable = { length: 1 };
+  report(150, 9);
+  assert.equal(video.paused, false);
+  assert.equal(nativeTimelineHidden(), false);
+  assert.equal(seekShown(), true);
+  assert.equal(elements['player-seek'].disabled, false);
+  assert.equal(elements['player-time'].textContent, '0:09');
+  assert.equal(elements['player-dur'].textContent, '2:30');
+
   player.stop();
+  assert.equal(nativeTimelineHidden(), false);
+  assert.equal(pictureSlot.hasAttribute('inert'), true);
 });

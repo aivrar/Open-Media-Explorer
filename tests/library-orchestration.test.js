@@ -16,6 +16,9 @@ import {
 import { ui } from '../src/modes/library/shell-refs.js';
 import { FakeElement } from './helpers/fake-dom.js';
 import { SOURCES } from '../src/lib/sources.js';
+import { catalogScheduler } from '../src/lib/catalog-scheduler.js';
+import { getState } from '../src/lib/state.js';
+import { pauseCatalogWork, runSearch } from '../src/modes/library/chain.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -275,8 +278,9 @@ test('a source still waiting never delays the follow-up work of the others', asy
 
 test('early search follow-up touches only the settled source; browse waits for the other searches', async () => {
   const chain = await read('src/modes/library/chain.js');
-  const runSearch = chain.slice(chain.indexOf('export async function runSearch()'), chain.indexOf('function recordSearchFailure('));
-  const followUp = runSearch.slice(runSearch.indexOf('}), (sourceId) => {'), runSearch.indexOf('await searches.untilSettledExcept('));
+  const runSearch = chain.slice(chain.indexOf('export async function runSearch()'), chain.indexOf('function searchCatalogSources('));
+  const scheduleSearch = chain.slice(chain.indexOf('function searchCatalogSources('), chain.indexOf('function freshProgressKeepingHold('));
+  const followUp = scheduleSearch.slice(scheduleSearch.indexOf('}), (sourceId) => {'));
   assert.match(followUp, /discoverSnapshot\(sourceId\);\s*queueChainRender\(\);\s*\}\);/);
   assert.doesNotMatch(followUp, /scheduleNextLoad|loadMore/, 'no browse work starts while other searches run');
   // Browse resumes after every search except those whose source is in a
@@ -387,7 +391,7 @@ test('partial search results from a source with a held lane still show its notic
 test('search, Retry now and switching a source back on keep a held source notice', async () => {
   const chain = await read('src/modes/library/chain.js');
   // A new search shows a held source's own status instead of "loading".
-  assert.match(chain, /if \(isHeldProgress\(progress, startedAt\)\) \{\s*status = \{ \.\.\.statusFromProgress\(progress\), count: 0 \};/);
+  assert.match(chain, /function searchStartStatus\(sourceId, now = Date\.now\(\)\) \{\s*const progress = ensureProgress\(sourceId\);\s*if \(isHeldProgress\(progress, now\)\) return \{ \.\.\.statusFromProgress\(progress\), count: 0 \};/);
   // Switching the source back on keeps the declared wait and its reason.
   assert.match(chain, /function freshProgressKeepingHold\(before, now = Date\.now\(\)\) \{[\s\S]*?if \(isHeldProgress\(before, now\)\) \{[\s\S]*?retryAt: before\.retryAt, error: before\.error, notice: before\.notice/);
   assert.match(chain, /const fresh = freshProgressKeepingHold\(view\.sourceProgress\.get\(sourceId\)\);/);
@@ -741,4 +745,102 @@ test('selecting a source while the first pages load does not start the Library o
   const focus = chain.slice(chain.indexOf('export function focusViewSources('));
   assert.match(focus, /catalogScheduler\.promote\(sourceId, CATALOG_PRIORITY\.USER\)/);
   assert.match(focus, /fetchBrowsePage\(sourceId, generation, \{\s*priority: CATALOG_PRIORITY\.USER,/);
+});
+
+
+test('Radio Browser collects the whole directory in the background, including during search', async (t) => {
+  const radio = 'radio-browser';
+  const state = getState();
+  const oldSettings = state.settings;
+  const oldDocument = globalThis.document;
+  const oldUi = { ...ui };
+  const oldView = { ...view };
+  t.after(() => {
+    pauseCatalogWork();
+    catalogScheduler.resetSource(radio);
+    state.settings = oldSettings;
+    globalThis.document = oldDocument;
+    Object.assign(ui, oldUi);
+    Object.assign(view, oldView);
+  });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.method(catalogScheduler, 'enqueue', ({ task, signal }) => task({ signal }));
+
+  const drain = () => new Promise((resolve) => setImmediate(resolve));
+  const station = (number, countrycode = 'US') => ({
+    stationuuid: String(number), name: 'Station ' + number, countrycode,
+    url: 'https://radio.example/live',
+  });
+  const pages = [];
+  const searches = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === '/json/servers') return Response.json([]);
+    assert.equal(pathname, '/json/stations/search');
+    const name = searchParams.get('name');
+    if (name) {
+      searches.push(name);
+      return Response.json([station(3300, 'GB')]);
+    }
+    const offset = Number(searchParams.get('offset'));
+    const limit = Number(searchParams.get('limit'));
+    pages.push(offset);
+    assert.equal(limit, 300);
+    const size = offset < 3300 ? limit : 1;
+    return Response.json(Array.from({ length: size }, (_, index) => station(offset + index)));
+  });
+  state.settings = {
+    ...oldSettings,
+    enabledSources: Object.fromEntries(SOURCES.map(({ id }) => [id, id === radio])),
+  };
+  globalThis.document = { createElement: (tag) => new FakeNode('', tag) };
+  const counts = Object.fromEntries([radio, 'all', 'type:radio', 'type:tv'].map((id) => [id, {}]));
+  Object.assign(ui, {
+    sidebar: {
+      querySelectorAll: () => Object.entries(counts).map(([source, count]) => ({
+        dataset: { source }, querySelector: (selector) => selector === '[data-role="count"]' ? count : null,
+      })),
+    },
+    resultsHost: new FakeResults(),
+    statusHost: null,
+    windowBack: null,
+    sentinelStatus: new FakeNode(),
+    sentinelButton: new FakeNode(),
+  });
+  Object.assign(view, {
+    activeSource: radio, query: '', filters: { ...view.filters, country: 'GB' },
+    items: [], itemIndex: new Map(), finiteItemIds: new Set(),
+    sourceCounts: new Map(), sourceProgress: new Map(), sourceStatus: new Map(),
+    sessionCounts: new Map(), cumulativeCounts: new Map(), cumulativeSourceTypeCounts: new Map(),
+    cumulativeTypeCounts: new Map(), exhausted: new Set(),
+  });
+  await runSearch();
+  for (let page = 1; page < 10; page += 1) {
+    t.mock.timers.tick(100);
+    await drain();
+  }
+  assert.deepEqual(pages, Array.from({ length: 10 }, (_, index) => index * 300));
+  assert.equal(counts[radio].textContent, '3000');
+  assert.equal(counts.all.textContent, '3000');
+  assert.equal(counts['type:radio'].textContent, '3000');
+  assert.equal(counts['type:tv'].textContent, '0');
+
+  view.filters.country = 'NZ';
+  view.query = 'Station 3300';
+  await runSearch();
+  assert.deepEqual(searches, ['Station 3300']);
+  view.filters.country = 'GB';
+  assert.deepEqual(filteredItemsForCurrentView().map((item) => item.title), ['Station 3300']);
+  view.filters.country = 'NZ';
+
+  for (let page = 10; page < 12; page += 1) {
+    t.mock.timers.tick(100);
+    await drain();
+  }
+  assert.deepEqual(pages, Array.from({ length: 12 }, (_, index) => index * 300));
+  assert.equal(view.exhausted.has(radio), true);
+  assert.equal(view.chainTimer, null);
+  assert.equal(counts[radio].textContent, '3301');
+  assert.equal(counts.all.textContent, '3301');
+  assert.equal(counts['type:radio'].textContent, '3301');
 });

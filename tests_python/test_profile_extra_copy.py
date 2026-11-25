@@ -105,6 +105,27 @@ class ProfileExtraCopyTests(unittest.TestCase):
         self.assertEqual(profile_transfer_copy_path(self.paths),
                          profile_transfer_path(self.paths).with_name(PROFILE_TRANSFER_COPY_FILENAME))
 
+    def test_appearance_settings_round_trip_inside_the_legacy_settings_value(self) -> None:
+        settings = json.dumps({
+            "theme": "forest",
+            "nowPlayingBackgroundBlur": "off",
+            "tabsShown": {"library": True, "tuner": False},
+        })
+        values = {**self.values, SETTINGS_KEY: settings}
+        old_keys = ("worldmedia.now-playing-background-blur.v1", "worldmedia.tabs-shown.v1")
+        for key in old_keys:
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "unsupported key"):
+                save_profile_transfer({**values, key: "off"}, self.paths)
+
+        self.assertEqual(save_profile_transfer(values, self.paths), values)
+        self.assertEqual(self.read_json(profile_transfer_path(self.paths))["values"], {
+            FAVORITES_KEY: self.favorites, SETTINGS_KEY: settings,
+        })
+        extra = profile_transfer_extra_path(self.paths)
+        self.assertTrue(set(old_keys).isdisjoint(self.read_json(extra)["values"]))
+        extra.unlink()
+        self.assertEqual(load_profile_transfer(self.paths)[SETTINGS_KEY], settings)
+
     def test_a_normal_write_fills_all_three_files_and_reads_back_unchanged(self) -> None:
         self.assertEqual(save_profile_transfer(self.values, self.paths), self.values)
         main = self.read_json(profile_transfer_path(self.paths))
@@ -287,6 +308,24 @@ class ProfileExtraCopyTests(unittest.TestCase):
         with self.assertRaises(BackupError) as caught:
             create_backup(self.paths, store, now=datetime(2026, 11, 20, 10, 0, 3))
         self.assertEqual(caught.exception.code, "BACKUP_STATE_UNSAFE")
+
+    def test_station_eq_and_q_are_saved_and_backed_up_in_the_extra_profile(self) -> None:
+        key = "worldmedia.eq-extra.v1"
+        advanced = json.dumps({"assignments": {"rb:one": "bass-boost"}, "q": {"global": [3]}})
+        values = {**self.values, "worldmedia.eq.v1": '{"version":1}', key: advanced}
+        save_profile_transfer(values, self.paths)
+        self.assertNotIn(key, self.read_json(profile_transfer_path(self.paths))["values"])
+        self.assertEqual(self.read_json(profile_transfer_extra_path(self.paths))["values"][key], advanced)
+        self.assertEqual(load_profile_transfer(self.paths), values)
+
+        store = PlaylistStore(self.state / "playlists.json")
+        result = create_backup(self.paths, store, now=datetime(2026, 11, 20, 10, 0, 0))
+        with zipfile.ZipFile(result["path"]) as archive:
+            extra = json.loads(archive.read(DATA + PROFILE_TRANSFER_EXTRA_FILENAME))
+            self.assertEqual(extra["values"][key], advanced)
+
+        save_profile_transfer({}, self.paths)
+        self.assertEqual(load_profile_transfer(self.paths), {})
 
     def test_the_backup_carries_the_copy_and_uses_its_names(self) -> None:
         store = PlaylistStore(self.state / "playlists.json")

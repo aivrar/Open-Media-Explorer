@@ -19,3 +19,13 @@ export function el(tag, opts = {}, ...children) {
   }
   return e;
 }
+
+export function setDescriptionReference(button, id, enabled) {
+  if (!button || !id) return;
+  const ids = new Set((button.getAttribute('aria-describedby') || '').match(/\S+/g));
+  if (ids.has(id) === enabled) return;
+  if (enabled) ids.add(id);
+  else ids.delete(id);
+  if (ids.size) button.setAttribute('aria-describedby', [...ids].join(' '));
+  else button.removeAttribute('aria-describedby');
+}

@@ -8,6 +8,7 @@ import {
   AudioEngine,
   computeEqResponseDb,
   dbToGain,
+  EQ_SMOOTHING_SECONDS,
 } from '../src/lib/audio-engine.js';
 
 class FakeParam {
@@ -99,18 +100,20 @@ test('one context builds the approved EQ topology and one source per media eleme
   assert.equal(second.sourceCreated, true);
   assert.equal(context.sources.length, 2);
   assert.equal(engine.getStatus().sourceCount, 2);
-  assert.equal(context.filters.length, 10);
-  assert.deepEqual(context.filters.map((filter) => filter.type), EQ_FILTER_TYPES);
-  assert.deepEqual(context.filters.map((filter) => filter.frequency.value), EQ_FREQUENCIES);
-  assert.deepEqual(context.filters.map((filter) => filter.Q.value), [1, ...Array(8).fill(EQ_FILTER_Q), 1]);
-
-  const { input, dry, preamp, bands, compressor, wet, analyser } = engine.graph;
+  const { input, dry, preamp, bands, shelfResonances, compressor, wet, analyser } = engine.graph;
+  assert.deepEqual(context.filters, [...bands, ...shelfResonances]);
+  assert.deepEqual(bands.map((filter) => filter.type), EQ_FILTER_TYPES);
+  assert.deepEqual(bands.map((filter) => filter.frequency.value), EQ_FREQUENCIES);
+  assert.deepEqual(bands.map((filter) => filter.Q.value), [1, ...Array(8).fill(EQ_FILTER_Q), 1]);
+  assert.deepEqual(shelfResonances.map((filter) => filter.gain.value), [0, 0]);
   assert.deepEqual(input.outputs, [dry, preamp]);
   assert.equal(preamp.outputs[0], bands[0]);
   for (let index = 0; index < bands.length - 1; index++) {
     assert.equal(bands[index].outputs[0], bands[index + 1]);
   }
-  assert.equal(bands.at(-1).outputs[0], compressor);
+  assert.equal(bands.at(-1).outputs[0], shelfResonances[0]);
+  assert.equal(shelfResonances[0].outputs[0], shelfResonances[1]);
+  assert.equal(shelfResonances[1].outputs[0], compressor);
   assert.equal(compressor.outputs[0], wet);
   assert.deepEqual(dry.outputs, [analyser]);
   assert.deepEqual(wet.outputs, [analyser]);
@@ -217,4 +220,29 @@ test('context creation stays lazy and rapid curve/source churn remains bounded a
   assert.equal(context.sources.length, 2);
   assert.equal(engine.getStatus().sourceCount, 2);
   assert.ok(elapsed < 1000, `5000 smoothed curve updates took ${elapsed.toFixed(1)} ms`);
+});
+
+test('Q changes a band width and shelf resonance using the same ramp as gain', async () => {
+  const context = new FakeContext();
+  const engine = new AudioEngine({ contextFactory: () => context });
+  await engine.attachElement(media('audio'));
+  const bands = [10, 0, 0, 0, 0, 10, 0, 0, 0, 0];
+  const q = [3, EQ_FILTER_Q, EQ_FILTER_Q, EQ_FILTER_Q, EQ_FILTER_Q, 5];
+  engine.applyCurve({ bands, q });
+
+  const { bands: filters, shelfResonances } = engine.graph;
+  const ramp = (value) => ['target', value, context.currentTime, EQ_SMOOTHING_SECONDS];
+  assert.deepEqual(filters[5].Q.events.at(-1), ramp(5));
+  assert.deepEqual(shelfResonances[0].Q.events.at(-1), ramp(3));
+  assert.deepEqual(shelfResonances[0].gain.events.at(-1), ramp(5));
+
+  const probes = [31, 750, 1000];
+  const original = computeEqResponseDb({ bands }, probes);
+  const adjusted = engine.getFrequencyResponse(probes);
+  assert.ok(adjusted[0] - original[0] > 4.9);
+  assert.ok(original[1] - adjusted[1] > 2);
+  assert.ok(Math.abs(adjusted[2] - original[2]) < 0.01);
+  engine.applyCurve({ bands });
+  assert.deepEqual(filters[5].Q.events.at(-1), ramp(EQ_FILTER_Q));
+  assert.deepEqual(shelfResonances[0].gain.events.at(-1), ramp(0));
 });

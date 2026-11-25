@@ -240,6 +240,8 @@ class CatalogRouteTests(unittest.TestCase):
             response, payload = self.request("GET", f"/api/v1/assets/{token}")
             self.assertEqual(response.status, 200)
             self.assertEqual(payload, b"0123456789")
+            self.assertEqual(response.getheader("Content-Type"), "image/png")
+            self.assertEqual(response.getheader("Content-Security-Policy"), "sandbox; default-src 'none'")
             self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
             self.assertEqual(response.getheader("Cache-Control"), "private, max-age=300")
 
@@ -268,6 +270,8 @@ class CatalogRouteTests(unittest.TestCase):
                 "GET", f"/api/v1/assets/{token}", headers={"If-None-Match": '"asset-etag"'}
             )
             self.assertEqual(response.status, 304)
+            self.assertEqual(response.getheader("Content-Security-Policy"), "sandbox; default-src 'none'")
+            self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
             self.assertEqual(payload, b"")
 
             response, payload = self.request("HEAD", f"/api/v1/assets/{token}")

@@ -74,7 +74,9 @@ short-lived opaque local asset registration before it is attached to an image.
 two at a time. The first working candidate wins; losing relay registrations are
 expired. `worldmedia_media.py` validates redirects, DNS/public addresses,
 content types, byte ranges, and manifest sizes. HLS/DASH manifests are rewritten
-to local opaque child resources.
+to local opaque child resources. Relayed content uses a sandboxing
+Content Security Policy and `nosniff`. Relayed HTML, XHTML and SVG are
+served as plain text.
 
 Every outbound connection is made to an address from the validated lookup of
 the host. Since v0.1.15 the addresses are tried together: IPv4 first, the next
@@ -225,7 +227,10 @@ back. Leaving the tab calls it, so a closed tab costs nothing.
   `fx-chain.js` runs the post effects over it and is bypassed while none are on.
   `overlay-layer.js` draws the Canvas 2D overlays on a second canvas laid over
   the picture. One overlay at a time can be uploaded and blended into the
-  picture by the chain. `transition.js` cross-fades every visible change.
+  picture by the chain. `structure.js` follows builds, breaks and drops
+  and can bring a shuffle change forward. `transition.js` blends scenes with
+  a warped dissolve or a fade. `colour-travel.js` drifts the palette with
+  the music.
 - **When it draws.** `loop.js` draws inside the signal's frames at the chosen
   rate while sound plays. With nothing to hear it draws at 5 frames a second for
   20 seconds, then holds the last picture and schedules nothing. Nothing is
@@ -368,11 +373,15 @@ a capture job's, never HLS or DASH):
   all with the same fixed fields), drops what came before it, and passes
   everything after that unchanged. If no such frame is found within 64 KB or
   1.5 seconds, or the stream ends first, what it holds is passed on unchanged.
-- **Passed as it arrives.** An endless audio reply (`audio/*` or
-  `application/ogg`, status 200, no length or range) is relayed as its bytes
-  arrive (`relay_passes_as_available`); a 64 KiB read holds a 32 kbps stream for
-  16 seconds before the player gets anything. Files with a length, video,
-  manifests, segments, ranged replies and HEAD keep full reads.
+- **Passed as it arrives.** Live audio playback uses available bytes even
+  when the server gives a generic type or declares a length. A full 64 KiB
+  read held a 40 kbps stream for about 13 seconds. A read deadline releases
+  any AAC alignment buffer after 1.5 seconds even if the stream stalls.
+
+For video and HLS, the player gets the available stream details from the
+media element and the active stream. Video facts are kept after five stable
+seconds. Play sessions can cancel their own lookup without cancelling a
+second caller's lookup.
 
 ## Local port at start
 
@@ -453,7 +462,7 @@ the data that version 0.1.9 added is kept apart:
 | File | Holds | Code |
 |---|---|---|
 | `state/profile-preferences.json` | The five keys every version knows: favorites, settings, volume, job history, EQ | `worldmedia_runtime.py` |
-| `state/profile-preferences-extra.json` | Newer keys: the favorites categories (`worldmedia.favgroups.v1`), the names the user gave favorites (`worldmedia.favnames.v1`, since 0.1.12) and the stations kept on their own stream (`worldmedia.ownstream.v1`, since 0.1.12) | `worldmedia_runtime.py` |
+| `state/profile-preferences-extra.json` | Favorites categories, custom station names, stations kept on their own stream, picture settings, edited stream addresses and audio bookmarks | `worldmedia_runtime.py` |
 | `state/song-log.json` | The song log, at most 500 songs | `worldmedia_songlog.py` |
 | `state/starred-songs.json` | The starred songs, at most 2,000 (since 0.1.12) | `worldmedia_starred.py` |
 | `station-images/` | The user's own station pictures | `worldmedia_station_images.py` |
@@ -464,7 +473,9 @@ keys. Every release keeps settings fields it does not know, so going back to
 0.1.9 and returning keeps them. The Visualizer's fields added in 0.1.11 (all
 named `visualizer...`) are stored the same way, and so are the settings added
 in 0.1.12: `bestStreamMode` (`off`, `listed` or `auto`), `processorUse`,
-`processorLimit` and `visualizerQualityPicked`.
+`processorLimit` and `visualizerQualityPicked`. Tab visibility, Now Playing
+blur, the Favorites title switch and Color travel are fields in the same
+settings value. On startup, preference saves wait for the profile restore.
 
 A favorite's own record keeps the station's original name;
 `src/lib/favorite-names.js` lays the user's name over it when a list is shown
@@ -529,7 +540,11 @@ headers (an older client) is applied as it always was.
   ZIP is written to a partial file in `downloads` and renamed when complete,
   holds at most 192 MB before compression, and only one backup runs at a time.
   The `.m3u8` exports are rebuilt from the saved favorites and playlists and
-  hold only web addresses World Media can play.
+  hold playable web addresses, including edited and backup addresses.
+- **Playlist export** (`worldmedia_playlist_export.py`) writes the current
+  Favorites or My Playlists selection to a new file. The Downloads path
+  check in `worldmedia_runtime.py` detects links and junctions before
+  downloads, recordings, backups or exports are written.
 
 ## Important API surfaces (for diagnostics)
 
@@ -544,12 +559,15 @@ These are local implementation routes, not a public API contract:
 | `POST /api/v1/playlists/import` | Parse and save a local M3U/M3U8, PLS, XSPF, JSON or CSV list (all but M3U are stored as M3U). The default type is `auto`, `tv` or `radio`; `auto` is saved as the type it chose |
 | `POST /api/v1/playlists/link` | Save a direct link or safely fetch an online list (the same default types) |
 | `POST /api/v1/playlists/remove` | Remove a list, keeping favorites |
+| `POST /api/v1/playlists/export` | Write the selected saved stations as M3U8 or JSON |
+| `POST /api/v1/playlists/validate-stream-addresses` | Validate edited main and backup addresses before saving |
 | `GET` / `POST /api/v1/profile/preferences` | Bounded cross-port preference backup (two files; a write carries an order number) |
 | `GET` / `POST /api/v1/song-log` | Load the song log, or save it (writes are ordered by a revision) |
 | `POST /api/v1/song-log/export` | Write the song log as a CSV file in `downloads` |
 | `GET` / `POST /api/v1/starred-songs` | Load the starred songs, or save them (writes are ordered by a revision) |
 | `POST /api/v1/starred-songs/export` | Write the starred songs as a text or CSV file in `downloads` |
 | `POST /api/v1/streams/probe` | A short look at a station's own stream and another directory entry for **Auto (verified)**; one pair at a time |
+| `POST /api/v1/streams/title-peek` | Read the current song from a radio favorite |
 | `GET /api/v1/system/processor-use` | The app's share of the whole processor since the last reading (read only on request) |
 | `GET /api/v1/station-images` | List the user's station pictures (scans the folder) |
 | `GET /api/v1/station-images/{id}` | One station picture, by an id from the last listing |

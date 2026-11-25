@@ -18,18 +18,22 @@
  */
 
 import {
-  addFavorite as appAddFavorite, getState, isFavorite as appIsFavorite,
+  addFavorite as appAddFavorite, getState, isFavorite as appIsFavorite, normalizeNowPlayingBackgroundBlur,
   removeFavorite as appRemoveFavorite, subscribe as appSubscribe,
 } from '../lib/state.js';
-import { getAudioSignal, getCurrentItem as appCurrentItem, getNowPlaying as appNowPlaying } from '../lib/player.js';
+import {
+  PLAYER_SILENT_CHANGE, getAudioSignal, getCurrentItem as appCurrentItem,
+  getNowPlaying as appNowPlaying, getCurrentPart, isMediaAdvancing, isPlayerSilent,
+} from '../lib/player.js';
+import { partLabel } from '../lib/media-parts.js';
 import { NOW_PLAYING_EVENT } from '../lib/now-playing.js';
 import { bindSongStar as appBindSongStar } from '../lib/song-star.js';
 import { songStarBlock, starredSongs } from '../lib/starred-songs.js';
 import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
 import { getSourceLabel } from '../lib/sources.js';
-import { playedStream as appPlayedStream } from '../lib/media-failover.js';
-import { playedQualityLabel } from '../lib/stream-quality.js';
+import { cleanBitrate, cleanCodec, formatStreamQuality } from '../lib/stream-quality.js';
+import { onPlayedStreamChange, playedStreamOf, stationStreamLabel } from '../lib/played-streams.js';
 import {
   isArtworkRelayUrl, loadArtworkImage, resolveArtworkRelay, stationImageSourceFor,
 } from '../lib/artwork.js';
@@ -39,6 +43,7 @@ import { createPlayerMeter } from '../lib/player-meter.js';
 import { MEDIA_ADVANCING_EVENT, playClock as appPlayClock } from '../lib/play-clock.js';
 import { COPIED_LABEL, COPIED_MS, COPY_FAILED, COPY_LABEL } from '../lib/song-log-panel.js';
 import { bestStreamAutoOn } from '../lib/best-stream.js';
+import { isTabShown } from '../lib/top-tabs.js';
 import { createBestStreamStatus } from './library/other-streams.js';
 
 export const NOW_PLAYING_MODE = 'now-playing';
@@ -169,6 +174,20 @@ export function announceable(title, shown) {
   return true;
 }
 
+function playedFormat(item, stream) {
+  const facts = stream?.url && playedStreamOf(item.id, stream.url);
+  if (facts?.width) return formatStreamQuality(facts);
+  if (stream?.kind === 'hls') return formatStreamQuality(facts || { hls: true });
+  const remembered = playedStreamOf(item.id);
+  if (!stream && remembered?.width) return formatStreamQuality(remembered);
+  if (!stream && (item.stream_kind === 'hls' || remembered?.hls)) return 'HLS';
+  const codec = cleanCodec(stream?.codec);
+  const bitrate = cleanBitrate(stream?.bitrate);
+  if (!codec && !bitrate && (!stream || !(remembered?.hls || remembered?.width))) return stationStreamLabel(item);
+  const plain = remembered?.hls || remembered?.width ? null : remembered;
+  return formatStreamQuality({ codec: codec || plain?.codec, bitrate: bitrate || plain?.bitrate });
+}
+
 /** The stream details as [label, value] rows, in order; only what is known. */
 export function detailRows(item, { stream = null, playedMs = null, playing = false } = {}) {
   if (!item) return [];
@@ -177,7 +196,7 @@ export function detailRows(item, { stream = null, playedMs = null, playing = fal
   if (source) rows.push(['Source', source]);
   const kind = kindText(item);
   if (kind) rows.push(['Type', kind]);
-  const format = playedQualityLabel(item, stream);
+  const format = playedFormat(item, stream);
   if (format) rows.push(['Format', format]);
   const country = countryText(item.country);
   if (country) rows.push(['Country', country]);
@@ -198,7 +217,7 @@ export function shownItem(item, favorite, names) {
  */
 export function nowPlayingView({
   item = null, favorite = false, names = new Map(), groups = null, nowPlaying = null,
-  stream = null, playedMs = null, playing = false,
+  stream = null, playedMs = null, playing = false, part = null,
 } = {}) {
   if (!item) return { empty: true };
   const shown = shownItem(item, favorite, names);
@@ -211,6 +230,7 @@ export function nowPlayingView({
     originalName: renamed ? (shown.originalTitle || NOW_PLAYING_TEXT.untitled) : '',
     category: categoryId ? groups.nameOf(categoryId) || '' : '',
     kind: kindText(item),
+    part: partLabel(item, part),
     favorite: favorite === true,
     initials: artworkInitials(name),
     hue: initialsHue(name),
@@ -233,8 +253,11 @@ function defaultDeps() {
     win: globalThis.window,
     subscribe: appSubscribe,
     getCurrentItem: appCurrentItem,
+    getCurrentPart,
     getNowPlaying: appNowPlaying,
     isPlaying: () => getState().isPlaying === true,
+    isAdvancing: isMediaAdvancing,
+    isSilent: isPlayerSilent,
     getSettings: () => getState().settings,
     isFavorite: appIsFavorite,
     addFavorite: appAddFavorite,
@@ -251,7 +274,7 @@ function defaultDeps() {
     resolveArtwork: resolveArtworkRelay,
     customSourceFor: stationImageSourceFor,
     onStationImagesChange: appOnStationImagesChange,
-    playedStream: appPlayedStream,
+    playedStream: () => getState().currentStream,
     bestStream: (item, options) => createBestStreamStatus(item, options),
     // The same as pressing the tab's button in the top bar.
     openMode: (mode) => globalThis.document?.querySelector?.(`.mode-btn[data-mode="${mode}"]`)?.click?.(),
@@ -319,6 +342,7 @@ export function mountNowPlaying(host, options = {}) {
   fav.innerHTML = STAR_SVG;
   const original = make('p', 'np-original');
   const category = make('p', 'np-category');
+  const part = make('p', 'np-part');
 
   const song = make('section', 'np-song', { 'aria-labelledby': 'np-song-heading' });
   const songText = make('p', 'np-song-title');
@@ -337,9 +361,12 @@ export function mountNowPlaying(host, options = {}) {
       append(make('div', 'np-song-actions'), songStarBtn, copyBtn, copyStatus)),
     announcer);
 
-  const meterBox = make('div', 'np-meter', { 'aria-hidden': 'true' });
-  const canvas = make('canvas', 'player-meter-canvas np-meter-canvas');
-  append(meterBox, canvas);
+  const meterBox = make('div', 'np-meter');
+  const canvas = make('canvas', 'player-meter-canvas np-meter-canvas', { 'aria-hidden': 'true' });
+  const mutedLabel = make('span', 'np-meter-muted', {
+    role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true',
+  });
+  append(meterBox, canvas, mutedLabel);
 
   const details = make('section', 'np-details', { 'aria-labelledby': 'np-details-heading' });
   const facts = make('dl', 'np-facts');
@@ -351,6 +378,7 @@ export function mountNowPlaying(host, options = {}) {
     append(make('div', 'np-heading-row'), title, fav),
     original,
     category,
+    part,
     song,
     meterBox,
     details);
@@ -385,6 +413,7 @@ export function mountNowPlaying(host, options = {}) {
       names: deps.favoriteNames(),
       groups: item ? deps.favoriteGroups() : null,
       nowPlaying: deps.getNowPlaying(),
+      part: item ? deps.getCurrentPart(item.id) : null,
       stream: item ? deps.playedStream(item) : null,
       playedMs: item ? deps.playClock.played(item.id) : null,
       playing: deps.isPlaying(),
@@ -518,6 +547,18 @@ export function mountNowPlaying(host, options = {}) {
     return doc?.visibilityState === 'hidden';
   }
 
+  function syncMeter() {
+    if (hidden()) return;
+    const muted = Boolean(current && deps.isPlaying() && deps.isAdvancing() && deps.isSilent());
+    setText(mutedLabel, muted ? 'Muted' : '');
+    meter?.setMuted?.(muted);
+  }
+
+  function syncBackdropBlur() {
+    const blur = normalizeNowPlayingBackgroundBlur(deps.getSettings()?.nowPlayingBackgroundBlur);
+    if (root.dataset.backgroundBlur !== blur) root.dataset.backgroundBlur = blur;
+  }
+
   function clearTick() {
     if (tick !== null) deps.clearTimer(tick);
     tick = null;
@@ -547,6 +588,7 @@ export function mountNowPlaying(host, options = {}) {
     root.dataset.state = v.empty ? 'empty' : 'playing';
     empty.hidden = !v.empty;
     layout.hidden = v.empty;
+    syncMeter();
     if (v.empty) {
       syncPicture(null);
       syncBest(null);
@@ -561,6 +603,8 @@ export function mountNowPlaying(host, options = {}) {
     original.hidden = !v.originalName;
     setText(category, v.category ? `Category: ${v.category}` : '');
     category.hidden = !v.category;
+    setText(part, v.part);
+    part.hidden = !v.part;
     renderFavorite(v.favorite);
     setText(artInitials, v.initials);
     artInitials.hidden = !v.initials;
@@ -575,7 +619,9 @@ export function mountNowPlaying(host, options = {}) {
 
   /* -- Controls -- */
   listen(libraryBtn, 'click', () => deps.openMode('library'));
-  listen(tunerBtn, 'click', () => deps.openMode('tuner'));
+  listen(tunerBtn, 'click', () => {
+    if (!tunerBtn.hidden) deps.openMode('tuner');
+  });
   listen(fav, 'click', () => {
     const item = deps.getCurrentItem();
     if (!item) return;
@@ -617,9 +663,8 @@ export function mountNowPlaying(host, options = {}) {
   stops.push(() => songStar?.destroy?.());
 
   // The large sound meter: the player bar's meter with bigger LEDs, on the
-  // same shared signal. It listens only while laid out and allowed to move,
-  // and the signal itself runs only while something plays and the window is
-  // shown, so a paused, stopped or hidden tab draws nothing.
+  // same shared signal. Muted playback shows a steady row while the signal
+  // rests. The signal runs only while audible playback is visible.
   const meter = deps.createMeter({
     root: meterBox,
     canvas,
@@ -637,6 +682,7 @@ export function mountNowPlaying(host, options = {}) {
   };
   on('current-item', render);
   on('playing-change', render);
+  on(PLAYER_SILENT_CHANGE, syncMeter);
   // The clock starts and stops with this (play-clock.js), and the timer too.
   on(MEDIA_ADVANCING_EVENT, render);
   on(NOW_PLAYING_EVENT, render);
@@ -644,7 +690,17 @@ export function mountNowPlaying(host, options = {}) {
   on(FAVORITE_GROUPS_EVENT, render);
   // The stream that plays is known once the relay has connected.
   on('media-relay', render);
-  on('settings-change', render);
+  stops.push(onPlayedStreamChange((id) => {
+    if (current && (!id || id === current.id)) renderFacts(view().rows || []);
+  }));
+  function syncTabLinks() {
+    tunerBtn.hidden = !isTabShown('tuner', deps.getSettings());
+  }
+  on('settings-change', () => {
+    syncTabLinks();
+    syncBackdropBlur();
+    syncBest(current);
+  });
   const stopPictures = deps.onStationImagesChange?.(() => {
     if (!destroyed) syncPicture(deps.getCurrentItem());
   });
@@ -655,6 +711,8 @@ export function mountNowPlaying(host, options = {}) {
     stops.push(() => doc.removeEventListener('visibilitychange', onVisibility));
   }
 
+  syncTabLinks();
+  syncBackdropBlur();
   render();
 
   function destroy() {
@@ -680,7 +738,7 @@ export function mountNowPlaying(host, options = {}) {
     meter,
     parts: {
       empty, layout, title, kind, original, category, fav, song, songText, songStarBtn, copyBtn, copyStatus,
-      announcer, facts, bestHost, art, artImg, artInitials, backdrop, backdropImg, meterBox, canvas, libraryBtn, tunerBtn,
+      announcer, facts, bestHost, art, artImg, artInitials, backdrop, backdropImg, meterBox, canvas, mutedLabel, libraryBtn, tunerBtn,
     },
     get timerPending() { return tick !== null || copyTimer !== null; },
     get pictureLoading() { return Boolean(picture.abort); },

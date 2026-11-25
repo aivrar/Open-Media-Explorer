@@ -9,6 +9,7 @@ import {
 } from '../src/lib/favorite-groups.js';
 import { getState, normalizeSettings, persistFavoriteMetadata, removeFavorite, subscribe } from '../src/lib/state.js';
 import { clearPersistenceFailure } from '../src/lib/persistence-notice.js';
+import { resetControlSession } from '../src/lib/capture-client.js';
 import { buildShell } from '../src/modes/library/shell.js';
 import { selectSource } from '../src/modes/library/sidebar.js';
 import { view, renderedIds } from '../src/modes/library/state.js';
@@ -191,6 +192,40 @@ function rockAndTalk() {
   assignFavoriteToGroup('b', talk.id);
   return { rock, talk };
 }
+
+test('Export sends the current Favorites view in M3U8 with one click', async (t) => {
+  resetControlSession();
+  t.after(resetControlSession);
+  const favorites = [
+    { ...card('news', 'Evening News', 'tv'), __contentHidden: false, stream_url: 'https://tv.example.org/news' },
+    { ...card('radio', 'News Radio'), __contentHidden: false, stream_url: 'https://radio.example.org/news' },
+  ];
+  const requests = [];
+  const message = withLibrary(favorites, () => {
+    const status = all(ui.favoritesActions).find((node) => node.getAttribute('role') === 'status');
+    const format = all(ui.favoritesActions).find((node) => node.getAttribute('aria-label') === 'Export format');
+    assert.equal(ui.favoritesExport.disabled, false);
+    assert.equal(format.value, 'm3u8');
+    globalThis.fetch = async (path, options) => {
+      requests.push([path, options]);
+      const data = path === '/api/v1/session' ? { token: 'export-test' } : { name: 'Favorites.m3u8', skipped: 0 };
+      return new Response(JSON.stringify({ ok: true, data }), { headers: { 'Content-Type': 'application/json' } });
+    };
+    click(ui.personalType.children.find((node) => node.getAttribute('data-type') === 'tv'));
+    click(ui.favoritesExport);
+    ui.searchInput.value = 'no matching result';
+    ui.searchInput.dispatchEvent(new Event('input'));
+    assert.equal(ui.favoritesExport.disabled, true);
+    selectSource('all');
+    assert.equal(ui.personalControls.style.display, 'none');
+    return status;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(requests.map(([path]) => path), ['/api/v1/session', '/api/v1/playlists/export']);
+  const body = JSON.parse(requests[1][1].body);
+  assert.deepEqual([body.format, body.type, body.stations.map(({ name }) => name)], ['m3u8', 'TV', ['Evening News']]);
+  assert.equal(message.textContent, 'Saved Favorites.m3u8 in Downloads.');
+});
 
 /* ============ The chip row ============ */
 
@@ -926,12 +961,14 @@ test('compact cards with technical details on: the source badge gets the room th
   assert.match(rule(`${on}.card-meta`), /display: flex;\s+flex-wrap: wrap;/);
   assert.doesNotMatch(rule(`${on}.card-meta`), /grid-template-columns/);
   assert.match(rule(`${on}.source-badge`), /display: block;[\s\S]*max-width: 100%;[\s\S]*white-space: nowrap;\s+text-overflow: ellipsis;/);
-  assert.match(rule(`${on}.card-license:not(.has-quality)`), /white-space: nowrap;\s+text-overflow: ellipsis;/);
   // With the move buttons ("My order") the cards start wider, so the badge
   // still fits whole: 318 px less the picture, the paddings and the buttons
   // leaves 110 px, and "Internet Archive" needs 109.
   assert.match(rule(`${on}.cards-grid:has(.card.has-order-controls)`), /grid-template-columns: repeat\(auto-fill, minmax\(318px, 1fr\)\);/);
   assert.match(rule('.library-root.is-personal-view .cards-grid'), /minmax\(280px, 1fr\)/);
-  // The catalog cards' columns are as they were.
-  assert.match(rule('.card-meta'), /grid-template-columns: minmax\(0, 1fr\) 38px minmax\(62px, 0\.78fr\);/);
+  // Year and country get space together before the license is shortened.
+  assert.match(rule('.card-meta'), /grid-template-columns: minmax\(0, 1fr\) max-content minmax\(62px, 0\.78fr\);/);
+  assert.match(rule('.card-facts'), /display: flex;[^}]*white-space: nowrap;/);
+  assert.doesNotMatch(rule('.card-facts'), /flex-direction: column/);
+  assert.match(rule('.card-license'), /white-space: nowrap;\s+overflow: hidden;\s+text-overflow: ellipsis;/);
 });

@@ -21,7 +21,7 @@ function fakeLibrary({ supported = true, initializeError = null } = {}) {
     destroy() { calls.push(['destroy']); },
   };
   function MediaPlayer() { return { create: () => player }; }
-  MediaPlayer.events = { ERROR: 'dashError' };
+  MediaPlayer.events = { ERROR: 'dashError', QUALITY_CHANGE_RENDERED: 'rendered' };
   return {
     library: {
       MediaPlayer,
@@ -46,12 +46,22 @@ test('DASH playback requires the opaque relay and owns one destroyable dash.js i
   assert.deepEqual(initialized, [
     'initialize', video, '/api/v1/media/root-token-1234567890123456789012', false,
   ]);
+  const rendered = fixture.handlers.get('rendered');
+  assert.equal(session.videoRepresentation(), null);
+  const videoQuality = { codecs: 'avc1.4d401f', frameRate: '30' };
+  rendered({ mediaType: 'video', newRepresentation: videoQuality });
+  assert.equal(session.videoRepresentation(), videoQuality);
+  rendered({ mediaType: 'audio', newRepresentation: { codecs: 'mp4a.40.2' } });
+  assert.equal(session.videoRepresentation(), videoQuality);
   fixture.handlers.get('dashError')({ error: { code: 27, message: 'segment failed' } });
   assert.deepEqual(errors, [{ code: 27, message: 'segment failed' }]);
   session.destroy();
   session.destroy();
   assert.equal(fixture.calls.filter((call) => call[0] === 'destroy').length, 1);
-  assert.deepEqual(fixture.calls.find((call) => call[0] === 'off'), ['off', 'dashError', true]);
+  assert.deepEqual(fixture.calls.filter(([action]) => action === 'off'), [
+    ['off', 'dashError', true], ['off', 'rendered', true],
+  ]);
+  assert.equal(session.videoRepresentation(), null);
 
   await assert.rejects(
     createDashPlayback(video, 'https://upstream.example/manifest.mpd', { library: fixture.library }),
@@ -77,6 +87,7 @@ test('DASH startup fails closed for missing MSE and destroys partial initializat
     /initialize failed/,
   );
   assert.equal(broken.calls.filter((call) => call[0] === 'destroy').length, 1);
+  assert.equal(broken.handlers.size, 0);
 });
 
 test('DASH library loading is lazy, shared, and retries after a failed import', async () => {

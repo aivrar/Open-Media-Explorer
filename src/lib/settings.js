@@ -4,6 +4,7 @@
 
 import {
   getState, saveSettings, setShowExplicitContent, setSourceEnabled, clearCache, subscribe,
+  NOW_PLAYING_BACKGROUND_BLUR_LABELS,
 } from './state.js';
 import { SOURCES } from './sources.js';
 import { openDownloadsFolder } from './download-client.js';
@@ -13,6 +14,7 @@ import { bindBackupControls } from './backup.js';
 import { STATION_IMAGES_HINT, bindStationImageControls } from './station-images.js';
 import { getPlaylistItems, playlistsLoaded } from './playlists.js';
 import { TUNER_CARD_SIZES, TUNER_CARD_SIZE_LABELS, normalizeTunerCardSize } from './tuner-card-size.js';
+import { TOP_TABS, isTabShown } from './top-tabs.js';
 import { TUNER_BACKGROUND_RELEASED, TUNER_BACKGROUND_TEXT } from './tuner-background.js';
 import { BEST_STREAM_MODES, BEST_STREAM_MODE_LABELS, bestStreamMode } from './best-stream.js';
 import {
@@ -32,7 +34,7 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.16';
+const VERSION = '0.1.17';
 
 function buildModal() {
   const state = getState();
@@ -64,7 +66,7 @@ function buildModal() {
           <div class="row">
             <div>
               <label for="settings-default-mode">Default mode on launch</label>
-              <span class="description">Which screen World Media opens to.</span>
+              <span class="description">If the chosen tab is hidden, World Media opens Library.</span>
             </div>
             <select id="settings-default-mode" data-field="defaultMode">
               <option value="library">Library</option>
@@ -90,6 +92,12 @@ function buildModal() {
             <input id="settings-tuner-visualizer" type="checkbox" class="switch" data-field="tunerVisualizerBackground" />
           </div>` : ''}
           <div class="row">
+            <label for="settings-now-playing-background-blur">Now Playing background blur</label>
+            <select id="settings-now-playing-background-blur" data-field="nowPlayingBackgroundBlur">
+              ${Object.entries(NOW_PLAYING_BACKGROUND_BLUR_LABELS).map(([id, label]) => `<option value="${id}">${label}</option>`).join('')}
+            </select>
+          </div>
+          <div class="row">
             <div>
               <label for="settings-sound-meter">Sound meter in the player bar</label>
               <span class="description">Small bars beside EQ that move with the sound, so you can see a station is really playing. They rest while nothing plays. Updates immediately.</span>
@@ -103,6 +111,15 @@ function buildModal() {
             </div>
             <input id="settings-tech-details" type="checkbox" class="switch" data-field="showTechnicalDetails" />
           </div>
+          <fieldset class="settings-tabs-shown">
+            <legend>Tabs shown</legend>
+            ${Object.entries(TOP_TABS).map(([mode, label]) => `
+              <div class="row">
+                <label for="settings-tab-${mode}">${label}</label>
+                <input id="settings-tab-${mode}" type="checkbox" role="switch" class="switch" data-show-tab="${mode}"${mode === 'library' ? ' disabled' : ''} />
+              </div>
+            `).join('')}
+          </fieldset>
         </section>
         <section data-content-settings>
           <h3>Content</h3>
@@ -271,7 +288,7 @@ function buildModal() {
           <div class="row">
             <div>
               <label>Clear local cache</label>
-              <span class="description">Removes favorites, preferences, equalizer settings, the song log, starred songs, and job history. Downloaded media and FFmpeg tools are kept.</span>
+              <span class="description">Removes favorites, stream address edits, preferences, equalizer and picture settings, the song log, starred songs, and job history. My Playlists, downloaded media, and FFmpeg tools are kept.</span>
             </div>
             <button class="btn btn-danger" type="button" data-act="clear-cache">Clear cache</button>
           </div>
@@ -305,6 +322,21 @@ function buildModal() {
   cardSizeSel.value = normalizeTunerCardSize(state.settings.tunerCardSize);
   cardSizeSel.addEventListener('change', () => saveSettings({ tunerCardSize: cardSizeSel.value }));
 
+  const tabToggles = root.querySelectorAll('input[data-show-tab]');
+  const processorAbout = root.querySelector('[data-act="processor-about"]');
+  function syncTabControls(settings) {
+    for (const toggle of tabToggles) toggle.checked = isTabShown(toggle.dataset.showTab, settings);
+    processorAbout.hidden = !isTabShown('about', settings);
+  }
+  syncTabControls(state.settings);
+  for (const toggle of tabToggles) {
+    if (toggle.disabled) continue;
+    toggle.addEventListener('change', () => saveSettings({
+      tabsShown: { ...getState().settings.tabsShown, [toggle.dataset.showTab]: toggle.checked },
+    }));
+  }
+  const unsubscribeTabControls = subscribe('settings-change', syncTabControls);
+
   const tunerVisualizerToggle = root.querySelector('input[data-field="tunerVisualizerBackground"]');
   let unsubscribeTunerVisualizer = null;
   if (tunerVisualizerToggle) {
@@ -316,6 +348,10 @@ function buildModal() {
       tunerVisualizerToggle.checked = settings.tunerVisualizerBackground === true;
     });
   }
+
+  const blurSel = root.querySelector('select[data-field="nowPlayingBackgroundBlur"]');
+  blurSel.value = state.settings.nowPlayingBackgroundBlur;
+  blurSel.addEventListener('change', () => saveSettings({ nowPlayingBackgroundBlur: blurSel.value }));
 
   const meterToggle = root.querySelector('input[data-field="soundMeter"]');
   meterToggle.checked = state.settings.soundMeter !== false;
@@ -571,7 +607,7 @@ function buildModal() {
   bindClearCache({
     button: root.querySelector('[data-act="clear-cache"]'),
     status: root.querySelector('[data-clear-cache-status]'),
-    confirmClear: () => confirm('Clear favorites, preferences, equalizer settings, the song log, and job history? Downloaded media and FFmpeg tools will be kept.'),
+    confirmClear: () => confirm('Clear favorites, stream address edits, preferences, equalizer and picture settings, the song log, starred songs, and job history? My Playlists, downloaded media, and FFmpeg tools will be kept.'),
     clear: clearCache,
     onDone: () => close(),
     isDisposed: () => disposed,
@@ -603,6 +639,7 @@ function buildModal() {
     disposed = true;
     window.clearTimeout(ffmpegTimer);
     unsubscribeTunerVisualizer?.();
+    unsubscribeTabControls();
     const app = document.getElementById('app');
     if (app) app.inert = false;
     root.remove();
@@ -736,6 +773,7 @@ export function bindProcessorUse(root, settings, {
 
 /** Close Settings and show the About tab's "Processor use" section. */
 export function openProcessorAbout(root) {
+  if (!isTabShown('about', getState().settings)) return;
   (root.closest?.('[data-settings-modal]') || root).querySelector?.('[data-act="close"]')?.click();
   document.querySelector('.mode-btn[data-mode="about"]')?.click();
   const section = document.getElementById('about-processor-use');

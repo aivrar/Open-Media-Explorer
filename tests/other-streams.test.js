@@ -129,7 +129,10 @@ test('the label is one short line, or nothing when nothing is known', () => {
   assert.equal(formatStreamQuality({ bitrate: 128 }), '128 kbps');
   assert.equal(formatStreamQuality({}), '');
   assert.equal(formatStreamQuality({ hls: true }), 'HLS');
-  assert.equal(formatStreamQuality({ hls: true, codec: 'AAC', bitrate: 64 }), `AAC${DOT}64 kbps`);
+  assert.equal(formatStreamQuality({ hls: true, codec: 'AAC', bitrate: 64 }), `HLS${DOT}AAC${DOT}64 kbps`);
+  assert.equal(formatStreamQuality({ hls: true, bitrate: 1249 }), `HLS${DOT}1.25 Mbps`);
+  assert.equal(formatStreamQuality({ hls: true, bitrate: 600 }), `HLS${DOT}600 kbps`);
+  assert.equal(formatStreamQuality({ bitrate: 6221 }), '6220 kbps');
   assert.equal(streamQualityLabel(rb('a', { bitrate: 320, codec: 'MP3' })), `MP3${DOT}320 kbps`);
   // An older favourite without the fields, and other sources, show nothing.
   assert.equal(streamQualityLabel({ id: 'radio-browser:old', _extra: { stationuuid: 'old', clickcount: 9 } }), '');
@@ -213,14 +216,13 @@ test('the label shows in the detail panel, on technical cards, and only on hover
   // The listed label, or the one the station played with (played-streams.js).
   assert.match(detail, /className: 'detail-quality', attrs: \{ title: 'Stream format and bitrate' \}/);
   assert.match(detail, /const text = stationStreamLabel\(detailItem\);\s+if \(detailQuality\.textContent !== text\) detailQuality\.textContent = text;/);
-  // Cards: inside the technical column, which the simple view hides.
-  assert.match(render, /className: 'card-license has-quality'[\s\S]*?className: 'card-quality', text: quality/);
-  assert.match(render, /const quality = stationStreamLabel\(item\);[\s\S]*?card\.__license = cardLicenseNode\(license, quality\);/);
-  assert.match(css, /:root:not\(\[data-tech-details="on"\]\) \.card-license \{ display: none; \}/);
+  // Cards put the stream on its own row, which the simple view hides.
+  assert.match(render, /const quality = stationStreamLabel\(item\);[\s\S]*?className: 'card-quality', text: quality/);
+  assert.match(css, /:root:not\(\[data-tech-details="on"\]\) :is\(\.card-license, \.card-quality\) \{ display: none; \}/);
   // Player: in the hover title after the normal line, never in the visible meta line.
   // The player bar shows the format and bitrate of the stream that plays.
   // (stream-quality.js playedQualityLabel, shared with the Now Playing tab.)
-  assert.match(player, /const listed = playedQualityLabel\(item, playedStream\(item\)\);[\s\S]*?const quality = \[listed, [\s\S]*?setSourceLine\(line, \{ itemLine: true, hover: quality \? \[line, quality\]/);
+  assert.match(player, /const listed = playSession\.orderedAddresses\s+\? formatStreamQuality\([\s\S]*?: playedQualityLabel\(item, playedStream\(item\)\);[\s\S]*?const quality = \[listed, [\s\S]*?setSourceLine\((?:part \|\| )?line, \{\s*itemLine: true, hover: (?:part \|\| )?quality \? \[(?:part, )?line, quality\]/);
   assert.match(player, /hover: \[text, line, quality\]\.filter\(Boolean\)\.join\('\\n'\)/);
   assert.doesNotMatch(player, /setSourceLine\(\[[^\]]*quality/);
 });

@@ -1,6 +1,8 @@
 /** Player-bar download/record controls and backend job synchronization. */
 
 import { listCaptureJobs } from './capture-client.js';
+import { getItemForDownload } from './player.js';
+import { safeExternalUrl } from './item-model.js';
 import { startItemDownload, cancelDownload, openDownloadsFolder } from './download-client.js';
 import {
   startItemRecording, stopRecording, cancelRecordingPreparation,
@@ -11,7 +13,7 @@ import {
   waitForFfmpeg,
 } from './ffmpeg-client.js';
 import { resolveMediaAction } from './media-capabilities.js';
-import { deriveCaptureView, isEqCurveActive } from './capture-view.js';
+import { captureJobMatches, deriveCaptureView, isEqCurveActive } from './capture-view.js';
 import { getEffectiveEq, loadEqState } from './eq-store.js';
 import { emit, getState, isFavorite, subscribe } from './state.js';
 import { isContentAllowed } from './content-rating.js';
@@ -49,10 +51,12 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   let jobs = [];
   let toolState = null;
   let transient = null;
+  let pendingDownload = null;
   let actionError = null;
   let timer = 0;
   let busy = false;
   let installWait = null;
+  let recordingWait = null;
   let toolStatusRequest = null;
   let stopped = false;
   let ignoredJobIds = new Set();
@@ -64,9 +68,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   // checked any more, and there is nothing to record. Cleared when the next
   // Play of an item starts.
   let unplayableItemId = '';
-  // The item the player bar treats as a recording, not live (player.js
-  // 'media-timeline', the seek bar's decision).
-  let recordingItemId = '';
+  let observedDelivery = null;
   let lastAnnouncementKey = '';
   let eqEngineStatus = { state: 'idle', reason: '' };
   let eqPreview = null;
@@ -78,6 +80,31 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   const unsubscribers = [];
 
   function currentItem() { return getState().currentItem; }
+
+  function captureTarget(item, stream = getState().currentStream) {
+    if (!item) return item;
+    const target = {
+      ...item, delivery: item.delivery || 'unknown',
+      ...(stream ? {
+        stream_url: stream.url, stream_kind: stream.kind,
+        capture_headers: stream.headers, require_https: stream.requireHttps === true,
+        _extra: { ...item._extra, needsResolve: false },
+      } : {}),
+    };
+    const declaredAction = resolveMediaAction(target);
+    if (observedDelivery === 'on-demand') target.delivery = 'on-demand';
+    if (observedDelivery === 'live' && target.delivery !== 'on-demand') target.delivery = 'live';
+    const capability = resolveMediaAction(target);
+    // Keep the release's recording eligibility when new evidence says live.
+    if (capability.startsWith('record-') && !declaredAction.startsWith('record-')) {
+      return { target, capability: declaredAction === 'checking' ? 'checking' : 'unavailable' };
+    }
+    return { target, capability };
+  }
+
+  function mediaAction(item) {
+    return captureTarget(getItemForDownload(item))?.capability || 'unavailable';
+  }
 
   function effectiveUiCurve() {
     const item = currentItem();
@@ -111,20 +138,24 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
 
   function viewForCurrent() {
     const item = currentItem();
-    let capability = resolveMediaAction(item);
+    let capability = mediaAction(item);
     const unplayable = Boolean(item?.id && item.id === unplayableItemId);
     if (capability === 'checking' && unplayable) {
       capability = 'unavailable';
     }
-    const recording = Boolean(item?.id && item.id === recordingItemId);
+    const finite = observedDelivery === 'on-demand';
+    const downloadPart = getItemForDownload(item)?.download_part || '';
+    const showTransient = !pendingDownload
+      || (pendingDownload.itemId === item?.id && pendingDownload.part === downloadPart);
     let view = deriveCaptureView({
-      item, capability, jobs, toolState, transient, ignoredJobIds, recording, unplayable,
+      item, capability, jobs, toolState, transient: showTransient ? transient : null,
+      ignoredJobIds, finite, unplayable, downloadPart,
     });
     const activeRecording = jobs.some(
       (job) => job.kind?.startsWith('record-') && ACTIVE_JOB_STATES.has(job.state),
     );
     const relevantActive = jobs.some(
-      (job) => job.item_id === item?.id && ACTIVE_JOB_STATES.has(job.state),
+      (job) => captureJobMatches(job, item?.id, downloadPart) && ACTIVE_JOB_STATES.has(job.state),
     );
     if (!recorderEnabled && capability.startsWith('record-') && !activeRecording) {
       // A standing hint: on the button's hover and description only.
@@ -136,7 +167,11 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
         secondaryAction: null, secondaryLabel: '',
       };
     }
-    if (actionError && actionError.itemId === (item?.id || '') && !activeRecording && !relevantActive) {
+    if (actionError?.itemId === (item?.id || '') && actionError.downloadPart === downloadPart
+        && !activeRecording && !relevantActive) {
+      if (actionError.playbackChanged) {
+        return { ...view, status: actionError.message, notice: actionError.message, tone: 'muted' };
+      }
       const labels = {
         'open-folder': 'Retry folder', stop: 'Retry stop', cancel: 'Retry cancel',
         'cancel-install': 'Retry cancel', retry: 'Retry',
@@ -194,14 +229,21 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     elements.secondary.disabled = busy && view.secondaryAction !== 'cancel-install';
 
     // The full sentence is the button's description (aria-describedby); the
-    // bar shows only a notice (progress, a result or an error) beside it,
-    // with the whole of it on hover when it is cut short.
+    // bar shows only a notice (progress, a result or an error) beside it.
+    // Hover on the status element is always that full sentence. The visible
+    // line may be shorter (a finished capture says "Saved • …").
     elements.hint.textContent = view.status;
     const notice = view.notice ?? view.status;
+    const full = view.status || notice;
     elements.status.hidden = !notice;
     elements.status.dataset.tone = view.tone;
-    elements.status.title = notice;
+    elements.status.title = full;
     elements.statusText.textContent = notice;
+    // Accessible name stays the full sentence when the visible line is
+    // shorter. The element is not a live region; the polite announcement
+    // already speaks `status`. aria-label covers reading the status itself.
+    if (!elements.status.hidden && full !== notice) elements.status.setAttribute('aria-label', full);
+    else elements.status.removeAttribute('aria-label');
     const showProgress = view.indeterminate || Number.isFinite(view.progress);
     elements.progress.hidden = !showProgress;
     elements.progress.classList.toggle('is-indeterminate', view.indeterminate);
@@ -283,7 +325,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     try {
       const item = currentItem();
       const needsTool = recorderEnabled && toolState == null
-        && resolveMediaAction(item).startsWith('record-');
+        && mediaAction(item).startsWith('record-');
       const requests = [listCaptureJobs({ fetchImpl })];
       if (needsTool || toolState === 'installing') requests.push(loadToolStatus());
       const values = await Promise.all(requests);
@@ -298,7 +340,8 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
       for (const jobId of jobContentRatings.keys()) {
         if (!presentIds.has(jobId)) jobContentRatings.delete(jobId);
       }
-      if (actionError && jobs.some((job) => job.item_id === actionError.itemId)) actionError = null;
+      if (actionError && !actionError.playbackChanged
+          && jobs.some((job) => captureJobMatches(job, actionError.itemId, actionError.downloadPart))) actionError = null;
       stopRecorderWork();
       render();
       const active = jobs.some((job) => ACTIVE_JOB_STATES.has(job.state)) || toolState === 'installing';
@@ -327,12 +370,15 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     if (!isContentAllowed(item, getState().settings) || item.__contentHidden === true) {
       throw new Error('This item is hidden by the explicit-content setting.');
     }
-    const capability = resolveMediaAction(item);
+    const stream = getState().currentStream;
+    const downloadItem = getItemForDownload(item);
+    const { target, capability } = captureTarget(downloadItem, stream);
     actionError = null;
     if (capability === 'download') {
+      pendingDownload = { itemId: item.id, part: downloadItem.download_part || '' };
       transient = 'checking';
       render();
-      const job = await startItemDownload(item, { fetchImpl });
+      const job = await startItemDownload(downloadItem, { fetchImpl });
       if (!isContentAllowed(item, getState().settings)) {
         if (job?.id) await cancelDownload(job.id, { fetchImpl }).catch(() => {});
         throw new DOMException('The pending download was cancelled by the content setting.', 'AbortError');
@@ -340,29 +386,56 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
       rememberStarted(job, item);
       return;
     }
-    if (!capability.startsWith('record-')) throw new Error('Capture is unavailable for this item.');
+    if (!capability.startsWith('record-') || !target.stream_url) throw new Error('Capture is unavailable for this item.');
     if (!recorderEnabled) throw new Error('Recorder is turned off in Settings.');
+    const approved = { ...target, capture_headers: { ...target.capture_headers } };
+    const approvedAddress = safeExternalUrl(approved.stream_url);
+    const listedAddress = safeExternalUrl(item.stream_url);
     const attempt = ++actionGeneration;
     transient = 'checking';
     render();
     const status = await loadToolStatus();
     toolState = status.state;
-    const begin = async () => {
+    const revalidate = () => {
       const latest = currentItem();
-      if (attempt !== actionGeneration || !latest || latest.id !== item.id) {
+      if (attempt !== actionGeneration || stopped || !recorderEnabled || latest?.__contentHidden === true
+          || !isContentAllowed(item, getState().settings)
+          || (latest && !isContentAllowed(latest, getState().settings))) {
         throw new DOMException('The pending recording was cancelled.', 'AbortError');
       }
-      // Record the curve that is actually audible, including an in-progress
-      // EQ preview that may not have reached persistent storage yet.
-      const eqCurve = effectiveUiCurve();
-      const job = await startItemRecording(
-        latest, getState().settings.recordingQuality, { fetchImpl, eqCurve },
-      );
-      if (attempt !== actionGeneration || !isContentAllowed(latest, getState().settings)) {
-        if (job?.id) await cancelRecordingPreparation(job.id, { fetchImpl }).catch(() => {});
-        throw new DOMException('The pending recording was cancelled by the content setting.', 'AbortError');
+      // While the same station reconnects, its replacement may still be resolving.
+      const sameSource = latest?.id === item.id && safeExternalUrl(latest.stream_url) === listedAddress;
+      const currentStream = getState().currentStream || (sameSource ? stream : null);
+      const candidate = captureTarget(getItemForDownload(latest), currentStream)?.target;
+      // A recordable legacy radio or TV item with unknown delivery is treated as live.
+      if (safeExternalUrl(candidate?.stream_url) !== approvedAddress || candidate?.delivery === 'on-demand') {
+        const error = new Error('Playback changed. Recording cancelled.');
+        error.code = 'RECORDING_PLAYBACK_CHANGED';
+        throw error;
       }
-      rememberStarted(job, latest);
+    };
+    const begin = async () => {
+      revalidate();
+      // Include the equalizer curve the listener hears, including unsaved previews.
+      const eqCurve = effectiveUiCurve();
+      const controller = new AbortController();
+      recordingWait = { controller, revalidate };
+      try {
+        const job = await startItemRecording(approved, getState().settings.recordingQuality, {
+          fetchImpl, eqCurve, signal: controller.signal,
+          revalidate() {
+            revalidate();
+            recordingWait = null;
+          },
+        });
+        if (attempt !== actionGeneration || !isContentAllowed(item, getState().settings)) {
+          if (job?.id) await cancelRecordingPreparation(job.id, { fetchImpl }).catch(() => {});
+          throw new DOMException('The pending recording was cancelled by the content setting.', 'AbortError');
+        }
+        rememberStarted(job, item);
+      } finally {
+        recordingWait = null;
+      }
     };
     if (status.state === 'ready') {
       await begin();
@@ -400,6 +473,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
   async function perform(action) {
     if (!action || (busy && action !== 'cancel-install')) return;
     const actionItemId = currentItem()?.id || '';
+    const actionDownloadPart = getItemForDownload(currentItem())?.download_part || '';
     busy = true;
     render();
     try {
@@ -436,14 +510,20 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
         const retryAction = ['open-folder', 'stop', 'cancel', 'cancel-install'].includes(action)
           ? action
           : 'retry';
+        const playbackChanged = error?.code === 'RECORDING_PLAYBACK_CHANGED';
         actionError = {
-          itemId: actionItemId,
+          itemId: playbackChanged ? currentItem()?.id || '' : actionItemId,
+          downloadPart: playbackChanged
+            ? getItemForDownload(currentItem())?.download_part || ''
+            : actionDownloadPart,
+          playbackChanged,
           message: error?.message || 'Capture could not start.',
           retryAction,
           jobId: viewForCurrent().jobId,
         };
       }
     } finally {
+      pendingDownload = null;
       busy = false;
       render();
       refresh();
@@ -472,6 +552,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
       && !isContentAllowed(changedItem, false);
     if (!changedItemIsExplicit && !hasTrackedExplicitJob) return;
     actionGeneration++;
+    recordingWait?.controller.abort();
     installWait?.abort();
     installWait = null;
     transient = null;
@@ -499,22 +580,24 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     unplayableItemId = itemId;
     render();
   }));
-  unsubscribers.push(subscribe('media-timeline', ({ itemId = '', recording = false } = {}) => {
-    const next = recording === true ? itemId : '';
-    if (next === recordingItemId) return;
-    recordingItemId = next;
+  unsubscribers.push(subscribe('media-timeline', ({ itemId, delivery }) => {
+    if (itemId !== currentItem()?.id || delivery === observedDelivery) return;
+    observedDelivery = delivery;
     render();
   }));
   unsubscribers.push(subscribe('current-item', (nextItem) => {
     const nextItemId = nextItem?.id || '';
+    observedDelivery = null;
+    actionError = null;
     // Every Play announces its item again: check afresh.
     unplayableItemId = '';
     if (nextItemId !== observedItemId) {
-      actionGeneration++;
+      if (recordingWait) {
+        try { recordingWait.revalidate(); } catch (error) { recordingWait.controller.abort(error); }
+      }
       installWait?.abort();
       installWait = null;
       transient = null;
-      actionError = null;
       observedItemId = nextItemId;
       eqPreview = null;
     }
@@ -528,6 +611,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
     recorderEnabled = next;
     if (!recorderEnabled) {
       actionGeneration++;
+      recordingWait?.controller.abort();
       installWait?.abort();
       installWait = null;
       transient = null;
@@ -567,6 +651,7 @@ export function initCaptureUi({ fetchImpl = fetch, confirmImpl = null } = {}) {
       stopped = true;
       refreshVersion++;
       actionGeneration++;
+      recordingWait?.controller.abort();
       installWait?.abort();
       window.clearTimeout(timer);
       for (const unsubscribe of unsubscribers) unsubscribe();

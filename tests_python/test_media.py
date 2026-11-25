@@ -533,6 +533,16 @@ class RelayIntegrationTests(unittest.TestCase):
         # browser offers gzip.
         status, body, _headers = self.request("GET", media["relay_url"], headers={"Accept-Encoding": "gzip, br"})
         self.assertEqual((status, body), (200, AUDIO_BYTES))
+        self.assertEqual(_headers["Content-Type"], "audio/mpeg")
+        self.assertEqual(_headers["Content-Security-Policy"], "sandbox; default-src 'none'")
+        self.assertEqual(_headers["X-Content-Type-Options"], "nosniff")
+
+        video = self.register("/media/video.mp4", "video")
+        status, body, headers = self.request("GET", video["relay_url"])
+        self.assertEqual((status, body), (200, VIDEO_BYTES))
+        self.assertEqual(headers["Content-Type"], "video/mp4")
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox; default-src 'none'")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
         with self.fixture.state.lock:
             last = next(entry for entry in reversed(self.fixture.state.requests) if entry["path"] == "/media/audio.mp3")
         self.assertEqual(last["headers"].get("Accept-Encoding"), "identity")
@@ -572,6 +582,9 @@ class RelayIntegrationTests(unittest.TestCase):
         self.assertEqual(rejected_body["error"]["code"], "HLS_RANGE_REJECTED")
         status, body, _headers = self.request("GET", master["relay_url"])
         self.assertEqual(status, 200)
+        self.assertEqual(_headers["Content-Type"], "application/vnd.apple.mpegurl")
+        self.assertEqual(_headers["Content-Security-Policy"], "sandbox; default-src 'none'")
+        self.assertEqual(_headers["X-Content-Type-Options"], "nosniff")
         text = body.decode()
         self.assertNotIn(self.fixture.base_url, text)
         self.assertNotIn("secret", text)
@@ -591,11 +604,28 @@ class RelayIntegrationTests(unittest.TestCase):
         results = [self.request("GET", path)[1] for path in resource_paths]
         self.assertTrue(any(payload == SEGMENT_BYTES for payload in results))
 
+    def test_extensionless_hls_rendition_with_two_content_types_is_rewritten(self) -> None:
+        master = self.register("/hls/extensionless.m3u8", "hls")
+        status, body, _headers = self.request("GET", master["relay_url"])
+        self.assertEqual(status, 200)
+        rendition = body.decode().splitlines()[-1]
+        self.assertRegex(rendition, r"^/api/v1/media/[A-Za-z0-9_-]+\.aac$")
+
+        status, body, headers = self.request("GET", rendition)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "application/vnd.apple.mpegurl")
+        segment = body.decode().splitlines()[-2]
+        self.assertRegex(segment, r"^/api/v1/media/[A-Za-z0-9_-]+\.ts$")
+        status, payload, _headers = self.request("GET", segment)
+        self.assertEqual((status, payload), (200, SEGMENT_BYTES))
+
     def test_dash_manifest_templates_static_urls_ranges_and_security(self) -> None:
         manifest = self.register("/dash/manifest.mpd?catalog=secret", "dash")
         status, body, headers = self.request("GET", manifest["relay_url"])
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "application/dash+xml")
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox; default-src 'none'")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
         text = body.decode("utf-8")
         self.assertNotIn(self.fixture.base_url, text)
         self.assertNotIn("secret", text)

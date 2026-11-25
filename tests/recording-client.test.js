@@ -20,20 +20,21 @@ test('recording exchanges live URL for opaque ID and sends a bounded EQ snapshot
     if (path === '/api/v1/media/register') return response(201, { media_id: 'opaque_live_media_1234567890' });
     return response(202, { id: 'job_record_1234567890', state: 'queued' });
   };
+  const q = [1, 2.5, 1, 1, 1, 1, 1, 1, 1, 3];
   await startItemRecording({
     id: 'radio:live', title: 'Live radio', source: 'radio-browser', type: 'radio',
     stream_kind: 'audio', stream_url: 'https://radio.example/live?token=secret',
     delivery: 'live', capture_headers: {}, download_name: '',
   }, 'balanced', {
     fetchImpl,
-    eqCurve: { preamp: -3, bands: [1, 2, 3, 4, 5, 4, 3, 2, 1, 0], bypassed: false, presetId: 'not-sent' },
+    eqCurve: { preamp: -3, bands: [1, 2, 3, 4, 5, 4, 3, 2, 1, 0], q, bypassed: false, presetId: 'not-sent' },
   });
   assert.deepEqual(calls.map((call) => call.path), [
     '/api/v1/session', '/api/v1/media/register', '/api/v1/jobs/record',
   ]);
   assert.deepEqual(JSON.parse(calls[2].options.body), {
-    media_id: 'opaque_live_media_1234567890', profile: 'balanced',
-    eq: { preamp: -3, bands: [1, 2, 3, 4, 5, 4, 3, 2, 1, 0], bypassed: false },
+    media_id: 'opaque_live_media_1234567890', profile: 'balanced', delivery: 'live',
+    eq: { preamp: -3, bands: [1, 2, 3, 4, 5, 4, 3, 2, 1, 0], q, bypassed: false },
   });
   assert.equal(calls[2].options.body.includes('radio.example'), false);
 });

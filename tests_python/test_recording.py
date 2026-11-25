@@ -195,6 +195,20 @@ class RecordingArgumentTests(unittest.TestCase):
             eq={"preamp": 6, "bands": [12] * 10, "bypassed": True},
         ))
 
+    def test_recording_eq_uses_custom_q_and_shelf_resonance(self) -> None:
+        curve = {
+            "preamp": 0, "bands": [8, 0, 0, 0, 0, 6, 0, 0, 0, 0],
+            "bypassed": False, "q": [3, 1, 1, 1, 1, 2.5, 1, 1, 1, 1],
+        }
+        filters = recording_eq_filter(curve)
+        self.assertIn("bass=f=31:t=q:w=1:g=8", filters)
+        self.assertIn("equalizer=f=31:t=q:w=3:g=4", filters)
+        self.assertIn("equalizer=f=1000:t=q:w=2.5:g=6", filters)
+        self.assertEqual(recording_eq_filter({**curve, "bypassed": True}), "")
+        for bad in (["bad"] * 10, [True] * 10, [9] * 10, [1] * 9, [float("nan")] * 10):
+            with self.subTest(q=bad), self.assertRaises(RecordingError):
+                normalize_recording_eq({**curve, "q": bad})
+
     def test_eq_validation_rejects_malformed_nonfinite_and_out_of_range_values(self) -> None:
         valid = {"preamp": 0, "bands": [0] * 10, "bypassed": False}
         self.assertEqual(normalize_recording_eq(valid)["bands"], [0.0] * 10)
@@ -291,6 +305,15 @@ class RecordingServiceTests(unittest.TestCase):
                 return value
             time.sleep(0.01)
         self.fail(self.jobs.snapshot(job_id))
+
+    def test_recording_refuses_delivery_that_differs_from_the_approved_registration(self) -> None:
+        registration = self.registration()
+        service = RecordingService(self.registry, self.jobs, self.ffmpeg, self.paths)
+        with self.assertRaises(RecordingError) as rejected:
+            service.start(registration.token, "balanced", "http://127.0.0.1:18080", delivery="unknown")
+        self.assertEqual(rejected.exception.code, "RECORDING_DELIVERY_CHANGED")
+        self.assertEqual(self.jobs.list(), [])
+        self.assertFalse(registration.capture)
 
     def test_progress_start_gate_requires_a_video_frame_but_not_for_audio(self) -> None:
         service = object.__new__(RecordingService)

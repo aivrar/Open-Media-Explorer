@@ -8,8 +8,9 @@ import {
   createSourceProgress, isHeldProgress, recordSourceFailure, RETRY_AFTER_MAX_MS,
 } from '../src/modes/library/progress.js';
 import {
-  loadMore, pauseCatalogWork, reconcileContentPreference, retrySources, runSearch,
+  loadMore, pauseCatalogWork, reconcileContentPreference, reconcileEnabledSources, retrySources, runSearch,
 } from '../src/modes/library/chain.js';
+import { filterItems } from '../src/modes/library/filter.js';
 import { ui } from '../src/modes/library/shell-refs.js';
 import { slowWaitingSourceIds, wakeWaitingSources } from '../src/modes/library/chain.js';
 import { FakeElement } from './helpers/fake-dom.js';
@@ -36,7 +37,7 @@ async function withChain(enabled, body) {
   const previousDocument = globalThis.document;
   const previousUi = { ...ui };
   const previousEnqueue = catalogScheduler.enqueue;
-  const keys = ['activeSource', 'query', 'lastQuery', 'items', 'loading', 'loadingMore', 'exhausted', 'catalogActive', 'loadAbort'];
+  const keys = ['activeSource', 'query', 'lastQuery', 'items', 'loading', 'loadingMore', 'exhausted', 'catalogActive', 'loadAbort', 'enabledSourcesSnapshot'];
   const before = Object.fromEntries(keys.map((key) => [key, view[key]]));
   const jobs = [];
   try {
@@ -322,6 +323,43 @@ test('a plain search failure (a 500 that declares no wait) is shown as retrying,
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('re-enabling an archive source restores results for the active search', async (t) => {
+  const queries = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    queries.push(new URL(url).searchParams.get('q'));
+    return Response.json({ collection: { items: [
+      { data: [{ nasa_id: 'moon-footage', media_type: 'video', title: 'Moon footage' }] },
+    ] } });
+  });
+  await withChain(['nasa'], async () => {
+    const searches = [];
+    catalogScheduler.enqueue = (job) => {
+      if (!job.key.startsWith('search:')) return Promise.resolve({ items: [], exhausted: true });
+      const result = job.task({ signal: job.signal });
+      searches.push(result);
+      return result;
+    };
+    view.activeSource = 'nasa';
+    view.lastQuery = '';
+    view.query = 'moon';
+    view.enabledSourcesSnapshot = new Set(['nasa']);
+    catalogScheduler.setSourceEnabled('nasa', true);
+    await runSearch();
+    assert.deepEqual(filterItems(view.items).map((item) => item.id), ['nasa:moon-footage']);
+
+    getState().settings.enabledSources.nasa = false;
+    reconcileEnabledSources();
+    assert.deepEqual(filterItems(view.items), []);
+    getState().settings.enabledSources.nasa = true;
+    reconcileEnabledSources();
+    await flush();
+    assert.equal(searches.length, 2);
+    await searches[1];
+    assert.deepEqual(queries, ['moon', 'moon']);
+    assert.deepEqual(filterItems(view.items).map((item) => item.id), ['nasa:moon-footage']);
+  });
 });
 
 test('the line coming back wakes sources in their slow retry, and only those', async () => {

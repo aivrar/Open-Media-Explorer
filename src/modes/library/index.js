@@ -43,13 +43,14 @@ import {
   ensurePlaylistsLoaded, syncFavoritesActions, syncFavoritesSort, syncPersonalControls,
 } from './personal-controls.js';
 import { ui } from './shell-refs.js';
-import { selectSource } from './sidebar.js';
+import { selectSource, syncSidebarSources } from './sidebar.js';
 import { syncFavoriteCategories } from './favorite-categories.js';
 import { closeCategoryMenu } from './card-category.js';
 import { FAVORITE_GROUPS_EVENT } from '../../lib/favorite-groups.js';
 import { onStationImagesChange } from '../../lib/station-images.js';
 import { onDidNotPlayChange } from '../../lib/did-not-play.js';
 import { onPlayedStreamChange } from '../../lib/played-streams.js';
+import { mountFavoriteTitles } from './favorite-titles.js';
 
 const subs = [];
 
@@ -130,6 +131,7 @@ export function renderLibrary(host) {
   resetThumbnailHydrationScope();
   chooseLibraryStartTab();
   host.appendChild(buildShell());
+  subs.push(mountFavoriteTitles(ui.resultsHost, ui.favoriteTitles));
 
   // buildShell() created a fresh resultsHost — so any ids we tracked as
   // "mounted" from a previous visit no longer have a real card in the DOM.
@@ -209,14 +211,7 @@ export function renderLibrary(host) {
     const contentChanged = view.contentPreference !== nextPreference;
     const priorPreference = view.contentPreference;
     view.contentPreference = nextPreference;
-    if (view.activeSource !== 'all'
-        && view.activeSource !== 'favorites'
-        && !view.activeSource.startsWith('type:')
-        && settings.enabledSources[view.activeSource] === false) {
-      view.activeSource = 'all';
-      view.filters.type = '';
-    }
-    reconcileEnabledSources();
+    if (reconcileEnabledSources()) syncSidebarSources(settings.enabledSources);
     if (contentChanged) reconcileContentPreference(priorPreference, nextPreference);
     // A new favorites sort reorders the mounted cards in place (render.js).
     syncFavoritesSort();

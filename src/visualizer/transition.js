@@ -10,13 +10,14 @@
  * out). So at most one change is visible at a time: changes asked for
  * meanwhile wait, and the latest one wins (the caller keeps only that).
  *
- * Each change is charged to the flash limiter's budget (one large change of
- * light, like a pulse). When the budget is full the change still happens
- * but over CROSSFADE_SLOW_MS instead of CROSSFADE_MS.
+ * Each change asks for a flash charge (one large change of light, like a
+ * pulse). When the budget is full the change runs more slowly.
  *
- * Two ways, the first when the browser can:
- *   cross-fade  the outgoing frame is drawn once more and copied, already
- *               dimmed by the brightness setting, to a 2D canvas on top,
+ * A warped dissolve can snapshot the outgoing scene and composite it over
+ * the incoming scene once per frame.
+ * Other changes can use either of these compositor transitions:
+ *   cross-fade  the outgoing frame is copied, dimmed by the brightness
+ *               setting, to a 2D canvas on top,
  *               which the compositor fades from opacity 1 to 0 over the
  *               incoming frame (Web Animations). The sum is old x a + new x
  *               (1 - a), both at the same brightness: never brighter than
@@ -40,6 +41,15 @@
 
 export const CROSSFADE_MS = 600;
 export const CROSSFADE_SLOW_MS = 1500;
+export const WARP_DISSOLVE_MS = 1000;
+// A black-to-white blend at 60 fps advances by about 0.01 in luma per
+// frame, below the Visualizer flash check's 0.10 step threshold.
+const WARP_DISSOLVE_SLOW_MS = 2500;
+export const WARP_FALLBACK_MS = 1800;
+const WARP_FRAME_MS = 1000 / 60;
+// Allow slower frames to catch up by at most three 60 fps intervals.
+const WARP_MAX_FRAME_MS = 3 * WARP_FRAME_MS;
+export const WARP_MAX_FRAME_STEP = WARP_MAX_FRAME_MS / WARP_DISSOLVE_MS;
 /** The longest a stretched cross-fade runs. */
 export const CROSSFADE_STRETCH_MS = 4000;
 /** How often a stretched cross-fade asks whether the picture is there. */
@@ -49,13 +59,17 @@ export const CROSSFADE_STRETCH_POLL_MS = 100;
  * @param {object} deps
  *   canvas, fade (the 2D canvas on top), setTimer, clearTimer, clock (ms),
  *   brightness() (0..1), enabled() (the picture moves and is seen),
- *   drawOld() (draws the outgoing frame into the canvas; false: nothing to
- *   draw), charge() (true when the flash budget had room; charged)
+ *   drawOld() (makes the outgoing frame available in the canvas; false
+ *   when unavailable), charge() (true when the flash budget had room)
  */
 export function createTransition({
-  canvas, fade, setTimer, clearTimer, clock, brightness, enabled, drawOld, charge,
+  canvas, fade, setTimer, clearTimer, clock, brightness, enabled, drawOld, charge, warp = null, debug = false,
 }) {
-  let phase = 'idle'; // idle | fading | out | dark | in
+  let phase = 'idle'; // idle | warping | warp-out | fading | out | dark | in
+  let warpAt = 0;
+  let warpFrameAt = null;
+  let warpProgress = 0;
+  let warpResize = null;
   let timer = 0;
   let endAt = 0;
   let duration = CROSSFADE_MS;
@@ -65,7 +79,24 @@ export function createTransition({
   let stretch = null;
   const stats = {
     fades: 0, dips: 0, cuts: 0, slow: 0, waits: 0, stretched: 0, readyAfter: [],
+    ...(debug ? { warps: 0 } : {}),
   };
+
+  const dissolveStats = debug ? {
+    started: 0, slow: 0, completed: 0, fallbacks: 0, interrupted: 0, skipped: 0, skipReasons: {}, last: null,
+  } : null;
+  let warpDrawnFrames;
+
+  function skipWarp(reason) {
+    if (!dissolveStats) return;
+    dissolveStats.skipped += 1;
+    dissolveStats.skipReasons[reason] = (dissolveStats.skipReasons[reason] || 0) + 1;
+  }
+  function endWarp(outcome) {
+    if (!dissolveStats) return;
+    dissolveStats[outcome] += 1;
+    dissolveStats.last = { outcome, drawnFrames: warpDrawnFrames, durationMs: clock() - warpAt };
+  }
 
   const level = () => {
     const b = brightness();
@@ -89,24 +120,80 @@ export function createTransition({
     fade.width = 0; // its memory back
     fade.height = 0;
   }
+  function releaseWarp() {
+    warpFrameAt = null;
+    warpProgress = 0;
+    warp?.release();
+  }
   function settle() {
     canvas.style.transition = '';
     canvas.style.opacity = level();
   }
+  function rise() {
+    const half = Math.round(duration / 2);
+    phase = 'in';
+    canvas.style.transition = `opacity ${half}ms linear`;
+    canvas.style.opacity = level();
+    arm(half, () => { phase = 'idle'; settle(); });
+  }
+  /** Transfer the last composite to the fade canvas before releasing its
+   *  texture. Without a copy, hold the composite through a dip to black. */
+  function finishWarpGradually() {
+    duration = duration === WARP_DISSOLVE_SLOW_MS ? CROSSFADE_SLOW_MS : CROSSFADE_MS;
+    if (crossFade(duration)) {
+      releaseWarp();
+      return true;
+    }
+    const half = duration / 2;
+    phase = 'warp-out';
+    canvas.style.transition = `opacity ${half}ms linear`;
+    canvas.style.opacity = '0';
+    arm(half, () => {
+      const resize = warpResize;
+      warpResize = null;
+      releaseWarp();
+      phase = 'dark';
+      resize?.();
+      warp.redraw();
+      rise();
+    });
+    return false;
+  }
+
+  /** Hand off only after a gap in drawn progress, even at a low frame rate. */
+  function checkWarpFallback() {
+    const remaining = WARP_FALLBACK_MS - (clock() - (warpFrameAt ?? warpAt));
+    if (remaining > 0) arm(remaining, checkWarpFallback);
+    else {
+      endWarp('fallbacks');
+      if (finishWarpGradually()) warp.redraw();
+    }
+  }
+
   /** End the change now. `keepFade` (the picture stays in view: a pause):
    *  nothing seen is cut short. A cross-fade, or a dip on its way back up,
    *  runs on to its end; a dip on its way down (the change not yet made)
    *  goes back up at the same pace. */
   function finishNow({ keepFade = false } = {}) {
-    if (keepFade && (phase === 'fading' || phase === 'in')) return;
+    if (keepFade && (phase === 'fading' || phase === 'in' || phase === 'warp-out')) return;
     if (timer) clearTimer(timer);
     timer = 0;
     if (phase === 'fading') releaseFade();
+    if (phase === 'warping') endWarp(warpProgress >= 1 ? 'completed' : 'interrupted');
+    if (phase === 'warping' && keepFade) {
+      // A pause stops visualizer frames. Let the compositor finish the fade.
+      if (finishWarpGradually()) warp.redraw();
+      return;
+    }
+    const resize = warpResize;
+    warpResize = null;
+    if (phase === 'warping' || phase === 'warp-out') releaseWarp();
     if (keepFade && (phase === 'out' || phase === 'dark')) {
       canvas.style.transition = `opacity ${Math.round(duration / 2)}ms linear`;
       canvas.style.opacity = level();
-    } else if (phase === 'out' || phase === 'dark' || phase === 'in') settle();
+    } else if (phase === 'out' || phase === 'dark' || phase === 'in' || phase === 'warp-out') settle();
     phase = 'idle';
+    resize?.();
   }
 
   /** A stretched cross-fade from here on at the normal pace: what is left of
@@ -142,12 +229,12 @@ export function createTransition({
   /** The outgoing frame, dimmed, on top, faded out by the compositor. */
   function crossFade(ms, ready = null) {
     if (typeof fade.animate !== 'function') return false;
-    const g2 = fade.getContext?.('2d');
-    if (!g2) return false;
     try {
+      const g2 = fade.getContext?.('2d');
+      if (!g2) return false;
       fade.width = canvas.width;
       fade.height = canvas.height;
-      // Drawn and copied in the same task, so the drawing buffer still holds it.
+      // The buffer holds the last picture, or it was redrawn in this task.
       if (!drawOld()) { releaseFade(); return false; }
       g2.globalAlpha = 1;
       g2.fillStyle = '#000';
@@ -175,23 +262,48 @@ export function createTransition({
 
   return {
     /** Ms to wait before the change may be made; 0: make it now.
-     *  `ready` (optional): stretch the cross-fade until it is true. */
-    begin({ ready = null } = {}) {
+     *  `ready` (optional): stretch the cross-fade until it is true.
+     *  `dissolve`: true to try it, or a skip reason for a scene change. */
+    begin({ ready = null, dissolve = false } = {}) {
       if (phase === 'dark') return 0;
       if (phase !== 'idle') {
         stats.waits += 1;
         // A stretched fade gives way: the rest at the normal pace.
         settleStretch();
-        return Math.max(1, Math.ceil(endAt - clock()));
+        const by = phase === 'warping' ? warpAt + duration : endAt;
+        return Math.max(phase === 'warping' ? Math.ceil(2 * WARP_FRAME_MS) : 1, Math.ceil(by - clock()));
       }
-      if (!enabled()) { stats.cuts += 1; return 0; }
+      if (!enabled()) {
+        if (dissolve) skipWarp(dissolve === true ? 'not-moving-or-visible' : dissolve);
+        stats.cuts += 1;
+        return 0;
+      }
       duration = CROSSFADE_MS;
-      // Not charged when the budget is full, by choice (slice 4): a 1.5 s ramp
-      // is a gradual change, not a pulse, and holding a change asked for by
-      // hand up to a second would feel broken. It is never cut short while it
-      // can be seen (finishNow keepFade) nor restarted fast: a change asked for
-      // during it waits for its end, then charges again.
-      if (!charge()) { duration = CROSSFADE_SLOW_MS; stats.slow += 1; }
+      // A hand pick can start a slower ramp even when the flash budget is
+      // full. A later change waits for this one to finish before it charges.
+      const charged = charge();
+      if (!charged) { duration = CROSSFADE_SLOW_MS; stats.slow += 1; }
+      if (dissolve) {
+        let result = dissolve;
+        if (dissolve === true) {
+          if (ready) result = 'stretched-fade';
+          else result = warp?.capture(drawOld) ?? 'unavailable';
+        }
+        if (result === true) {
+          phase = 'warping';
+          duration = charged ? WARP_DISSOLVE_MS : WARP_DISSOLVE_SLOW_MS;
+          warpAt = clock();
+          arm(WARP_FALLBACK_MS, checkWarpFallback);
+          if (dissolveStats) {
+            stats.warps += 1;
+            dissolveStats.started += 1;
+            if (!charged) dissolveStats.slow += 1;
+            warpDrawnFrames = 0;
+          }
+          return 0;
+        }
+        skipWarp(result || 'snapshot-unavailable');
+      }
       if (crossFade(duration, typeof ready === 'function' ? ready : null)) { stats.fades += 1; return 0; }
       // Dip: down to the backing, the change in the dark, back up.
       stats.dips += 1;
@@ -206,22 +318,45 @@ export function createTransition({
     applied() {
       if (phase !== 'dark') return;
       if (!enabled()) { finishNow(); return; }
-      const half = Math.round(duration / 2);
-      phase = 'in';
-      canvas.style.transition = `opacity ${half}ms linear`;
-      canvas.style.opacity = level();
-      arm(half, () => { phase = 'idle'; settle(); });
+      rise();
     },
     finishNow,
+    beforeResize(retry) {
+      if (phase === 'warping') {
+        endWarp('interrupted');
+        if (finishWarpGradually()) return true;
+      }
+      if (phase !== 'warp-out') return true;
+      warpResize = retry;
+      return false;
+    },
+    /** Advance from the last drawn frame, capping the step after a gap. */
+    nextWarpProgress(at = clock()) {
+      if (phase !== 'warping' || warpFrameAt === null) return warpProgress;
+      const elapsed = Math.max(0, Math.min(WARP_MAX_FRAME_MS, at - warpFrameAt));
+      return Math.min(1, warpProgress + elapsed / duration);
+    },
+    /** Commit progress only after a new composite has drawn to the screen.
+     *  Redraws (at === null) keep the last frame's clock. */
+    presentWarp(progress, at = clock()) {
+      if (phase !== 'warping') return;
+      if (dissolveStats) warpDrawnFrames += 1;
+      if (at !== null && (warpFrameAt === null || progress > warpProgress)) warpFrameAt = at;
+      warpProgress = progress;
+      if (progress >= 1) finishNow();
+    },
+    get showingWarp() { return phase === 'warping' || phase === 'warp-out'; },
+    get warpProgress() { return warpProgress; },
+    /** The canvas owns the old picture while it dips, even after a resize. */
+    get ownsOpacity() { return phase === 'out' || phase === 'dark' || phase === 'in' || phase === 'warp-out'; },
     /** A change is in progress (nothing else may start). */
     get busy() { return phase !== 'idle'; },
-    /** The canvas's opacity belongs to the dip just now (brightness waits). */
-    get ownsOpacity() { return phase === 'out' || phase === 'dark' || phase === 'in'; },
     get phase() { return phase; },
     get duration() { return duration; },
     get pending() { return Boolean(timer); },
     /** A stretched cross-fade is waiting for its picture. */
     get stretching() { return Boolean(stretch); },
     stats,
+    ...(dissolveStats ? { dissolveStats } : {}),
   };
 }

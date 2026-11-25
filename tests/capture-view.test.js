@@ -52,8 +52,7 @@ test('every backend job state has an unmistakable action and recovery mapping', 
     assert.equal(view.action, action, backendState);
     assert.equal(view.secondaryAction, secondary, backendState);
     assert.ok(view.status, backendState);
-    // Progress, a result or an error: shown in the bar, beside the button.
-    assert.equal(view.notice, view.status, backendState);
+    assert.ok(view.notice, backendState);
   }
 
   const download = deriveCaptureView({
@@ -63,6 +62,32 @@ test('every backend job state has an unmistakable action and recovery mapping', 
   assert.equal(download.state, 'downloading');
   assert.equal(download.action, 'cancel');
   assert.match(download.status, /42%/);
+});
+
+test('recording notices keep the full status and shorten preparing and saved text', () => {
+  for (const state of ['queued', 'preparing']) {
+    const view = deriveCaptureView({ item, jobs: [job(state, {
+      title: 'Other station', item_id: 'radio:other', elapsed_seconds: 0,
+    })] });
+    assert.equal(view.status, 'Preparing recording “Other station” • 0:00');
+    assert.equal(view.notice, 'Preparing • 0:00');
+  }
+
+  const running = deriveCaptureView({ item, jobs: [job('running', {
+    bytes_written: 512 * 1024, elapsed_seconds: 19,
+  })] });
+  assert.equal(running.notice, 'Recording • 0:19 • 512.0 KB');
+
+  const completed = deriveCaptureView({ item, jobs: [job('completed', {
+    bytes_written: Math.round(641.4 * 1024), elapsed_seconds: 21,
+  })] });
+  assert.equal(completed.status, 'Recording complete • 641.4 KB • 0:21');
+  assert.equal(completed.notice, 'Saved • 641 KB • 0:21');
+
+  const download = deriveCaptureView({ item, jobs: [job('completed', {
+    kind: 'download', bytes_written: Math.round(641.4 * 1024), elapsed_seconds: 21,
+  })] });
+  assert.equal(download.notice, 'Saved • 641.4 KB • 0:21');
 });
 
 test('active recording remains global while downloads stay associated with the selected item', () => {
@@ -86,11 +111,23 @@ test('active recording remains global while downloads stay associated with the s
   assert.equal(captureOnly.action, 'cancel');
 });
 
+test('running and completed downloads only match their selected chapter', () => {
+  const jobs = ['running', 'completed'].map((state) => job(state, {
+    kind: 'download', download_part: state === 'running' ? '0011223344556677' : '8899aabbccddeeff',
+  }));
+  const viewFor = (downloadPart) => deriveCaptureView({ item, capability: 'download', downloadPart, jobs });
+  assert.equal(viewFor('0011223344556677').label, 'Cancel download');
+  assert.equal(viewFor('8899aabbccddeeff').label, 'Open folder');
+  assert.equal(viewFor('8899aabbccddeeff').secondaryLabel, 'Download again');
+  assert.equal(viewFor('0123456789abcdef').label, 'Download');
+  assert.equal(viewFor('').label, 'Download');
+});
+
 test('standing hints are hover text only; progress, results and errors are shown in the bar', () => {
   const hints = [
     deriveCaptureView({ item, capability: 'download' }),
     deriveCaptureView({ item, capability: 'record-audio' }),
-    deriveCaptureView({ item, capability: 'record-audio', recording: true }),
+    deriveCaptureView({ item, finite: true }),
     deriveCaptureView({ item, capability: 'record-video', unplayable: true }),
     deriveCaptureView({ item, capability: 'checking' }),
     deriveCaptureView({ item, capability: 'unavailable' }),
@@ -108,8 +145,9 @@ test('standing hints are hover text only; progress, results and errors are shown
   ];
   assert.deepEqual(shown.map((view) => view.notice), [
     'Preparing download…', 'Installing and verifying FFmpeg…', 'Stream closed.',
-    'Recording complete • 2.0 KB • 0:12',
+    'Saved • 2 KB • 0:12',
   ]);
+  assert.equal(shown[3].status, 'Recording complete • 2.0 KB • 0:12');
   // Two downloads elsewhere: the hint keeps the full sentence; the bar a short note.
   const two = [1, 2].map((n) => job('running', { id: `job_bg_${n}_1234567890`, item_id: `archive:${n}`, kind: 'download' }));
   const view = deriveCaptureView({ item, capability: 'record-audio', jobs: two });

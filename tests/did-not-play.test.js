@@ -302,6 +302,25 @@ test('a stream that another stream takes over from is not the result; the last o
   assert.equal(outcome.failed('a', 'refused'), false);
 });
 
+test('an edited address invalidates both held and active results for that station', async () => {
+  const h = outcomeHarness();
+  const { outcome, marks, link } = h;
+  h.advance(2 * 60_000);
+  outcome.begin('a');
+  outcome.failed('a', 'unreachable');
+  await flush();
+  assert.deepEqual(outcome.held, ['a']);
+  outcome.invalidate('a');
+  link.answer(true);
+  await flush();
+  assert.equal(marks.has('a'), false);
+
+  outcome.begin('a');
+  outcome.streamSetUp('a');
+  outcome.invalidate('a');
+  assert.equal(outcome.failed('a', 'refused'), false);
+});
+
 test('a station that could not be reached is marked only when the connection is shown to work', async () => {
   const h = outcomeHarness();
   const { outcome, marks, link } = h;
@@ -631,9 +650,15 @@ test('Library cards of saved stations carry a small mark with the sentence; othe
   assert.equal(mark.parentNode, null);
   assert.equal(alpha.__open.getAttribute('aria-describedby'), null);
   assert.equal(alpha.classList.contains('has-trouble'), false);
+  beta.__open.setAttribute('aria-describedby', 'favorite-song-1');
   markDidNotPlay('fav:b', DAY);
   syncDidNotPlayMarks();
   assert.ok(beta.__trouble);
+  assert.equal(beta.__open.getAttribute('aria-describedby'),
+    `favorite-song-1 ${beta.__trouble.getAttribute('id')}`);
+  clearDidNotPlay('fav:b');
+  syncDidNotPlayMarks();
+  assert.equal(beta.__open.getAttribute('aria-describedby'), 'favorite-song-1');
 });
 
 test('a Tuner card\'s mark changes in place: the strip, its scroll position and the focused card stay', (t) => {

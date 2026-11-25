@@ -4,11 +4,12 @@ import { readFile } from 'node:fs/promises';
 
 import { FakeElement } from './helpers/fake-dom.js';
 import {
-  MAX_PLAYED_STREAMS, PLAYED_STREAMS_KEY, clearPlayedStreams, createPlayedStreamNote, forgetLoadedPlayedStreams,
+  MAX_PLAYED_STREAMS, PLAYED_STREAMS_KEY, clearPlayedStream, clearPlayedStreams, createPlayedStreamNote,
+  forgetLoadedPlayedStreams,
   onPlayedStreamChange, playedStreamOf, rememberPlayedStream, sameStreamFacts, stationStreamLabel,
-  streamFactsFromRelay, streamTooltipLine, compactStreamLabel, stationStreamFacts,
+  streamFactsFromRelay, streamFactsFromHlsLevel, streamTooltipLine, compactStreamLabel, stationStreamFacts,
 } from '../src/lib/played-streams.js';
-import { codecFromContentType } from '../src/lib/stream-quality.js';
+import { codecFromContentType, formatStreamQuality } from '../src/lib/stream-quality.js';
 import { createNowPlayingPoller } from '../src/lib/now-playing.js';
 import { clearCache, getState, STORAGE_KEYS } from '../src/lib/state.js';
 import { syncTunerMarks } from '../src/modes/tuner.js';
@@ -98,6 +99,145 @@ test('the now-playing poll reports the stream facts once, and again only when th
 });
 
 /* ============ Remembering ============ */
+
+test('HLS facts round-trip without mixing a variant with listed metadata', (t) => {
+  const storage = withStorage(t);
+  const station = { id: 'radio:radio-hls', _extra: { codec: 'MP3', bitrate: 192 } };
+  const radio = streamFactsFromHlsLevel({
+    audioCodec: 'mp4a.40.2',
+    attrs: { BANDWIDTH: '128000', 'AVERAGE-BANDWIDTH': '120000' },
+  });
+  assert.equal(rememberPlayedStream(station.id, radio), true);
+  assert.equal(rememberPlayedStream(station.id, radio), false);
+  forgetLoadedPlayedStreams();
+  assert.deepEqual(playedStreamOf(station.id), { hls: true, codec: 'AAC', bitrate: 128 });
+  assert.equal(stationStreamLabel(station), `HLS ${DOT} AAC ${DOT} 128 kbps`);
+  assert.equal(compactStreamLabel(stationStreamFacts(station)), 'HLS AAC 128k');
+
+  const tv = { id: 'tv:hls' };
+  const bandwidthOnly = { audioCodec: 'mp4a.40.5', attrs: { BANDWIDTH: '2400000' } };
+  rememberPlayedStream(tv.id, streamFactsFromHlsLevel(bandwidthOnly, { video: true }));
+  assert.equal(stationStreamLabel(tv), `HLS ${DOT} 2.4 Mbps`);
+  rememberPlayedStream(tv.id, streamFactsFromHlsLevel({ ...bandwidthOnly, videoCodec: 'avc1.4d401f' }));
+  forgetLoadedPlayedStreams();
+  assert.equal(stationStreamLabel(tv), `HLS ${DOT} H.264 + AAC+ ${DOT} 2.4 Mbps total`);
+  assert.equal(storage.writes, 3);
+
+  assert.deepEqual(streamFactsFromHlsLevel({ bitrate: 900_000, attrs: { 'AVERAGE-BANDWIDTH': '900000' } }),
+    { hls: true, codec: '', bitrate: 0 });
+  assert.equal(streamFactsFromHlsLevel(null), null);
+});
+
+test('video labels show dimensions, HLS codec, declared frame rate and bandwidth when known', () => {
+  const label = { hls: true, width: 1920, height: 1080, videoCodec: 'H.264', bitrate: 4200 };
+  assert.equal(formatStreamQuality(label), ['HLS', '1080p', 'H.264', '4.2 Mbps'].join(' \u00b7 '));
+  assert.equal(formatStreamQuality({ ...label, videoCodec: 'AV1', frameRate: 59.94 }),
+    ['HLS', '1080p', '59.94 fps', 'AV1', '4.2 Mbps'].join(' \u00b7 '));
+  assert.equal(formatStreamQuality({ width: 1440, height: 1080 }), '1440x1080');
+});
+
+test('first video facts and adaptive changes each require five seconds at the same observed size and level', (t) => {
+  const storage = withStorage(t);
+  const id = 'tv:video';
+  const url = 'https://video.example/live.m3u8';
+  const video = { videoWidth: 1920, videoHeight: 1080 };
+  const level = { videoCodec: 'hvc1.1.6', attrs: { BANDWIDTH: '4200000', 'FRAME-RATE': '29.970' } };
+  const note = createPlayedStreamNote();
+  const sample = (ms, rendition = level) => note.videoProgress(id, url, video, 'hls', rendition, ms);
+  note.played(id);
+  sample(0);
+  sample(4000);
+  note.renditionChanged();
+  sample(1000); // A switch between samples cleared the earlier progress.
+  sample(4999);
+  assert.equal(playedStreamOf(id, url), null);
+  sample(1);
+  forgetLoadedPlayedStreams();
+  const facts = { codec: '', bitrate: 4200, hls: true, videoCodec: 'HEVC', width: 1920, height: 1080, frameRate: 29.97 };
+  assert.deepEqual(playedStreamOf(id, url), facts);
+
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  const next = { videoCodec: 'av01.0.04M.08', attrs: { BANDWIDTH: '2400000' } };
+  sample(1000, next);
+  sample(4999, next);
+  assert.deepEqual(playedStreamOf(id, url), facts);
+  sample(1, next);
+  assert.deepEqual(playedStreamOf(id, url),
+    { codec: '', bitrate: 2400, hls: true, videoCodec: 'AV1', width: 1280, height: 720 });
+  assert.equal(playedStreamOf(id, url + '?other'), null);
+  assert.equal(storage.writes, 2);
+  clearPlayedStreams();
+  assert.equal(playedStreamOf(id, url), null);
+});
+
+test('the cache leaves out invalid non-HLS video codecs and frame rates', (t) => {
+  withStorage(t);
+  const id = 'tv:dash';
+  const url = 'https://video.example/live.mpd';
+  rememberPlayedStream(id, { width: 1920, height: 1080, videoCodec: 'unknown', frameRate: 10_000 }, url);
+  forgetLoadedPlayedStreams();
+  assert.deepEqual(playedStreamOf(id, url), { codec: '', bitrate: 0, width: 1920, height: 1080 });
+});
+
+test('HLS addresses retain independent facts in the same bounded cache', (t) => {
+  const storage = withStorage(t);
+  const id = 'radio:two-addresses';
+  const main = 'https://radio.example/main.m3u8';
+  const backup = 'https://radio.example/backup.m3u8';
+  const mainFacts = { hls: true, codec: 'AAC', bitrate: 128 };
+  const backupFacts = { hls: true, codec: 'AAC', bitrate: 64 };
+  rememberPlayedStream(id, mainFacts, main);
+  rememberPlayedStream(id, backupFacts, backup);
+  forgetLoadedPlayedStreams();
+  assert.deepEqual(playedStreamOf(id, main), mainFacts);
+  assert.deepEqual(playedStreamOf(id, backup), backupFacts);
+  assert.deepEqual(playedStreamOf(id), backupFacts);
+
+  const note = createPlayedStreamNote();
+  note.heard(id, mainFacts, main);
+  note.played(id);
+  assert.deepEqual(playedStreamOf(id), mainFacts);
+
+  for (let i = 0; i < MAX_PLAYED_STREAMS - 1; i++) {
+    rememberPlayedStream('other', mainFacts, 'https://radio.example/' + i + '.m3u8');
+  }
+  assert.equal(JSON.parse(storage.getItem(PLAYED_STREAMS_KEY)).items.length, MAX_PLAYED_STREAMS);
+  assert.equal(playedStreamOf(id, backup), null);
+  assert.deepEqual(playedStreamOf(id, main), mainFacts);
+
+  rememberPlayedStream(id, backupFacts, backup);
+  clearPlayedStream(id);
+  forgetLoadedPlayedStreams();
+  assert.equal(playedStreamOf(id, main), null);
+  assert.equal(playedStreamOf(id, backup), null);
+  assert.deepEqual(playedStreamOf('other'), mainFacts);
+});
+
+test('a startup HLS rendition must play five seconds to replace facts saved for its address', (t) => {
+  const storage = withStorage(t);
+  const id = 'radio:hls-reconnect';
+  const url = 'https://radio.example/live.m3u8';
+  const saved = { hls: true, codec: 'AAC', bitrate: 128 };
+  const startup = { hls: true, codec: 'AAC', bitrate: 64 };
+  rememberPlayedStream(id, saved, url);
+  forgetLoadedPlayedStreams();
+  const note = createPlayedStreamNote();
+  note.begin();
+  note.heard(id, startup, url);
+  note.progress(1000);
+  note.played(id);
+  assert.deepEqual(playedStreamOf(id, url), saved);
+  note.heard(id, saved, url);
+  note.progress(5000);
+  assert.equal(storage.writes, 1);
+
+  note.heard(id, startup, url);
+  note.progress(4999);
+  assert.deepEqual(playedStreamOf(id, url), saved);
+  note.progress(1);
+  assert.deepEqual(playedStreamOf(id, url), startup);
+});
 
 test('a station\'s stream is kept per item, written only when it changes', (t) => {
   const storage = withStorage(t);
@@ -237,7 +377,7 @@ test('the player ties the facts to its start: begin with each start, played afte
   const player = await read('src/lib/player.js');
   assert.match(player, /playSession = newPlaySession\(myToken\);\s+playedStreamNote\.begin\(\);/);
   assert.match(player, /startOutcome\.played\(currentItem\?\.id\);[\s\S]{0,120}playedStreamNote\.played\(currentItem\?\.id\);/);
-  assert.match(player, /onStream: \(\{ itemId, stream \}\) => \{\s+if \(itemId && itemId === currentItem\?\.id\) playedStreamNote\.heard\(itemId, stream\);/);
+  assert.match(player, /onStream: \(\{ itemId, stream \}\) => \{\s+if \(itemId && itemId === currentItem\?\.id && streamAddressesCurrent\(\)\) playedStreamNote\.heard\(itemId, stream\);/);
   // No timer or request of its own: the facts come with the song poll.
   const module = await read('src/lib/played-streams.js');
   assert.doesNotMatch(module, /setTimeout|setInterval|fetch\(|controlRequest/);
@@ -278,6 +418,8 @@ test('the label: the played values, the directory\'s as before, and nothing when
   assert.equal(compactStreamLabel({ codec: 'AAC+', bitrate: 320 }), 'AAC+ 320k');
   assert.equal(compactStreamLabel({ codec: 'MP3', bitrate: 0 }), 'MP3');
   assert.equal(compactStreamLabel({ codec: '', bitrate: 128 }), '128k');
+  assert.equal(compactStreamLabel({ hls: true, bitrate: 6221 }), 'HLS 6.22M');
+  assert.equal(compactStreamLabel({ hls: true, bitrate: 600 }), 'HLS 600k');
   assert.equal(compactStreamLabel({ hls: true }), 'HLS');
   assert.equal(compactStreamLabel({}), '');
 });
@@ -329,12 +471,12 @@ class Node extends FakeElement {
   }
 }
 
-test('Library cards: the label in the tooltip, and in the technical column; changed in place', (t) => {
+test('Library cards: the full stream tooltip and a separate metadata row update in place', (t) => {
   withStorage(t);
   // __contentHidden keeps these cards from asking the artwork relay for logos.
   withFavorites(t, [
     { id: 'fav:a', title: 'Alpha', type: 'radio', source: 'playlist', __contentHidden: true },
-    { id: 'fav:b', title: 'Beta', type: 'radio', source: 'playlist', __contentHidden: true },
+    { id: 'fav:b', title: 'Beta', type: 'tv', source: 'iptv-org', license: 'See provider terms', __contentHidden: true },
   ]);
   const oldDocument = globalThis.document;
   const oldUi = { ...ui };
@@ -366,30 +508,33 @@ test('Library cards: the label in the tooltip, and in the technical column; chan
   const [alpha, beta] = host.children;
   assert.equal(alpha.__open.getAttribute('title'), `Alpha\nStream: MP3 ${DOT} 128 kbps`);
   assert.equal(alpha.__titleNode.getAttribute('title'), `Alpha\nStream: MP3 ${DOT} 128 kbps`);
-  const column = alpha.__license;
-  assert.equal(column.className, 'card-license has-quality is-quality-only');
-  assert.equal(column.parentNode, alpha.__meta);
-  assert.deepEqual(column.children.map((child) => [child.className, child.textContent]), [['card-quality', `MP3 ${DOT} 128 kbps`]]);
-  // Never played: no column and no extra tooltip line.
-  assert.equal(beta.__license, null);
+  const radioQuality = alpha.__quality;
+  assert.equal(radioQuality.className, 'card-quality');
+  assert.equal(radioQuality.parentNode, alpha.__meta);
+  assert.equal(radioQuality.textContent, `MP3 ${DOT} 128 kbps`);
+  assert.equal(beta.__quality, null);
   assert.equal(beta.__open.getAttribute('title'), 'Beta');
+  const license = beta.__meta.children.find((child) => child.className === 'card-license');
+  assert.equal(license.getAttribute('title'), 'See provider terms');
 
-  // Beta played: only its text changes; the cards stay.
-  rememberPlayedStream('fav:b', { codec: 'AAC+', bitrate: 64 });
+  rememberPlayedStream('fav:b', { hls: true, width: 1920, height: 1080, videoCodec: 'H.264', frameRate: 50, bitrate: 6221 });
   syncStreamLabels();
   assert.deepEqual(host.children, [alpha, beta]);
-  assert.equal(beta.__open.getAttribute('title'), `Beta\nStream: AAC+ ${DOT} 64 kbps`);
-  assert.equal(beta.__license.children[0].textContent, `AAC+ ${DOT} 64 kbps`);
-  // The same again changes nothing.
-  const kept = beta.__license;
+  const videoLabel = ['HLS', '1080p', '50 fps', 'H.264', '6.22 Mbps'].join(` ${DOT} `);
+  const videoQuality = beta.__quality;
+  assert.deepEqual(beta.__meta.children.slice(-2), [license, videoQuality]);
+  assert.equal(videoQuality.textContent, videoLabel);
+  assert.equal(videoQuality.getAttribute('title'), `Stream: ${videoLabel}`);
+  assert.equal(beta.__open.getAttribute('title'), `Beta\nStream: ${videoLabel}`);
   syncStreamLabels();
-  assert.equal(beta.__license, kept);
-  // Clear cache: the text goes again.
+  assert.equal(beta.__quality, videoQuality);
+
   clearPlayedStreams();
   syncStreamLabels();
-  assert.equal(alpha.__license, null);
+  assert.equal(alpha.__quality, null);
   assert.equal(alpha.__open.getAttribute('title'), 'Alpha');
-  assert.equal(alpha.__meta.children.some((child) => child === column), false);
+  assert.equal(radioQuality.parentNode, null);
+  assert.equal(license.parentNode, beta.__meta);
 });
 
 test('Tuner cards: the label after the source, and in the tooltip; changed in place', (t) => {
@@ -492,16 +637,27 @@ test('Tuner cards keep their width at every size when the format and bitrate com
   assert.doesNotMatch(css, /data-card-size='small'/);
 });
 
-test('on cards only with technical details on; the card keeps its height; the setting says so', async () => {
+test('technical stream details use a full-width row with up to two lines', async () => {
   const [libraryCss, tunerCss, settings, tuner, index] = await Promise.all([
     read('src/styles/library.css'), read('src/styles/tuner.css'), read('src/lib/settings.js'),
     read('src/modes/tuner.js'), read('src/modes/library/index.js'),
   ]);
-  assert.match(libraryCss, /:root:not\(\[data-tech-details="on"\]\) \.card-license \{ display: none; \}/);
+  assert.match(libraryCss, /:root:not\(\[data-tech-details="on"\]\) :is\(\.card-license, \.card-quality\) \{ display: none; \}/);
   assert.match(tunerCss, /:root:not\(\[data-tech-details="on"\]\) \.pill-quality \{ display: none; \}/);
-  // Compact cards: alone, it takes only the room beside the badge (no new line).
+  assert.match(libraryCss, /\.card-body \{[^}]*grid-template-rows: 18px auto;/);
+  assert.match(libraryCss, /\.card-meta \{[^}]*column-gap: 6px;/);
   assert.match(libraryCss,
-    /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-license\.is-quality-only \{ flex: 1 1 0; min-width: 0; \}/);
+    /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-meta:has\(> \.card-quality\) \{\s*row-gap: 0;/);
+  assert.match(libraryCss,
+    /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-body:has\(\.card-quality\) \{\s*padding-block: 6px;/);
+  const quality = libraryCss.match(/\.card-quality \{([^}]*)\}/)[1];
+  assert.match(quality, /grid-column: 1 \/ -1;/);
+  assert.match(quality, /display: -webkit-box;\s*-webkit-box-orient: vertical;\s*-webkit-line-clamp: 2;/);
+  assert.match(quality, /overflow: hidden;/);
+  assert.match(quality, /line-height: 16px;/);
+  assert.doesNotMatch(quality, /white-space: nowrap;|(?:^|\n)\s*(?:min-|max-)?height:/);
+  assert.match(libraryCss,
+    /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-quality \{ flex: 0 0 100%; \}/);
   assert.match(settings, /stream format and bitrate \(such as MP3 · 128 kbps\) once a station has played/);
   assert.doesNotMatch(settings, /full source badges/);
   // A change shows at once, without rebuilding the strip or the cards.

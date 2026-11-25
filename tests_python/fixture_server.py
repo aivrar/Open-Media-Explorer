@@ -135,6 +135,12 @@ class FixtureHandler(http.server.BaseHTTPRequestHandler):
                 b'#EXT-X-MAP:URI="init.mp4?secret=map"\n#EXTINF:4,\nsegment0.ts?secret=segment\n#EXT-X-ENDLIST\n'
             )
             return self._send(200, body, "application/vnd.apple.mpegurl")
+        if parsed.path == "/hls/extensionless.m3u8":
+            body = b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nrendition?id=42\n"
+            return self._send(200, body, "application/vnd.apple.mpegurl")
+        if parsed.path == "/hls/rendition":
+            body = b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nsegment0.ts\n#EXT-X-ENDLIST\n"
+            return self._send(200, body, "application/vnd.apple.mpegurl", {"Content-Type": "text/html"})
         if parsed.path == "/hls/vod/index.m3u8":
             body = b"#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\n../segment0.ts\n#EXT-X-ENDLIST\n"
             return self._send(200, body, "application/vnd.apple.mpegurl")

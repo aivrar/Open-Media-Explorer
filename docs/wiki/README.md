@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.16` behavior in this repository: how to
+It describes the shipped `0.1.17` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -20,6 +20,32 @@ providers at run time and can change without an app update.
 ![Ten-band equalizer with presets](<../../screenshots/v0.1.14/equalizer.png>)
 
 ![Visualizer - Black Hole with Lasers and Tron Hex Grid](<../../screenshots/v0.1.14/visualizer-black-hole.jpg>)
+
+## New in 0.1.17
+
+- Set the picture and fit for video and TV, including fullscreen. Live TV
+  hides its timeline and video and HLS show more stream details.
+  [Playback](04-playback-eq-downloads-recording.md#player-controls)
+- Export the current Favorites or My Playlists view, edit saved stream
+  addresses with backups, and see what's playing on radio Favorites.
+  [Library](02-using-the-application.md#library)
+- Play Internet Archive tracks and LibriVox chapters in order, resume
+  later or download one part.
+  [Tracks and chapters](04-playback-eq-downloads-recording.md#tracks-and-chapters)
+- Assign a preset to several stations and set Q per band.
+  [Equalizer](04-playback-eq-downloads-recording.md#equalizer)
+- Hide tabs with **Tabs shown** or adjust **Now Playing background blur**.
+  [Appearance](02-using-the-application.md#appearance)
+- Visualizer scenes dissolve and shuffle with the music's structure.
+  **Color travel** shifts the palette, and DIFS Tunnel Flight is brighter.
+  [Visualizer](09-visualizer.md)
+- Low-bitrate live stations start sooner, and a cancelled first play no
+  longer interrupts another start.
+  [Troubleshooting](06-troubleshooting.md#a-station-starts-slowly)
+
+Thanks to TaxicabMessiah for the ideas and reports.
+[Discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8) ·
+[Issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
 
 ## New in 0.1.16
 
@@ -138,7 +164,7 @@ providers at run time and can change without an app update.
 - A new **Visualizer** tab shows pictures that move with the sound of whatever
   is playing: 71 scenes, post effects, overlays, a shuffle, favorites, and an
   automatic step-down for weak computers. It shows moving, flashing pictures, so
-  a notice about photosensitivity comes first. Work on it continues. See
+  a notice about photosensitivity comes first. See
   [Visualizer](09-visualizer.md).
 - Importing a playlist now starts on **Add as: Auto**, which works out radio or
   TV by itself, and the import result says what it chose when some channels

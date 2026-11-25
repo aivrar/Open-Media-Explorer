@@ -1,7 +1,7 @@
 /**
  * Song structure: notices a build-up (the level rising over several bars)
  * and a drop (the sudden full return after a build or a break), on the bar
- * clock the shuffle already uses (the reactor's beat clock, 4 beats a bar).
+ * mood tracker's tempo clock (4 beats a bar).
  * A pure detector: fed one frame at a time with the beat clock and the
  * sound's level in dB (before the reactor's auto-gain, which would flatten a
  * build); no timers, nothing allocated per frame.
@@ -15,23 +15,22 @@
  *   Break   a bar BREAK_DB or more below the mean of the BREAK_BARS before
  *           it: a drop may follow for BREAK_WAIT_BARS bars, back to that
  *           mean.
- *   Drop    on the first beat of a bar (judged when that beat ends), while a
- *           drop may follow: the beat's mean level at least the reference
+ *   Drop    at a bar line, confirmed by the first 0.2 beats. A drop may
+ *           follow if their mean level is at least the reference
  *           less DROP_FULL_DB (the level before the break, or the top of the
- *           build) and DROP_JUMP_DB over the bar before. step() returns
- *           'drop' once; then none for DROP_COOLDOWN_BARS.
+ *           build) and DROP_JUMP_DB over the previous bar and its tail.
+ *           step() returns 'drop' once, then waits DROP_COOLDOWN_BARS.
  * A beat clock that goes back (a new track) or no sure tempo (step with a
  * non-finite clock) starts it afresh.
  *
- * Held hooks (index.js, SONG_STRUCTURE_RELEASED): through a build the drift
- * deepens a little (structureDriftScale, never past the most the flash
+ * Through a build the drift deepens a little (structureDriftScale, never past the most the flash
  * check measured); a drop brings the shuffle's next change forward
  * (shuffle.js createShuffleTimer bringForward: only when it has shown the
- * scene for its minimum time; it replaces the change, adds none).
+ * scene for its minimum time).
  */
 
 /** Whether song structure steers drift and the shuffle. */
-export const SONG_STRUCTURE_RELEASED = false;
+export const SONG_STRUCTURE_RELEASED = true;
 export const STRUCTURE_BARS = 16;
 export const BUILD_BARS = 4;
 export const BUILD_SLACK_DB = 0.5;
@@ -44,6 +43,8 @@ export const BREAK_WAIT_BARS = 16;
 export const DROP_FULL_DB = 2;
 export const DROP_JUMP_DB = 3;
 export const DROP_COOLDOWN_BARS = 8;
+const DROP_SAMPLE_BEATS = 0.2;
+const DROP_LATEST_BEAT = 0.4;
 /** The quietest level counted (dB): silence reads this. */
 export const STRUCTURE_FLOOR_DB = -90;
 /** How much a full build deepens the drift (a share; PROPOSED). */
@@ -57,6 +58,11 @@ export function structureDriftScale(scale, buildAmount, most) {
   return Math.max(scale, Math.min(deeper, Number.isFinite(most) ? Math.max(scale, most) : scale));
 }
 
+/** A drop may replace the next shuffle change while the scene can move. */
+export function bringDropForward(timer, { shuffleOn, reducedMotion }) {
+  return shuffleOn && !reducedMotion && timer.bringForward();
+}
+
 export function createStructureDetector() {
   const means = new Float64Array(STRUCTURE_BARS);
   let filled = 0; // bars closed (up to STRUCTURE_BARS kept)
@@ -64,9 +70,13 @@ export function createStructureDetector() {
   let bar = Number.NaN;
   let barSum = 0;
   let barCount = 0;
+  let tailSum = 0;
+  let tailCount = 0;
+  let previousTail = Number.NaN;
   let beatSum = 0;
   let beatCount = 0;
   let firstBeatJudged = false;
+  let nearBarLine = false;
   let lastBeats = Number.NaN;
   let building = false;
   let buildAmount = 0;
@@ -86,9 +96,13 @@ export function createStructureDetector() {
     bar = Number.NaN;
     barSum = 0;
     barCount = 0;
+    tailSum = 0;
+    tailCount = 0;
+    previousTail = Number.NaN;
     beatSum = 0;
     beatCount = 0;
     firstBeatJudged = false;
+    nearBarLine = false;
     lastBeats = Number.NaN;
     building = false;
     buildAmount = 0;
@@ -144,7 +158,7 @@ export function createStructureDetector() {
     get buildAmount() { return buildAmount; },
     /** A drop may come now (after a build or in a break). */
     get armed() {
-      return Number.isFinite(bar) && (building || bar <= afterBuildUntil || bar <= breakUntil);
+      return Number.isFinite(bar) && bar > quietUntil && (building || bar <= afterBuildUntil || bar <= breakUntil);
     },
     stats,
     reset,
@@ -155,29 +169,40 @@ export function createStructureDetector() {
      */
     step(beats, levelDb) {
       if (!Number.isFinite(beats)) { if (Number.isFinite(bar)) reset(); return null; }
-      if (Number.isFinite(lastBeats) && beats < lastBeats) reset();
-      lastBeats = beats;
       const level = Number.isFinite(levelDb) ? Math.max(STRUCTURE_FLOOR_DB, levelDb) : STRUCTURE_FLOOR_DB;
       const now = Math.floor(beats / 4);
+      if (Number.isFinite(lastBeats) && (beats < lastBeats || beats - lastBeats > 1)) reset();
+      lastBeats = beats;
       if (!Number.isFinite(bar)) bar = now;
       if (now > bar) {
         closeBar(bar);
         bar = now;
         barSum = 0;
         barCount = 0;
+        previousTail = tailCount ? tailSum / tailCount : Number.NaN;
+        tailSum = 0;
+        tailCount = 0;
         beatSum = 0;
         beatCount = 0;
         firstBeatJudged = false;
+        nearBarLine = false;
       }
       barSum += level;
       barCount += 1;
       const inBar = beats - now * 4;
-      if (inBar < 1) {
-        beatSum += level;
-        beatCount += 1;
+      if (inBar >= 3) {
+        tailSum += level;
+        tailCount += 1;
+      }
+      if (firstBeatJudged) return null;
+      if (inBar < DROP_SAMPLE_BEATS) nearBarLine = true;
+      if (inBar > DROP_LATEST_BEAT || !nearBarLine) {
+        firstBeatJudged = true;
         return null;
       }
-      if (firstBeatJudged || !beatCount) return null;
+      beatSum += level;
+      beatCount += 1;
+      if (inBar < DROP_SAMPLE_BEATS || beatCount < 2) return null;
       firstBeatJudged = true;
       const canDrop = (building || bar <= afterBuildUntil || bar <= breakUntil) && bar > quietUntil && filled >= 1;
       if (!canDrop) return null;
@@ -185,7 +210,8 @@ export function createStructureDetector() {
       const inBreak = bar <= breakUntil;
       const reference = inBreak ? breakRef : buildTop;
       if (!Number.isFinite(reference)) return null;
-      if (first >= reference - DROP_FULL_DB && first >= meanAgo(1) + DROP_JUMP_DB) {
+      if (first >= reference - DROP_FULL_DB && first >= meanAgo(1) + DROP_JUMP_DB
+        && first >= previousTail + DROP_JUMP_DB) {
         stats.drops += 1;
         building = false;
         buildAmount = 0;

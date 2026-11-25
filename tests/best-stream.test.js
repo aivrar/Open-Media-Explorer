@@ -90,7 +90,11 @@ test('the player never looks anything up before a start; it offers only a stream
   const player = await read('src/lib/player.js');
   assert.match(player, /refreshStreamCandidates\(item, \{ signal: connectionController\.signal \}\)/);
   assert.doesNotMatch(player, /betterStationStreams|probeStreams|verifyStation/);
-  assert.match(player, /const verified = verifiedStreamFor\(item, getState\(\)\.settings\);\s*const preferBest = bestStreamOn\(getState\(\)\.settings\);\s*const extraStreams = verified \? \[verified\] : \[\];\s*const relay = await connectMediaRelay\(item, \{\s*signal: connectionController\.signal, preferBest, extraStreams, skipUrls: skipStreams,\s*\}\)/);
+  assert.match(player, /const verified = partPlayback \|\| addresses\.ordered \? null : verifiedStreamFor\(item, getState\(\)\.settings\);/);
+  assert.match(player, /const preferBest = !partPlayback && bestStreamOn\(getState\(\)\.settings\);/);
+  assert.match(player, /const extraStreams = verified \? \[verified\] : \[\];/);
+  assert.match(player, /const relayItem = itemForPart\(item, partPlayback\);/);
+  assert.match(player, /connectMediaRelay\(relayItem, \{\s*signal: connectionController\.signal, preferBest, extraStreams, skipUrls: skipStreams, addresses,/);
   // A recording takes the stream that plays, as before.
   const recording = await read('src/lib/recording-client.js');
   assert.doesNotMatch(recording, /preferBest/);

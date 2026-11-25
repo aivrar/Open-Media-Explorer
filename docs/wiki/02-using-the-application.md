@@ -16,7 +16,10 @@ station that did not play, **Choose picture…** and dropping a picture on a
 station's card require v0.1.13 or newer. The stream format and bitrate of
 a station that has played, the volume control, the one-row player bar, the
 mouse wheel over the Tuner's station strip, the Tuner's **Visualizer:** control
-and one running copy per data folder require v0.1.16 or newer.
+and one running copy per data folder require v0.1.16 or newer. **Picture**,
+**Export...**, **Stream address...**, **Show what's playing**, audio parts,
+batch EQ assignments, Q controls, Now Playing blur and **Tabs shown** require
+v0.1.17 or newer.
 
 ## Window layout
 
@@ -37,14 +40,30 @@ Video appears in an overlay above the bar, at the bottom right. It grows with
 the window, and the button in its top-right corner switches between the normal
 and a larger size; the choice is remembered. Audio keeps the bar visible
 without showing a video element, including radio stations that stream in a
-video format (HLS or DASH) but carry no picture.
+video format (HLS or DASH) but carry no picture. While the picture is open,
+Library, Grid, Now Playing, About and the Visualizer panel leave scroll room
+so you can reach their bottom controls.
+
+With video playing, open **Picture** beside **EQ** to adjust **Brightness**,
+**Contrast**, **Saturation** or **Hue**. **Reset** restores the defaults and
+removes the picture filter. **Fit** offers **Whole picture**, **Fill**,
+**Zoom 110%**, **Zoom 125%** and **Zoom 133%**. Pick a zoom level to crop
+black bars. Fit also applies in fullscreen. Under **Apply to**, choose **For
+this channel** or **For all video**. Channel settings are saved while the
+channel is in Favorites or My Playlists. A channel outside those lists keeps
+its settings for the session. Use **For all video** for on-demand video.
+Backups include picture settings. **Clear local cache** removes them.
+Recordings and downloads use the original stream.
 
 In a window wider than 1000 px the bar is one row, 74 px high, with every
 control on one centre line; in a window 1000 px wide or narrower its rows are
 stacked (168 px). Nothing is written under the buttons: why the **Record**
 button is unavailable is its hover text (with **Recorder** off it says where to
 turn it on: Settings, Capture & storage), and a capture's progress, result or
-error shows beside the button. The gear at the top opens Settings.
+error shows beside the button. **Record audio**, **Record video** and **Stop
+recording** take up the same space, with a reserved area for recording status.
+Point at the status to read the full text. Settings, EQ and the Song log stay
+above the player bar and scroll inside in a small window.
 
 The speaker button shows a crossed-out speaker when the sound is muted or the
 volume is at zero. The volume control beside it is an up button, the volume as
@@ -84,7 +103,8 @@ show.
 Library is the main browse and search surface. When you have saved favorites,
 the first Library visit of a session opens on **Favorites**; the full catalog
 still loads in the background for **All Sources**. Favorites and My Playlists
-use compact one-line cards so many saved items fit on screen.
+use compact cards so many saved items fit on screen. Favorites cards make room
+for their buttons at every width.
 
 ### Search and filters
 
@@ -114,8 +134,9 @@ continuous browse chain.
 - **Browse → My Playlists** opens imported channel lists and direct links. It
   has the same type buttons.
 - **By Type** selects Radio, TV, Video, or Audio.
-- **By Archive** selects one of the ten source adapters. A source switched
-  off in **Settings** is left out of this list until it is switched back on.
+- **By Archive** selects one of the ten sources. Sources switched off in
+  **Settings > Sources** appear dimmed below those that are on. Turning a
+  source back on runs the current search for it again.
 
 The number beside a row is the session count for the selected catalog (or the
 persisted favorite count). By default the sidebar stays quiet: a source that
@@ -258,6 +279,36 @@ to 50,000 entries, and the saved playlist document to 64 MiB, with a
 visible error before saving if exceeded. These are input/storage safeguards,
 not limits on the continuously collected public catalog or mounted-card window.
 
+### Export saved stations
+
+In **Favorites** or **My Playlists**, choose **M3U8** or **JSON** and press
+**Export...**. The export follows the **All / Radio / TV / Audio / Video**
+buttons, the selected playlist or category, and the search. World Media saves
+a new file in Downloads each time. It counts skipped items that have no
+playable address. Import the file again to get the same exported stations
+with their custom names, edited addresses and backups.
+
+### Edit a stream address
+
+Open a station in **Favorites** or **My Playlists** and press **Stream
+address...** in its details. Edit the main address or add up to five
+**Backup addresses**. World Media validates public HTTP and HTTPS addresses
+before saving. If the main address fails to start, the app tries the backups
+in order. It also uses them when reconnecting. Data backups keep the addresses.
+
+When writing a playlist by hand, use a `backups` list in JSON or a
+`#WORLDMEDIA-BACKUP:` line for each backup in M3U.
+
+### Show what's playing
+
+Turn on **Show what's playing** above the Favorites cards. As you browse
+radio Favorites, the song appears on the first line and the performer on the
+second when the station supplies both. Point at the title for the original
+text. The app reads up to four stations at once and refreshes titles on
+visible cards while Favorites is open and the window is visible. Each read uses at most 160 KiB or eight
+seconds. The button is off by default. A station that sends no titles shows
+no title.
+
 ### Continuous collection and large catalogs
 
 At startup the app fetches a page from every enabled source. It then asks ready
@@ -301,9 +352,10 @@ technical source details are on (on the Tuner card in a short form, such as
 "AAC+ 320k · My Playlists"), and in the player bar's tooltip. Radio Browser
 lists them for its stations. Since v0.1.16 the app also remembers what a
 station's own stream said the last time it played, so a station from another
-source, a playlist station for example, shows them after it has played once; a
-station delivered as HLS does not (see
-[Playback](04-playback-eq-downloads-recording.md#stream-format-and-other-streams)).
+source, a playlist station for example, shows them after it has played once.
+HLS now gets a stream line too. Video can show resolution, frame rate, codec
+and bitrate. See
+[Playback](04-playback-eq-downloads-recording.md#stream-format-and-other-streams).
 The detail panel of a Radio Browser station has an **Other streams** button that
 lists other Radio Browser entries for
 the same station (same name and same homepage) with a **Play** button each.
@@ -501,10 +553,13 @@ turning the switch off in Settings keeps the level for when it is turned on
 again. Nothing is drawn until the notice about flashing pictures has been
 accepted in the Visualizer tab, at any level.
 
-The dial keeps the same size while you use it: it does not change between
-stations, while a list is loading or empty, or when the player bar appears on
-the first play. Before anything has played, the Tuner keeps the player bar's
-room free.
+The Tuner keeps room for the player bar from the start. When you tune TV,
+the dial makes room for the picture in one 200 ms movement, or at once with
+reduced motion. The picture is centered under the station strip. The room
+stays when you switch TV channels or press **Stop**. Playing radio or choosing
+the **Radio** band brings the dial back to full size. In a short window the
+picture can shrink to 200 × 112 so there is room for the dial. In the smallest
+windows, a small picture floats at the bottom right.
 Stations appear as each live source answers; a source
 that does not answer within 20 seconds is marked unavailable instead of holding
 the dial on "Loading". If the dial stays empty because a source did not answer,
@@ -536,15 +591,17 @@ other live audio, the song announced is shown in large type, with the same star 
 the player bar (shown only when the title looks like a song) and **Copy**;
 when the station announces no title, the tab says so. **Stream details** lists
 what the app already knows: the source, the type, the format and bitrate of
-the stream that plays, the **Better stream** line of **Pick the best stream:
+the stream that plays, including remembered **Format** details for playlists
+and HLS, the **Better stream** line of **Pick the best stream:
 Auto**, the country and language when the item has them, and how long it has
 played (only time with sound counts, not connecting or buffering; a pause is
 marked). Below the song a large
 copy of the sound meter moves with the sound (the setting **Sound meter in the
 player bar** switches only the small one); like the small one, it rests with
 flat bars when there is no sound to show, and it stays still when Windows is set
-to show fewer animations. The background is a blurred, dimmed copy of the
-picture. Play, pause and stop stay in the player bar, and a TV channel or video
+to show fewer animations. When muted, the large meter turns red and reads
+**Muted**, which screen readers announce. **Settings > Appearance > Now
+Playing background blur** sets the background blur. Play, pause and stop stay in the player bar, and a TV channel or video
 keeps playing in its own square. With nothing playing, the tab says so and
 offers the Library and the Tuner. Nothing in the tab runs while it is closed.
 
@@ -577,6 +634,10 @@ restart; the local server port is explicitly marked **for next launch**.
   Ember · Orange, or Amethyst · Violet.
 - **Default mode on launch:** Library, Tuner, Grid, or Discovery (About is
   accepted by the state normalizer but is not offered as a default selector).
+- **Tabs shown** hides individual tabs. Library is always visible. If you hide
+  the tab you are on, the app opens Library.
+- **Now Playing background blur** offers **Off**, **Light**, **Medium**
+  (the default) and **Strong**.
 - **Tuner card size:** Small (default), Medium or Large. Medium and Large show
   each station's picture on its card under the Tuner dial. Updates immediately.
 - **Sound meter in the player bar:** on by default. Shows the small bars beside
@@ -736,7 +797,7 @@ environment variable is intended for diagnostics, not ordinary use.
   and CPU; downloads remain available. An idle recorder uses essentially no
   resources.
 - **Recording quality:** Compact (96 kbps/480p), Balanced (160 kbps/720p), or
-  High (256 kbps audio/1080p video). Source media is never upscaled.
+  High (256 kbps audio/1080p video).
 - **Open downloads:** opens the runtime's approved `downloads` directory.
 - The runtime card shows the portable root, downloads root, FFmpeg tools root,
   and whether the portable location is writable.
@@ -745,7 +806,8 @@ environment variable is intended for diagnostics, not ordinary use.
 
 Every source has an independent switch. Disabling a source cancels its queued
 catalog/snapshot work and removes its ordinary Library items; existing favorites
-remain visible. Re-enabling creates a fresh source progress lane.
+remain visible. Disabled sources appear dimmed below enabled ones in the
+Library sidebar. Turning a source back on reruns the current search for it.
 
 ### Storage
 
@@ -763,15 +825,16 @@ The ZIP contains:
   internet radio apps can open: `favorites-radio.m3u8`, `favorites-tv.m3u8`,
   `favorites-other.m3u8` (videos and audio), and one file for each playlist you
   imported. These files are cleaned: they hold only the web addresses World
-  Media can play, with names, groups and pictures; player options and other
-  lines are left out. A file is only made when it has at least one entry.
+  Media can play, with names, groups, pictures and backup stream addresses.
+  A file is made only when it has at least one entry.
   Favorites without a direct stream address (items World Media looks up again
   each time you play them) cannot go in these files; the README says how many.
 - `WorldMediaWindows-data\state\`: a copy of `playlists.json` (your imported
   playlists) and `profile-preferences.json` (favorites, settings, volume and
   equalizer curves). Old download history is left out of the copy.
   `profile-preferences-extra.json` (your favorites categories, the names you
-  gave your favorites, and the stations you keep on their own stream),
+  gave your favorites, the stations you keep on their own stream, saved
+  picture settings, edited and backup stream addresses, and audio bookmarks),
   `song-log.json` and `starred-songs.json` are copied too when you have them.
 - `WorldMediaWindows-data\station-images\`: your own station pictures (see
   below), when you have any. Only pictures World Media actually uses are
@@ -883,8 +946,9 @@ World Media lists the folder when it starts and again whenever you press
 
 **Clear local cache** is a reset, not a thumbnail-only cleanup. It removes
 favorites, favorites categories, the names you gave your favorites, preferences
-(the Visualizer's choices and favorites are part of them), volume, EQ, job
-history and the results of **Auto (verified)** checks from the browser profile,
+(including the Visualizer's choices and favorites), picture settings, stream
+address edits, audio bookmarks, volume, EQ, job history and the results of
+**Auto (verified)** checks from the browser profile,
 empties the song log and your starred songs, and clears catalog/artwork cache
 records. It keeps downloaded media, imported playlists, your station pictures,
 the stations you keep on their own stream, and managed FFmpeg tools. Back up

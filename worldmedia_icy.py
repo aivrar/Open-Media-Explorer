@@ -175,12 +175,19 @@ class AdtsAligner:
         self._clock = clock
         self._started: float | None = None
 
+    def time_left(self) -> float | None:
+        if self._done or self._started is None:
+            return None
+        return self._seconds - (self._clock() - self._started)
+
     def feed(self, chunk: bytes) -> bytes:
         if self._done:
             return chunk
         if self._started is None:
             self._started = self._clock()
         self._buffer += chunk
+        if self._clock() - self._started >= self._seconds:
+            return self._release(0)
         data = self._buffer
         at = data.find(b"\xff")
         while at != -1:

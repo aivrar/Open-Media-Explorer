@@ -5,11 +5,13 @@
  * {
  *   mode: 'library' | 'tuner' | 'grid' | 'discovery' | 'now-playing' | 'visualizer' | 'about',
  *   currentItem: Item | null,
+ *   currentStream: the upstream candidate selected for currentItem, or null,
  *   isPlaying: bool,
  *   favorites: Item[],
  *   settings: {
  *     theme: 'system' | 'light' | 'dark' | 'midnight' | 'forest' | 'ember' | 'amethyst',
  *     defaultMode: string,
+ *     tabsShown: Record<mode, bool>,
  *     recordingEnabled: bool,
  *     enabledSources: Record<adapterId, bool>,
  *     showExplicitContent: bool,
@@ -18,6 +20,7 @@
  *     videoSize: 'normal' | 'large',
  *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
  *     tunerCardSize: 'small' | 'medium' | 'large',   // Tuner strip cards (tuner-card-size.js)
+ *     nowPlayingBackgroundBlur: 'off' | 'light' | 'medium' | 'strong',
  *     soundMeter: bool,   // LED sound meter in the player bar (player-meter.js), default on
  *     bestStreamMode: 'off' | 'listed' | 'auto',   // "Pick the best stream" (best-stream.js), default 'listed'
  *     processorUse: 'light' | 'balanced' | 'high',   // Processor use (processor-budget.js), default 'light'
@@ -47,10 +50,11 @@ import { DEFAULT_BEST_STREAM_MODE, bestStreamMode } from './best-stream.js';
 import { DEFAULT_PROCESSOR_USE, normalizeProcessorLimit, normalizeProcessorUse } from './processor-budget.js';
 import { clearStreamVerifications } from './stream-verify.js';
 import { clearDidNotPlayCache } from './did-not-play.js';
+import { PICTURE_STORAGE_KEY } from './profile-storage.js';
 import { clearPlayedStreams } from './played-streams.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
-  addFavoritesEq, saveEqState,
+  addFavoritesEq, EQ_EXTRA_STORAGE_KEY, EQ_STORAGE_KEY, isEqStation, saveEqState,
 } from './eq-store.js';
 import { DEFAULT_RECORDING_QUALITY, normalizeRecordingQuality } from './recording-profiles.js';
 import { repairFiniteMediaFields } from './media-capabilities.js';
@@ -58,6 +62,7 @@ import { applyTheme, normalizeTheme } from './themes.js';
 import { FAVORITES_SORT_MANUAL, favoritesInDisplayOrder, normalizeFavoritesSort } from './favorites-order.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 import { TUNER_CARD_SMALL, normalizeTunerCardSize } from './tuner-card-size.js';
+import { normalizeTabsShown } from './top-tabs.js';
 import {
   DEFAULT_VISUALIZER_BRIGHTNESS, DEFAULT_VISUALIZER_DEBUG, DEFAULT_VISUALIZER_FPS, DEFAULT_VISUALIZER_QUALITY,
   DEFAULT_VISUALIZER_SCENE, DEFAULT_VISUALIZER_SHOW_FPS, normalizeVisualizerBrightness, normalizeVisualizerFps,
@@ -66,15 +71,17 @@ import {
 import { TUNER_BACKGROUND_DEFAULT_LEVEL, normalizeTunerBackgroundLevel } from './tuner-background.js';
 import { songLog } from './song-log.js';
 import { FAVORITE_NAMES_KEY, withoutFavoriteName } from './favorite-names.js';
+import { removeUnusedStationStreams, STATION_STREAMS_KEY } from './station-stream-addresses.js';
 import { tidyStorageAtStart } from './startup-tidy.js';
 import { starredSongs } from './starred-songs.js';
 import { STREAM_QUALITY_FIELDS } from './stream-quality.js';
 import {
   cancelScheduledProfileHandoff,
   clearProfileHandoff,
-  restoreProfileHandoffOutcome,
+  restoreStartupProfileHandoff,
   scheduleProfileHandoff,
 } from './profile-transfer.js';
+import { clearPartResume } from './part-resume.js';
 
 export const STORAGE_KEYS = {
   favorites: 'worldmedia.favorites.v1',
@@ -88,6 +95,17 @@ export const STORAGE_KEYS = {
 };
 
 export const SETTINGS_VERSION = 1;
+
+export const NOW_PLAYING_BACKGROUND_BLUR_LABELS = Object.freeze({
+  off: 'Off', light: 'Light', medium: 'Medium', strong: 'Strong',
+});
+const DEFAULT_NOW_PLAYING_BACKGROUND_BLUR = 'medium';
+
+export function normalizeNowPlayingBackgroundBlur(value) {
+  return typeof value === 'string' && Object.hasOwn(NOW_PLAYING_BACKGROUND_BLUR_LABELS, value)
+    ? value
+    : DEFAULT_NOW_PLAYING_BACKGROUND_BLUR;
+}
 
 export function loadVolume() {
   try {
@@ -117,7 +135,9 @@ const DEFAULT_SETTINGS = {
   showTechnicalDetails: false,
   videoSize: 'normal',
   favoritesSort: FAVORITES_SORT_MANUAL,
+  showFavoriteTitles: false,
   tunerCardSize: TUNER_CARD_SMALL,
+  nowPlayingBackgroundBlur: DEFAULT_NOW_PLAYING_BACKGROUND_BLUR,
   soundMeter: true,
   bestStreamMode: DEFAULT_BEST_STREAM_MODE,
   processorUse: DEFAULT_PROCESSOR_USE,
@@ -143,6 +163,7 @@ const EXPLICIT_USER_GESTURE = Symbol('explicit-user-gesture');
 function freshDefaultSettings() {
   return {
     ...DEFAULT_SETTINGS,
+    tabsShown: normalizeTabsShown(),
     enabledSources: { ...DEFAULT_SETTINGS.enabledSources },
   };
 }
@@ -167,6 +188,7 @@ export function normalizeSettings(value) {
     defaultMode: ['library', 'tuner', 'grid', 'discovery', 'about'].includes(source.defaultMode)
       ? source.defaultMode
       : DEFAULT_SETTINGS.defaultMode,
+    tabsShown: normalizeTabsShown(source.tabsShown),
     recordingEnabled: source.recordingEnabled !== false,
     recordingQuality: normalizeRecordingQuality(source.recordingQuality),
     showExplicitContent: source.showExplicitContent === true,
@@ -174,7 +196,9 @@ export function normalizeSettings(value) {
     showTechnicalDetails: source.showTechnicalDetails === true,
     videoSize: source.videoSize === 'large' ? 'large' : 'normal',
     favoritesSort: normalizeFavoritesSort(source.favoritesSort),
+    showFavoriteTitles: source.showFavoriteTitles === true,
     tunerCardSize: normalizeTunerCardSize(source.tunerCardSize),
+    nowPlayingBackgroundBlur: normalizeNowPlayingBackgroundBlur(source.nowPlayingBackgroundBlur),
     // Only an explicit false turns it off; older builds keep the field as is.
     soundMeter: source.soundMeter !== false,
     bestStreamMode: bestStreamMode(source),
@@ -259,12 +283,14 @@ export function normalizeFavoriteItem(value, options = {}) {
 const state = {
   mode: 'library',
   currentItem: null,
+  currentStream: null,
   isPlaying: false,
   favorites: [],
   settings: freshDefaultSettings(),
   sleepTimer: { until: null },
 };
 
+let favoritesKnown = false;
 const listeners = {};
 
 /** Subscribe to a named event. Returns an unsubscribe function. */
@@ -283,14 +309,16 @@ export function emit(event, payload) {
 }
 
 export function getState() { return state; }
+export function favoritesLoaded() { return favoritesKnown; }
 
 export function setMode(mode) {
   state.mode = mode;
   emit('mode-change', mode);
 }
 
-export function setCurrentItem(item) {
+export function setCurrentItem(item, stream = null) {
   state.currentItem = item;
+  state.currentStream = stream;
   emit('current-item', item);
 }
 
@@ -310,12 +338,12 @@ export function addFavorite(item) {
   const itemId = normalized.id;
   if (state.favorites.some((f) => f.id === itemId)) return;
   emit('eq-before-scope-change', { itemId, scope: 'favorite' });
-  const eqState = loadEqState();
-  const effectiveCurve = getEffectiveEq(eqState, itemId, false);
   const next = [normalized, ...state.favorites];
   if (!persistFavorites(next)) return false;
   state.favorites = next;
-  persistFavoriteEq(itemId, effectiveCurve);
+  if (!isEqStation(normalized)) {
+    persistFavoriteEq(itemId, getEffectiveEq(loadEqState(), itemId, false));
+  }
   emit('favorites-change', state.favorites);
   if (state.currentItem?.id === itemId) emit('eq-scope-change', { itemId, scope: 'favorite' });
   return true;
@@ -363,7 +391,10 @@ export function addFavorites(items) {
   if (!persistFavorites(next)) return { ...result, failed: true };
   state.favorites = next;
   let eqFailed = false;
-  saveEqState(addFavoritesEq(loadEqState(), ids), undefined, () => { eqFailed = true; });
+  const curveIds = fresh.filter(({ normalized }) => !isEqStation(normalized)).map(({ normalized }) => normalized.id);
+  if (curveIds.length) {
+    saveEqState(addFavoritesEq(loadEqState(), curveIds), undefined, () => { eqFailed = true; });
+  }
   emit('favorites-change', state.favorites);
   const current = ids.find((itemId) => itemId === state.currentItem?.id);
   if (current) emit('eq-scope-change', { itemId: current, scope: 'favorite' });
@@ -380,6 +411,7 @@ export function removeFavorite(itemId) {
     if (!persistFavorites(next)) return false;
     state.favorites = next;
     deleteFavoriteEq(itemId);
+    removeUnusedStationStreams([itemId]);
     emit('favorites-change', state.favorites);
     if (state.currentItem?.id === itemId) emit('eq-scope-change', { itemId, scope: 'global' });
   }
@@ -401,24 +433,37 @@ export function removeAllFavorites() {
   if (removed.length === 0) return { removed: 0, failed: '' };
   const currentId = state.currentItem?.id;
   const playingFavorite = Boolean(currentId) && removed.some((f) => f.id === currentId);
+  if (playingFavorite) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
   const eq = loadEqState();
   const curves = { ...eq.favorites };
   let hadCurves = false;
   for (const favorite of removed) {
     if (Object.hasOwn(curves, favorite.id)) { delete curves[favorite.id]; hadCurves = true; }
   }
-  if (playingFavorite) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
   const undoScope = () => { if (playingFavorite) emit('eq-scope-change', { itemId: currentId, scope: 'favorite' }); };
+  const savedEq = [];
   let eqFailed = false;
-  if (hadCurves) saveEqState({ ...eq, favorites: curves }, undefined, () => { eqFailed = true; });
+  if (hadCurves) {
+    try {
+      for (const key of [EQ_STORAGE_KEY, EQ_EXTRA_STORAGE_KEY]) savedEq.push([key, localStorage.getItem(key)]);
+      saveEqState({ ...eq, favorites: curves }, undefined, () => { eqFailed = true; });
+    } catch (_) { eqFailed = true; }
+  }
   if (eqFailed) { undoScope(); return { removed: 0, failed: 'nothing' }; }
   if (!persistFavorites([])) {
     let restoreFailed = false;
-    if (hadCurves) saveEqState(eq, undefined, () => { restoreFailed = true; });
+    for (const [key, value] of savedEq) {
+      try {
+        if (localStorage.getItem(key) === value) continue;
+        if (value == null) localStorage.removeItem(key);
+        else localStorage.setItem(key, value);
+      } catch (_) { restoreFailed = true; }
+    }
     undoScope();
     return { removed: 0, failed: restoreFailed ? 'curves' : 'nothing' };
   }
   state.favorites = [];
+  removeUnusedStationStreams(removed.map((item) => item.id));
   emit('favorites-change', state.favorites);
   if (playingFavorite) emit('eq-scope-change', { itemId: currentId, scope: 'global' });
   return { removed: removed.length, failed: '' };
@@ -570,6 +615,10 @@ function loadFavorites() {
 
 /* ============ Settings ============ */
 
+// The last settings JSON seen by this window. Another window can update or
+// clear it before this one saves a different preference.
+let savedSettingsRaw;
+
 export function saveSettings(partial, authorization = null) {
   const requested = partial && typeof partial === 'object' && !Array.isArray(partial)
     ? { ...partial }
@@ -579,9 +628,18 @@ export function saveSettings(partial, authorization = null) {
   }
   const previousExplicit = state.settings.showExplicitContent === true;
   const currentItem = state.currentItem;
-  state.settings = normalizeSettings({ ...state.settings, ...requested });
+  let currentSettings = state.settings;
   try {
-    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(state.settings));
+    const raw = localStorage.getItem(STORAGE_KEYS.settings);
+    if (savedSettingsRaw !== undefined && raw !== savedSettingsRaw) {
+      currentSettings = normalizeSettings(raw ? JSON.parse(raw) : null);
+    }
+  } catch (_) { /* Keep the settings in use when storage cannot be read. */ }
+  state.settings = normalizeSettings({ ...currentSettings, ...requested });
+  try {
+    const raw = JSON.stringify(state.settings);
+    localStorage.setItem(STORAGE_KEYS.settings, raw);
+    savedSettingsRaw = raw;
     clearPersistenceFailure('settings');
     scheduleProfileHandoff();
   } catch (e) {
@@ -611,11 +669,11 @@ export function setSourceEnabled(sourceId, enabled) {
 }
 
 function loadSettings() {
+  state.settings = freshDefaultSettings();
+  savedSettingsRaw = undefined;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.settings);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    state.settings = normalizeSettings(parsed);
+    savedSettingsRaw = localStorage.getItem(STORAGE_KEYS.settings);
+    if (savedSettingsRaw) state.settings = normalizeSettings(JSON.parse(savedSettingsRaw));
   } catch (e) { console.warn('Could not load settings:', e); }
 }
 
@@ -624,15 +682,11 @@ function loadSettings() {
 export async function initState() {
   // A localhost port is part of the browser origin. Restore a saved handoff
   // before reading any local keys when Settings deliberately changed that port.
-  const restore = await restoreProfileHandoffOutcome();
-  const favoritesKnown = loadFavorites();
+  await restoreStartupProfileHandoff();
+  favoritesKnown = loadFavorites();
   loadSettings();
-  // After the restore (names and categories may just have come from the
-  // data folder) and before the first save. Never when the favorites could
-  // not be read, or when the restore failed (this page may then hold names
-  // without the favorites they belong to): every name would look like a
-  // leftover, and the next save would write that loss.
-  if (favoritesKnown && restore !== 'failed') {
+  // Tidy only after the restore, when the saved favorites are known.
+  if (favoritesKnown) {
     try {
       tidyStorageAtStart(localStorage, state.favorites.map((favorite) => favorite?.id));
     } catch (_) { /* storage unavailable */ }
@@ -650,16 +704,22 @@ export function clearCache() {
   try {
     localStorage.removeItem(STORAGE_KEYS.favorites);
     localStorage.removeItem(STORAGE_KEYS.settings);
+    savedSettingsRaw = null;
     localStorage.removeItem(STORAGE_KEYS.volume);
     localStorage.removeItem(STORAGE_KEYS.jobs);
     localStorage.removeItem(STORAGE_KEYS.favoriteGroups);
     localStorage.removeItem(STORAGE_KEYS.favoriteNames);
     clearStreamLookups();
     clearStreamVerifications();
+    localStorage.removeItem(STATION_STREAMS_KEY);
     clearDidNotPlayCache(); // "Did not play last time" marks (a cache)
     clearPlayedStreams(); // the format and bitrate stations played with (a cache)
     clearEqState(localStorage);
+    localStorage.removeItem(PICTURE_STORAGE_KEY);
   } catch (_) {}
+  clearPartResume();
+  emit('part-resume-cleared');
+  emit('picture-settings-cleared');
   cancelScheduledProfileHandoff();
   // The song log and starred songs are kept apart from the profile (see
   // song-log.js, starred-songs.js); they are cleared with it, here and in the

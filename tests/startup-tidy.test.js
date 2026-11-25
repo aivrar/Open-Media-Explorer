@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import { FAVORITE_NAMES_KEY, favoriteName, resetFavoriteNamesCache, withFavoriteName } from '../src/lib/favorite-names.js';
 import { FAVORITE_GROUPS_VERSION } from '../src/lib/favorite-groups.js';
-import { cancelScheduledProfileHandoff, captureProfileStorage } from '../src/lib/profile-transfer.js';
+import { cancelScheduledProfileHandoff, captureProfileStorage, scheduleProfileHandoff } from '../src/lib/profile-transfer.js';
 import { FAVORITE_GROUPS_KEY, groupsKeptFor, namesKeptFor, tidyStorageAtStart } from '../src/lib/startup-tidy.js';
 import { STORAGE_KEYS, addFavorite, getState, initState } from '../src/lib/state.js';
 import { createFakeDocument } from './helpers/fake-dom.js';
@@ -29,9 +29,9 @@ const names = (entries) => JSON.stringify({ version: 1, names: entries });
 const groups = (assign) => JSON.stringify({ version: 1, groups: [{ id: 'g1', name: 'Rock' }], assign });
 
 /** initState with this page storage and, when given, a data folder answering
- *  GET /api/v1/profile/preferences with `folderValues`, or failing as
- *  `failure` says ('network', 'status', 'unreadable'). */
-async function startWith(t, storage, folderValues = null, failure = '') {
+ *  GET /api/v1/profile/preferences with `folderValues`, or failing
+ *  until recover() is called. */
+function beginWith(t, storage, folderValues = null, failure = '') {
   const previous = {
     localStorage: globalThis.localStorage, document: globalThis.document,
     location: globalThis.location, fetch: globalThis.fetch,
@@ -41,10 +41,17 @@ async function startWith(t, storage, folderValues = null, failure = '') {
   globalThis.document = createFakeDocument();
   globalThis.location = { protocol: folderValues ? 'http:' : 'file:' };
   const asked = [];
+  const writes = [];
   globalThis.fetch = async (path, options = {}) => {
     asked.push(`${options.method || 'GET'} ${path}`);
     const reply = (data) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ ok: true, data }) });
-    if (path === '/api/v1/session') return reply({ token: 'tidy-token' });
+    if (path === '/api/v1/session') {
+      if (failure === 'session') {
+        failure = '';
+        throw new TypeError('Failed to fetch');
+      }
+      return reply({ token: 'tidy-token' });
+    }
     if (path === '/api/v1/profile/preferences' && (options.method || 'GET') === 'GET') {
       if (failure === 'network') throw new TypeError('Failed to fetch');
       if (failure === 'status') {
@@ -56,6 +63,7 @@ async function startWith(t, storage, folderValues = null, failure = '') {
       if (failure === 'unreadable') return reply({ unexpected: true });
       return reply({ values: folderValues || {} });
     }
+    if (path === '/api/v1/profile/preferences') writes.push(JSON.parse(options.body).values);
     return reply({ saved: true, keys: [] });
   };
   resetControlSession();
@@ -67,10 +75,17 @@ async function startWith(t, storage, folderValues = null, failure = '') {
     Object.assign(globalThis, previous);
   });
   getState().favorites = [];
-  await initState();
+  return { asked, writes, init: initState(), recover: () => { failure = ''; } };
+}
+
+async function startWith(t, storage, folderValues) {
+  const { asked, init } = beginWith(t, storage, folderValues);
+  await init;
   cancelScheduledProfileHandoff();
   return asked;
 }
+
+const drain = () => new Promise((resolve) => setImmediate(resolve));
 
 test('the tidy keeps exactly the names and category assignments of saved favorites', () => {
   assert.equal(FAVORITE_GROUPS_KEY, STORAGE_KEYS.favoriteGroups);
@@ -131,19 +146,58 @@ test('on a new port the names come from the data folder first, then only the lef
   assert.equal(favoriteName(KEPT), 'My station');
 });
 
-test('a restore that fails leaves every name and category alone in that start', async (t) => {
+test('a failed restore leaves saved names and categories alone and retries the restore', async (t) => {
   for (const failure of ['network', 'status', 'unreadable']) {
     await t.test(failure, async (st) => {
       // Leftover names and categories, no profile keys: the data folder is asked.
       const storedNames = names({ [KEPT]: 'My station', [LEFT]: 'An old name' });
       const storedGroups = groups({ [KEPT]: 'g1', [LEFT]: 'g1' });
       const storage = new MemoryStorage({ [FAVORITE_NAMES_KEY]: storedNames, [FAVORITE_GROUPS_KEY]: storedGroups });
-      const asked = await startWith(st, storage, {}, failure);
-      assert.ok(asked.includes('GET /api/v1/profile/preferences'));
+      st.mock.timers.enable({ apis: ['setTimeout'] });
+      const { asked, writes, init, recover } = beginWith(st, storage, {}, failure);
+      await drain();
+      assert.deepEqual(asked, ['GET /api/v1/session', 'GET /api/v1/profile/preferences']);
+      assert.equal(scheduleProfileHandoff(), false);
+      st.mock.timers.tick(999);
       assert.equal(storage.getItem(FAVORITE_NAMES_KEY), storedNames);
       assert.equal(storage.getItem(FAVORITE_GROUPS_KEY), storedGroups);
+      assert.deepEqual(writes, []);
+      recover();
+      st.mock.timers.tick(1);
+      await init;
+      assert.equal(asked.filter((call) => call === 'GET /api/v1/profile/preferences').length, 2);
+      st.mock.timers.tick(350);
+      await drain();
+      assert.equal(writes.length, 1, 'saving resumes once the server confirms there is no profile');
     });
   }
+});
+
+test('a failed first session lookup never writes an empty startup profile', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const storage = new MemoryStorage();
+  const expected = {
+    [STORAGE_KEYS.favorites]: JSON.stringify([station(KEPT, 'Kept FM')]),
+    [STORAGE_KEYS.settings]: '{"theme":"forest"}',
+  };
+  const { asked, writes, init } = beginWith(t, storage, expected, 'session');
+  await drain();
+  assert.deepEqual(asked, ['GET /api/v1/session']);
+  assert.equal(scheduleProfileHandoff(), false);
+  t.mock.timers.tick(999);
+  assert.deepEqual(writes, []);
+  t.mock.timers.tick(1);
+  await init;
+  assert.equal(getState().settings.theme, 'forest');
+  t.mock.timers.tick(350);
+  await drain();
+  assert.deepEqual(asked, [
+    'GET /api/v1/session', 'GET /api/v1/session',
+    'GET /api/v1/profile/preferences', 'POST /api/v1/profile/preferences',
+  ]);
+  assert.deepEqual(writes, [captureProfileStorage(storage)]);
+  assert.deepEqual(JSON.parse(writes[0][STORAGE_KEYS.favorites]).map(({ id }) => id), [KEPT]);
+  assert.equal(writes[0][STORAGE_KEYS.settings], expected[STORAGE_KEYS.settings]);
 });
 
 test('a restore that answers with nothing to restore is followed by the tidy', async (t) => {

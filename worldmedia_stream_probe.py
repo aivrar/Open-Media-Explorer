@@ -122,10 +122,14 @@ class Deadline:
                 pass
 
 
-def abandonable_resolver(resolver: Callable[[str, int], object], deadline: Deadline) -> Callable[[str, int], list]:
+def abandonable_resolver(
+    resolver: Callable[[str, int], object], deadline: Deadline, *, slots: threading.BoundedSemaphore | None = None,
+) -> Callable[[str, int], list]:
     """The resolver run on a helper thread that is left behind when the time is up."""
 
     def resolve(host: str, port: int) -> list:
+        if slots is not None and not slots.acquire(blocking=False):
+            raise ProbeTimeout("A stream lookup is still running.")
         box: dict[str, object] = {}
         done = threading.Event()
 
@@ -134,13 +138,24 @@ def abandonable_resolver(resolver: Callable[[str, int], object], deadline: Deadl
                 box["answers"] = list(resolver(host, port))
             except BaseException as error:  # handed to the caller below
                 box["error"] = error
-            done.set()
+            finally:
+                if slots is not None:
+                    slots.release()
+                done.set()
 
         helper = threading.Thread(target=run, daemon=True, name="stream-probe-dns")
-        helper.start()
-        with _SLOT_LOCK:
-            _RESOLVERS.append(helper)
-        if not done.wait(deadline.timeout()) or deadline.cancel.is_set():
+        try:
+            helper.start()
+        except BaseException:
+            if slots is not None:
+                slots.release()
+            raise
+        if slots is None:
+            with _SLOT_LOCK:
+                _RESOLVERS.append(helper)
+        while not done.is_set():
+            done.wait(min(0.1, deadline.timeout()))
+        if deadline.expired():
             raise ProbeTimeout("The stream check ran out of time.")
         if "error" in box:
             raise box["error"]  # type: ignore[misc]
@@ -157,10 +172,12 @@ class DeadlineConnector(SafeConnector):
     used, and the DNS lookup can be abandoned.
     """
 
-    def __init__(self, base: SafeConnector, deadline: Deadline) -> None:
+    def __init__(
+        self, base: SafeConnector, deadline: Deadline, *, resolver_slots: threading.BoundedSemaphore | None = None,
+    ) -> None:
         self._deadline = deadline
         super().__init__(
-            resolver=abandonable_resolver(base.resolver, deadline),
+            resolver=abandonable_resolver(base.resolver, deadline, slots=resolver_slots),
             address_policy=base.address_policy,
             ssl_context=base.ssl_context,
             target_policy=base.target_policy,

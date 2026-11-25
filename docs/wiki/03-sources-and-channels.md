@@ -76,6 +76,11 @@ HEVC, MKV) are left out. A media.ccc.de talk plays its MP4 or MP3 in the
 talk's own language when there is one, otherwise WebM, Opus or a recording in
 another language.
 
+Internet Archive audio with several tracks and LibriVox books with several
+chapters play each part in order. You can choose a part, resume from the saved
+position or download one part. See
+[Tracks and chapters](04-playback-eq-downloads-recording.md#tracks-and-chapters).
+
 ## Live snapshots versus finite catalogs
 
 C3VOC and Owncast are snapshot sources. Since v0.1.15 each is read once at

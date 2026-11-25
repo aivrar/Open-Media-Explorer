@@ -98,6 +98,27 @@ test('polling keeps capture status attached to item identity across item and mod
     assert.equal(elements['player-capture-label'].textContent, 'Stop recording');
     assert.match(elements['player-capture-status-text'].textContent, /Other TV/);
 
+    jobs = [{ ...jobs[0], state: 'preparing', title: 'Second item', item_id: 'archive:second', elapsed_seconds: 0 }];
+    await controller.refresh();
+    const status = elements['player-capture-status'];
+    assert.equal(elements['player-capture-status-text'].textContent, 'Preparing • 0:00');
+    assert.equal(status.title, 'Preparing recording • 0:00');
+    assert.equal(status.getAttribute('aria-label'), status.title);
+
+    jobs = [{ ...jobs[0], state: 'completed', elapsed_seconds: 21, bytes_written: Math.round(641.4 * 1024) }];
+    await controller.refresh();
+    assert.equal(elements['player-capture-status-text'].textContent, 'Saved • 641 KB • 0:21');
+    assert.equal(status.title, 'Recording complete • 641.4 KB • 0:21');
+    assert.equal(status.getAttribute('aria-label'), status.title);
+
+    const completedRecording = jobs[0];
+    jobs = [{ ...completedRecording, kind: 'download' }];
+    await controller.refresh();
+    assert.equal(elements['player-capture-status-text'].textContent, 'Saved • 641.4 KB • 0:21');
+    assert.equal(status.title, 'Download complete • 641.4 KB • 0:21');
+    assert.equal(status.getAttribute('aria-label'), status.title);
+
+    jobs = [{ ...completedRecording, state: 'running' }];
     setCurrentItem(null);
     await controller.refresh();
     assert.equal(elements['player-bar'].hidden, false);
@@ -464,6 +485,68 @@ test('while a press is handled the Record button is disabled outright (no hint s
   }
 });
 
+test('Record again clears the saved actions as soon as preparation starts', async () => {
+  const originalDocument = globalThis.document;
+  const originalWindow = globalThis.window;
+  const originalStorage = globalThis.localStorage;
+  const { elements, document } = createPlayerDom();
+  document.visibilityState = 'visible';
+  globalThis.document = document;
+  globalThis.window = { setTimeout, clearTimeout };
+  globalThis.localStorage = memoryStorage();
+  const item = {
+    id: 'tv:repeat', title: 'Live TV', source: 'iptv-org', delivery: 'live',
+    stream_url: 'https://tv.example/live.m3u8', stream_kind: 'hls', type: 'tv',
+  };
+  const saved = { id: 'first', item_id: item.id, kind: 'record-video', state: 'completed' };
+  const next = { ...saved, id: 'second', state: 'preparing' };
+  let jobs = [saved];
+  let releaseRecording;
+  const recordingGate = new Promise((resolve) => { releaseRecording = resolve; });
+  const fetchImpl = async (path) => {
+    if (path === '/api/v1/session') return response({ token: 'repeat-token' });
+    if (path === '/api/v1/jobs') return response({ jobs });
+    if (path === '/api/v1/ffmpeg/status') return response({ state: 'ready' });
+    if (path === '/api/v1/media/register') return response({ media_id: 'repeat_media_001' });
+    if (path === '/api/v1/jobs/record') {
+      await recordingGate;
+      jobs = [next, saved];
+      return response(next);
+    }
+    throw new Error('unexpected route ' + path);
+  };
+  resetControlSession();
+  saveSettings({ recordingEnabled: true });
+  setCurrentItem(item);
+  const controller = initCaptureUi({ fetchImpl, confirmImpl: () => false });
+  const primary = elements['player-capture'];
+  const secondary = elements['player-capture-secondary'];
+  try {
+    await controller.refresh();
+    assert.equal(primary.dataset.state, 'completed');
+    assert.equal(secondary.textContent, 'Record again');
+    secondary.dispatchEvent(new Event('click'));
+    assert.equal(primary.dataset.state, 'checking');
+    assert.equal(secondary.hidden, true);
+
+    releaseRecording();
+    await waitFor(() => secondary.dataset.action === 'cancel');
+    assert.equal(primary.dataset.state, 'checking');
+    jobs = [{ ...next, state: 'running' }, saved];
+    await controller.refresh();
+    assert.equal(primary.dataset.state, 'stop-recording');
+    assert.equal(secondary.hidden, true);
+  } finally {
+    releaseRecording();
+    controller.destroy();
+    setCurrentItem(null);
+    globalThis.document = originalDocument;
+    globalThis.window = originalWindow;
+    globalThis.localStorage = originalStorage;
+    resetControlSession();
+  }
+});
+
 test('an error after Record is shown in the bar beside Retry, with no Open Settings button', async () => {
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
@@ -510,6 +593,61 @@ test('an error after Record is shown in the bar beside Retry, with no Open Setti
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
     globalThis.localStorage = originalStorage;
+    resetControlSession();
+  }
+});
+
+test('a pending recording is cancelled if its same-station endpoint or delivery changes', async () => {
+  const previous = { document: globalThis.document, window: globalThis.window, localStorage: globalThis.localStorage };
+  const { elements, document } = createPlayerDom();
+  document.visibilityState = 'visible';
+  Object.assign(globalThis, { document, window: { setTimeout, clearTimeout }, localStorage: memoryStorage() });
+  const item = { id: 'radio:pending', type: 'radio', stream_kind: 'audio',
+    stream_url: 'https://radio.example/live', delivery: 'live', content_rating: 'not-explicit' };
+  const main = { url: item.stream_url, kind: 'audio' };
+  const registrations = [];
+  let gate;
+  const fetchImpl = async (path, options) => {
+    if (path === '/api/v1/session') return response({ token: 'pending-token' });
+    if (path === '/api/v1/jobs') return response({ jobs: [] });
+    if (path === '/api/v1/ffmpeg/status') {
+      if (gate) await gate;
+      return response({ state: 'ready' });
+    }
+    if (path === '/api/v1/media/register') {
+      registrations.push(JSON.parse(options.body));
+      return response({ media_id: 'unexpected' });
+    }
+    if (path === '/api/v1/jobs/record') return response({ id: 'unexpected' });
+    throw new Error(`unexpected route ${path}`);
+  };
+  resetControlSession();
+  saveSettings({ recordingEnabled: true });
+  setCurrentItem(item, main);
+  const controller = initCaptureUi({ fetchImpl });
+  try {
+    await controller.refresh();
+    const record = elements['player-capture'];
+    for (const change of [
+      () => setCurrentItem(item, { url: 'https://backup.example/live', kind: 'audio' }),
+      () => emit('media-timeline', { itemId: item.id, delivery: 'on-demand' }),
+    ]) {
+      setCurrentItem(item, main);
+      emit('media-timeline', { itemId: item.id, delivery: 'unknown' });
+      let release;
+      gate = new Promise((resolve) => { release = resolve; });
+      assert.equal(record.dataset.action, 'record');
+      record.dispatchEvent(new Event('click'));
+      await waitFor(() => record.disabled);
+      change();
+      release();
+      await waitFor(() => elements['player-capture-label'].textContent !== 'Preparing…');
+      assert.deepEqual(registrations, []);
+    }
+  } finally {
+    controller.destroy();
+    setCurrentItem(null);
+    Object.assign(globalThis, previous);
     resetControlSession();
   }
 });

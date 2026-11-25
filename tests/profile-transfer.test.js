@@ -13,6 +13,8 @@ import {
   saveProfileHandoff,
 } from '../src/lib/profile-transfer.js';
 
+import { clearCache, getState, initState, saveSettings, STORAGE_KEYS, subscribe } from '../src/lib/state.js';
+
 class MemoryStorage {
   constructor(values = {}) { this.values = new Map(Object.entries(values)); }
   getItem(key) { return this.values.has(key) ? this.values.get(key) : null; }
@@ -79,6 +81,76 @@ test('profile handoff sends only the supported local browser keys before a port 
   assert.deepEqual(options, { method: 'POST', body: { values: result.values }, ownConnection: true });
   assert.deepEqual(Object.keys(headers).sort(), [PROFILE_SEQUENCE_HEADER, PROFILE_WRITER_HEADER].sort());
   assert.ok(signal instanceof AbortSignal, 'every profile request can be stopped by its timeout');
+});
+
+test('Now Playing blur saves, restores and clears with ordinary settings', async (t) => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  t.after(() => {
+    if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);
+    else delete globalThis.localStorage;
+  });
+  const setStorage = (value) => Object.defineProperty(globalThis, 'localStorage', { configurable: true, value });
+  const oldBlurKey = 'worldmedia.now-playing-background-blur.v1';
+  const oldTabsKey = 'worldmedia.tabs-shown.v1';
+  const storage = new MemoryStorage({
+    [STORAGE_KEYS.settings]: '{"theme":"forest"}',
+    [oldBlurKey]: 'strong',
+    [oldTabsKey]: '{"tuner":false}',
+  });
+  setStorage(storage);
+  await initState();
+  assert.equal(getState().settings.nowPlayingBackgroundBlur, 'medium');
+  assert.equal(getState().settings.theme, 'forest');
+  const seen = [];
+  const off = subscribe('settings-change', (settings) => seen.push(settings.nowPlayingBackgroundBlur));
+  t.after(off);
+  saveSettings({ nowPlayingBackgroundBlur: 'off' });
+  assert.deepEqual(seen, ['off']);
+  saveSettings({ theme: 'dark' });
+  const values = captureProfileStorage(storage);
+  assert.equal(Object.hasOwn(values, oldBlurKey), false);
+  assert.equal(Object.hasOwn(values, oldTabsKey), false);
+  assert.equal(JSON.parse(values[STORAGE_KEYS.settings]).theme, 'dark');
+  assert.equal(JSON.parse(values[STORAGE_KEYS.settings]).nowPlayingBackgroundBlur, 'off');
+
+  const fresh = new MemoryStorage();
+  assert.equal(restoreProfileStorageValues(values, fresh), true);
+  setStorage(fresh);
+  await initState();
+  assert.equal(getState().settings.nowPlayingBackgroundBlur, 'off');
+  assert.equal(getState().settings.theme, 'dark');
+  await clearCache();
+  assert.equal(getState().settings.nowPlayingBackgroundBlur, 'medium');
+  assert.equal(fresh.getItem(STORAGE_KEYS.settings), null);
+});
+
+test('cleared or unreadable settings fall back to appearance defaults', async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+    else delete globalThis.localStorage;
+  });
+  t.mock.method(console, 'warn', () => {});
+  const storage = new MemoryStorage({
+    [STORAGE_KEYS.settings]: '{"nowPlayingBackgroundBlur":"off","tabsShown":{"tuner":false}}',
+  });
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  await initState();
+  assert.equal(getState().settings.nowPlayingBackgroundBlur, 'off');
+  assert.equal(getState().settings.tabsShown.tuner, false);
+
+  storage.removeItem(STORAGE_KEYS.settings);
+  saveSettings({ theme: 'forest' });
+  const saved = JSON.parse(storage.getItem(STORAGE_KEYS.settings));
+  assert.equal(saved.theme, 'forest');
+  assert.equal(saved.nowPlayingBackgroundBlur, 'medium');
+  assert.equal(saved.tabsShown.tuner, true);
+
+  saveSettings({ nowPlayingBackgroundBlur: 'strong', tabsShown: { tuner: false } });
+  storage.setItem(STORAGE_KEYS.settings, '{broken');
+  await initState();
+  assert.equal(getState().settings.nowPlayingBackgroundBlur, 'medium');
+  assert.equal(getState().settings.tabsShown.tuner, true);
 });
 
 test('a fresh localhost origin restores the profile handoff without overwriting existing data', async () => {

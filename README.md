@@ -17,6 +17,17 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
+**New in v0.1.17:** adjust the picture and fit for video and TV, export the
+current Favorites or My Playlists view, edit stream addresses with backups,
+and see what your radio Favorites are playing. Internet Archive tracks and
+LibriVox chapters play in order and resume where you stopped. Assign an EQ
+curve to several stations, change the Now Playing blur and hide tabs you
+rarely use. The Visualizer dissolves between scenes in time with the music,
+and low-bitrate live streams start sooner. Thanks to TaxicabMessiah for
+the ideas and reports.
+[Discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8) ·
+[Issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
+
 **New in v0.1.16:** a station's stream format and bitrate now show for stations
 from any source once they have played, not only for those Radio Browser lists:
 the app remembers what the station's own stream said and shows it in the
@@ -137,7 +148,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.16-portable.zip
+WorldMediaWindows-0.1.17-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -190,7 +201,9 @@ cards under the dial Small, Medium or Large; Medium and Large show each
 station's picture. The **Visualizer:** control at the right of the top bar (down,
 a number, up) sets how strongly the Visualizer shows behind the Tuner when
 **Settings > Appearance > Show the Visualizer behind the Tuner** is on: 0 turns
-it off, and the default, 8, is a faint picture.
+it off, and the default, 8, is a faint picture. The Tuner makes room under
+the station strip for TV video and keeps the picture in place between channels.
+Switch to Radio to bring the dial back to full size.
 
 ![Tuner - the dial moving from station to station](screenshots/v0.1.14/demo-tuner.gif)
 
@@ -208,7 +221,8 @@ play it.
 **Now Playing** - whatever plays now, shown large: the station or item picture
 over a blurred copy of it, its name, the song a radio station announces (with
 a star and **Copy**), the stream details, how long it has played, and a large
-sound meter.
+sound meter. The meter turns red and reads **Muted** when muted. The **Format**
+row also shows remembered details for playlist stations and HLS streams.
 
 ![Now Playing - station picture, song and the large sound meter](screenshots/v0.1.14/now-playing.png)
 
@@ -218,13 +232,15 @@ has 103 scenes (flat patterns, 3D scenes, simulations and line drawings), a
 can limit to **Light only**, **Light and medium**, or all scenes (heavy too),
 post effects and overlays (off until you turn them on), a slow drift in time
 with the music, a star that keeps a scene with its effects and overlays, and a
-quality, frame rate and brightness choice. Its side panel folds into sections
+quality, frame rate and brightness choice. Shuffle listens for builds, drops
+and breaks, and scenes dissolve into one another. **Color travel** lets the
+palette drift with the music. DIFS Tunnel Flight is brighter. Its side panel folds into sections
 that say what is set. When the computer cannot keep up it lowers the load by
 itself, and **Settings > Processor use** can let it use more of the processor
-for a finer picture. It costs nothing while its tab is closed. It never
-changes the sound. It shows moving, flashing pictures: a notice about
+for a finer picture. It runs while its tab is open, or behind the Tuner if
+you turn that setting on. It leaves the sound unchanged. It shows moving, flashing pictures: a notice about
 photosensitivity comes before the first picture, and a flash limiter is always
-on. Work on it continues. See the
+on. See the
 [Visualizer page](docs/wiki/09-visualizer.md).
 
 ![The Visualizer moving with the music: four scenes with effects and overlays](screenshots/v0.1.14/demo-visualizer.gif)
@@ -259,13 +275,20 @@ they are radio or TV. Auto, the default, uses what most channels in the same
 file say. When some channels needed a type from **Add as**, the result tells
 you how many, and with Auto what it chose. To change or remove stations,
 edit your own playlist file and import it again under the same file name, or
-press **Remove playlist**.
+press **Remove playlist** to remove the list. Use **Stream address...** in a
+saved station's details to change its HTTP or HTTPS address and add up to
+five backups. World Media tries the backups in order if the main address
+fails to start, and on reconnect.
 
 In **Favorites** and **My Playlists**, use the **All / Radio / TV / Audio /
 Video** buttons and local search to find saved channels. **Star all** in My
 Playlists adds every listed channel to Favorites. Removing a playlist keeps its
-favorites. Playlist URLs may contain access tokens: keep your data folder
-private.
+favorites. **Export...** saves the items shown, using the selected type,
+playlist or category, and search. Choose **M3U8** or **JSON**. The file goes
+into Downloads and can be imported again with custom names and edited and
+backup addresses. The message counts items skipped for lack of a stream
+address. Each export creates a new file. Playlist URLs may contain access
+tokens, so keep your data folder private.
 
 Favorites can be sorted **My order** (drag a card before or after another, or
 move it up, down, to the top or to the bottom with the buttons on it) or
@@ -286,6 +309,10 @@ copy or save as a CSV file. Star a song in the log, or the one playing now
 with the star on the player bar, to keep it under **Starred songs**, where it
 can be looked up on the web or on YouTube or saved as a text or CSV file. Not
 every station sends titles, and stations delivered as HLS do not show one.
+In **Favorites**, turn on **Show what's playing** to see the song on the first
+line and performer on the second when a radio station sends both. Point at
+the title for the station's original text. Titles refresh while Favorites is
+open and the window is visible. The button is off by default.
 
 ![Song log with starred songs](screenshots/v0.1.14/song-log.png)
 
@@ -298,9 +325,9 @@ Settings lists the pictures that were not used and why. A station's format and
 bitrate (for example "AAC+ · 320 kbps") show in its detail panel, in the tooltip
 of its card in the Library and the Tuner, and on its card with **Show technical
 source details** on. Radio Browser lists them for its stations; any other
-station shows them once it has played, as its own stream says them (a station
-delivered as HLS does not). **Clear local cache** removes what the app
-remembered. **Other streams** lists other listings of the same Radio Browser
+station shows them once it has played, including HLS. Video can also show
+resolution, frame rate and codec, for example "Stream: HLS · 1080p · 50 fps
+· H.264 · 6.22 Mbps". **Clear local cache** removes remembered stream details. **Other streams** lists other listings of the same Radio Browser
 station to pick from by hand.
 **Settings > Content > Pick the best stream** tries a station's or channel's
 best listed stream first. Its **Auto (verified)** choice also checks other
@@ -309,8 +336,9 @@ from the next start, only after two checks found it playing the same songs.
 
 **Settings → Storage → Back up my data** writes one ZIP into the `downloads`
 folder with your favorites and the names you gave them, settings, categories,
-song log, starred songs, imported playlists and station pictures, plus `.m3u8`
-playlist files that other players can open.
+song log, starred songs, imported playlists, station pictures, saved video
+picture settings and edited and backup stream addresses, plus `.m3u8` playlist
+files that other players can open.
 There is no restore button; the
 [data guide](docs/wiki/05-data-cache-and-portability.md) says how to copy it
 back. Playlist addresses can contain private links or account tokens, so share
@@ -329,7 +357,11 @@ with a fresh test profile. See the [portability guide](docs/wiki/05-data-cache-a
 Settings includes **System**, **Dark · Teal**, **Light**, **Midnight · Blue**,
 **Forest · Green**, **Ember · Orange**, and **Amethyst · Violet**. Changes apply
 immediately and persist across launches. System follows the Windows light/dark
-preference.
+preference. **Tabs shown** hides tabs you do not use. Library is always
+visible. **Now Playing background blur** offers **Off**, **Light**, **Medium**
+(the default) and **Strong**. Sources switched off in **Settings > Sources**
+appear dimmed at the bottom of the Library sidebar. Turning a source back on
+runs the current search for it again.
 
 | Midnight · Blue | Forest · Green |
 |---|---|
@@ -346,9 +378,26 @@ exact palette color; Windows 10 uses the matching dark or light caption style.
 
 ## Playback
 
-Video plays in a movable overlay with fullscreen support. Live radio and TV
-that lose their connection reconnect by themselves for up to ten minutes; the
-player bar says "Connection lost. Retrying..." meanwhile.
+Video plays in a movable overlay with fullscreen support. While the picture is
+open, lists give you room to scroll to the last buttons. Open **Picture**
+beside **EQ** to adjust **Brightness**, **Contrast**, **Saturation** and
+**Hue**, or use **Reset**. **Fit** offers **Whole picture**, **Fill** and
+**Zoom 110%**, **Zoom 125%** or **Zoom 133%** for black bars. It applies in
+fullscreen too. Choose **For this channel** or **For all video**. Channel
+settings stay saved while the channel is in Favorites or My Playlists. They
+are included in backups and removed by **Clear local cache**. The picture
+controls affect what you see. Recordings and downloads use the source stream.
+
+Live TV hides the video's own timeline and time numbers. On-demand video
+keeps them, and a live stream that turns out to be finite gets them back.
+Live radio and TV that lose their connection reconnect by themselves for up
+to ten minutes. The player bar says "Connection lost. Retrying..." meanwhile.
+
+Internet Archive audio and LibriVox books with several parts play in order.
+The player bar shows **Track N of M** or **Chapter N of M**, with **Previous
+part** and **Next part**. Choose a part in the item's details and use
+**Download** for that part. When you reopen an item with a saved position,
+the player bar offers to resume at that position or **Start over**.
 
 The player bar is one row in a window wider than 1000 px. The volume has its
 own control beside the speaker (mute) button: an up button, the volume as a
@@ -357,8 +406,9 @@ button repeats, the mouse wheel over the control changes it by 2 per notch, and
 with the control focused the arrow keys change it by 1 (Page Up and Page Down by
 10, Home and End set 0 and 100). Changing the volume with a video's own controls
 moves the number too. When the **Record** button is unavailable, point at it to
-read why (with Recorder off, it says where to turn it on); a capture's progress,
-result or error shows beside it.
+read why. **Record audio**, **Record video** and **Stop recording** take up
+the same space. A capture's progress, result or error has room beside the
+button, with the full status in its tooltip.
 
 A small LED-style sound meter beside **EQ** moves with the sound, so you can see
 that a station is really playing. It only reads the sound, rests while nothing
@@ -377,10 +427,12 @@ the player bar**.
   the saved file. **Stop recording** performs finalization before publishing the
   completed filename.
 - Settings provides Compact (96 kbps/480p), Balanced (160 kbps/720p), and High
-  (256 kbps/1080p) profiles. Source resolution is never upscaled.
-- The ten-band EQ and preamp apply immediately. The current curve is the global
-  default; a favorite automatically keeps its own curve. There is no Apply or
-  Save button.
+  (256 kbps/1080p) profiles.
+- The ten-band EQ and preamp apply immediately. A favorite can keep its own
+  curve. Use **Stations...** to assign or clear a preset for several saved
+  stations at once. To assign your current curve, first use **Save new preset**.
+  In **Advanced**, set each band's Q from 0.25 to 8. Recordings made with EQ
+  use those values.
 
 Only download or record media when its source and your local law permit it.
 World Media does not remove DRM or grant rights to third-party broadcasts.
@@ -456,6 +508,10 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - No song title under a station means the station does not send one (or is
   delivered as HLS). See the
   [troubleshooting guide](docs/wiki/06-troubleshooting.md).
+- If a song title is cut short in its tooltip too, the station may have sent
+  it that way.
+- If a station starts slowly, give it a few seconds to connect. HLS can take
+  longer. Try a backup address for a saved station if you have one.
 - A favorite missing from the Tuner dial may be saved as the other type: the
   Tuner's status line says so. The same guide tells how to fix it.
 - If the Visualizer is slow, set **Quality** to Low, **Frame rate** to 15 or 30,
@@ -490,7 +546,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.16-portable.zip
+dist\WorldMediaWindows-0.1.17-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

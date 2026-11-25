@@ -14,7 +14,7 @@ WorldMediaWindows-data\
   station-images\        your own station pictures (made when you open it)
   logs\                  native.log and runtime diagnostics
   webview2_data\         WebView2 browser profile and localStorage
-downloads\               finite downloads and completed recordings
+downloads\               downloads, recordings, backups and exports
 tools\ffmpeg\           managed portable FFmpeg (if selected)
 frontend\                 packaged UI assets in the folder build
 ```
@@ -65,6 +65,12 @@ Version 0.1.12 adds these, kept in the same way:
 - the new settings (**Pick the best stream**, **Processor use** and its limit,
   and the Visualizer's new choices) are fields inside the existing settings.
 
+Version 0.1.17 mirrors picture settings, edited stream addresses with backups,
+and track and chapter bookmarks to `state/profile-preferences-extra.json`.
+Backups include them. **Clear local cache** removes them. **Tabs shown**,
+**Now Playing background blur**, **Show what's playing** and **Color travel**
+are saved with the other settings.
+
 The browser profile stores:
 
 - favorites (`worldmedia.favorites.v1`);
@@ -75,7 +81,11 @@ The browser profile stores:
   choices and favorites (`worldmedia.settings.v1`);
 - volume (`worldmedia.volume.v1`);
 - recent capture job history (`worldmedia.jobs.v1`);
-- global/favorite/custom EQ (`worldmedia.eq.v1`);
+- global, favorite and custom EQ, including station preset assignments and
+  band widths (`worldmedia.eq.v1`),
+- picture settings (`worldmedia.picture.v1`),
+- edited main and backup stream addresses (`worldmedia.stationstreams.v1`),
+- track and chapter bookmarks (`worldmedia.partresume.v1`),
 - with **Auto (verified)**, the results of its checks
   (`worldmedia.streamverify.v1`) and its directory lookups
   (`worldmedia.streamlookups.v1`). These two are a cache: they are not copied
@@ -136,12 +146,14 @@ folder:
 - `WorldMediaWindows-data\state\` holds `playlists.json`,
   `profile-preferences.json` (favorites, settings, volume, equalizer curves),
   `profile-preferences-extra.json` (categories, the names you gave your
-  favorites, and the stations you keep on their own stream), `song-log.json`
+  favorites, stations you keep on their own stream, picture settings,
+  edited and backup stream addresses, and audio bookmarks), `song-log.json`
   and `starred-songs.json`, for each of them that exists;
 - `WorldMediaWindows-data\station-images\` holds your station pictures;
 - `exports\` holds `.m3u8` playlist files that other players can open:
   `favorites-radio.m3u8`, `favorites-tv.m3u8`, `favorites-other.m3u8` (with
-  the names you gave your favorites), and one file for each imported playlist;
+  the names you gave your favorites), and one file for each imported
+  playlist. These files include edited stream addresses and backups;
 - `README.txt` explains the files and how to restore them.
 
 The cache, logs, browser profile, FFmpeg tools, and your downloads are never

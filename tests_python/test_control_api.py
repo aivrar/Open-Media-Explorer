@@ -102,6 +102,21 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             store.remove.assert_called_once_with('example')
 
+    def test_playlist_export_requires_authenticated_post(self) -> None:
+        path = '/api/v1/playlists/export'
+        data = {'format': 'm3u8', 'collection': 'Favorites', 'type': 'TV', 'stations': []}
+        body = json.dumps(data).encode()
+        with mock.patch.object(worldmedia_server, 'export_library_playlist', return_value={'count': 1}) as save:
+            response, _ = self.request('GET', path, headers={'X-WorldMedia-Token': self.token})
+            self.assertEqual(response.status, 405)
+            response, _ = self.request('POST', path, headers={'Content-Type': 'application/json'}, body=body)
+            self.assertEqual(response.status, 403)
+            save.assert_not_called()
+            response, payload = self.request('POST', path, headers=self.mutation_headers(), body=body)
+            self.assertEqual(response.status, 200)
+            self.assertEqual(payload['data'], {'count': 1})
+            save.assert_called_once_with(data, worldmedia_server.RUNTIME_PATHS)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.server = worldmedia_server.ThreadingServer(
@@ -432,6 +447,9 @@ class ControlApiTests(unittest.TestCase):
             response, payload = self.request("GET", path)
             self.assertEqual(response.status, 200)
             self.assertEqual(payload, {})
+            self.assertEqual(response.getheader("Content-Type"), "application/json")
+            self.assertEqual(response.getheader("Content-Security-Policy"), "sandbox; default-src 'none'")
+            self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
             self.assertEqual(
                 response.getheader("Link"),
                 '<https://api.media.ccc.de/public/events/recent?page=2>; rel="next"',
@@ -472,6 +490,25 @@ class ControlApiTests(unittest.TestCase):
         response.headers = headers
         return mock.Mock(response=response, close=response.close)
 
+    def test_metadata_proxy_serves_document_types_as_plain_text(self) -> None:
+        body = b"<html><body>Upstream document</body></html>"
+        path = "/api/proxy?" + urllib.parse.urlencode({"url": "https://images-api.nasa.gov/search"})
+        for content_type in (
+            "Text/HTML; charset=iso-8859-1", "application/xhtml+xml", "image/svg+xml",
+            "application/octet-stream, text/html",
+        ):
+            with self.subTest(content_type=content_type):
+                upstream = self.proxy_upstream(200, body, {
+                    "Content-Type": content_type, "Content-Length": str(len(body)),
+                })
+                with mock.patch.object(worldmedia_server.PROXY_CONNECTOR, "open", return_value=upstream):
+                    response, payload = self.request("GET", path)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(payload, body)
+                self.assertEqual(response.getheader("Content-Type"), "text/plain; charset=utf-8")
+                self.assertEqual(response.getheader("Content-Security-Policy"), "sandbox; default-src 'none'")
+                self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
+
     def test_metadata_proxy_asks_for_gzip_and_passes_it_through_compressed(self) -> None:
         payload = b"<rss>" + b"<item>same text again</item>" * 2000 + b"</rss>"
         compressed = gzip.compress(payload)
@@ -491,6 +528,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertIs(opened.call_args.kwargs["accept_gzip"], True)
         self.assertEqual(response.status, 200)
         self.assertEqual(response.getheader("Content-Encoding"), "gzip")
+        self.assertEqual(response.getheader("Content-Type"), "application/xml")
+        self.assertEqual(response.getheader("Content-Security-Policy"), "sandbox; default-src 'none'")
         self.assertEqual(response.getheader("Content-Length"), str(len(compressed)))
         self.assertEqual(response.getheader("Cache-Control"), "no-store")
         self.assertEqual(response.getheader("Link"), '<https://images-api.nasa.gov/search?page=2>; rel="next"')
@@ -711,15 +750,16 @@ class ControlApiTests(unittest.TestCase):
             eq = {"preamp": -2, "bands": [0, 1, 2, 3, 4, 3, 2, 1, 0, -1], "bypassed": False}
             response, payload = self.request(
                 "POST", "/api/v1/jobs/record", headers=self.mutation_headers(),
-                body=json.dumps({"media_id": media_id, "profile": "balanced", "eq": eq}).encode(),
+                body=json.dumps({"media_id": media_id, "profile": "balanced", "eq": eq, "delivery": "unknown"}).encode(),
             )
             self.assertEqual(response.status, 202)
             self.assertEqual(payload["data"]["state"], "queued")
             fake.start.assert_called_once_with(
-                media_id, "balanced", f"http://127.0.0.1:{self.port}", eq,
+                media_id, "balanced", f"http://127.0.0.1:{self.port}", eq, delivery="unknown",
             )
             hostile = [
                 {"media_id": media_id, "profile": "ultra"},
+                {"media_id": media_id, "profile": "compact", "delivery": ["live"]},
                 {"media_id": media_id, "profile": "high", "url": "https://evil.test/live"},
                 {"media_id": "short", "profile": "compact"},
                 {"profile": "compact", "url": "https://evil.test/live"},

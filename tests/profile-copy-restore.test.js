@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  PROFILE_COPY_KEYS, restoreCopiedProfileValues, restoreProfileHandoff,
+  PROFILE_COPY_KEYS, restoreCopiedProfileValues, restoreProfileHandoff, restoreProfileHandoffOutcome,
 } from '../src/lib/profile-transfer.js';
 
 class MemoryStorage {
@@ -67,7 +67,7 @@ test('without copied keys nothing is set in an origin that has a profile', async
   assert.equal(storage.getItem(NAMES), null);
 });
 
-test('a copied key that cannot be stored leaves the origin as it was', () => {
+test('a copied key that cannot be stored leaves the origin as it was', async () => {
   const storage = new MemoryStorage({ [FAVORITES]: '[]' });
   const setItem = storage.setItem.bind(storage);
   storage.setItem = (key, value) => {
@@ -75,6 +75,9 @@ test('a copied key that cannot be stored leaves the origin as it was', () => {
     setItem(key, value);
   };
   assert.equal(restoreCopiedProfileValues(folder, [NAMES, OWN_STREAM], storage), false);
+  assert.equal(await restoreProfileHandoffOutcome({
+    storage, requestImpl: async () => ({ values: folder, copied: [NAMES, OWN_STREAM] }),
+  }), 'failed');
   assert.deepEqual([...storage.values.keys()], [FAVORITES]);
 });
 

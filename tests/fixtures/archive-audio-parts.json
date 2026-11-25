@@ -1,0 +1,68 @@
+{
+  "files": [
+    {
+      "name": "Hamlet_librivox.m4b",
+      "source": "original"
+    },
+    {
+      "name": "hamlet_0_shakespeare.mp3",
+      "source": "original",
+      "title": "Dramatis Personae",
+      "track": "1/6",
+      "length": "162.32"
+    },
+    {
+      "name": "hamlet_0_shakespeare.ogg",
+      "source": "derivative",
+      "original": "hamlet_0_shakespeare.mp3",
+      "length": "158.16"
+    },
+    {
+      "name": "hamlet_0_shakespeare_64kb.mp3",
+      "source": "derivative",
+      "original": "hamlet_0_shakespeare.mp3",
+      "title": "Dramatis Personae",
+      "length": "02:42"
+    },
+    {
+      "name": "hamlet_act1_shakespeare.mp3",
+      "source": "original",
+      "title": "Act 1",
+      "track": "2/6",
+      "length": "3070.34"
+    },
+    {
+      "name": "hamlet_act1_shakespeare.ogg",
+      "source": "derivative",
+      "original": "hamlet_act1_shakespeare.mp3",
+      "length": "3070.21"
+    },
+    {
+      "name": "hamlet_act1_shakespeare_64kb.mp3",
+      "source": "derivative",
+      "original": "hamlet_act1_shakespeare.mp3",
+      "title": "Act 1",
+      "length": "51:10"
+    },
+    {
+      "name": "hamlet_act2_shakespeare.mp3",
+      "source": "original",
+      "title": "Act 2",
+      "track": "3/6",
+      "length": "2471.17"
+    },
+    {
+      "name": "hamlet_act2_shakespeare.ogg",
+      "source": "derivative",
+      "original": "hamlet_act2_shakespeare.mp3",
+      "length": "2471.06"
+    },
+    {
+      "name": "hamlet_act2_shakespeare_64kb.mp3",
+      "source": "derivative",
+      "original": "hamlet_act2_shakespeare.mp3",
+      "title": "Act 2",
+      "length": "41:11"
+    }
+  ]
+}

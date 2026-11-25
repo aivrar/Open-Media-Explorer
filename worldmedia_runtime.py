@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import sys
 import threading
 from collections import OrderedDict
@@ -25,9 +26,13 @@ PROFILE_TRANSFER_KEYS = frozenset({
     "worldmedia.volume.v1",
     "worldmedia.jobs.v1",
     "worldmedia.eq.v1",
+    "worldmedia.eq-extra.v1",
+    "worldmedia.picture.v1",
     "worldmedia.favgroups.v1",  # Favorites categories (src/lib/favorite-groups.js)
     "worldmedia.favnames.v1",  # The user's names for favorites (src/lib/favorite-names.js)
     "worldmedia.ownstream.v1",  # Stations kept on their own stream (src/lib/stream-verify.js)
+    "worldmedia.stationstreams.v1",  # Main and backup addresses for saved stations
+    "worldmedia.partresume.v1",  # Playback position for chapters and tracks
 })
 # Releases up to 0.1.8 know only these keys, and they treat a profile file that
 # holds any other key as unreadable: the whole file, favorites included. So the
@@ -469,6 +474,36 @@ def migrate_legacy_state(paths: RuntimePaths | None = None) -> bool:
     return True
 
 
+class UnsafeDownloadRoot(ValueError):
+    """Downloads would not write to an ordinary directory inside the portable root."""
+
+
+def validated_download_root(paths: RuntimePaths) -> Path:
+    root = paths.downloads_root.absolute()
+    boundary = paths.portable_root.absolute()
+    outside = "Downloads directory is outside the portable root."
+    if not root.is_relative_to(boundary):
+        raise UnsafeDownloadRoot(outside)
+    current = root
+    while True:
+        try:
+            # Inspect the directory entry even when its target is missing.
+            info = current.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT:
+                raise UnsafeDownloadRoot("Downloads paths cannot use links or junctions.")
+        if current == boundary:
+            break
+        current = current.parent
+    resolved = root.resolve()
+    resolved_boundary = boundary.resolve()
+    if resolved == resolved_boundary or not resolved.is_relative_to(resolved_boundary):
+        raise UnsafeDownloadRoot(outside)
+    return resolved
+
+
 def probe_writable(directory: Path) -> tuple[bool, str | None]:
     """Atomically create and remove a private probe in *directory*."""
 
@@ -499,7 +534,12 @@ def probe_writable(directory: Path) -> tuple[bool, str | None]:
 
 def runtime_status(paths: RuntimePaths | None = None, *, active_port: int | None = None) -> dict:
     selected = paths or get_runtime_paths()
-    downloads_ok, downloads_error = probe_writable(selected.downloads_root)
+    try:
+        downloads_ok, downloads_error = probe_writable(validated_download_root(selected))
+    except UnsafeDownloadRoot as error:
+        downloads_ok, downloads_error = False, str(error)
+    except OSError:
+        downloads_ok, downloads_error = False, "Portable downloads/tools directory is not writable."
     tools_ok, tools_error = probe_writable(selected.tools_root)
     writable = downloads_ok and tools_ok
     data = selected.as_data(

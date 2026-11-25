@@ -10,7 +10,7 @@ from pathlib import Path
 
 from worldmedia_jobs import ACTIVE_STATES, DuplicateJobError, Job, JobRegistry, JobStateError
 from worldmedia_media import MediaError, MediaRegistration, MediaRegistry
-from worldmedia_runtime import RuntimePaths, get_runtime_paths, probe_writable
+from worldmedia_runtime import RuntimePaths, UnsafeDownloadRoot, get_runtime_paths, probe_writable, validated_download_root
 from worldmedia_security import sanitize_filename
 
 
@@ -131,21 +131,10 @@ def _declared_length(response) -> int | None:
 
 
 def _validated_download_root(paths: RuntimePaths) -> Path:
-    root = paths.downloads_root
-    boundary = paths.portable_root.absolute()
-    current = root
-    while True:
-        if current.exists() and (
-            current.is_symlink()
-            or (hasattr(os.path, "isjunction") and os.path.isjunction(current))
-        ):
-            raise DownloadError("Downloads paths cannot use links or junctions.", code="UNSAFE_DOWNLOAD_ROOT")
-        if current.absolute() == boundary:
-            break
-        if current.parent == current:
-            raise DownloadError("Downloads directory is outside the portable root.", code="UNSAFE_DOWNLOAD_ROOT")
-        current = current.parent
-    return root.resolve()
+    try:
+        return validated_download_root(paths)
+    except UnsafeDownloadRoot as error:
+        raise DownloadError(str(error), code="UNSAFE_DOWNLOAD_ROOT") from error
 
 
 def _unlink_with_retry(path: Path) -> None:
@@ -194,7 +183,7 @@ class DownloadService:
                 raise DuplicateJobError(existing)
             job = self.jobs.create(
                 kind="download", title=title, media_id=media_id,
-                item_id=registration.item_id, source=registration.source,
+                item_id=registration.item_id, source=registration.source, download_part=registration.download_part,
             )
             self._active_sources[source_key] = job.id
             self._job_sources[job.id] = source_key

@@ -1,12 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import {
-  BUILD_DRIFT_BOOST, DROP_COOLDOWN_BARS, SONG_STRUCTURE_RELEASED, createStructureDetector, structureDriftScale,
+  BUILD_DRIFT_BOOST, DROP_COOLDOWN_BARS, SONG_STRUCTURE_RELEASED, bringDropForward, createStructureDetector, structureDriftScale,
 } from '../src/visualizer/structure.js';
 import { createShuffleTimer, SHUFFLE_MIN_DWELL_S } from '../src/visualizer/shuffle.js';
-import { WARP_DISSOLVE_RELEASED, WARP_DISSOLVE_SHADER, warpWeight } from '../src/visualizer/warp-dissolve.js';
+import { WARP_DISSOLVE_RELEASED, WARP_DISSOLVE_SHADER, WARP_LAYER_MIX, warpWeight } from '../src/visualizer/warp-dissolve.js';
 import { createMoodTracker } from '../src/visualizer/mood.js';
 import { beatTrack, listen } from './helpers/mood-sim.js';
 
@@ -39,7 +38,7 @@ test('a steady level, or one that only wobbles, is neither a build nor a drop', 
   assert.deepEqual(wobbly.building, []);
 });
 
-test('a build over several bars, then the drop on the first beat of the bar it lands on', () => {
+test('a build over several bars, then the drop at the bar it lands on', () => {
   // 8 bars at -18, rising 2 dB a bar for 6 bars, then the drop at -2.
   const levels = [...flat(8, -18), -16, -14, -12, -10, -8, -6, ...flat(10, -2)];
   const { drops, building, detector } = run(levels);
@@ -50,7 +49,7 @@ test('a build over several bars, then the drop on the first beat of the bar it l
   // A drop no louder than the build's last bar by DROP_JUMP_DB is not told
   // from the build going on.
   assert.deepEqual(run([...flat(8, -18), -16, -14, -12, -10, -8, -6, ...flat(10, -5)]).drops, []);
-  assert.ok(drops[0] >= dropBar * 4 + 1 && drops[0] < dropBar * 4 + 1.1, `judged as its first beat ends: ${drops[0]}`);
+  assert.ok(drops[0] >= dropBar * 4 + 0.2 && drops[0] < dropBar * 4 + 0.3, `judged near the start of the bar: ${drops[0]}`);
   assert.equal(detector.building, false);
   assert.equal(detector.stats.builds, 1);
 });
@@ -58,7 +57,7 @@ test('a build over several bars, then the drop on the first beat of the bar it l
 test('a break, then the sudden full return is a drop; a gradual return is not', () => {
   const sudden = run([...flat(8, -10), ...flat(4, -26), ...flat(8, -10)]);
   assert.equal(sudden.drops.length, 1);
-  assert.ok(sudden.drops[0] >= 12 * 4 && sudden.drops[0] < 12 * 4 + 1.1);
+  assert.ok(sudden.drops[0] >= 12 * 4 && sudden.drops[0] < 12 * 4 + 0.3);
   const gradual = run([...flat(8, -10), ...flat(4, -26), -24, -22, -20, -18, -16, -14, -12, -10, ...flat(6, -10)]);
   assert.deepEqual(gradual.drops, []);
   // Back only half way: not a full return.
@@ -68,7 +67,7 @@ test('a break, then the sudden full return is a drop; a gradual return is not', 
 test('a drop lands mid-bar is judged on the bar line only; none again within the cool-down', () => {
   // The return comes on the third beat: the bar's first beat is still quiet.
   const late = run((bar, beat) => (bar < 8 ? -10 : bar < 12 ? -26 : bar === 12 && beat < 2 ? -26 : -10));
-  assert.ok(late.drops.every((at) => Math.abs(at / 4 - Math.round(at / 4)) < 0.3), 'on a bar line');
+  assert.deepEqual(late.drops, [], 'a mid-bar return is missed');
   // Two breaks close together: the second return is in the cool-down.
   const twice = run([...flat(8, -10), ...flat(2, -26), ...flat(2, -10), ...flat(2, -26), ...flat(10, -10)]);
   assert.equal(twice.drops.length, 1);
@@ -84,6 +83,10 @@ test('no sure tempo, or a clock that goes back, starts afresh', () => {
   run([...flat(8, -10), ...flat(3, -26)], { detector });
   detector.step(2, -10); // the clock went back
   assert.equal(detector.armed, false);
+  run([...flat(8, -10), ...flat(3, -26)], { detector });
+  assert.equal(detector.armed, true);
+  assert.equal(detector.step(48, -10), null, 'a gap cannot count as continuous music');
+  assert.equal(detector.armed, false);
   assert.equal(detector.step(Number.POSITIVE_INFINITY, -10), null);
 });
 
@@ -98,10 +101,13 @@ test('the build deepens drift a little, never past the most measured', () => {
 test('a drop brings the shuffle change forward only after the minimum time, and never adds one', () => {
   const timer = createShuffleTimer({ bars: 32 });
   for (let t = 0; t < SHUFFLE_MIN_DWELL_S - 1; t += 0.25) timer.step(t, t * 2, 0.9);
-  assert.equal(timer.bringForward(), false, 'too soon');
+  assert.equal(bringDropForward(timer, { shuffleOn: true, reducedMotion: false }), false, 'too soon');
   assert.equal(timer.due, false);
   for (let t = SHUFFLE_MIN_DWELL_S - 1; t < SHUFFLE_MIN_DWELL_S + 1; t += 0.25) timer.step(t, t * 2, 0.9);
-  assert.equal(timer.bringForward(), true);
+  assert.equal(bringDropForward(timer, { shuffleOn: false, reducedMotion: false }), false, 'pinned');
+  assert.equal(bringDropForward(timer, { shuffleOn: true, reducedMotion: true }), false, 'reduced motion');
+  assert.equal(timer.due, false);
+  assert.equal(bringDropForward(timer, { shuffleOn: true, reducedMotion: false }), true);
   assert.equal(timer.due, true);
   assert.equal(timer.bringForward(), false, 'already due: nothing extra');
   timer.restart();
@@ -145,15 +151,14 @@ test('the mood\'s beat count: none while its tempo is not sure, then beats at th
   assert.ok(Number.isNaN(mood.beats));
 });
 
-test('held: nothing steers until released; the warped dissolve is a convex mix, held and not wired', () => {
-  assert.equal(SONG_STRUCTURE_RELEASED, false);
-  const viz = readFileSync('src/visualizer/index.js', 'utf8');
-  assert.match(viz, /const structure = SONG_STRUCTURE_RELEASED \? createStructureDetector\(\) : null;/);
-  assert.match(viz, /structure\.step\(mood\.beats, bridge\.adapter\.levelDb\)/, 'the bar clock is the mood\'s beat count');
-  assert.match(viz, /if \(structureEvent === 'drop' && shuffleOn && started && !lost\) shuffleTimer\.bringForward\(\);/);
-  assert.equal(WARP_DISSOLVE_RELEASED, false);
-  assert.doesNotMatch(viz, /warp-dissolve/);
-  assert.match(WARP_DISSOLVE_SHADER, /FRAG_OUT = vec4\(mix\(from, to, w\), 1\.0\);/);
+test('released structure and a monotonic, convex warped dissolve', () => {
+  assert.equal(SONG_STRUCTURE_RELEASED, true);
+  assert.equal(WARP_DISSOLVE_RELEASED, true);
+  assert.ok(1 - WARP_LAYER_MIX >= 0.75);
+  assert.match(WARP_DISSOLVE_SHADER, /if \(t <= 0\.0\) \{\s*FRAG_OUT = vec4\(texture2D\(u_from, v_uv\)\.rgb, 1\.0\)/);
+  assert.match(WARP_DISSOLVE_SHADER, /if \(t >= 1\.0\) \{\s*FRAG_OUT = vec4\(texture2D\(u_to, v_uv\)\.rgb, 1\.0\)/);
+  assert.match(WARP_DISSOLVE_SHADER, /vec3 base = mix\(texture2D\(u_from, v_uv\)\.rgb, texture2D\(u_to, v_uv\)\.rgb, t\)/);
+  assert.match(WARP_DISSOLVE_SHADER, /mix\(base, mix\(from, to, w\), u_layer_mix\)/);
   for (const n of [0.1, 0.5, 0.9]) {
     let before = 0;
     for (let p = 0; p <= 1.0001; p += 0.05) {

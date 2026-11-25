@@ -16,12 +16,13 @@ function elapsed(seconds) {
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${rest}` : `${minutes}:${rest}`;
 }
 
-function bytes(value) {
+function bytes(value, compact = false) {
   const size = Math.max(0, Number(value) || 0);
   if (size < 1024) return `${Math.floor(size)} B`;
-  if (size < 1024 ** 2) return `${(size / 1024).toFixed(1)} KB`;
-  if (size < 1024 ** 3) return `${(size / 1024 ** 2).toFixed(1)} MB`;
-  return `${(size / 1024 ** 3).toFixed(1)} GB`;
+  const format = (amount) => compact ? Number(amount.toPrecision(3)) : amount.toFixed(1);
+  if (size < 1024 ** 2) return `${format(size / 1024)} KB`;
+  if (size < 1024 ** 3) return `${format(size / 1024 ** 2)} MB`;
+  return `${format(size / 1024 ** 3)} GB`;
 }
 
 // `status` is the full sentence: the Record button's hover text and
@@ -52,6 +53,7 @@ function jobStatus(job, currentItemId) {
       return base('checking', 'Preparing…', {
         disabled: true, disabledReason: 'Recording is being prepared.',
         status: `Preparing recording${otherTitle} • ${timing}`,
+        notice: `Preparing • ${timing}`,
         indeterminate: true, jobId: job.id,
         secondaryAction: 'cancel', secondaryLabel: 'Cancel',
       });
@@ -92,9 +94,12 @@ function jobStatus(job, currentItemId) {
     });
   }
   if (job.state === 'completed') {
+    const size = bytes(job.bytes_written);
+    const noticeSize = isRecording ? bytes(job.bytes_written, true) : size;
     return base('completed', 'Open folder', {
       action: 'open-folder', tone: 'success', jobId: job.id,
-      status: `${isRecording ? 'Recording' : 'Download'} complete • ${bytes(job.bytes_written)} • ${timing}`,
+      status: `${isRecording ? 'Recording' : 'Download'} complete • ${size} • ${timing}`,
+      notice: `Saved • ${noticeSize} • ${timing}`,
       secondaryAction: 'again', secondaryLabel: isRecording ? 'Record again' : 'Download again',
     });
   }
@@ -107,9 +112,14 @@ function jobStatus(job, currentItemId) {
   });
 }
 
+export function captureJobMatches(job, itemId, downloadPart) {
+  return Boolean(itemId && job.item_id === itemId && job.kind !== 'ffmpeg-install'
+    && (job.kind !== 'download' || (job.download_part || '') === downloadPart));
+}
+
 export function deriveCaptureView({
   item = null, capability = 'unavailable', jobs = [], toolState = null,
-  transient = null, ignoredJobIds = new Set(), recording = false, unplayable = false,
+  transient = null, ignoredJobIds = new Set(), finite = false, unplayable = false, downloadPart = '',
 } = {}) {
   const visibleJobs = Array.isArray(jobs)
     ? jobs.filter((job) => job && !ignoredJobIds.has(job.id))
@@ -135,7 +145,7 @@ export function deriveCaptureView({
   if (activeRecording) return jobStatus(activeRecording, item?.id || '');
 
   const relevant = item?.id
-    ? visibleJobs.find((job) => job.item_id === item.id && job.kind !== 'ffmpeg-install')
+    ? visibleJobs.find((job) => captureJobMatches(job, item.id, downloadPart))
     : visibleJobs.find((job) => job.kind === 'download' && ACTIVE_STATES.has(job.state));
   if (relevant) return jobStatus(relevant, item?.id || '');
 
@@ -153,10 +163,8 @@ export function deriveCaptureView({
       status: 'Recording is available once this item plays.', hint: true,
     });
   } else if (capability === 'record-audio' || capability === 'record-video') {
-    // `recording`: the player found the media to be a recording with a set
-    // length (a playlist entry that points at an MP3), so it is not called live.
     view = base('record', capability === 'record-video' ? 'Record video' : 'Record audio', {
-      action: 'record', status: recording ? 'This stream can be recorded.' : 'Live media can be recorded.',
+      action: 'record', status: 'Live media can be recorded.',
       hint: true,
     });
   } else if (capability === 'checking') {
@@ -167,7 +175,8 @@ export function deriveCaptureView({
   } else {
     view = base('unavailable', 'Unavailable', {
       disabled: true, disabledReason: 'This item has no downloadable original or recordable stream.',
-      status: item ? 'Download and recording are unavailable for this item.' : '', hint: true,
+      status: finite ? 'This is a finite stream. No download is available.'
+        : (item ? 'Download and recording are unavailable for this item.' : ''), hint: true,
     });
   }
 

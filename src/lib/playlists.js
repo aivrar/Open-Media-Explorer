@@ -2,6 +2,7 @@
 import { controlRequest } from './capture-client.js';
 import { makeItem } from './item-model.js';
 import { emit } from './state.js';
+import { removeUnusedStationStreams } from './station-stream-addresses.js';
 
 let playlists = [];
 let combinedItems = [];
@@ -21,8 +22,11 @@ export function getPlaylistItems(id = '') {
 
 function publish(entries) {
   revision += 1;
+  const previousItems = combinedItems;
   playlists = entries.map((entry) => ({ ...entry, items: entry.items.map((item) => ({ ...makeItem(item), __revision: revision })) }));
   combinedItems = [...new Map(playlists.flatMap((entry) => entry.items).map((item) => [item.id, item])).values()];
+  removeUnusedStationStreams(previousItems.map((item) => item.id));
+  loaded = true;
   emit('playlists-change', playlists);
 }
 
@@ -31,7 +35,6 @@ export async function loadPlaylists(requestImpl = controlRequest) {
   if (pendingLoad) return pendingLoad;
   pendingLoad = requestImpl('/api/v1/playlists').then((data) => {
     publish(data.playlists);
-    loaded = true;
     return playlists;
   }).finally(() => { pendingLoad = null; });
   return pendingLoad;
@@ -52,6 +55,10 @@ export async function importPlaylistFile(file, defaultType = 'tv', requestImpl =
   });
   publish([...playlists.filter((entry) => entry.id !== data.playlist.id), data.playlist]);
   return data;
+}
+
+export function exportPlaylist(body, requestImpl = controlRequest) {
+  return requestImpl('/api/v1/playlists/export', { method: 'POST', body });
 }
 
 export async function removePlaylist(id, requestImpl = controlRequest) {

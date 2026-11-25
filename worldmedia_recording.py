@@ -50,6 +50,9 @@ EQ_MIN_DB = -12.0
 EQ_MAX_DB = 12.0
 EQ_PREAMP_MIN_DB = -12.0
 EQ_PREAMP_MAX_DB = 6.0
+EQ_MIN_Q = 0.25
+EQ_MAX_Q = 8.0
+EQ_DEFAULT_Q = (1.0,) + (math.sqrt(2),) * (len(EQ_FREQUENCIES) - 2) + (1.0,)
 
 
 class RecordingError(RuntimeError):
@@ -109,7 +112,8 @@ def normalize_recording_eq(value: object | None) -> dict:
 
     if value is None:
         return {"preamp": 0.0, "bands": [0.0] * len(EQ_FREQUENCIES), "bypassed": True}
-    if not isinstance(value, dict) or set(value) != {"preamp", "bands", "bypassed"}:
+    required = {"preamp", "bands", "bypassed"}
+    if not isinstance(value, dict) or not required <= value.keys() <= required | {"q"}:
         raise RecordingError("Recording EQ is invalid.", code="INVALID_RECORDING_EQ")
     preamp = value.get("preamp")
     bands = value.get("bands")
@@ -130,7 +134,16 @@ def normalize_recording_eq(value: object | None) -> dict:
         ):
             raise RecordingError("Recording EQ is invalid.", code="INVALID_RECORDING_EQ")
         normalized_bands.append(float(band))
-    return {"preamp": float(preamp), "bands": normalized_bands, "bypassed": bypassed}
+    result = {"preamp": float(preamp), "bands": normalized_bands, "bypassed": bypassed}
+    if "q" in value:
+        widths = value["q"]
+        if not isinstance(widths, list) or len(widths) != len(EQ_FREQUENCIES) or any(
+            isinstance(width, bool) or not isinstance(width, (int, float))
+            or not EQ_MIN_Q <= width <= EQ_MAX_Q for width in widths
+        ):
+            raise RecordingError("Recording EQ is invalid.", code="INVALID_RECORDING_EQ")
+        result["q"] = widths
+    return result
 
 
 def _filter_number(value: float) -> str:
@@ -145,16 +158,19 @@ def recording_eq_filter(value: object | None) -> str:
     filters: list[str] = []
     if curve["preamp"] != 0:
         filters.append(f"volume={_filter_number(curve['preamp'])}dB")
-    for index, (frequency, gain) in enumerate(zip(EQ_FREQUENCIES, curve["bands"])):
+    for index, (frequency, gain, q) in enumerate(zip(EQ_FREQUENCIES, curve["bands"], curve.get("q", EQ_DEFAULT_Q))):
         if gain == 0:
             continue
         amount = _filter_number(gain)
-        if index == 0:
-            filters.append(f"bass=f={frequency}:t=q:w=1:g={amount}")
-        elif index == len(EQ_FREQUENCIES) - 1:
-            filters.append(f"treble=f={frequency}:t=q:w=1:g={amount}")
+        if index in (0, len(EQ_FREQUENCIES) - 1):
+            shelf = "bass" if index == 0 else "treble"
+            filters.append(f"{shelf}=f={frequency}:t=q:w=1:g={amount}")
+            # Match the extra bell used to adjust shelf resonance in Web Audio.
+            resonance = gain * (q - 1) / (q + 1)
+            if resonance:
+                filters.append(f"equalizer=f={frequency}:t=q:w={_filter_number(q)}:g={_filter_number(resonance)}")
         else:
-            filters.append(f"equalizer=f={frequency}:t=q:w=1.414214:g={amount}")
+            filters.append(f"equalizer=f={frequency}:t=q:w={_filter_number(q)}:g={amount}")
     if not filters:
         return ""
     # Web Audio's downstream compressor prevents boosted curves from clipping.
@@ -369,10 +385,15 @@ class RecordingService:
         self._closing = False
         self._terminating = False
 
-    def start(self, media_id: str, profile: str, relay_origin: str, eq: object | None = None) -> dict:
+    def start(
+        self, media_id: str, profile: str, relay_origin: str, eq: object | None = None, *,
+        delivery: str | None = None,
+    ) -> dict:
         registration = self.registry.get(media_id)
         selected_profile = normalize_profile(profile)
         selected_eq = normalize_recording_eq(eq)
+        if delivery is not None and delivery != registration.delivery:
+            raise RecordingError("Recording delivery changed.", code="RECORDING_DELIVERY_CHANGED")
         if registration.delivery == "on-demand":
             raise RecordingError("Finite on-demand originals should be downloaded, not recorded.", code="RECORDING_NOT_LIVE")
         # FFmpeg reads this root through the relay; it must get the stream

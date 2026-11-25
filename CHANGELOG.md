@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.1.17 - 2026-11-25
+
+The player bar has a **Picture** panel for video and TV. You can export saved
+stations, edit stream addresses and add backups, and see what Favorites are
+playing. The equalizer can assign presets to several stations at once, and the
+Visualizer times scene changes to the music. Low-bitrate live streams start
+sooner.
+
+- **Picture controls and live TV (discussion #8)** — **Picture**, beside **EQ**,
+  adjusts **Brightness**, **Contrast**, **Saturation** and **Hue**. **Fit** offers
+  **Whole picture**, **Fill** and three zoom levels. Save the look **For this
+  channel** or **For all video**. Fit also applies in fullscreen. Live TV hides
+  the timeline and time numbers in the video controls. On-demand video keeps
+  them, and a stream found to be finite gets them back.
+- **Stream details (issue #6)** — the missing details were reported by
+  TaxicabMessiah. HLS streams now get a stream line. Video can show its
+  resolution, frame rate, codec and bitrate after five stable seconds.
+  They appear in tooltips, in the item's details and in the **Format**
+  row of Now Playing. Turn on **Show technical source
+  details** to see them on Library cards too.
+- **Room for the video picture (discussion #8)** — Lists scroll past the
+  picture so you can reach the last cards' buttons. The Tuner makes room in
+  one movement, centers the picture under the station strip and keeps the
+  room between TV channels and after Stop. Switch to Radio to get the full
+  dial back. In smaller windows the picture shrinks or floats at the bottom right.
+- **Export and backup stream addresses (discussion #8)** — **Export...** saves
+  the current view of **Favorites** or **My Playlists** as M3U8 or JSON, with
+  custom names and stream addresses. Each export creates a new file and
+  reports how many items had no playable address. **Stream address...** in
+  a saved station's details edits the main address and adds up to five
+  backups. The app tries them in order on start and reconnect. Data backups
+  keep the addresses.
+- **Show what's playing (discussion #8)** — Turn it on in **Favorites** to
+  see the song first and the performer below, where the station sends both.
+  Titles on visible cards refresh while Favorites is open and the window is
+  visible. Favorites cards now make room for their buttons at every width.
+- **Sources and audio parts** — Disabled sources sit below enabled sources
+  and are dimmed in the Library sidebar. Turning a source back on reruns the
+  current search for it. Internet Archive audio tracks and LibriVox chapters
+  play in order, with previous and next part controls, resume and individual
+  downloads.
+- **Now Playing and the player bar** — **Now Playing background blur** offers
+  **Off**, **Light**, **Medium** and **Strong**. The large sound meter turns red
+  and announces **Muted** when muted. **EQ** and **Record** stay in place for
+  radio and TV, with room for recording status. Settings, EQ and the Song log
+  stay above the player bar and scroll in small windows.
+- **Equalizer and tabs (discussion #8)** — Use **Stations...** in EQ to apply
+  a preset to several saved stations or clear their assignments. To assign
+  the current curve, first use **Save new preset**. **Advanced** sets Q for
+  each band from 0.25 to 8, including for recordings made with EQ.
+  **Tabs shown** in Settings lets you hide tabs. Library stays visible.
+- **Visualizer** — Shuffle follows builds, drops and breaks within the existing
+  interval. Scene changes dissolve, and a quick manual change uses a slower
+  dissolve to stay within the flash limiter. **Color travel** lets the palette
+  drift with the music. DIFS Tunnel Flight is brighter. FLAM3 Density Lab,
+  IFS / L-System Lab, Attractor Density Lab and Hypercomplex Slice Flight
+  remain held back.
+- **Live starts and profile restore** — Live radio can start as bytes arrive
+  even when the server labels the type generically or supplies a length. AAC
+  alignment releases after 1.5 seconds even if the stream stalls. Cancelling
+  one start no longer cancels another start's session lookup. The app waits
+  for the saved profile to restore before saving settings.
+- **A song title is cut short (issue #6)** — Reported by TaxicabMessiah.
+  The SomaFM channel's own track data was already cut short. The app shows
+  what the station sends. A 59-character title from another station appeared
+  in full.
+- **Safer local server and Downloads folder** — Relayed content is served with
+  a sandboxing Content Security Policy and `nosniff`. HTML, XHTML and SVG
+  from a relay are served as plain text. The Downloads folder is checked for
+  links and junctions before writes.
+
 ## 0.1.16 - 2026-11-23
 
 A station's stream format and bitrate show for stations from any source once

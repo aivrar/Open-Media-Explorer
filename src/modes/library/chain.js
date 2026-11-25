@@ -375,24 +375,40 @@ export async function runSearch() {
   const enabledIds = fetchSourcesAllEnabled();
   const sourceIds = enabledIds.filter((sourceId) => !sourceInDeclaredHold(sourceId, startedAt));
   for (const source of SOURCES) {
-    const enabled = enabledIds.includes(source.id);
-    const progress = enabled ? ensureProgress(source.id) : null;
-    let status = { state: enabled ? 'loading' : 'disabled', count: 0 };
-    if (isHeldProgress(progress, startedAt)) {
-      status = { ...statusFromProgress(progress), count: 0 };
-    } else if (enabled && !sourceIds.includes(source.id)) {
-      status = {
-        state: 'rate-limited', count: 0, error: 'Waiting for the provider',
-        retryAt: startedAt + catalogScheduler.declaredCooldownRemainingMs(source.id),
-      };
-    }
+    const status = enabledIds.includes(source.id)
+      ? searchStartStatus(source.id, startedAt)
+      : { state: 'disabled', count: 0 };
     mergeFiniteStatus(source.id, status);
   }
   renderChainState();
 
-  const searches = settleEachSource(sourceIds, (sourceId) => catalogScheduler.enqueue({
+  const searches = searchCatalogSources(sourceIds, query, { generation, signal });
+  // Browse resumes once every search has settled, as it always did, except
+  // that a search whose source is in a declared hold (now, not just when the
+  // search began) may stay queued behind it and is not waited for.
+  const searchCurrent = () => generation === view.searchGen && !signal.aborted;
+  // A replaced or cancelled search ends the wait at once (no timer left).
+  searchWaitGeneration = generation;
+  await searches.untilSettledExcept((id) => !searchCurrent() || sourceInDeclaredHold(id), { signal });
+  if (searchWaitGeneration === generation) searchWaitGeneration = 0;
+  if (!searchCurrent()) return;
+  renderChainState();
+  scheduleNextLoad();
+}
+
+function searchStartStatus(sourceId, now = Date.now()) {
+  const progress = ensureProgress(sourceId);
+  if (isHeldProgress(progress, now)) return { ...statusFromProgress(progress), count: 0 };
+  const wait = catalogScheduler.declaredCooldownRemainingMs(sourceId);
+  return wait > 0
+    ? { state: 'rate-limited', count: 0, error: 'Waiting for the provider', notice: '', retryAt: now + wait }
+    : { state: 'loading', count: 0, error: '', notice: '', retryAt: 0 };
+}
+
+function searchCatalogSources(sourceIds, query, { generation, signal, key = `search:${generation}:${query}` }) {
+  return settleEachSource(sourceIds, (sourceId) => catalogScheduler.enqueue({
     sourceId,
-    key: `search:${generation}:${query}`,
+    key,
     priority: CATALOG_PRIORITY.SEARCH,
     signal,
     task: ({ signal: taskSignal }) => {
@@ -432,17 +448,6 @@ export async function runSearch() {
     discoverSnapshot(sourceId);
     queueChainRender();
   });
-  // Browse resumes once every search has settled, as it always did, except
-  // that a search whose source is in a declared hold (now, not just when the
-  // search began) may stay queued behind it and is not waited for.
-  const searchCurrent = () => generation === view.searchGen && !signal.aborted;
-  // A replaced or cancelled search ends the wait at once (no timer left).
-  searchWaitGeneration = generation;
-  await searches.untilSettledExcept((id) => !searchCurrent() || sourceInDeclaredHold(id), { signal });
-  if (searchWaitGeneration === generation) searchWaitGeneration = 0;
-  if (!searchCurrent()) return;
-  renderChainState();
-  scheduleNextLoad();
 }
 
 /** A new, empty browse progress that still carries a declared hold of
@@ -640,11 +645,13 @@ export function loadMoreNow() {
   maybeLoadMore({ priority: CATALOG_PRIORITY.USER });
 }
 
+let enabledSearchSequence = 0;
+
 export function reconcileEnabledSources() {
   const current = new Set(fetchSourcesAllEnabled());
   const previous = view.enabledSourcesSnapshot;
-  const changed = current.size !== previous.size
-    || [...current].some((sourceId) => !previous.has(sourceId));
+  const newlyEnabled = [...current].filter((sourceId) => !previous.has(sourceId));
+  const changed = current.size !== previous.size || newlyEnabled.length > 0;
   for (const source of SOURCES) {
     const sourceId = source.id;
     const enabled = current.has(sourceId);
@@ -677,8 +684,18 @@ export function reconcileEnabledSources() {
   view.enabledSourcesSnapshot = current;
   if (changed) {
     clearChainTimer();
-    if (view.catalogActive) queueMicrotask(() => maybeLoadMore());
-    // The view may show other sources now (a source off sends it to All).
+    if (view.catalogActive) {
+      const query = (view.lastQuery || '').trim();
+      if (query && newlyEnabled.length) {
+        for (const sourceId of newlyEnabled) mergeFiniteStatus(sourceId, searchStartStatus(sourceId));
+        searchCatalogSources(newlyEnabled, query, {
+          generation: view.searchGen, signal: currentGenerationSignal(),
+          key: `search:enabled:${++enabledSearchSequence}`,
+        });
+      }
+      queueMicrotask(() => maybeLoadMore());
+    }
+    // A switch changes which live lists the current view can show.
     syncSnapshotVisibility();
   }
   return changed;
@@ -818,6 +835,7 @@ export function pauseCatalogWork() {
 }
 
 export function onSentinelVisible() {
+  if (!view.catalogActive) return;
   if (view.activeSource === 'playlists') {
     expandRenderWindow();
     return;

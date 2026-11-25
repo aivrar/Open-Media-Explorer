@@ -9,7 +9,7 @@
 .about-page {
   max-width: 820px;
   margin: 0 auto;
-  padding: 48px 32px 80px;
+  padding: 48px 32px calc(80px + var(--video-clearance));
 }
 
 .about-hero {

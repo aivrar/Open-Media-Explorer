@@ -48,6 +48,11 @@ export async function createDashPlayback(video, url, {
     throw new Error('DASH_PLAYER_INVALID');
   }
   const errorEvent = dash.MediaPlayer.events?.ERROR || 'error';
+  const qualityEvent = dash.MediaPlayer.events?.QUALITY_CHANGE_RENDERED || 'qualityChangeRendered';
+  let renderedVideo = null;
+  const qualityHandler = (event) => {
+    if (event?.mediaType === 'video') renderedVideo = event.newRepresentation ?? null;
+  };
   const errorHandler = (event) => onError({
     code: Number(event?.error?.code ?? event?.code ?? 0) || 0,
     message: String(event?.error?.message ?? event?.message ?? 'DASH playback failed.').slice(0, 240),
@@ -58,9 +63,11 @@ export async function createDashPlayback(video, url, {
       debug: { logLevel: dash.Debug?.LOG_LEVEL_WARNING ?? 3 },
     });
     player.on?.(errorEvent, errorHandler);
+    player.on?.(qualityEvent, qualityHandler);
     player.initialize(video, url, autoplay);
   } catch (error) {
     try { player.off?.(errorEvent, errorHandler); } catch (_) {}
+    try { player.off?.(qualityEvent, qualityHandler); } catch (_) {}
     try { player.destroy?.(); } catch (_) {}
     throw error;
   }
@@ -77,10 +84,15 @@ export async function createDashPlayback(video, url, {
         return null;
       }
     },
+    videoRepresentation() {
+      return destroyed ? null : renderedVideo;
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      renderedVideo = null;
       try { player.off?.(errorEvent, errorHandler); } catch (_) {}
+      try { player.off?.(qualityEvent, qualityHandler); } catch (_) {}
       try { player.destroy?.(); } catch (_) {}
     },
   };

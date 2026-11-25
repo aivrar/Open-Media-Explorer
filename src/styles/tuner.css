@@ -1,9 +1,46 @@
 /* Tuner mode */
 
+/* Animate the reservation itself. Window and size changes update both
+   the dock and the space it takes immediately, even during the transition. */
+@property --tuner-video-space {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+#app:has(> #view-host[data-mode='tuner']) {
+  /* The dock and the band share the limit measured from the Tuner layout. */
+  --tuner-video-height: min(calc(var(--video-w) * 9 / 16),
+    var(--tuner-video-height-limit, max(2px, 100vh - var(--player-h) - 96px)));
+}
+
+#app.tuner-video-floating:has(> #view-host[data-mode='tuner']) {
+  --tuner-video-height: var(--tuner-video-height-limit);
+}
+
+#view-host[data-mode='tuner'] ~ .video-dock {
+  display: grid;
+  width: calc(var(--tuner-video-height) * 16 / 9);
+}
+#app.tuner-video-reserved:not(.tuner-video-floating) > #view-host[data-mode='tuner'] ~ .video-dock {
+  inset-inline: 0;
+  margin-inline: auto;
+}
+:where(#view-host[data-mode='tuner']) ~ .video-dock video:where(:not(:fullscreen)) {
+  height: var(--tuner-video-height);
+  object-fit: contain;
+  max-height: none;
+}
+
 .tuner-root {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100%;
+  overflow-y: auto;
+  --tuner-video-space: 0;
+  --tuner-video-padding: calc((var(--tuner-video-height, 0px) + var(--video-gap)) * var(--tuner-video-space));
+  padding-bottom: var(--tuner-video-padding);
+  transition: --tuner-video-space 200ms ease;
   background:
     radial-gradient(ellipse at 50% 18%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
     linear-gradient(180deg, var(--bg-elev-1), var(--bg));
@@ -13,7 +50,21 @@
    the dial does not jump smaller when the bar appears on the first play. */
 #app:not(.has-player) .tuner-root {
   box-sizing: border-box;
-  padding-bottom: var(--player-h);
+  padding-bottom: calc(var(--player-h) + var(--tuner-video-padding));
+}
+
+#app.tuner-video-reserved .tuner-root {
+  --tuner-video-space: 1;
+}
+
+/* Keep the reservation state so it can take effect immediately when the window grows. */
+#app.tuner-video-floating .tuner-root {
+  --tuner-video-padding: 0px;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tuner-root { transition: none; }
 }
 
 .tuner-controls {

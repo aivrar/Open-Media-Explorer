@@ -5,6 +5,7 @@
 
 import { getJson } from '../lib/http.js';
 import { makeItem, prefixId } from '../lib/item-model.js';
+import { partDuration } from '../lib/media-parts.js';
 
 export const id = 'internet-archive';
 export const displayName = 'Internet Archive';
@@ -32,7 +33,7 @@ const COLLECTION_ID_SET = new Set(COLLECTIONS.map(({ id: collectionId }) => coll
 // buckets is treated as transient so a brownout can never retire the source.
 const ALLOW_EMPTY_COLLECTIONS = new Set(['fedflix', 'tvnews']);
 
-const metaCache = new Map(); // identifier -> metadata response
+const metaCache = new Map(); // identifier -> pending or completed metadata request
 
 // Token-bucket rate limit — spec §3.2.3 asks for max 5 requests/sec.
 const RATE_WINDOW_MS = 1000;
@@ -49,11 +50,16 @@ async function rateLimit() {
 }
 
 async function fetchMetadata(identifier) {
-  if (metaCache.has(identifier)) return metaCache.get(identifier);
-  await rateLimit();
-  const data = await getJson(`${BASE}/metadata/${encodeURIComponent(identifier)}`);
-  metaCache.set(identifier, data);
-  return data;
+  if (!metaCache.has(identifier)) {
+    const request = rateLimit()
+      .then(() => getJson(BASE + '/metadata/' + encodeURIComponent(identifier)))
+      .catch((error) => {
+        metaCache.delete(identifier);
+        throw error;
+      });
+    metaCache.set(identifier, request);
+  }
+  return metaCache.get(identifier);
 }
 
 const VIDEO_EXTS = ['mp4', 'm4v', 'webm', 'ogv', 'mov'];
@@ -65,29 +71,71 @@ const AUDIO_EXTS = ['mp3', 'ogg', 'oga', 'opus', 'm4a', 'flac', 'wav'];
 // item has nothing else, so an item that played before plays the same file.
 const LAST_RESORT_EXTS = new Set(['ogv', 'opus']);
 
-function pickPlayable(metadata, isVideo) {
-  if (!metadata || !Array.isArray(metadata.files)) return null;
-  const wantExts = isVideo ? VIDEO_EXTS : AUDIO_EXTS;
-  // Prefer derivative for quick streaming, then original.
-  const candidates = metadata.files.filter((f) => {
-    const name = (f.name || '').toLowerCase();
-    return wantExts.some((ext) => name.endsWith('.' + ext));
-  });
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => {
-    const aExt = (a.name || '').split('.').pop().toLowerCase();
-    const bExt = (b.name || '').split('.').pop().toLowerCase();
-    const aLast = LAST_RESORT_EXTS.has(aExt) ? 1 : 0;
-    const bLast = LAST_RESORT_EXTS.has(bExt) ? 1 : 0;
-    if (aLast !== bLast) return aLast - bLast;
-    const aDer = a.source === 'derivative' ? 0 : 1;
-    const bDer = b.source === 'derivative' ? 0 : 1;
-    if (aDer !== bDer) return aDer - bDer;
-    // Prefer mp4 over webm over others for compatibility
-    const order = ['mp4', 'mp3', 'm4a', 'm4v', 'webm', 'ogg', 'oga', 'opus', 'ogv', 'flac', 'wav', 'mov'];
-    return order.indexOf(aExt) - order.indexOf(bExt);
-  });
-  return candidates[0];
+const FORMAT_ORDER = ['mp4', 'mp3', 'm4a', 'm4v', 'webm', 'ogg', 'oga', 'opus', 'ogv', 'flac', 'wav', 'mov'];
+function fileExtension(name) {
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
+function playableFiles(metadata, extensions) {
+  return (Array.isArray(metadata?.files) ? metadata.files : []).filter((file) =>
+    typeof file?.name === 'string' && file.private !== true && file.private !== 'true'
+      && extensions.includes(fileExtension(file.name)));
+}
+
+function compareFormats(a, b) {
+  const aExt = fileExtension(a.name);
+  const bExt = fileExtension(b.name);
+  return Number(LAST_RESORT_EXTS.has(aExt)) - Number(LAST_RESORT_EXTS.has(bExt))
+    || Number(b.source === 'derivative') - Number(a.source === 'derivative')
+    || FORMAT_ORDER.indexOf(aExt) - FORMAT_ORDER.indexOf(bExt);
+}
+
+function fileUrl(identifier, name) {
+  return BASE + '/download/' + encodeURIComponent(identifier) + '/' + encodeURIComponent(name);
+}
+
+export function buildParts(metadata, identifier) {
+  const files = playableFiles(metadata, AUDIO_EXTS);
+  if (!files.length) return [];
+  const byName = new Map(metadata.files.filter((file) => typeof file?.name === 'string')
+    .map((file) => [file.name, file]));
+  function originalFile(file) {
+    const seen = new Set();
+    while (typeof file.original === 'string' && file.original && !seen.has(file.original)) {
+      seen.add(file.name);
+      file = byName.get(file.original) || { name: file.original };
+    }
+    return file;
+  }
+  const tracks = new Map();
+  for (const file of files) {
+    const original = originalFile(file);
+    // Archive links derivatives to their original. A matching filename stem
+    // also groups copies uploaded independently in different formats.
+    const key = original.name.replace(/\.[^.\/]+$/, '');
+    const previous = tracks.get(key);
+    if (!previous || compareFormats(file, previous.file) < 0) tracks.set(key, { file, original });
+  }
+  const ordered = [...tracks].map(([key, { file, original }]) => ({
+    key,
+    url: fileUrl(identifier, file.name),
+    title: String(file.title || original.title || key.split('/').pop()).trim(),
+    duration: partDuration(file.length) ?? partDuration(original.length),
+    downloadName: file.name,
+    track: Number(String(original.track || file.track || '').match(/^(\d+)(?:\/\d+)?$/)?.[1]),
+  }));
+  // Use explicit track order when it describes the entire list. Otherwise
+  // keep the order supplied by Archive's files array.
+  if (ordered.every(({ track }) => track > 0) && new Set(ordered.map(({ track }) => track)).size === ordered.length) {
+    ordered.sort((a, b) => a.track - b.track);
+  }
+  return ordered.map(({ track, ...part }) => part);
+}
+
+export async function resolveParts(item) {
+  const identifier = item?._extra?.identifier;
+  return item?.type === 'audio' && identifier ? buildParts(await fetchMetadata(identifier), identifier) : [];
 }
 
 function licenseFromUrl(urlOrText, collections = []) {
@@ -148,11 +196,15 @@ export async function resolveStream(item) {
   if (!item || !item._extra?.needsResolve) return item;
   try {
     const meta = await fetchMetadata(item._extra.identifier);
-    const file = pickPlayable(meta, item.type === 'video');
-    if (file) {
-      item.stream_url = `${BASE}/download/${encodeURIComponent(item._extra.identifier)}/${encodeURIComponent(file.name)}`;
-      item.download_url = item.stream_url;
-      item.download_name = file.name || '';
+    const first = item.type === 'video'
+      ? playableFiles(meta, VIDEO_EXTS).sort(compareFormats).map((file) => ({
+        url: fileUrl(item._extra.identifier, file.name), downloadName: file.name,
+      }))[0]
+      : buildParts(meta, item._extra.identifier)[0];
+    if (first) {
+      item.stream_url = first.url;
+      item.download_url = first.url;
+      item.download_name = first.downloadName;
       item._extra.needsResolve = false;
     }
   } catch (err) {

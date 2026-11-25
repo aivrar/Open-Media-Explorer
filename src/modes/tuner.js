@@ -13,7 +13,7 @@
  */
 
 import { browseLiveOne } from '../lib/search.js';
-import { playItem } from '../lib/player.js';
+import { playItem, setTunerVideoBand } from '../lib/player.js';
 import { subscribe, getState, saveSettings, isFavorite } from '../lib/state.js';
 import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js';
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
@@ -900,6 +900,7 @@ function applyContentPreference(showExplicit) {
 
 function setBand(b) {
   state.band = b;
+  setTunerVideoBand(b);
   // "My favorites" (and its categories) applies to both bands; a specific source may not.
   if (!isFavoritesSource(state.sourceFilter)) state.sourceFilter = 'all';
   for (const btn of document.querySelectorAll('.tuner-band-switch button')) {
@@ -1059,6 +1060,69 @@ function centerActivePill() {
 /** The band the Tuner is on ('radio' or 'tv'); used for dropped playlists. */
 export function tunerBand() { return state.band; }
 
+const TUNER_VIDEO_MIN_HEIGHT = 200 * 9 / 16;
+
+export function tunerVideoLayout(stageHeight, viewportWidth, videoGap) {
+  // In narrow windows the dial's width is capped at 92vw (see tuner.css).
+  const dialMin = Math.min(220, viewportWidth * 0.92);
+  const floating = Math.min(dialMin, stageHeight - TUNER_VIDEO_MIN_HEIGHT - videoGap) < 150;
+  const heightLimit = floating
+    ? TUNER_VIDEO_MIN_HEIGHT
+    : Math.max(TUNER_VIDEO_MIN_HEIGHT, stageHeight - dialMin - videoGap);
+  return { floating, heightLimit };
+}
+
+export function bindTunerVideoHeight(host, root) {
+  const app = host.parentElement;
+  const [controls, stage, strip, status] = root.children;
+  const fixedRows = [controls, strip, status];
+  let heightLimit;
+  let observer;
+
+  const sync = () => {
+    const rootStyle = window.getComputedStyle(root);
+    const stageStyle = window.getComputedStyle(stage);
+    const idlePlayer = app.classList.contains('has-player')
+      ? 0
+      : parseFloat(rootStyle.getPropertyValue('--player-h'));
+    const fixedHeight = fixedRows.reduce((height, row) => height + row.getBoundingClientRect().height, 0);
+    const view = host.getBoundingClientRect();
+    const stageHeight = view.height - fixedHeight - idlePlayer
+      - parseFloat(stageStyle.paddingTop) - parseFloat(stageStyle.paddingBottom);
+    const { floating, heightLimit: nextLimit } = tunerVideoLayout(
+      stageHeight, view.width, parseFloat(rootStyle.getPropertyValue('--video-gap')),
+    );
+    app.classList.toggle('tuner-video-floating', floating);
+    if (nextLimit === heightLimit) return;
+    heightLimit = nextLimit;
+    app.style.setProperty('--tuner-video-height-limit', `${heightLimit}px`);
+  };
+
+  const syncObserver = () => {
+    const needsHeight = app.classList.contains('has-video') || app.classList.contains('tuner-video-reserved');
+    if (needsHeight === Boolean(observer)) return;
+    if (!needsHeight) {
+      observer.disconnect();
+      observer = null;
+      // Keep the last height while the band's padding animates out.
+      return;
+    }
+    sync();
+    // Observe rows the band's animation cannot resize.
+    observer = new ResizeObserver(sync);
+    for (const element of [host, ...fixedRows]) observer.observe(element, { box: 'border-box' });
+  };
+  const changes = new MutationObserver(syncObserver);
+  changes.observe(app, { attributes: true, attributeFilter: ['class'] });
+  syncObserver();
+  return () => {
+    changes.disconnect();
+    observer?.disconnect();
+    app.classList.remove('tuner-video-floating');
+    app.style.removeProperty('--tuner-video-height-limit');
+  };
+}
+
 const subs = [];
 function tearDown() {
   state.loadGen += 1;
@@ -1088,6 +1152,7 @@ export function renderTuner(host) {
   state.contentPreference = getState().settings.showExplicitContent === true;
   state.favoritesSort = normalizeFavoritesSort(getState().settings.favoritesSort);
   loadStations();
+  subs.push(bindTunerVideoHeight(host, root));
   root.focus();
   subs.push(subscribe('settings-change', (settings) => {
     if (getState().mode !== 'tuner') return;

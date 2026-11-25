@@ -1,8 +1,9 @@
-import { cloneEqCurve, normalizeEqCurve } from './eq-store.js';
+import { cloneEqCurve, normalizeEqCurve } from './eq-curve.js';
 
 function preset(id, name, preamp, bands) {
   const curve = normalizeEqCurve({ preamp, bands, presetId: id, bypassed: false });
   Object.freeze(curve.bands);
+  Object.freeze(curve.q);
   return Object.freeze({ id, name, curve: Object.freeze(curve) });
 }
 

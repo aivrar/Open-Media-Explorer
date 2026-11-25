@@ -24,6 +24,7 @@ export const METER_TILT_DB_PER_OCTAVE = 3;
  *  main-thread commit and a compositor frame, so this is kept low on purpose;
  *  the timings below are tuned for it. */
 export const METER_FPS = 15;
+const MUTED_COLORS = Object.freeze({ on: '#f04848', hot: '#f04848', offAlpha: 0.16 });
 const FRAME_OPTIONS = Object.freeze({
   minHz: METER_MIN_HZ, maxHz: METER_MAX_HZ, tiltDbPerOctave: METER_TILT_DB_PER_OCTAVE,
 });
@@ -297,6 +298,8 @@ export function createPlayerMeter({
   let shown = false;
   let isEnabled = enabled !== false;
   let reducedMotion = false;
+  let muted = false;
+  let mutedDrawPending = false;
   let unsubscribe = null;
   let destroyed = false;
   const cleanups = [];
@@ -318,9 +321,16 @@ export function createPlayerMeter({
 
   function draw(force = false) {
     if (!shown || !ctx || !layout) return false;
-    const changed = quantizeMeter(state, layout.segments, lit, peak);
-    if (!changed && !force) return false;
-    drawMeter(ctx, layout, lit, peak, colors, deviceWidth, deviceHeight);
+    if (muted) {
+      if (!force) return false;
+      mutedDrawPending = doc?.visibilityState === 'hidden';
+      if (mutedDrawPending) return false;
+      lit.fill(1);
+      peak.fill(-1);
+    } else if (!quantizeMeter(state, layout.segments, lit, peak) && !force) {
+      return false;
+    }
+    drawMeter(ctx, layout, lit, peak, muted ? MUTED_COLORS : colors, deviceWidth, deviceHeight);
     stats.draws += 1;
     return true;
   }
@@ -340,7 +350,7 @@ export function createPlayerMeter({
   }
 
   function sync() {
-    const listen = !destroyed && isEnabled && shown && !reducedMotion && Boolean(signal);
+    const listen = !destroyed && isEnabled && shown && !reducedMotion && !muted && Boolean(signal);
     if (listen && !unsubscribe) {
       unsubscribe = signal.subscribe(onFrame, { fps: METER_FPS });
     } else if (!listen && unsubscribe) {
@@ -424,6 +434,17 @@ export function createPlayerMeter({
       isEnabled = next !== false;
       if (root) root.hidden = !isEnabled;
       sync();
+    },
+    /** Show the Now Playing mute indicator without listening to the signal. */
+    setMuted(next) {
+      if (muted === next) {
+        if (mutedDrawPending) draw(true);
+        return;
+      }
+      muted = next;
+      mutedDrawPending = false;
+      sync();
+      draw(true);
     },
     destroy() {
       destroyed = true;

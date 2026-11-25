@@ -1,13 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
-  curveAfterEqInput, flushEqPersistence, initEqOverlay,
+  curveAfterEqInput, flushEqPersistence, initEqOverlay, openEqOverlay,
 } from '../src/lib/eq-overlay.js';
 import {
   BUILT_IN_EQ_PRESETS, createCustomEqPresetKey, customEqPresetId,
   customEqPresetKey, getBuiltInEqPreset, snapshotEqPreset,
 } from '../src/lib/eq-presets.js';
+
+import {
+  EQ_STORAGE_KEY, freshEqState, getEffectiveEq, loadEqState, saveEqState, setCustomEqPreset,
+  setScopedEq, setStationEqPreset,
+} from '../src/lib/eq-store.js';
+import { cancelScheduledProfileHandoff } from '../src/lib/profile-transfer.js';
+import { getAudioFrequencyResponse } from '../src/lib/player.js';
+import { emit, getState, setCurrentItem } from '../src/lib/state.js';
+import { FakeElement, createFakeDocument } from './helpers/fake-dom.js';
 
 test('built-in EQ presets are immutable, complete, and headroom-safe', () => {
   assert.deepEqual(BUILT_IN_EQ_PRESETS.map((preset) => preset.name), [
@@ -18,6 +28,7 @@ test('built-in EQ presets are immutable, complete, and headroom-safe', () => {
     assert.equal(Object.isFrozen(preset), true);
     assert.equal(Object.isFrozen(preset.curve), true);
     assert.equal(Object.isFrozen(preset.curve.bands), true);
+    assert.equal(Object.isFrozen(preset.curve.q), true);
     assert.equal(preset.curve.bands.length, 10);
     assert.ok(
       preset.curve.preamp + Math.max(0, ...preset.curve.bands) <= 0,
@@ -29,7 +40,7 @@ test('built-in EQ presets are immutable, complete, and headroom-safe', () => {
   assert.equal(getBuiltInEqPreset('flat').bands[0], 0, 'callers receive snapshots, not templates');
 });
 
-test('preamp retains preset identity, band edits detach built-ins, and custom presets stay live', () => {
+test('preamp and custom edits retain preset identity and band edits detach built-ins', () => {
   const preampEdit = curveAfterEqInput(getBuiltInEqPreset('rock'), {
     kind: 'preamp', gain: -6.5,
   });
@@ -75,4 +86,164 @@ test('EQ lifecycle owns one page-hide persistence hook and removes the same hook
   } finally {
     globalThis.window = previousWindow;
   }
+});
+
+test('a Q edit changes only one width and Reset can restore the preset defaults', () => {
+  const rock = getBuiltInEqPreset('rock');
+  const changed = curveAfterEqInput(rock, { kind: 'q', index: 3, gain: 3.5 });
+  assert.equal(changed.presetId, 'manual');
+  assert.deepEqual(changed.bands, rock.bands);
+  assert.equal(changed.preamp, rock.preamp);
+  assert.deepEqual(changed.q, rock.q.map((value, index) => index === 3 ? 3.5 : value));
+  const flat = getBuiltInEqPreset('flat');
+  assert.equal(flat.preamp, 0);
+  assert.deepEqual(flat.q, rock.q);
+});
+
+test('station and Q controls use labelled inputs and default to closed', () => {
+  const overlay = readFileSync(new URL('../src/lib/eq-overlay.js', import.meta.url), 'utf8');
+  assert.match(overlay, /<details class="eq-stations" data-eq-stations>\s*<summary>Stations\.\.\.<\/summary>/);
+  assert.match(overlay, /<details class="eq-advanced">\s*<summary>Advanced<\/summary>/);
+  assert.match(overlay, /<label for="eq-station-filter">Filter stations<\/label>/);
+  assert.match(overlay, /<label for="eq-station-preset">Use preset<\/label>/);
+  assert.match(overlay, /Stop using for this station/);
+});
+
+function withOverlay(run) {
+  class Element extends FakeElement {
+    get childElementCount() { return this.children.length; }
+    get childNodes() { return this.children; }
+    append(...children) { for (const child of children) this.appendChild(child); }
+    contains(node) { return this === node || this.children.some((child) => child.contains(node)); }
+    replaceChildren(...children) {
+      if (this !== document.activeElement && this.contains(document.activeElement)) document.activeElement = document.body;
+      this.children = children.flatMap((child) => child.tagName === '#FRAGMENT' ? child.children : [child]);
+    }
+    focus() { document.activeElement = this; }
+  }
+
+  const previousDocument = globalThis.document;
+  const previousStorage = globalThis.localStorage;
+  const previousWindow = globalThis.window;
+  const previousItem = getState().currentItem;
+  const previousFavorites = getState().favorites;
+  const elements = new Map();
+  const op = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, new Element());
+    return elements.get(selector);
+  };
+  const action = (name) => op(`[data-eq-act="${name}"]`);
+  const slider = new Element();
+  slider.dataset = { kind: 'band', index: '0' };
+  slider.closest = (selector) => selector === 'input[data-kind]' ? slider : op('band-label');
+  op('band-label').querySelector = () => op('band-value');
+  const root = new Element();
+  root.querySelector = op;
+  root.querySelectorAll = () => [slider];
+  const document = createFakeDocument([new Element('app')]);
+  document.createElement = (tag) => tag === 'div' ? root : new Element('', tag);
+  document.createDocumentFragment = () => new Element('', '#fragment');
+  const stored = new Map();
+  globalThis.document = document;
+  globalThis.localStorage = {
+    getItem: (key) => stored.get(key) ?? null,
+    setItem: (key, value) => stored.set(key, value),
+    removeItem: (key) => stored.delete(key),
+  };
+  globalThis.window = { setTimeout, clearTimeout };
+  const current = { id: 'radio:one', type: 'radio' };
+  const change = (value) => {
+    slider.value = String(value);
+    const input = new Event('input');
+    Object.defineProperty(input, 'target', { value: slider });
+    root.dispatchEvent(input);
+    flushEqPersistence();
+  };
+  try {
+    setCurrentItem(current);
+    run({ action, op, slider, document, current, change });
+  } finally {
+    root._close?.();
+    cancelScheduledProfileHandoff();
+    getState().favorites = previousFavorites;
+    setCurrentItem(previousItem);
+    globalThis.document = previousDocument;
+    globalThis.localStorage = previousStorage;
+    globalThis.window = previousWindow;
+  }
+}
+
+test('assigned controls stay locked until Edit preset is selected', () => {
+  withOverlay(({ action, op, slider, current, change }) => {
+    const other = 'radio:two';
+    const id = customEqPresetId('shared');
+    const eq = setCustomEqPreset(freshEqState(), 'shared', 'Shared', { bands: [4] });
+    saveEqState(setStationEqPreset(eq, [current.id, other], id));
+    openEqOverlay();
+    assert.equal(op('[data-eq-assigned-name]').textContent, 'Using preset Shared for this station');
+    assert.equal(slider.disabled, true);
+    change(9);
+    assert.equal(getEffectiveEq(loadEqState(), other).bands[0], 4);
+
+    action('edit-preset').dispatchEvent(new Event('click'));
+    assert.equal(slider.disabled, false);
+    change(7);
+    assert.equal(getEffectiveEq(loadEqState(), other).bands[0], 7);
+    assert.equal(loadEqState().global.bands[0], 0);
+
+    action('edit-preset').dispatchEvent(new Event('click'));
+    assert.equal(slider.disabled, true);
+    action('stop-preset').dispatchEvent(new Event('click'));
+    assert.equal(slider.disabled, false);
+    assert.equal(slider.value, '0');
+    assert.deepEqual(loadEqState().assignments, { [other]: id });
+  });
+});
+
+test('closing the preset editor restores the saved favorite curve even without input', () => {
+  withOverlay(({ action, current }) => {
+    getState().favorites = [current];
+    const presetId = customEqPresetId('shared');
+    const eq = setCustomEqPreset(freshEqState(), 'shared', 'Shared', { bands: [8] });
+    saveEqState(setScopedEq(eq, current.id, true, { bands: [2], presetId }));
+    const response = () => getAudioFrequencyResponse([10])[0];
+    openEqOverlay();
+    const saved = response();
+    action('edit-preset').dispatchEvent(new Event('click'));
+    assert.ok(response() > saved + 3);
+    action('close').dispatchEvent(new Event('click'));
+    assert.equal(response(), saved);
+    assert.equal(loadEqState().favorites[current.id].bands[0], 2);
+  });
+});
+
+test('the station list restores checkbox focus on refresh and falls back to the filter', () => {
+  withOverlay(({ op, document, current }) => {
+    getState().favorites = [{ ...current, title: 'One FM' }];
+    openEqOverlay();
+    op('[data-eq-stations]').open = true;
+    const list = op('.eq-station-list');
+    const checkbox = () => list.children[0].children[0].children[0];
+    emit('playlists-change');
+    checkbox().focus();
+    emit('playlists-change');
+    assert.equal(document.activeElement, checkbox());
+    getState().favorites = [];
+    emit('playlists-change');
+    assert.equal(document.activeElement, op('#eq-station-filter'));
+  });
+});
+
+test('the EQ editor shows why a save would exceed the combined profile limit', () => {
+  withOverlay(({ action, op }) => {
+    saveEqState(freshEqState());
+    const before = localStorage.getItem(EQ_STORAGE_KEY);
+    localStorage.setItem('worldmedia.settings.v1', 'x'.repeat(2 * 1024 * 1024 - before.length));
+    openEqOverlay();
+    op('[data-eq-preset-name]').value = 'A new preset';
+    action('new-preset').dispatchEvent(new Event('click'));
+    assert.equal(localStorage.getItem(EQ_STORAGE_KEY), before);
+    assert.match(op('[data-eq-save-message]').textContent, /profile is full/i);
+    assert.equal(op('[data-eq-save-message]').hidden, false);
+  });
 });

@@ -386,6 +386,11 @@ export function createStartOutcome({
     cancel(id = '') {
       if (!id || mine(id)) end();
     },
+    /** A changed address makes both the current and any held result stale. */
+    invalidate(id) {
+      if (mine(id)) end();
+      dropHeld((entry) => entry.id === id);
+    },
     get active() { return attempt !== null; },
     /** Tests: the stations waiting for word on the connection. */
     get held() { return held.map((entry) => entry.id); },

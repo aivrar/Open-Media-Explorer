@@ -209,7 +209,8 @@ test('on: one layer behind the Tuner, the tab\'s Visualizer mounted in it with t
   // Settings reach it narrowed.
   let seen = null;
   const unsubscribe = mount.options.subscribeSettings((s) => { seen = s; });
-  app.settings({ visualizerFx: true });
+  app.settings({ visualizerFx: true, tabsShown: { visualizer: false } });
+  assert.equal(mount.destroyed, 0, 'hiding the Visualizer tab leaves the background running');
   assert.equal(seen.visualizerFx, false);
   unsubscribe(); // the mount's own destroy does this
   assert.equal(visualizerHolder(), 'tuner');
@@ -219,6 +220,18 @@ test('on: one layer behind the Tuner, the tab\'s Visualizer mounted in it with t
   assert.equal(app.root.classList.contains('has-viz-bg'), false);
   assert.equal(visualizerHolder(), null);
   assert.equal(app.count(), 0, 'every listener gone');
+});
+
+test('the Tuner can start its background with the Visualizer tab hidden', async () => {
+  const app = fakeApp({ settings: { tabsShown: { visualizer: false } } });
+  const detach = attachTunerBackground(app.root, app.options);
+  try {
+    await settle();
+    assert.equal(app.mounts.length, 1);
+    assert.equal(visualizerHolder(), 'tuner');
+  } finally {
+    detach();
+  }
 });
 
 test('off, or the notice not accepted, or no sound: no layer and nothing loaded', async () => {

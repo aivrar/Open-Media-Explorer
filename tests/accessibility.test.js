@@ -5,9 +5,9 @@ import { readFile } from 'node:fs/promises';
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('primary navigation, Library cards, source status, and discovery controls expose keyboard state', async () => {
-  const [html, main, cards, shell, sidebar, detail, grid, tuner, discovery] = await Promise.all([
+  const [html, tabs, cards, shell, sidebar, detail, grid, tuner, discovery] = await Promise.all([
     read('src/index.html'),
-    read('src/main.js'),
+    read('src/lib/top-tabs.js'),
     read('src/modes/library/render.js'),
     read('src/modes/library/shell.js'),
     read('src/modes/library/sidebar.js'),
@@ -19,8 +19,8 @@ test('primary navigation, Library cards, source status, and discovery controls e
 
   assert.match(html, /<nav[^>]*id="modes-nav"[^>]*aria-label="Primary views"/);
   assert.match(html, /data-mode="library"[^>]*aria-current="page"/);
-  assert.match(main, /setAttribute\('aria-current', 'page'\)/);
-  assert.match(main, /removeAttribute\('aria-current'\)/);
+  assert.match(tabs, /setAttribute\('aria-current', 'page'\)/);
+  assert.match(tabs, /removeAttribute\('aria-current'\)/);
 
   assert.match(cards, /className:\s*'card-open'[\s\S]*?type:\s*'button'[\s\S]*?'aria-label'/);
   assert.doesNotMatch(cards, /role:\s*'button'[\s\S]*?card-star/,

@@ -41,8 +41,13 @@ test('an accepted shutdown never shows Retry if UI cleanup or native close fails
   } finally { globalThis.document = previousDocument; }
 });
 
-test('Shutdown uses authenticated JSON control and closes only after backend acceptance', async () => {
+test('Shutdown uses authenticated JSON control and closes only after backend acceptance', async (t) => {
   resetControlSession();
+  const timeout = new AbortController();
+  t.mock.method(AbortSignal, 'timeout', (milliseconds) => {
+    assert.equal(milliseconds, 5000);
+    return timeout.signal;
+  });
   const previousDocument = globalThis.document;
   const { button, host, document } = shutdownDom();
   globalThis.document = document;
@@ -66,9 +71,10 @@ test('Shutdown uses authenticated JSON control and closes only after backend acc
     });
     assert.deepEqual(order.slice(0, 2), ['flush-eq', 'fetch:/api/v1/session']);
     assert.deepEqual(calls.map((call) => call.path), ['/api/v1/session', '/api/shutdown']);
-    assert.ok(calls[0].options.signal, 'session acquisition must share the shutdown timeout');
     assert.equal(calls[1].options.method, 'POST');
-    assert.equal(calls[1].options.signal, calls[0].options.signal);
+    assert.equal(calls[1].options.signal, timeout.signal);
+    timeout.abort();
+    assert.equal(calls[0].options.signal.aborted, true, 'the shutdown timeout also cancels session acquisition');
     assert.equal(calls[1].options.headers['X-WorldMedia-Token'], 'shutdown-token');
     assert.equal(calls[1].options.headers['Content-Type'], 'application/json');
     assert.equal(calls[1].options.body, '{}');

@@ -56,6 +56,22 @@ class JsonTests(unittest.TestCase):
         plain = read_json_playlist('\ufeff["https://a.example.org/1", "https://a.example.org/2"]')
         self.assertEqual([c['stream_url'] for c in channels(plain)], ['https://a.example.org/1', 'https://a.example.org/2'])
 
+    def test_json_backups_are_ordered_validated_and_survive_reload(self):
+        store, _ = store_with()
+        main = 'https://station.example/main.aac'
+        backups = [f'https://station.example/backup{i}.aac' for i in range(6)]
+        text = json.dumps([
+            {'url': main, 'backups': [main, 'http://127.0.0.1/private', 'ftp://station.example/one',
+                                      backups[0], backups[0], 'https://station.example/two\n#EXTM3U', *backups[1:]]},
+            {'url': 'https://station.example/another.aac'},
+        ])
+        result = store.import_file({'name': 'test.json', 'text': text, 'default_type': 'radio'})
+        first, second = result['playlist']['items']
+        self.assertEqual(first['stream_url'], main)
+        self.assertEqual(first['_extra']['backupStreamUrls'], backups[:5])
+        self.assertNotIn('backupStreamUrls', second['_extra'])
+        self.assertEqual(store.list()[0]['items'], result['playlist']['items'])
+
     def test_the_type_becomes_a_radio_mark_so_auto_still_works(self):
         stations = [{"name": "A", "url": "https://a.example.org/a", "type": "Radio"},
                     {"name": "B", "url": "https://a.example.org/b", "radio": True},
@@ -218,7 +234,8 @@ class ImportTests(unittest.TestCase):
 
     def test_online_json_and_csv_lists_come_through_the_same_fetcher(self):
         body = json.dumps({"name": "Their list", "stations": [
-            {"name": "One", "url": "https://a.example.org/1"}, {"name": "Relative", "url": "two.mp3"}, {"x": 1}]})
+            {"name": "One", "url": "https://a.example.org/1"},
+            {"name": "Relative", "url": "two.mp3", "backups": ["two.mp3", "../backup.mp3"]}, {"x": 1}]})
         fetcher = mock.Mock()
         fetcher.fetch.return_value = SimpleNamespace(data=body.encode('utf-8'), url='https://lists.example.org/a/list')
         store, records = store_with(fetcher)
@@ -235,6 +252,7 @@ class ImportTests(unittest.TestCase):
                          [('One', 'https://a.example.org/1'), ('Relative', 'https://lists.example.org/a/two.mp3')])
         self.assertEqual(playlist['skipped'], 1)
         self.assertEqual(records[0]['base_url'], 'https://lists.example.org/a/list')
+        self.assertEqual(playlist['items'][1]['_extra']['backupStreamUrls'], ['https://lists.example.org/backup.mp3'])
         fetcher.fetch.return_value = SimpleNamespace(data=b'Name;URL\nCSV one;https://a.example.org/c\n',
                                                      url='https://lists.example.org/b.csv')
         result = store.import_link({'url': 'https://lists.example.org/b.csv', 'name': 'Mine', 'default_type': 'tv',

@@ -5,7 +5,7 @@
  * with that process; window.close() is only a final browser-preview fallback.
  */
 
-import { controlRequest, resetControlSession } from './capture-client.js';
+import { controlRequest } from './capture-client.js';
 import { flushEqPersistence } from './eq-overlay.js';
 
 let shuttingDown = false;
@@ -22,7 +22,6 @@ async function postShutdown(fetchImpl) {
     // backend restart. Recover within the same click instead of making the
     // user discover that a second click is required.
     if (error?.status !== 403 || error?.code !== 'INVALID_TOKEN') throw error;
-    resetControlSession();
     await controlRequest('/api/shutdown', options);
   }
   return true;

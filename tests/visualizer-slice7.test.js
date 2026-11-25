@@ -60,7 +60,8 @@ test('slice 7: the fifteen 3D flights and seven endless scenes are scenes like t
     const scene = entryOf(id);
     assert.equal(scene.cost, MEDIUM_IDS.includes(id) ? 'medium' : 'heavy', id);
     // The flights read no sound: only the time surge; the endless scenes read it themselves.
-    assert.equal(scene.audio, scene.category === 'Endless Scenes' ? 'shader' : 'motion', id);
+    const readsSound = scene.category === 'Endless Scenes' || id === 'difs_tunnel_flight';
+    assert.equal(scene.audio, readsSound ? 'shader' : 'motion', id);
     assert.equal(scene.links, null, id);
   }
 });

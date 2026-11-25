@@ -504,13 +504,15 @@ test('details: a saved station has Choose picture, and Remove picture only while
   assert.equal(input.getAttribute('type'), 'file');
   assert.equal(input.getAttribute('accept'), PICTURE_ACCEPT);
   assert.equal(input.hidden, true);
-  // The buttons sit with Rename; the result line comes after them.
+  // The buttons sit with Rename, with the result line next in the default layout.
   const actions = find('detail-actions');
   assert.ok(actions.children.includes(choose) && actions.children.includes(act('rename-favorite')));
+  assert.ok(actions.children.includes(remove));
   const message = find('detail-picture-message');
   assert.equal(message.getAttribute('role'), 'status');
   assert.equal(message.hidden, true);
-  assert.equal(ui.detailPanel.children.indexOf(message), ui.detailPanel.children.indexOf(actions) + 1);
+  const afterActions = ui.detailPanel.children.slice(ui.detailPanel.children.indexOf(actions) + 1);
+  assert.equal(afterActions.find((node) => node === message || !node.hidden), message);
   choose.dispatchEvent(new Event('click'));
   assert.equal(input.clicks, 1, 'opens the file chooser');
 

@@ -43,8 +43,11 @@
   width: 120%;
   height: 120%;
   object-fit: cover;
-  filter: blur(56px) saturate(1.25);
+  filter: blur(var(--np-background-blur, 24px)) saturate(1.25);
 }
+.np-root[data-background-blur='off'] { --np-background-blur: 0px; }
+.np-root[data-background-blur='light'] { --np-background-blur: 8px; }
+.np-root[data-background-blur='strong'] { --np-background-blur: 56px; }
 .np-scrim {
   display: none;
   background: color-mix(in srgb, var(--bg) 80%, transparent);
@@ -56,6 +59,7 @@
   z-index: 1;
   height: 100%;
   overflow: auto;
+  padding-bottom: var(--video-clearance);
 }
 
 /* ---- Nothing playing ---- */
@@ -108,9 +112,6 @@
   color: var(--text);
   font-size: clamp(13px, 1.8cqmin, 32px);
 }
-/* The floating video sits over the bottom right: the details can scroll
-   clear of it. */
-#app.has-video .np-layout { padding-bottom: calc(var(--video-clearance) + 16px); }
 
 .np-art {
   position: relative;
@@ -204,6 +205,11 @@
   color: var(--np-dim);
 }
 
+.np-part {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .np-fav,
 .np-song-star {
   appearance: none;
@@ -292,6 +298,7 @@
   width: 100%;
   height: clamp(56px, 13cqmin, 300px);
 }
+.np-meter-muted { font-size: 0.85em; }
 
 .np-facts {
   margin: 0;

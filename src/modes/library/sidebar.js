@@ -10,7 +10,7 @@
  * collection filters never start a provider search.
  */
 
-import { SOURCES } from '../../lib/sources.js';
+import { SOURCES, SOURCE_IDS } from '../../lib/sources.js';
 import { getState } from '../../lib/state.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
@@ -46,18 +46,14 @@ export function buildSidebar() {
   for (const sec of sections) {
     list.appendChild(el('li', { className: 'source-section-header', attrs: { 'aria-hidden': 'true' }, text: sec.header }));
     for (const s of sec.items) {
-      const isDirectSource = SOURCES.some((source) => source.id === s.id);
-      const disabled = isDirectSource && getState().settings.enabledSources[s.id] === false;
+      const isDirectSource = SOURCE_IDS.includes(s.id);
       const li = el('li', {
-        className: 'source-item'
-          + (view.activeSource === s.id ? ' is-active' : '')
-          + (disabled ? ' is-disabled' : ''),
+        className: 'source-item' + (view.activeSource === s.id ? ' is-active' : ''),
         attrs: {
           'data-source': s.id,
           role: 'option',
           tabindex: '0',
           'aria-selected': view.activeSource === s.id ? 'true' : 'false',
-          'aria-disabled': disabled ? 'true' : 'false',
         },
         on: {
           click: () => selectSource(s.id),
@@ -69,8 +65,7 @@ export function buildSidebar() {
             }
             if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
-            // Switched-off sources are hidden, so they are not keyboard stops.
-            const options = [...list.querySelectorAll('.source-item:not(.is-disabled)')];
+            const options = [...list.querySelectorAll('.source-item')];
             const index = options.indexOf(event.currentTarget);
             const next = event.key === 'Home' ? options[0]
               : event.key === 'End' ? options.at(-1)
@@ -95,14 +90,41 @@ export function buildSidebar() {
       list.appendChild(li);
     }
   }
+  syncSidebarSources(getState().settings.enabledSources, list);
   ui.sidebar.appendChild(list);
   queueMicrotask(() => list.querySelector('.source-item.is-active')
     ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }));
 }
 
+// Only the source switches drive this order. Status and count updates leave rows in place.
+export function syncSidebarSources(enabledSources, list = ui.sidebar?.querySelector('.source-list')) {
+  if (!list) return;
+  const archiveRows = [...list.children].filter((row) => SOURCE_IDS.includes(row.dataset.source));
+  const rowsById = new Map(archiveRows.map((row) => [row.dataset.source, row]));
+  const on = [];
+  const off = [];
+  for (const { id, displayName } of SOURCES) {
+    const row = rowsById.get(id);
+    if (!row) continue;
+    const disabled = enabledSources[id] === false;
+    row.classList.toggle('is-disabled', disabled);
+    if (disabled) {
+      row.setAttribute('aria-label', `${displayName} (off)`);
+      off.push(row);
+    } else {
+      row.removeAttribute('aria-label');
+      on.push(row);
+    }
+  }
+  const wanted = [...on, ...off];
+  if (wanted.every((row, index) => row === archiveRows[index])) return;
+  const focused = document.activeElement;
+  for (const row of wanted) list.appendChild(row);
+  if (wanted.includes(focused)) focused.focus({ preventScroll: true });
+}
+
 export function selectSource(sourceId) {
-  if (SOURCES.some((source) => source.id === sourceId)
-      && getState().settings.enabledSources[sourceId] === false) return;
+  const sourceOff = getState().settings.enabledSources[sourceId] === false;
   view.activeSource = sourceId;
   view.searchDebounced?.cancel?.();
   syncPersonalControls();
@@ -129,7 +151,7 @@ export function selectSource(sourceId) {
   // would cancel and repeat every source's first request.
   const poolIsEmpty = view.items.length === 0;
   const chainIdle = !view.catalogActive || view.sourceProgress.size === 0;
-  const headingNonFav = !isPersonalSource(sourceId);
+  const headingNonFav = !sourceOff && !isPersonalSource(sourceId);
   const pendingQuery = (view.query || '').trim() !== (view.lastQuery || '').trim();
   if (headingNonFav && ((poolIsEmpty && chainIdle) || pendingQuery)) {
     runSearch();

@@ -326,7 +326,9 @@ test('the smallest tab (967 x 320): the panel and the notice scroll inside the t
   // The panel fills the tab's height and scrolls as a whole.
   const panel = rule(CSS, '.viz-panel');
   for (const part of ['top: 0', 'bottom: 0', 'overflow-y: auto', 'max-width: calc(100% - 48px)']) assert.ok(panel.includes(part), part);
-  // The notice: its box never taller than the tab, and scrolls.
+  // The notice stays left of the video even when there is little space above it.
+  assert.match(rule(CSS, '#app.has-video .viz-notice'), /padding-right: calc\(var\(--video-w\) \+ 32px\);/);
+  // The notice box is at most as tall as the tab, and scrolls.
   const box = rule(CSS, '.viz-notice-box');
   assert.ok(box.includes('max-height: 100%') && box.includes('overflow-y: auto'));
   assert.ok(rule(CSS, '.viz-notice').includes('inset: 0'));

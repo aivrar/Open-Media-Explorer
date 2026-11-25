@@ -84,7 +84,7 @@ export const ACCUMULATING_HELD = Object.freeze({
     // Lifted for every look: the Nebula Glow background (2, as its brightest
     // passing looks have), a stronger glow and lines no thinner than its own
     // start (11 of its 15 looks sat under 0.05 as they started without it).
-    least: Object.freeze({ ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 2.6 }),
+    least: Object.freeze({ ifs_background: 2, ifs_glow: 1.8, ifs_thickness: 3.2, ifs_exposure: 2.4 }),
   }),
 });
 
@@ -141,7 +141,11 @@ const hosted = (id, own, density) => () => own().then((file) => ({
   default: (G) => file.default({
     ...G,
     Controls: heldControls(G.Controls, ACCUMULATING_HELD[id]),
-    ...(density ? { ProgressiveDensityRenderer: createDensityRenderer(G) } : {}),
+    // The held density scenes get a dim backing while their workers build
+    // the first visible points. Buddhabrot keeps its measured black level.
+    ...(density ? { ProgressiveDensityRenderer: createDensityRenderer(G, {
+      backingLift: id === 'buddhabrot_lab' ? 0 : 0.055,
+    }) } : {}),
   }),
 }));
 

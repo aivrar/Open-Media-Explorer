@@ -8,13 +8,12 @@ Flight, Fourier Epicycles and 4D Polytopes, the overlays Ripples, Fireflies and
 Orbits, the **Lighten** and **Color** blends, **Extra glow** and the setting
 that shows the Visualizer behind the Tuner require v0.1.13 or newer. The
 **Visualizer:** control on the Tuner tab, which sets how strongly it shows there,
-requires v0.1.16 or newer.
+requires v0.1.16 or newer. Song structure, scene dissolves, **Color travel**
+and the brighter DIFS Tunnel Flight require v0.1.17 or newer.
 
 The Visualizer shows pictures that move with the sound of whatever is playing.
 It is the tab between **Now Playing** and **About**. It is ported from [Psychedelia
 Studio](https://github.com/aivrar/psychedelia-studio), the author's own project.
-Work on the Visualizer continues, and more is planned, so this page describes
-this version.
 
 ## Please read first: moving and flashing pictures
 
@@ -127,7 +126,7 @@ Among the scenes are these families:
 - **Flights:** Apollonian Foam Flight, Folded Box Variants Flight, Mandelbox
   Flight, Triplex Mutation Flight, Glass Fractal DE Flight, DIFS Tunnel Flight
   and Quaternion Julia Flight (in Fractals). Journeys through 3D fractal
-  shapes.
+  shapes. DIFS Tunnel Flight is brighter in this release.
 - **Buddhabrot Lab** (in Fractals): a still picture that builds up point by
   point within about a minute, then stays as it is until you change the
   look. It takes no post effects.
@@ -144,13 +143,16 @@ Among the scenes are these families:
   procession of dancing robots.
 - **World Media's own scenes:** Band Ridgelines, Sound Ring and Petal Bloom
   (in Sound Shapes), and Hex Weave and Contour Lines (in Patterns), written
-  for this app. The music moves only their shapes, never their colors or
-  brightness. Each has four looks.
+  for this app. The scenes themselves move their shapes with the music. Each
+  has four looks, and **Color travel** can shift the palette.
 
 The line drawings, simulations, flights, Buddhabrot Lab, Fractal Flame Lab,
 2D Formula Lab and Robot Foundry are all **Heavy**. Some scenes need graphics
 features that not every computer has, such as the simulations; where they are
 missing, those scenes are not in the list.
+
+FLAM3 Density Lab, IFS / L-System Lab, Attractor Density Lab and Hypercomplex
+Slice Flight remain held back and are not offered in the scene list.
 
 Names that come from the copied code are shown in American spelling, for
 example **Complex Domain Coloring** and the **Watercolor** effect.
@@ -177,7 +179,12 @@ A scene without looks does not show it.
 The shuffle shows every scene once before it shows one again, avoids the same
 category three times in a row, and leans toward calm scenes for calm music and
 lively scenes for lively music. It prepares the next scene ahead so the change
-is quick, and it changes only when the flash limiter has room.
+is quick. Shuffle listens for builds and breaks. A drop after either can
+bring the next scene forward within the existing interval. Scenes usually
+dissolve in about one second, with the picture bending as it changes. If you
+pick a scene by hand just after another change and the flash limiter is
+full, the dissolve takes about 2.5 seconds. With reduced motion, the still
+picture changes at once.
 
 The line **Music** under it says what the Visualizer hears: **calm**, **steady**
 or **energetic**. It reads the sound's spectrum: how often new sounds start,
@@ -216,6 +223,8 @@ on. They are off by default.
 - **Effects on:** the master switch, always shown. The effects' library is
   loaded the first time you turn it on. The controls below show only while it
   is on.
+- **Color travel** lets the palette shift slowly with the music. The app
+  remembers this switch.
 - **Shuffle effects:** on by default. The Visualizer picks the effects.
   **New effects now** picks a new set at once.
 - **Change effects:** **With the scene** (the default), or **Every 4, 8 or 16
@@ -443,8 +452,8 @@ does closing the tab.
 ## Where its choices are saved
 
 The Visualizer's choices (scene, looks, shuffle, effects, overlays and their
-styles, Extra glow, Slow drift, quality, frame rate, brightness, favorites, the
-panel's folded sections and whether you accepted the notice) are
+styles, Extra glow, Slow drift, Color travel, quality, frame rate, brightness,
+favorites, the panel's folded sections and whether you accepted the notice) are
 stored inside your settings in the browser profile. They are not a separate
 file. **Clear local cache** resets them with the rest of your settings, so the
 notice comes back too. See [Data, cache, and

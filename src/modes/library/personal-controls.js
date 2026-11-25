@@ -1,18 +1,23 @@
 import {
   addPlaylistLink, getPlaylistItems, getPlaylists, importPlaylistFile, loadPlaylists, playlistName, playlistsLoaded,
-  removePlaylist,
+  exportPlaylist, removePlaylist,
 } from '../../lib/playlists.js';
 import { moveFavoritesToNewIds, planTypeMoves, typeMoveMessage } from '../../lib/favorite-migration.js';
 import {
   addFavorites, BULK_FAVORITES_LIMIT, countNewFavorites, getState, removeAllFavorites, saveSettings,
 } from '../../lib/state.js';
 import { FAVORITES_SORT_MANUAL, FAVORITES_SORT_NAME, normalizeFavoritesSort } from '../../lib/favorites-order.js';
+import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
+import { favoriteNamesSnapshot, withFavoriteName } from '../../lib/favorite-names.js';
+import { detectStreamKind, safeExternalUrl } from '../../lib/item-model.js';
+import { stationStreamAddresses } from '../../lib/station-stream-addresses.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
 import { filteredItemsForCurrentView, renderResults, renderStatus, updateSentinelStatus } from './render.js';
 import { buildFavoriteCategories, syncFavoriteCategories } from './favorite-categories.js';
+import { favoriteTitlesButton, syncFavoriteTitles } from './favorite-titles.js';
 
 function refresh() { renderResults(); renderStatus(); updateSentinelStatus(); }
 
@@ -167,7 +172,8 @@ export function importLocalPlaylist(file, type = '') {
 }
 
 function selectControl(label, options, onChange) {
-  const select = el('select', { className: 'chip', attrs: { 'aria-label': label, title: label }, on: { change: onChange } },
+  const select = el('select', { className: 'chip', attrs: { 'aria-label': label, title: label },
+    on: onChange && { change: onChange } },
     ...options.map(([value, text]) => el('option', { attrs: { value }, text })));
   if (options.length) select.value = options[0][0];
   return select;
@@ -214,6 +220,77 @@ function buildFavoritesSort() {
         syncFavoritesSort();
       } },
     })));
+}
+
+/** The whole filtered selection, including items beyond the rendered cards. */
+export function libraryExportSelection(format = 'm3u8') {
+  if (!isPersonalSource()) return null;
+  const filters = personalFilters();
+  const type = PERSONAL_TYPES.find(([value]) => value === filters.type)?.[1] || 'All';
+  const favorites = view.activeSource === 'favorites';
+  const groups = favoriteGroupsSnapshot();
+  const { names } = favoriteNamesSnapshot();
+  const lists = favorites ? [] : getPlaylists().filter(({ id }) => !view.playlistId || id === view.playlistId);
+  const playlistNames = new Map(lists.flatMap(({ name, items }) => items.map((item) => [item.id, name])));
+  const collection = favorites
+    ? ['Favorites', filters.category === UNCATEGORIZED ? 'Uncategorized' : groups.nameOf(filters.category)].filter(Boolean).join(' - ')
+    : lists.length === 1 ? lists[0].name : 'My Playlists';
+  const stations = filteredItemsForCurrentView(libraryPool())
+    .filter((item) => item.__contentHidden !== true)
+    .map((item) => {
+      const { main, backups } = stationStreamAddresses(item);
+      const audio = item.type === 'radio' || item.type === 'audio';
+      const stream = main || item.stream_url;
+      const download = stream ? '' : safeExternalUrl(item.download_url);
+      const downloadPath = download ? new URL(download).pathname : '';
+      // Only fall back to a download when its address identifies playable media.
+      const downloadKind = /\.opus$/i.test(downloadPath) ? 'audio' : detectStreamKind(downloadPath, 'unknown');
+      const playableDownload = downloadKind !== 'unknown';
+      const url = stream || (playableDownload ? download : '');
+      const kind = main ? detectStreamKind(new URL(main).pathname, audio ? 'audio' : 'video')
+        : stream ? item.stream_kind : playableDownload ? downloadKind : undefined;
+      return {
+        name: withFavoriteName(item, names).title,
+        type: item.type,
+        group: favorites ? groups.nameOf(groups.groupOf(item.id)) || 'Uncategorized' : playlistNames.get(item.id),
+        url,
+        kind,
+        delivery: item.delivery,
+        content_rating: item.content_rating,
+        headers: main ? undefined : item.capture_headers,
+        backups,
+        logo: item._extra?.artworkUrl,
+        thumbnail: item.thumbnail,
+        country: item.country,
+        language: item.language,
+      };
+    });
+  return { format, collection, type, stations };
+}
+
+function buildExportControls(message) {
+  const format = selectControl('Export format', [['m3u8', 'M3U8'], ['json', 'JSON']]);
+  let saving = false;
+  const button = el('button', { className: 'btn', text: 'Export...', attrs: {
+    type: 'button', disabled: '', title: 'No items match this view.',
+  }, on: { click: async () => {
+    if (saving) return;
+    const selection = libraryExportSelection(format.value);
+    if (!selection?.stations.length) return;
+    saving = true;
+    message.textContent = 'Saving playlist...';
+    try {
+      const { name, skipped } = await exportPlaylist(selection);
+      message.textContent = `Saved ${name} in Downloads.`
+        + (skipped === 1 ? ' 1 item was left out because it had no playable stream address.'
+          : skipped ? ` ${skipped} items were left out because they had no playable stream address.` : '');
+    } catch (error) {
+      message.textContent = error.message || 'Could not save the playlist.';
+    } finally {
+      saving = false;
+    }
+  } } });
+  return { format, button };
 }
 
 export function buildPersonalControls() {
@@ -346,15 +423,22 @@ export function buildPersonalControls() {
     } catch (error) { message.textContent = error.message || 'Could not remove playlist.'; }
     finally { setBusy(false); }
   });
+  const playlistExport = buildExportControls(message);
+  ui.playlistExport = playlistExport.button;
   ui.playlistActions = el('div', { className: 'playlist-actions' },
-    el('label', { className: 'playlist-media-type', text: 'Add as ' }, defaultType), addLink, importButton, removeButton, starAll, file, linkForm);
+    el('label', { className: 'playlist-media-type', text: 'Add as ' }, defaultType), addLink, importButton, removeButton, starAll,
+    playlistExport.format, ui.playlistExport, file, linkForm);
   ui.favoritesSort = buildFavoritesSort();
   // Remove all favorites: asks first, with the count (removeAllFavoritesAsked).
   const favoritesMessage = el('span', { className: 'playlist-message', attrs: { role: 'status', 'aria-live': 'polite' } });
   ui.favoritesRemoveAll = el('button', { className: 'btn', text: 'Remove all favorites', attrs: {
     type: 'button', title: 'Remove every favorite. You are asked first; a backup can be made in Settings > Storage.',
   }, on: { click: () => { favoritesMessage.textContent = removeAllFavoritesAsked().message; } } });
-  ui.favoritesActions = el('div', { className: 'favorites-actions' }, ui.favoritesRemoveAll, favoritesMessage);
+  ui.favoriteTitles = favoriteTitlesButton();
+  const favoritesExport = buildExportControls(favoritesMessage);
+  ui.favoritesExport = favoritesExport.button;
+  ui.favoritesActions = el('div', { className: 'favorites-actions' },
+    ui.favoriteTitles, ui.favoritesRemoveAll, favoritesExport.format, ui.favoritesExport, favoritesMessage);
   // Favorites categories: a second row of chips (favorite-categories.js).
   buildFavoriteCategories();
   ui.personalControls.append(ui.personalType, ui.favoritesSort, ui.favoritesActions, ui.favoriteCategories,
@@ -378,6 +462,7 @@ export function syncPersonalControls() {
   ui.favoritesSort.style.display = view.activeSource === 'favorites' ? '' : 'none';
   ui.favoritesActions.style.display = view.activeSource === 'favorites' ? '' : 'none';
   syncFavoritesSort();
+  syncFavoriteTitles();
   ui.favoriteCategories.style.display = view.activeSource === 'favorites' ? '' : 'none';
   syncFavoriteCategories();
   ui.playlistSelect.style.display = playlist ? '' : 'none';

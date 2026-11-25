@@ -85,10 +85,14 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.16-portable.zip
+dist\WorldMediaWindows-0.1.17-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
+Check the versions in About and Settings in the packaged app. Both use
+their own version constant in source. The build manifest and package versions
+are set separately.
+
 The full release/smoke flow is in [docs/BUILD_WINDOWS.md](../BUILD_WINDOWS.md)
 and [docs/RELEASE_CHECKLIST.md](../RELEASE_CHECKLIST.md).
 
@@ -116,8 +120,8 @@ EXE is tried; a test copy with its own data folder runs beside it.
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For v0.1.16 evidence and limitations, see the
-[release record](../RELEASE_RECORD_0.1.16.md). The optional
+For the v0.1.17 checks and artifact hashes, see the
+[release record](../RELEASE_RECORD_0.1.17.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review

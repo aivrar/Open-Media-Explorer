@@ -10,9 +10,11 @@ import {
 import { MEDIA_ADVANCING_EVENT, createPlayClock } from '../src/lib/play-clock.js';
 import { meterLayout, meterScale, METER_BARS } from '../src/lib/player-meter.js';
 import { playedQualityLabel } from '../src/lib/stream-quality.js';
+import { clearPlayedStreams, forgetLoadedPlayedStreams, rememberPlayedStream } from '../src/lib/played-streams.js';
 import { bindSongStar } from '../src/lib/song-star.js';
 import { createPlayerMeter } from '../src/lib/player-meter.js';
 import { NOW_PLAYING_EVENT } from '../src/lib/now-playing.js';
+import { PLAYER_SILENT_CHANGE } from '../src/lib/player.js';
 import { FAVORITE_GROUPS_EVENT } from '../src/lib/favorite-groups.js';
 import { COPIED_LABEL, COPY_FAILED, COPY_LABEL } from '../src/lib/song-log-panel.js';
 import { fakeMotion, fakeResizeObserverWin } from './helpers/visualizer-fakes.js';
@@ -283,8 +285,11 @@ class FakeEl extends EventTarget {
   getContext(kind) {
     if (this.tagName !== 'CANVAS' || kind !== '2d') return null;
     this.ctx ||= {
-      draws: 0, globalAlpha: 1, fillStyle: '',
-      clearRect: () => { this.ctx.draws += 1; }, beginPath() {}, rect() {}, fill() {},
+      draws: 0, globalAlpha: 1, fillStyle: '', litColor: '',
+      clearRect() { this.draws += 1; this.litColor = ''; },
+      beginPath() {},
+      rect() {},
+      fill() { if (this.globalAlpha === 1) this.litColor = this.fillStyle; },
     };
     return this.ctx;
   }
@@ -355,6 +360,9 @@ function harness({
   const state = {
     item,
     playing,
+    advancing: playing,
+    silent: false,
+    stream: null,
     nowPlaying: title && item ? { itemId: item.id, mediaId: 'm1', title, changedAt: 1 } : null,
     favorites: new Set(favorite && item ? [item.id] : []),
     custom,
@@ -373,6 +381,8 @@ function harness({
     getCurrentItem: () => state.item,
     getNowPlaying: () => state.nowPlaying,
     isPlaying: () => state.playing,
+    isAdvancing: () => state.advancing,
+    isSilent: () => state.silent,
     getSettings: () => state.settings,
     isFavorite: (id) => state.favorites.has(id),
     addFavorite: (entry) => { state.favorites.add(entry.id); bus.emit('favorites-change'); },
@@ -402,7 +412,7 @@ function harness({
     },
     customSourceFor: () => state.custom,
     onStationImagesChange: (fn) => { pictureListeners.add(fn); return () => pictureListeners.delete(fn); },
-    playedStream: () => null,
+    playedStream: () => state.stream,
     bestStream,
     openMode,
     setTimer: (fn, ms) => { const timer = { fn, ms }; timers.add(timer); return timer; },
@@ -425,6 +435,68 @@ function harness({
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test('My Playlists stream details update when playback format is remembered or cleared', (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const storage = {
+    getItem: () => null,
+    setItem() {},
+    removeItem() {},
+  };
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  forgetLoadedPlayedStreams();
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
+    else delete globalThis.localStorage;
+    forgetLoadedPlayedStreams();
+  });
+
+  const item = { id: 'playlist:jazz', title: 'Jazz FM', source: 'playlist', type: 'radio', delivery: 'live' };
+  const { view, state, bus } = harness({ item, playing: true });
+  t.after(() => view.destroy());
+  const format = () => view.parts.facts.children.find((row) => row.children[0].textContent === 'Format')
+    ?.children[1].textContent;
+
+  assert.equal(format(), undefined);
+  assert.equal(rememberPlayedStream('playlist:other', { codec: 'MP3', bitrate: 128 }), true);
+  assert.equal(format(), undefined);
+  state.stream = { codec: 'AAC' };
+  bus.emit('media-relay');
+  assert.equal(format(), 'AAC');
+  assert.equal(rememberPlayedStream(item.id, { codec: 'AAC', bitrate: 64 }), true);
+  assert.equal(format(), 'AAC \u00B7 64 kbps');
+  const listedFormat = (stream) => detailRows(item, { stream }).find(([label]) => label === 'Format')?.[1];
+  assert.equal(listedFormat({ codec: 'MP3', bitrate: 128 }), 'MP3 \u00B7 128 kbps');
+  assert.equal(listedFormat({ codec: 'AAC' }), 'AAC \u00B7 64 kbps');
+  assert.equal(listedFormat({ codec: 'UNKNOWN', bitrate: 96 }), 'AAC \u00B7 96 kbps');
+  assert.equal(listedFormat({ codec: 'N/A' }), 'AAC \u00B7 64 kbps');
+
+  const main = 'https://radio.example/main.m3u8';
+  const backup = 'https://radio.example/backup.m3u8';
+  state.stream = { kind: 'hls', url: main, codec: 'AAC', bitrate: 192 };
+  assert.equal(rememberPlayedStream(item.id, { hls: true, codec: 'AAC+', bitrate: 128 }, main), true);
+  assert.equal(format(), 'HLS \u00B7 AAC+ \u00B7 128 kbps');
+  state.stream = { ...state.stream, url: backup };
+  assert.deepEqual(detailRows(item, { stream: state.stream }).find(([label]) => label === 'Format'), ['Format', 'HLS']);
+  assert.equal(rememberPlayedStream(item.id, { hls: true, videoCodec: 'HEVC' }, backup), true);
+  assert.equal(format(), 'HLS \u00B7 HEVC');
+  assert.equal(listedFormat({ kind: 'audio', codec: 'MP3' }), 'MP3');
+  assert.equal(listedFormat({ kind: 'audio' }), undefined);
+  clearPlayedStreams();
+  assert.equal(format(), 'HLS');
+  const tv = { ...item, type: 'tv' };
+  assert.deepEqual(detailRows(tv, { stream: state.stream }).find(([label]) => label === 'Format'), ['Format', 'HLS']);
+  rememberPlayedStream(tv.id, { hls: true, videoCodec: 'H.264', width: 1920, height: 1080, bitrate: 4200 }, backup);
+  assert.equal(format(), ['HLS', '1080p', 'H.264', '4.2 Mbps'].join(' \u00b7 '));
+  const videoUrl = 'https://tv.example/clip.mp4';
+  rememberPlayedStream(tv.id, { width: 1440, height: 1080 }, videoUrl);
+  assert.deepEqual(detailRows(tv, { stream: { kind: 'video', url: videoUrl } }).find(([label]) => label === 'Format'),
+    ['Format', '1440x1080']);
+  clearPlayedStreams();
+  state.stream = null;
+  bus.emit('media-relay');
+  assert.equal(format(), undefined);
+});
+
 test('nothing playing: a calm empty state that points to the Library and the Tuner, with nothing running', async () => {
   const opened = [];
   const h = harness({ openMode: (mode) => opened.push(mode) });
@@ -445,6 +517,24 @@ test('nothing playing: a calm empty state that points to the Library and the Tun
   assert.equal(h.signalSubs.size, 0);
   assert.equal(h.view.timerPending, false);
   await settle();
+  h.view.destroy();
+});
+
+test('the empty state hides Open in Tuner live and keeps Open Library', () => {
+  const opened = [];
+  const h = harness({ settings: { tabsShown: { tuner: false } }, openMode: (mode) => opened.push(mode) });
+  const { libraryBtn, tunerBtn } = h.view.parts;
+  assert.equal(tunerBtn.hidden, true);
+  assert.equal(libraryBtn.hidden, false);
+  tunerBtn.click();
+  libraryBtn.click();
+  assert.deepEqual(opened, ['library']);
+
+  h.state.settings = { tabsShown: { tuner: true } };
+  h.bus.emit('settings-change', h.state.settings);
+  assert.equal(tunerBtn.hidden, false);
+  tunerBtn.click();
+  assert.deepEqual(opened, ['library', 'tuner']);
   h.view.destroy();
 });
 
@@ -501,7 +591,8 @@ test('a playing station: large picture, name, category, song with star and Copy,
   assert.deepEqual(facts.map(([label]) => label), ['Source', 'Type', 'Format', 'Country', 'Language', 'Playing for']);
   assert.equal(parts.facts.children[0].children[0].tagName, 'DT');
   // The meter: decorative, on the shared signal at the bar meter's rate, once laid out.
-  assert.equal(parts.meterBox.getAttribute('aria-hidden'), 'true');
+  assert.equal(parts.canvas.getAttribute('aria-hidden'), 'true');
+  assert.equal(parts.meterBox.hasAttribute('aria-hidden'), false, 'the Muted label is accessible');
   assert.equal(h.signalSubs.size, 0, 'not laid out yet');
   h.win.observers[0].fire(800, 200);
   assert.equal(h.signalSubs.size, 1);
@@ -869,6 +960,85 @@ test('the large meter draws from the shared signal only while the window is show
   assert.equal(clock.pending(), 0, 'the signal stops with its last listener');
 });
 
+test('playing while silent holds one red LED per bar and shows Muted until pause or unmute', (t) => {
+  const h = harness({ item: radio(), playing: true });
+  t.after(() => h.view.destroy());
+  const { canvas, mutedLabel } = h.view.parts;
+  const { meter } = h.view;
+  h.win.observers[0].fire(800, 200);
+  assert.equal(mutedLabel.getAttribute('role'), 'status');
+  assert.equal(mutedLabel.getAttribute('aria-live'), 'polite');
+  assert.equal(mutedLabel.getAttribute('aria-atomic'), 'true');
+  assert.equal(mutedLabel.hidden, false, 'the live region is present before its text changes');
+  assert.equal(mutedLabel.textContent, '');
+  assert.equal(h.signalSubs.size, 1);
+
+  const announcements = [];
+  let text = '';
+  Object.defineProperty(mutedLabel, 'textContent', {
+    get: () => text,
+    set(value) { text = value; announcements.push(value); },
+  });
+  const silent = (value) => {
+    h.state.silent = value;
+    h.bus.emit(PLAYER_SILENT_CHANGE, value);
+  };
+  const advancing = (value) => {
+    h.state.advancing = value;
+    h.bus.emit(MEDIA_ADVANCING_EVENT, value);
+  };
+  silent(true);
+  assert.equal(mutedLabel.textContent, 'Muted');
+  assert.equal(canvas.ctx.litColor, '#f04848');
+  assert.ok(meter.lit.every((count) => count === 1));
+  assert.equal(h.signalSubs.size, 0, 'no audio frames while muted');
+  const draws = meter.stats.draws;
+  h.bus.emit('playing-change', true);
+  assert.equal(meter.stats.draws, draws, 'the mute display is steady');
+
+  h.setVisible(false);
+  h.win.observers[0].fire(820, 200);
+  silent(false);
+  silent(true);
+  assert.equal(meter.stats.draws, draws, 'no mute drawing while hidden');
+  h.setVisible(true);
+  assert.equal(meter.stats.draws, draws + 1, 'draws at the new size on return');
+  assert.equal(canvas.ctx.litColor, '#f04848');
+
+  advancing(false);
+  assert.equal(mutedLabel.textContent, '');
+  assert.equal(canvas.ctx.litColor, '');
+  assert.ok(meter.lit.every((count) => count === 0));
+  h.state.item = radio({ id: 'radio-browser:replacement' });
+  h.bus.emit('current-item', h.state.item);
+  assert.equal(h.state.playing, true, 'play controls can still report playing while the new station loads');
+  assert.equal(mutedLabel.textContent, '');
+  advancing(true);
+  assert.equal(mutedLabel.textContent, 'Muted');
+  silent(false);
+  assert.equal(mutedLabel.textContent, '');
+  assert.equal(h.signalSubs.size, 1, 'live meter resumes');
+  assert.deepEqual(announcements, ['Muted', '', 'Muted', ''], 'only actual status changes update the live region');
+});
+
+test('the background blur changes on the mounted tab without reloading the picture or drawing the meter', async (t) => {
+  const h = harness({ item: radio(), custom: 'station-image:abc:1', playing: true });
+  t.after(() => h.view.destroy());
+  const { root, parts, meter } = h.view;
+  await settle();
+  h.win.observers[0].fire(800, 200);
+  const draws = meter.stats.draws;
+  assert.equal(root.dataset.backgroundBlur, 'medium');
+  for (const [setting, expected] of [['off', 'off'], ['light', 'light'], ['strong', 'strong'], ['invalid', 'medium']]) {
+    h.state.settings.nowPlayingBackgroundBlur = setting;
+    h.bus.emit('settings-change', h.state.settings);
+    assert.equal(root.dataset.backgroundBlur, expected);
+  }
+  assert.equal(parts.backdropImg.getAttribute('src'), 'blob:station-picture');
+  assert.equal(h.loads.length, 1);
+  assert.equal(meter.stats.draws, draws);
+});
+
 test('the tab\'s code never makes, resumes or reads Web Audio itself', async () => {
   const source = await read('src/modes/now-playing.js');
   assert.doesNotMatch(source, /AudioContext|createAnalyser|createMediaElementSource|\.resume\(|requestAnimationFrame|setInterval/);
@@ -930,20 +1100,32 @@ test('the tab sits after Discovery and before Visualizer, with its own styles, a
   assert.match(main, /'now-playing': renderNowPlaying,/);
   assert.match(main, /initPlayer\(\);[\s\S]{0,300}playClock\.start\(subscribe, getCurrentItem,/);
   assert.equal(NOW_PLAYING_MODE, 'now-playing');
-  // No new setting: the start-up tab list is unchanged.
+  // The supported launch modes stay the same.
   const state = await read('src/lib/state.js');
   assert.match(state, /defaultMode: \['library', 'tuner', 'grid', 'discovery', 'about'\]\.includes/);
+});
+
+test('Settings offers the Now Playing blur levels in Appearance', async () => {
+  const settings = await read('src/lib/settings.js');
+  const appearance = settings.match(/<h3>Appearance<\/h3>[\s\S]*?<\/section>/)[0];
+  assert.match(appearance, /<label for="settings-now-playing-background-blur">Now Playing background blur<\/label>/);
+  assert.match(appearance, /<select id="settings-now-playing-background-blur" data-field="nowPlayingBackgroundBlur">/);
+  assert.match(settings, /blurSel.value = state.settings.nowPlayingBackgroundBlur;/);
+  assert.match(settings, /blurSel.addEventListener\('change', \(\) => saveSettings\(\{ nowPlayingBackgroundBlur: blurSel.value \}\)\);/);
 });
 
 test('nothing in the tab\'s styles moves, and the backdrop is a still CSS blur', async () => {
   const css = await read('src/styles/now-playing.css');
   assert.doesNotMatch(css, /@keyframes|animation|transition/);
-  assert.match(css, /\.np-backdrop-img \{[^}]*filter: blur\(/);
+  assert.match(css, /\.np-backdrop-img \{[^}]*filter: blur\(var\(--np-background-blur, 24px\)\) saturate\(1.25\);/);
+  for (const [level, radius] of [['off', 0], ['light', 8], ['strong', 56]]) {
+    assert.ok(css.includes(`.np-root[data-background-blur='${level}'] { --np-background-blur: ${radius}px; }`));
+  }
   // The picture and the text scale with the room, within limits.
   assert.match(css, /\.np-root \{[^}]*container: np \/ size;/);
   assert.match(css, /\.np-art \{[^}]*width: clamp\(150px, min\(42cqw, 68cqh\), 1280px\);/);
   assert.match(css, /\.np-title \{[^}]*font-size: clamp\(22px, [\d.]+cqmin, 88px\);/);
-  assert.match(css, /#app\.has-video \.np-layout \{ padding-bottom: calc\(var\(--video-clearance\)/);
+  assert.match(css, /\.np-scroll \{[^}]*padding-bottom: var\(--video-clearance\);/);
 });
 
 /** The rules of a style sheet as { media, selectors, decls } (one level of @media). */

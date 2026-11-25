@@ -14,6 +14,7 @@ export const ui = {
   personalControls: null,
   personalType: null,
   favoritesSort: null,
+  favoriteTitles: null,
   // Favorites categories row (favorite-categories.js)
   favoriteCategories: null,
   categoryChips: null,
@@ -29,6 +30,8 @@ export const ui = {
   playlistActions: null,
   playlistRemove: null,
   playlistStarAll: null,
+  favoritesExport: null,
+  playlistExport: null,
   playlistMessage: null,
   playlistLinkForm: null,
   resultsHost:    null,

@@ -353,7 +353,7 @@ test('a playlist entry listed as a station that plays an MP3 is not called live 
   audio.duration = 3546;
   audio.emit('durationchange');
   assert.equal(seekShown(elements), true, 'the seek bar decision: a recording');
-  assert.equal(status(), 'This stream can be recorded.');
+  assert.equal(status(), 'This is a finite stream. No download is available.');
 
   // A live station keeps its wording.
   await player.playItem(item('radio-browser:bar-start-live'));

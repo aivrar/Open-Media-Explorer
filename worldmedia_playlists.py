@@ -22,6 +22,9 @@ from worldmedia_runtime import _atomic_write_json
 
 MAX_PLAYLIST_BYTES = 8 * 1024 * 1024
 MAX_STORE_BYTES = 64 * 1024 * 1024
+MAX_BACKUP_STREAMS = 5
+PLAYLIST_TYPES = frozenset({'radio', 'tv', 'audio', 'video'})
+BACKUP_STREAM_TAG = '#WORLDMEDIA-BACKUP:'  # Older readers ignore this comment in converted JSON lists.
 _ATTR = re.compile(r'([\w-]+)\s*=\s*(?:"([^"]*)"|\x27([^\x27]*)\x27|([^\s,]+))')
 
 
@@ -46,6 +49,14 @@ def _web_url(value: str) -> str:
         return value
     except ValueError:
         return ''
+
+
+def validate_stream_addresses(payload: dict) -> None:
+    urls = payload.get('urls')
+    if set(payload) != {'urls'} or not isinstance(urls, list) or not 1 <= len(urls) <= 1 + MAX_BACKUP_STREAMS:
+        raise ValueError('Enter a main address and up to five backup addresses.')
+    if any(not isinstance(url, str) or not _web_url(url) for url in urls):
+        raise ValueError('Enter a public HTTP or HTTPS address without a username or password.')
 
 
 def _playlist_url(value: str, base_url: str) -> str:
@@ -385,11 +396,14 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
     items, seen, names_at = [], set(), {}
     attrs, title, group, headers = {}, '', '', {}
     skipped = duplicates = defaulted = private = 0
+    backups = []
+    exported_duplicates = {}
     for raw in text.lstrip('\ufeff').splitlines():
         line = raw.strip()
         if not line:
             continue
         if line.upper().startswith('#EXTINF:'):
+            backups = []
             attrs, name = _extinf_parts(line)
             title = _label(name)
             group = _label(attrs.get('group-title', ''))
@@ -405,6 +419,12 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
                 if mapped != 'referer' or _web_url(value):
                     headers[mapped] = value
             continue
+        if line.startswith(BACKUP_STREAM_TAG):
+            if len(backups) <= MAX_BACKUP_STREAMS:
+                backup = _playlist_url(line[len(BACKUP_STREAM_TAG):], base_url)
+                if backup and backup not in backups:
+                    backups.append(backup)
+            continue
         if line.startswith('#'):
             continue
         url = _playlist_url(line, base_url)
@@ -416,10 +436,20 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
             path = urlsplit(url).path.lower()
             audio = bool(_AUDIO_PATH.search(path))
             radio = attrs.get('radio', '').lower()
-            media_type = ('radio' if radio in TRUE_MARKS else 'tv'
-                          if radio in FALSE_MARKS else 'radio' if audio else default_type)
+            marked_type = attrs.get('worldmedia-type')
+            media_type = (marked_type if marked_type in PLAYLIST_TYPES else
+                          'radio' if radio in TRUE_MARKS else 'tv' if radio in FALSE_MARKS else
+                          'radio' if audio else default_type)
             kind = ('hls' if path.endswith('.m3u8') else 'dash' if path.endswith('.mpd')
-                    else 'audio' if media_type == 'radio' else 'video')
+                    else 'audio' if media_type in {'radio', 'audio'} else 'video')
+            delivery, rating = 'live', 'unrated'
+            if marked_type in PLAYLIST_TYPES:
+                if attrs.get('worldmedia-kind') in {'audio', 'video', 'hls', 'dash'}:
+                    kind = attrs['worldmedia-kind']
+                if attrs.get('worldmedia-delivery') in {'live', 'on-demand', 'unknown'}:
+                    delivery = attrs['worldmedia-delivery']
+                if attrs.get('worldmedia-rating') in {'explicit', 'not-explicit'}:
+                    rating = attrs['worldmedia-rating']
             name = title or _label(attrs.get('tvg-name', ''))
             address = 'playlist:' + hashlib.sha256((media_type + '\n' + url).encode('utf-8')).hexdigest()
             identity = address
@@ -428,6 +458,14 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
                 # another name (then it gets an id of its own; see above).
                 identity = ('playlist:' + hashlib.sha256((media_type + '\n' + url + '\n' + name).encode('utf-8')).hexdigest()
                             if name and name not in names_at.get(address, ()) else '')
+            if not identity and marked_type in PLAYLIST_TYPES:
+                # Two saved items can have the same name and edited address.
+                key = (address, name)
+                occurrence = exported_duplicates.get(key, 0) + 1
+                exported_duplicates[key] = occurrence
+                identity = 'playlist:' + hashlib.sha256(
+                    f"{media_type}\n{url}\n{name}\n{occurrence}".encode('utf-8')
+                ).hexdigest()
             if not identity or identity in seen:
                 duplicates += 1
             else:
@@ -435,18 +473,23 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
                 names_at.setdefault(address, set()).add(name)
                 if radio not in TRUE_MARKS | FALSE_MARKS and not audio:
                     defaulted += 1
+                extra = {'artworkUrl': _playlist_url(attrs.get('tvg-logo', ''), base_url)}
+                alternates = [backup for backup in backups if backup != url][:MAX_BACKUP_STREAMS]
+                if alternates:
+                    extra['backupStreamUrls'] = alternates
                 items.append({
                     'id': identity, 'source': 'playlist', 'title': name or f'Channel {len(items) + 1}',
                     'description': group, 'type': media_type, 'stream_url': url,
-                    'stream_kind': kind, 'delivery': 'live', 'download_url': '',
+                    'stream_kind': kind, 'delivery': delivery, 'download_url': '',
                     'download_name': '', 'thumbnail': '', 'source_url': '',
                     'country': _label(attrs.get('tvg-country', ''), 16),
                     'language': _label(attrs.get('tvg-language', ''), 32),
                     'year': None, 'license': 'See provider terms', 'tags': [group] if group else [],
-                    'content_rating': 'unrated', 'capture_headers': dict(headers),
-                    '_extra': {'artworkUrl': _playlist_url(attrs.get('tvg-logo', ''), base_url)},
+                    'content_rating': rating, 'capture_headers': dict(headers),
+                    '_extra': extra,
                 })
         attrs, title, group, headers = {}, '', '', {}
+        backups = []
     if not items:
         raise ValueError('No supported public HTTP(S) channels found. Local files, relative paths, private IPs and non-web streams are not supported.')
     result = {'items': items, 'skipped': skipped, 'duplicates': duplicates}
@@ -584,7 +627,7 @@ class PlaylistStore:
                 not_a_list = ('That URL did not return an M3U, PLS, XSPF, JSON or CSV channel list. For a stream, choose '
                               'Single channel; website pages and login pages cannot be imported.')
                 from worldmedia_playlist_tables import read_table_playlist
-                table = read_table_playlist(text)
+                table = read_table_playlist(text, base_url=fetched.url)
                 if table:
                     # With no name typed, a JSON list's own name beats the host name.
                     name = _label(payload['name'], 160) or table.title or name

@@ -34,6 +34,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.14.md
 |   |-- RELEASE_NOTES_0.1.15.md
 |   |-- RELEASE_NOTES_0.1.16.md
+|   |-- RELEASE_NOTES_0.1.17.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -48,6 +49,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.14.md
 |   |-- RELEASE_RECORD_0.1.15.md
 |   |-- RELEASE_RECORD_0.1.16.md
+|   |-- RELEASE_RECORD_0.1.17.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -101,6 +103,7 @@ WorldMediaWindows/
 |-- worldmedia_native.py
 |-- worldmedia_playlists.py
 |-- worldmedia_playlist_tables.py
+|-- worldmedia_playlist_export.py
 |-- worldmedia_processor.py
 |-- worldmedia_recording.py
 |-- worldmedia_runtime.py
@@ -110,6 +113,7 @@ WorldMediaWindows/
 |-- worldmedia_starred.py
 |-- worldmedia_station_images.py
 |-- worldmedia_stream_probe.py
+|-- worldmedia_stream_title.py
 |-- worldmedia_theme.py
 |-- worldmedia_server.py
 `-- README.md
@@ -136,6 +140,8 @@ WorldMediaWindows/
 | `worldmedia_station_images.py` | The user's `station-images` folder: safe listing (with the files that were not used and why), station-name matching, and serving verified pictures. |
 | `worldmedia_starred.py` | Starred songs (`state/starred-songs.json`): ordered writes, safe handling of an unreadable file, and the **Save as text** and **Save as CSV** exports. |
 | `worldmedia_playlist_tables.py` | JSON and CSV channel lists, turned into the M3U form every playlist is stored in, with limits on size and entries. |
+| `worldmedia_playlist_export.py` | Writes the current Favorites or My Playlists selection as M3U8 or JSON and counts entries it cannot export. |
+| `worldmedia_stream_title.py` | Reads the current song title of a radio favorite with limits on time, bytes and simultaneous reads. |
 | `worldmedia_stream_probe.py` | A short, bounded look at two radio streams for **Pick the best stream: Auto (verified)**: what each says about itself (format, bitrate, name, song title); nothing is decoded or kept. |
 | `worldmedia_processor.py` | The app's processor use (its own and its window's processes, as a share of the whole processor), read only when the Visualizer asks at Balanced or High. |
 | `src/lib/capture-client.js` | Authenticated control client and frontend relay lifecycle. |
@@ -204,6 +210,21 @@ WorldMediaWindows/
 | `src/` | Vite frontend source. |
 | `src/lib/media-capabilities.js` | Pure download/record capability and manifest-delivery resolver. |
 | `src/lib/eq-store.js` | Versioned global, favorite, and custom-preset EQ persistence contract. |
+| `src/lib/eq-curve.js` | Normalizes preamp, band gain and Q for playback, presets and recording. |
+| `src/lib/eq-stations.js` | Collects stations from Favorites and My Playlists for batch EQ assignment. |
+| `src/lib/media-parts.js` | Loads audio tracks and chapters and builds the playback and download information for the selected part. |
+| `src/lib/part-resume.js` | Keeps the saved track or chapter and playback position for audio items. |
+| `src/lib/picture-panel.js` | Connects the Picture controls to the current video and saves the selected look and fit. |
+| `src/lib/picture-settings.js` | Stores picture settings for all video or a saved channel and applies color and fit to video. |
+| `src/lib/profile-storage.js` | Lists the browser keys copied to the saved profile and checks the shared size limit. |
+| `src/lib/station-stream-addresses.js` | Stores and reads edited main and backup stream addresses for saved stations. |
+| `src/lib/station-stream-edit.js` | Checks station ownership and validates new addresses before saving an edit. |
+| `src/lib/top-tabs.js` | Applies **Tabs shown** and falls back to Library when the active tab is hidden. |
+| `src/modes/library/favorite-title-scheduler.js` | Queues and refreshes song title reads for visible radio Favorites. |
+| `src/modes/library/favorite-titles.js` | Shows song and performer on Favorites cards and the station text in a tooltip. |
+| `src/modes/library/stream-addresses.js` | The **Stream address...** form for editing a station and ordering its backups. |
+| `src/visualizer/dev-flags.js` | Reads Visualizer diagnostic switches when the tab opens. |
+| `src/visualizer/flight-shading.js` | Adjusts the shading for DIFS Tunnel Flight and Hypercomplex Slice Flight. |
 | `src/lib/recording-profiles.js` | Validated compact, balanced, and high capture-quality profiles. |
 | `frontend/` | Built frontend copied into the portable distribution. |
 | `public/THIRD_PARTY_NOTICES.txt` | Versioned runtime/library notices copied into the packaged localhost frontend. |
@@ -246,6 +267,21 @@ WorldMediaWindows/
 | `tests/about-credits.test.js` | The About page's Visualizer credits, and that `CREDITS.md` and the notices name every borrowed piece. |
 | `tests/helpers/audio-sim.js`, `scene-luminance.js`, `signal-harness.js`, `visualizer-fakes.js` | Test helpers: simulated music for the analyser, a CPU recompute of two scenes' brightness, a clock and timer simulation, and fake graphics, DOM and window objects. |
 | `tests/helpers/visualizer-flash-check.mjs` and `.py`, `visualizer-fx-check.mjs` and `.py`, `visualizer-fx-check-page.js` | Checks run by hand, not by `npm test`: they draw scenes, effects and overlays in Chromium and report the largest frame-to-frame step of light. |
+| `tests/eq-stations.test.js` | Batch EQ assignments and their removal when the last saved station is removed. |
+| `tests/favorite-title-scheduler.test.js` | Song title read limits, refresh timing and cancellation. |
+| `tests/favorite-titles.test.js` | Song and performer text, station tooltips and when Favorites reads titles. |
+| `tests/fixtures/archive-audio-parts.json` | Internet Archive metadata with tracks and alternate files. |
+| `tests/fixtures/librivox-parts.xml` | LibriVox RSS with chapters in playback order. |
+| `tests/library-sidebar.test.js` | Disabled source order, dimming and re-enabling in the Library. |
+| `tests/multi-part-items.test.js` | Track and chapter ordering, resume, auto-advance, detail controls and downloads. |
+| `tests/picture-settings.test.js` | Picture scope, filter and fit, saved settings and live video timeline controls. |
+| `tests/station-stream-addresses.test.js` | Stream address validation, edit controls, failover order and saved profile behavior. |
+| `tests/top-tabs.test.js` | Tab visibility, Library fallback and settings persistence. |
+| `tests/visualizer-release.test.js` | Held scenes, warped dissolves and DIFS Tunnel Flight brightness. |
+| `tests_python/test_part_resume_profile.py` | Track and chapter bookmarks in the extra profile and their removal on cache clear. |
+| `tests_python/test_playlist_export.py` | Export and re-import, unique filenames, skipped items and safe Downloads paths. |
+| `tests_python/test_station_stream_addresses.py` | Stream address validation, saved profile and backups. |
+| `tests_python/test_stream_title.py` | Bounded radio title reads and their cancellation and connection rules. |
 | `screenshots/` | Versioned README and documentation screenshots and short GIF demos. |
 | `build_windows.py` | Builds the signed-runtime portable folder and release ZIP. |
 | `build_single_exe.py` | Builds the classic unsigned one-file `dist\WorldMediaWindows.exe` with the current frontend, icon, and WebView bridge. |
@@ -264,3 +300,5 @@ WorldMediaWindows/
 | `docs/RELEASE_RECORD_0.1.15.md` | What was checked for v0.1.15, with artifact hashes and limits. |
 | `docs/RELEASE_NOTES_0.1.16.md` | GitHub release notes for the `v0.1.16` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.16.md` | What was checked for v0.1.16, with artifact hashes and limits. |
+| `docs/RELEASE_NOTES_0.1.17.md` | GitHub release notes for the `v0.1.17` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.17.md` | What was checked for v0.1.17, with artifact sizes and hashes. |

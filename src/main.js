@@ -30,6 +30,7 @@ import { playClock } from './lib/play-clock.js';
 import { initPersistenceNotice } from './lib/persistence-notice.js';
 import { initPlaylistDrop } from './lib/playlist-drop.js';
 import { loadStationImages } from './lib/station-images.js';
+import { selectTopTab, syncTopTabs } from './lib/top-tabs.js';
 
 const MODES = {
   library: renderLibrary,
@@ -65,14 +66,8 @@ function syncMediaPriority(active) {
 }
 
 function setMode(mode) {
-  if (!(mode in MODES)) return;
+  if (!selectTopTab(mode, getState().settings, document.querySelectorAll('.mode-btn'))) return;
   setStateMode(mode);
-  for (const btn of document.querySelectorAll('.mode-btn')) {
-    const active = btn.dataset.mode === mode;
-    btn.classList.toggle('is-active', active);
-    if (active) btn.setAttribute('aria-current', 'page');
-    else btn.removeAttribute('aria-current');
-  }
   const host = document.getElementById('view-host');
   host.innerHTML = '';
   host.dataset.mode = mode;
@@ -157,15 +152,21 @@ async function boot() {
   const state = getState();
   syncCatalogSourceSettings(state.settings);
   syncTechnicalDetails(state.settings);
+  const modeButtons = document.querySelectorAll('.mode-btn');
+  const startMode = syncTopTabs(state.settings, modeButtons, state.settings.defaultMode);
   if (!unbindCatalogSettings) {
     unbindCatalogSettings = subscribe('settings-change', syncCatalogSourceSettings);
     subscribe('settings-change', syncTechnicalDetails);
+    subscribe('settings-change', (settings) => {
+      const { mode } = getState();
+      const visible = syncTopTabs(settings, modeButtons, mode);
+      if (visible !== mode) setMode(visible);
+    });
   }
   if (!unbindMediaPriority) {
     syncMediaPriority(false);
     unbindMediaPriority = subscribe('media-priority-change', syncMediaPriority);
   }
-  const startMode = state.settings.defaultMode || 'library';
   setMode(startMode);
 }
 

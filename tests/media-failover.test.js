@@ -60,6 +60,27 @@ test('two endpoint attempts race and the reachable winner becomes the recording 
   assert.deepEqual(expired, ['dead_media_1234567890']);
 });
 
+test('a lone TV backup uses audio only when its relay confirms plain audio', async () => {
+  const item = tvItem();
+  const backup = 'https://backup.example/live.mp3';
+  item._extra.streamCandidates = [{ url: backup }];
+  for (const [status, contentType, expectedKind] of [
+    [206, 'audio/mpeg; charset=binary', 'audio'],
+    [206, 'application/octet-stream', 'video'],
+    [206, 'video/mp4', 'video'],
+    [416, 'text/plain', 'video'],
+  ]) {
+    const relay = await connectMediaRelay(item, {
+      skipUrls: [item.stream_url],
+      registerImpl: async () => ({ relay_url: '/api/v1/media/backup' }),
+      fetchImpl: async () => new Response(null, { status, headers: { 'Content-Type': contentType } }),
+    });
+    assert.equal(relay.relay_url, '/api/v1/media/backup');
+    assert.equal(playedStream(item).url, backup);
+    assert.equal(playedStream(item).kind, expectedKind, contentType);
+  }
+});
+
 test('HLS preflight reaches a segment and rejects a playlist whose media is dead', async () => {
   const calls = [];
   const fetchImpl = async (path) => {

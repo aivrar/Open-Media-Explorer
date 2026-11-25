@@ -38,7 +38,9 @@ export function cleanBitrate(value) {
  *  anything but letters, digits and a few joiners, and cut to a short length. */
 export function cleanCodec(value) {
   if (typeof value !== 'string') return '';
-  const parts = value.toUpperCase().split(/[,;/|]/)
+  const label = value.toUpperCase().trim();
+  if (NOT_AUDIO_CODEC.test(label)) return '';
+  const parts = label.split(/[,;/|]/)
     .map((part) => part.replace(/\s+/g, ' ').trim())
     .filter((part) => part && !NOT_AUDIO_CODEC.test(part));
   for (const part of parts) {
@@ -72,12 +74,30 @@ export function isHlsFlag(value) {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
-/** One short label from cleaned parts: "MP3 \u00B7 128 kbps", "MP3",
- *  "128 kbps", or '' when nothing is known. HLS stands in for an unknown format. */
-export function formatStreamQuality({ bitrate = 0, codec = '', hls = false } = {}) {
+/** Display a bitrate with up to three significant digits. */
+export function formatStreamBitrate(bitrate, { hls = false, compact = false } = {}) {
   const kbps = cleanBitrate(bitrate);
-  const format = cleanCodec(codec) || (hls === true ? 'HLS' : '');
-  return [format, kbps ? `${kbps} kbps` : ''].filter(Boolean).join(' \u00B7 ');
+  if (!kbps) return '';
+  const useMbps = hls && kbps >= 1000;
+  const amount = useMbps ? kbps / 1000 : kbps;
+  const unit = useMbps ? (compact ? 'M' : ' Mbps') : (compact ? 'k' : ' kbps');
+  return `${Number(amount.toPrecision(3))}${unit}`;
+}
+
+/** A short label from directory data or a rendition's advertised bandwidth. */
+export function formatStreamQuality({
+  bitrate = 0, codec = '', hls = false, videoCodec = '', width = 0, height = 0, frameRate = 0,
+} = {}) {
+  const audio = cleanCodec(codec);
+  const bandwidth = formatStreamBitrate(bitrate, { hls });
+  if (width && height) {
+    const resolution = width * 9 === height * 16 ? height + 'p' : width + 'x' + height;
+    return [hls ? 'HLS' : '', resolution, frameRate ? frameRate + ' fps' : '', videoCodec, bandwidth]
+      .filter(Boolean).join(' \u00B7 ');
+  }
+  const format = hls ? [videoCodec, audio].filter(Boolean).join(' + ') : audio;
+  return [hls ? 'HLS' : '', format, bandwidth && hls && videoCodec ? `${bandwidth} total` : bandwidth]
+    .filter(Boolean).join(' \u00B7 ');
 }
 
 /** The label for an item, from what its adapter kept in `_extra`. */

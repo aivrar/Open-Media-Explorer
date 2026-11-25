@@ -48,8 +48,12 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   const previous = {
     document: globalThis.document, window: globalThis.window, storage: globalThis.localStorage,
     navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator'),
+    fetch: globalThis.fetch,
   };
+  let player;
   t.after(() => {
+    player?.stop();
+    globalThis.fetch = previous.fetch;
     globalThis.document = previous.document;
     globalThis.window = previous.window;
     globalThis.localStorage = previous.storage;
@@ -69,11 +73,31 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   emitVolumeChanges(audio);
   emitVolumeChanges(video);
 
-  const player = await import(`../src/lib/player.js?sleepFade=${Date.now()}`);
+  globalThis.fetch = async (path) => {
+    let data;
+    if (path === '/api/v1/session') data = { token: 'sleep-fade-test' };
+    else if (path === '/api/v1/media/register') {
+      data = { media_id: 'sleep_fade_video', relay_url: '/api/v1/media/sleep_fade_video' };
+    } else if (path === '/api/v1/media/sleep_fade_video/expire') data = { expired: true };
+    else assert.fail('Unexpected request: ' + path);
+    return Response.json({ ok: true, data });
+  };
+  player = await import(`../src/lib/player.js?sleepFade=${Date.now()}`);
   const { initSleepTimer } = await import(`../src/lib/sleep-timer.js?sleepFade=${Date.now()}`);
-  const { loadVolume } = await import('../src/lib/state.js');
+  const { loadVolume, subscribe } = await import('../src/lib/state.js');
   player.initPlayer();
   initSleepTimer();
+  await player.playItem({
+    id: 'playlist:sleep-video', source: 'playlist', title: 'Test video', type: 'video',
+    delivery: 'on-demand', stream_kind: 'video', stream_url: 'https://media.example/test.mp4',
+    _extra: { streamCandidates: [] },
+  });
+  await flush();
+  assert.equal(video.paused, false);
+  assert.equal(audio.paused, true);
+  const silenceChanges = [];
+  const unsubscribe = subscribe(player.PLAYER_SILENT_CHANGE, (silent) => silenceChanges.push(silent));
+  t.after(unsubscribe);
   const group = elements['player-volume-control'];
   const choose = (value) => { select.value = value; select.dispatchEvent(new Event('change')); };
   const key = (name) => group.dispatchEvent(Object.assign(new Event('keydown', { cancelable: true }), { key: name }));
@@ -87,6 +111,28 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   await flush();
   shows(80, 'start');
 
+  key('Home');
+  await flush();
+  shows(0, 'compact volume at zero');
+  assert.equal(player.isPlayerSilent(), true);
+  elements['player-volume-up'].dispatchEvent(new Event('click'));
+  await flush();
+  shows(1, 'compact volume raised from zero');
+  assert.equal(player.isPlayerSilent(), false);
+  elements['player-mute'].dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(player.isPlayerSilent(), true);
+  elements['player-mute'].dispatchEvent(new Event('click'));
+  await flush();
+  assert.equal(player.isPlayerSilent(), false);
+  video.volume = 0;
+  await flush();
+  shows(0, 'native video volume at zero');
+  video.volume = 0.8;
+  await flush();
+  shows(80, 'native video volume restored');
+  assert.deepEqual(silenceChanges.splice(0), [true, false, true, false, true, false]);
+
   // 1. Sleep in 1 minute; the fade starts 10 s before the end.
   choose('1');
   t.mock.timers.tick(50_000);
@@ -95,8 +141,26 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   assert.equal(audio.dataset.preFadeVol, '0.8');
   assert.ok(Math.abs(audio.volume - 0.64) < 1e-9, `fading: ${audio.volume}`);
   shows(80, 'the fade is not the user\'s volume');
-  // The user turns it down to 50 while it fades.
-  key('PageDown'); key('PageDown'); key('PageDown');
+  key('Home');
+  await flush();
+  shows(0, 'Home changes the saved level during the fade');
+  assert.equal(player.isPlayerSilent(), false, 'the active video is still at the fade level');
+  assert.deepEqual(silenceChanges, [], 'ordinary fade steps and changing the saved level emit nothing');
+
+  video.volume = 0;
+  await flush();
+  assert.ok(audio.volume > 0, 'the inactive audio element still has volume');
+  assert.equal(player.isPlayerSilent(), true);
+  video.volume = 0.003;
+  await flush();
+  shows(0, 'native volume during the fade leaves the saved level alone');
+  assert.equal(player.isPlayerSilent(), false, 'any positive volume on the active video is audible');
+  video.volume = 0.25;
+  await flush();
+  assert.deepEqual(silenceChanges.splice(0), [true, false], 'only crossing effective zero changes silence');
+
+  // The user sets the saved level to 50 while it fades.
+  player.setVolume(50);
   await flush();
   shows(50, 'set during the fade');
   assert.equal(audio.dataset.preFadeVol, '0.5');
@@ -132,20 +196,21 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   choose('0');
   await flush();
   shows(50, 'second cancel');
+  assert.deepEqual(silenceChanges.splice(0), [true, false], 'native mute and unmute reach shared listeners');
 
   // 3. A fade that runs to its end: playback stops, the volume comes back,
   // and the store and the saved volume are as they were.
-  await audio.play();
-  assert.equal(audio.paused, false);
+  assert.equal(video.paused, false);
   choose('1');
   t.mock.timers.tick(50_000); // the fade begins
   t.mock.timers.tick(10_000); // and runs out
   await flush();
   assert.equal(select.value, '0');
-  assert.equal(audio.paused, true);
+  assert.equal(video.paused, true);
   assert.equal(audio.dataset.preFadeVol, undefined);
   assert.equal(audio.volume, 0.5);
   assert.equal(video.volume, 0.5);
   shows(50, 'after the fade ran out');
+  assert.deepEqual(silenceChanges, [], 'the volume is restored at fade completion');
   assert.equal(elements['player-mute'].getAttribute('aria-pressed'), 'false');
 });

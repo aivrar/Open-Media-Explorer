@@ -36,9 +36,11 @@ import {
 } from './hls-recovery.js';
 import { isContentAllowed } from './content-rating.js';
 import { expectsPicture, hasPicture } from './video-picture.js';
+import { bindPicturePanel } from './picture-panel.js';
 import { createNowPlayingPoller, NOW_PLAYING_EVENT, songLine } from './now-playing.js';
-import { playedQualityLabel } from './stream-quality.js';
-import { createPlayedStreamNote } from './played-streams.js';
+import { formatStreamQuality, playedQualityLabel } from './stream-quality.js';
+import { stationStreamAddresses } from './station-stream-addresses.js';
+import { createPlayedStreamNote, streamFactsFromHlsLevel } from './played-streams.js';
 import { favoriteName } from './favorite-names.js';
 import { bestStreamOn } from './best-stream.js';
 import {
@@ -49,14 +51,21 @@ import { createStartWatch, START_FAILOVER_MS, untriedStreams } from './start-fai
 import { verifiedLabel } from './stream-verify.js';
 import { MEDIA_ADVANCING_EVENT, playClock } from './play-clock.js';
 import { createStartOutcome, startFailureKind } from './did-not-play.js';
+import { hasPartsSource, itemForPart, loadParts, partLabel, resumablePart } from './media-parts.js';
+import { partResumeGeneration, readPartResume, rememberPartResume } from './part-resume.js';
+
+export const PLAYER_SILENT_CHANGE = 'player-silent-change';
 
 let Hls = null;
 let hlsInstance = null;
 let hlsRecoverySession = null;
 let dashSession = null;
 let currentItem = null;
+let partPlayback = null;
+let pendingPartResume = null;
 let bar = null;
 let elements = null;
+let playerSilent = false;
 let playbackProblem = null;
 let pendingPlay = null;
 let mediaPriorityActive = false;
@@ -74,7 +83,7 @@ const startWatch = createStartWatch({
     startOutcome.handOver(item.id);
     // Never inside the callback that reported the failure (hls.js, dash.js).
     queueMicrotask(() => {
-      if (token === playToken && currentItem?.id === item.id) playNextStreams(item, tried);
+      if (token === playToken && currentItem?.id === item.id && streamAddressesCurrent()) playNextStreams(item, tried);
     });
   },
 });
@@ -107,10 +116,7 @@ const audioSignal = createAudioSignal({
     // Muted or turned all the way down (by hand or a sleep-timer fade): the
     // meter rests. Both elements are muted and set together (setMuted,
     // setVolume); a volumechange on either calls refresh() (initPlayer).
-    isAudible: () => {
-      const el = playback.activeElement || elements?.audio;
-      return !el || (!el.muted && el.volume > 0);
-    },
+    isAudible: () => !isPlayerSilent(),
     // The volume the tap hears the sound at (it is after the element's
     // volume); read once per frame, so the visualizer can make up for it.
     getVolume: () => {
@@ -162,6 +168,9 @@ function releaseRelay(graceSeconds = 0) {
 function newPlaySession(token) {
   return {
     token,
+    addressSignature: '',
+    orderedAddresses: false,
+    candidate: null,
     played: false, // the playhead really moved forward 1 s after a `playing` event
     lastTime: null, // playhead at the last sample; null until `playing`
     lastSampleAt: 0, // wall-clock time of that sample
@@ -170,15 +179,27 @@ function newPlaySession(token) {
     duration: undefined, // last known duration; NaN (unknown) is never stored
     lengthGrowth: null, // the lengths reported in this start (trackLengthGrowth)
     unbounded: false, // the duration was Infinity at some point of this start
+    hlsLevel: null,
+    hasVideoTrack: null,
     hlsLive: null, // hls.js playlist type, once known
     stopReason: '', // a failure that must end an auto-reconnect episode
     userPaused: false, // the user paused while the first play() was pending
+    sleepExpired: false,
   };
 }
 let playSession = newPlaySession(0);
 
+function streamAddressesCurrent() {
+  return JSON.stringify(stationStreamAddresses(currentItem)) === playSession.addressSignature;
+}
+
+function activeStreamKind() {
+  return playSession.candidate?.kind || currentItem?.stream_kind;
+}
+
 // Auto-reconnect for live streams that drop after playing (see live-resume.js).
 let reconnectItem = null;
+let reconnectTried = new Set();
 let reconnectStatus = '';
 let reconnectEpoch = 0; // bumped by every cancel, so queued work can tell
 let queuedFailureToken = 0; // the play session whose failure is being queued
@@ -194,7 +215,7 @@ const liveResume = createLiveResume({
   onRecovered: () => {
     reconnectItem = null;
     reconnectStatus = '';
-    // A stream that froze silently during the episode emits no timeupdate.
+    // The ordinary stall watchdog resumes after reconnect probation.
     watchForStall();
   },
   setTimer: (fn, delay) => setTimeout(fn, delay),
@@ -202,15 +223,15 @@ const liveResume = createLiveResume({
   now: () => Date.now(),
 });
 
-// A plain live stream can freeze with no error, `ended` or `waiting`. While it
-// should be playing, a playhead that stands still for 20 s counts as a lost
-// connection. HLS has its own progress watchdog in hls-recovery.js.
+// Watch started chapters and plain live streams for a frozen playhead.
+// HLS has its own progress watchdog in hls-recovery.js.
 let stallWatchToken = 0;
 const stallWatchdog = createStallWatchdog({
   read: () => stallWatchState(),
   onStall: () => {
     if (stallWatchToken !== playToken || !stallWatchState().eligible) return;
-    failPlayback('Playback error');
+    if (partPlayback) failPlayback('This part stopped loading. Press Play to retry.', { showNext: false, retry: true });
+    else failPlayback('Playback error');
   },
   setTimer: (fn, delay) => setTimeout(fn, delay),
   clearTimer: (timer) => clearTimeout(timer),
@@ -218,7 +239,7 @@ const stallWatchdog = createStallWatchdog({
 });
 
 function plainLiveStream() {
-  const kind = currentItem?.stream_kind;
+  const kind = activeStreamKind();
   return (kind === 'audio' || kind === 'video') && !hlsInstance && !dashSession
     && playSession.played && isLiveMedia({
       delivery: currentItem.delivery,
@@ -238,7 +259,7 @@ const playedStreamNote = createPlayedStreamNote();
 const nowPlaying = createNowPlayingPoller({
   onChange: (state) => onSongChange(state),
   onStream: ({ itemId, stream }) => {
-    if (itemId && itemId === currentItem?.id) playedStreamNote.heard(itemId, stream);
+    if (itemId && itemId === currentItem?.id && streamAddressesCurrent()) playedStreamNote.heard(itemId, stream);
   },
   now: () => Date.now(),
 });
@@ -249,7 +270,7 @@ let metadataBeforeSong = null;
 function songTitleEligible() {
   const el = playback.activeElement;
   return Boolean(elements && currentItem && activeRelayId && activePlaybackRelayed
-    && el === elements.audio && currentItem.stream_kind === 'audio'
+    && el === elements.audio && activeStreamKind() === 'audio'
     && !hlsInstance && !dashSession && !el.paused && !el.ended && !playbackProblem
     && playSession.token === playToken && !reconnectPending()
     && isLiveMedia({
@@ -319,7 +340,7 @@ function stallWatchState() {
   const eligible = Boolean(el && currentItem && stallWatchToken === playToken
     && playSession.token === playToken && !el.paused && !el.ended
     && !playSession.seeking && !playbackProblem && !liveResume.active
-    && plainLiveStream());
+    && (partPlayback ? partPlayback.started : plainLiveStream()));
   return { eligible, position: el ? Number(el.currentTime) : Number.NaN };
 }
 
@@ -363,6 +384,13 @@ function bindElements() {
     iconPlay: $('icon-play'),
     iconPause:$('icon-pause'),
     stop:     $('player-stop'),
+    previousPartSlot: $('player-previous-part-slot'),
+    nextPartSlot: $('player-next-part-slot'),
+    previousPart: $('player-previous-part'),
+    nextPart: $('player-next-part'),
+    resumeActions: $('player-resume-actions'),
+    resumePart: $('player-resume-part'),
+    startOver: $('player-start-over'),
     seek:     $('player-seek'),
     time:     $('player-time'),
     dur:      $('player-dur'),
@@ -412,27 +440,76 @@ function bindVideoSizeButton() {
   syncVideoSize();
 }
 
-// True while a stream is playing through the <video> element. Audio-only
-// HLS/DASH (some radio stations) also plays there, so the square is only shown
-// for radio and audio items once the stream reports a picture.
-let pictureStream = false;
+let setPictureItem = () => {};
 
 function syncVideoPicture() {
+  const pictureStream = getActiveEl() === elements.video;
   if (pictureStream && hasPicture(elements.video)) showVideo(true);
 }
 
+// A visible box counts once, even if metadata or a fullscreen change
+// reports the picture again. The reservation itself survives the gaps.
+let tunerVideoHandled = false;
+// An explicit Radio selection takes precedence over a TV stream still open.
+let tunerRadioSelected = false;
+
+function reserveTunerVideoSpace() {
+  if (tunerVideoHandled || elements.video.hidden || getState().mode !== 'tuner') return;
+  tunerVideoHandled = true;
+  if (!tunerRadioSelected && expectsPicture(currentItem)) $('app')?.classList.add('tuner-video-reserved');
+}
+
+function releaseTunerVideoSpace() {
+  tunerVideoHandled = !elements.video.hidden;
+  $('app')?.classList.remove('tuner-video-reserved');
+}
+
+export function setTunerVideoBand(band) {
+  tunerRadioSelected = band === 'radio';
+  if (tunerRadioSelected) releaseTunerVideoSpace();
+}
+
 function bindVideoPicture() {
+  subscribe('mode-change', reserveTunerVideoSpace);
+  subscribe(MEDIA_ADVANCING_EVENT, (advancing) => {
+    if (advancing && currentItem && (getActiveEl() === elements.audio || !expectsPicture(currentItem))) {
+      releaseTunerVideoSpace();
+    }
+  });
   elements.video.addEventListener?.('loadedmetadata', syncVideoPicture);
   elements.video.addEventListener?.('resize', syncVideoPicture);
+  const app = $('app');
+  if (app && typeof ResizeObserver === 'function') {
+    new ResizeObserver(([entry]) => {
+      // Keep the windowed height so the page keeps its scroll position.
+      if (document.fullscreenElement) return;
+      app.style.setProperty('--video-height', `${entry.borderBoxSize[0].blockSize}px`);
+    }).observe(elements.video, { box: 'border-box' });
+  }
+}
+
+function noteHlsAudio() {
+  if (!streamAddressesCurrent()) return;
+  const facts = hlsInstance ? streamFactsFromHlsLevel(playSession.hlsLevel, { audioOnly: true }) : { hls: true };
+  if (facts) playedStreamNote.heard(currentItem?.id, facts, playSession.candidate?.url);
+}
+
+function syncVideoTrack(video) {
+  const hasVideoTrack = hasPicture(video);
+  if (hasVideoTrack || hasVideoTrack !== playSession.hasVideoTrack) {
+    playedStreamNote.renditionChanged();
+    playSession.hasVideoTrack = hasVideoTrack;
+    if (!hasVideoTrack && activeStreamKind() === 'hls') noteHlsAudio();
+  }
 }
 
 function showVideo(show) {
   elements.video.hidden = !show;
-  // Tell the rest of the UI a video overlay is on-screen, so anything that
-  // ends near the bottom-right (the library detail panel, mainly) can
-  // reserve some bottom padding so its text doesn't slide under the video.
-  const app = document.getElementById('app');
-  if (app) app.classList.toggle('has-video', !!show);
+  setPictureItem(show ? currentItem : null);
+  if (!show) elements.video.classList.remove('is-live-video');
+  $('app')?.classList.toggle('has-video', !!show);
+  if (show) reserveTunerVideoSpace();
+  else tunerVideoHandled = false;
 }
 
 function getActiveEl() {
@@ -523,26 +600,22 @@ function listedLive(delivery, type) {
  *    VOD or ended list) or dash.js (static). Played directly (`direct`: no
  *    hls.js, no dash.js; a playlist entry listed as a station may point at a
  *    plain MP3), it is a recording once the element reports a finite length
- *    that is not growing; an unknown or endless length (now, or earlier in
- *    this start) or one that keeps growing (LIVE_GROWTH) keeps it live.
- * 3. Any other item: what hls.js or dash.js say, else an endless length (now,
- *    or earlier in this start), else a length that keeps growing with the
- *    clock (LIVE_GROWTH).
+ *    that is not growing. Native HLS can report a complete recording once
+ *    it offers a seekable range with a finite duration.
+ * 3. Any other item: what the HLS or DASH player reports, else an endless
+ *    length or a length that keeps growing with the clock (LIVE_GROWTH).
  * A length not known yet gives no seek bar in any case.
  */
 export function mediaTimeline({
-  duration, delivery = '', type = '', hlsLive = null, dashLive = null, unbounded = false, durationGrowing = false,
+  duration, delivery = '', type = '', hlsLive = null, dashLive = null, durationGrowing = false,
   direct = false,
 } = {}) {
   let live;
   if (delivery === 'on-demand') live = false;
-  else if (listedLive(delivery, type)) {
-    if (hlsLive === false || dashLive === false) live = false;
-    else if (direct === true) live = !hasSeekableLength(duration) || unbounded === true || durationGrowing === true;
-    else live = true;
-  } else if (typeof hlsLive === 'boolean') live = hlsLive;
+  else if (typeof hlsLive === 'boolean') live = hlsLive;
   else if (typeof dashLive === 'boolean') live = dashLive;
-  else live = duration === Number.POSITIVE_INFINITY || unbounded === true || durationGrowing === true;
+  else if (listedLive(delivery, type)) live = !direct || !hasSeekableLength(duration) || durationGrowing;
+  else live = duration === Number.POSITIVE_INFINITY || durationGrowing;
   return { live, seekable: !live && hasSeekableLength(duration) };
 }
 
@@ -578,16 +651,18 @@ function setMediaAdvancing(next) {
 /** Whether the media advances now (see setMediaAdvancing). */
 export function isMediaAdvancing() { return mediaAdvancing; }
 
-// Whether the bar treats the current item's media as a recording (not live),
-// by the same decision as its seek bar (mediaTimeline). Published as
-// 'media-timeline' so the record status does not call a recording live.
-let timelineNote = { itemId: '', recording: false };
+// Only observed evidence changes delivery. In particular, an unknown
+// duration can look live in the controls while capture is still checking.
+let timelineNote = null;
 
-function noteTimeline(recording) {
+function noteTimeline(delivery = 'unknown') {
   const itemId = currentItem?.id || '';
-  if (timelineNote.itemId === itemId && timelineNote.recording === recording) return;
-  timelineNote = { itemId, recording };
-  emit('media-timeline', { ...timelineNote });
+  const session = playToken;
+  const stream = playSession.candidate;
+  if (timelineNote?.session === session && timelineNote.stream === stream
+      && timelineNote.delivery === delivery) return;
+  timelineNote = { session, stream, delivery };
+  emit('media-timeline', { itemId, delivery });
 }
 
 /** The only writer of global playback state, play/pause affordances, and seek UI. */
@@ -617,21 +692,32 @@ function syncPlaybackUi(reason = 'sync') {
   // back on every station change, for example each step of the Tuner dial.
   const switching = Boolean(currentItem && !hasSource && !playbackProblem);
   elements.play.hidden = !currentItem || (!hasSource && !canRetry && !switching);
-  elements.play.disabled = !hasSource && !canRetry;
+  elements.play.disabled = Boolean(pendingPartResume || (!hasSource && !canRetry));
+  syncPartControls();
 
+  let liveVideo = false;
   if (el) {
+    const dashLive = dashLiveNow();
+    const nativeHls = !hlsInstance && activeStreamKind() === 'hls';
+    const hlsLive = nativeHls && hasSeekableLength(el.duration)
+      ? !el.seekable?.length : playSession.hlsLive;
     const timeline = mediaTimeline({
       duration: el.duration,
       delivery: currentItem?.delivery,
       type: currentItem?.type,
-      hlsLive: playSession.hlsLive,
-      dashLive: dashLiveNow(),
-      unbounded: playSession.unbounded,
+      hlsLive,
+      dashLive,
       durationGrowing: playSession.lengthGrowth?.growing === true,
       // Played by the element itself: no hls.js or dash.js to say live or not.
       direct: !hlsInstance && !dashSession,
     });
-    noteTimeline(!timeline.live);
+    liveVideo = el === elements.video && !el.hidden && timeline.live;
+    const manifestLive = hlsLive ?? dashLive;
+    if (manifestLive != null) noteTimeline(manifestLive ? 'live' : 'on-demand');
+    else if (el.duration === Infinity || playSession.lengthGrowth?.growing) noteTimeline('live');
+    else if (!hlsInstance && !dashSession && (hasSeekableLength(el.duration) || hasSeekableLength(playSession.duration))) {
+      noteTimeline('on-demand');
+    } else noteTimeline();
     // Live: the time played, never the stream's own position.
     elements.time.textContent = fmtTime(timeline.live ? playedSeconds() : el.currentTime);
     const withLength = timeline.seekable;
@@ -677,7 +763,8 @@ function syncPlaybackUi(reason = 'sync') {
     elements.seek.disabled = true;
     elements.seek.value = '0';
   }
-  if (!el) noteTimeline(false);
+  if (!el) noteTimeline();
+  elements.video.classList.toggle('is-live-video', liveVideo);
 
   const mediaSession = globalThis.navigator?.mediaSession;
   if (mediaSession && 'playbackState' in mediaSession) {
@@ -744,7 +831,7 @@ function reconnectPending(item = currentItem) {
  *  one that is already inside an episode. A station that never started keeps
  *  today's immediate broken state. */
 function shouldReconnect() {
-  if (!currentItem) return false;
+  if (!currentItem || partPlayback) return false;
   if (reconnectingCurrentItem()) return true;
   return playSession.token === playToken && playSession.played && isLiveMedia({
     delivery: currentItem.delivery,
@@ -758,6 +845,7 @@ function failPlayback(msg, options = {}) {
   if (!shouldReconnect()) {
     // Listed and Auto: a stream that never played; the next streams get a turn.
     if (startWatch.failed(playToken)) return;
+    rememberCurrentPart();
     showBrokenState(msg, options);
     // A start that never played (a stream that played already ended its
     // start's watch, so this changes nothing for it). Unreachable unless its
@@ -789,6 +877,7 @@ function failPlayback(msg, options = {}) {
     if (!reconnectingCurrentItem()) {
       liveResume.cancel();
       reconnectItem = currentItem;
+      reconnectTried = new Set();
     }
     liveResume.failed();
   });
@@ -909,7 +998,10 @@ function startProgressSample(el) {
  *  against the wall-clock time since the previous sample, so throttled
  *  timeupdate events (a minimised window) still count. */
 function notePlaybackProgress(el) {
-  if (playSession.played || playSession.lastTime == null || playSession.seeking) return;
+  if (playSession.lastTime == null || playSession.seeking || el.paused || el.ended) return;
+  const reconnecting = reconnectingCurrentItem();
+  const videoFacts = el === elements.video && hasPicture(el);
+  if (playSession.played && !reconnecting && !hlsInstance && !videoFacts) return;
   const time = Number(el.currentTime);
   if (!Number.isFinite(time)) return;
   const sampledAt = Date.now();
@@ -917,18 +1009,25 @@ function notePlaybackProgress(el) {
   const elapsed = Math.max(0, sampledAt - playSession.lastSampleAt) / 1000;
   playSession.lastTime = time;
   playSession.lastSampleAt = sampledAt;
-  if (step > 0 && step <= elapsed + PROGRESS_SLACK_SECONDS) {
-    playSession.progressed += step;
-    // Listed and Auto: it began; the start watch's confirm window runs.
-    startWatch.moved(playToken);
-  }
+  if (step <= 0 || step > elapsed + PROGRESS_SLACK_SECONDS) return;
+  if (reconnecting) liveResume.noteProgress(step * 1000);
+  if (videoFacts && streamAddressesCurrent()) {
+    const rendition = dashSession ? dashSession.videoRepresentation() : playSession.hlsLevel;
+    playedStreamNote.videoProgress(currentItem?.id, playSession.candidate?.url, el, activeStreamKind(),
+      rendition, Math.min(step, elapsed) * 1000);
+  } else if (hlsInstance && !videoFacts) playedStreamNote.progress(step * 1000);
+  if (playSession.played) return;
+  playSession.progressed += step;
+  // Listed and Auto: it began; the start watch's confirm window runs.
+  startWatch.moved(playToken);
   if (playSession.progressed >= 1) {
     playSession.played = true;
     startWatch.end();
-    // It plays: a "Did not play last time" mark goes.
-    startOutcome.played(currentItem?.id);
-    // ...and what the stream said it is may be remembered.
-    playedStreamNote.played(currentItem?.id);
+    if (streamAddressesCurrent()) {
+      // It plays: forget an earlier failure and remember the stream facts.
+      startOutcome.played(currentItem?.id);
+      playedStreamNote.played(currentItem?.id);
+    }
   }
 }
 
@@ -977,6 +1076,66 @@ function unbindMediaEvents(el) {
   mediaEventBindings.delete(el);
 }
 
+function selectPart(parts, index, position, epoch) {
+  partPlayback = {
+    parts, index, position, epoch, seekPending: position > 0,
+    started: false, finished: false, savedAt: -Infinity,
+  };
+}
+
+function remembersPart(item, parts) {
+  return parts.length > 1 || item.source === 'librivox';
+}
+
+function rememberCurrentPart(el = getActiveEl(), { force = true } = {}) {
+  const part = partPlayback;
+  if (!part?.started || part.seekPending || part.finished || playbackProblem || !el
+      || !remembersPart(currentItem, part.parts)) return;
+  const seconds = el.currentTime;
+  if (!Number.isFinite(seconds) || seconds < 0) return;
+  part.position = seconds;
+  const now = Date.now();
+  if (!force && now - part.savedAt < 15_000) return;
+  part.savedAt = now;
+  rememberPartResume(currentItem.id, part.parts[part.index].key, seconds, part.epoch);
+}
+
+function finishPart(el) {
+  const part = partPlayback;
+  if (!part || part.finished || !el.ended || !part.started) return;
+  part.finished = true;
+  const index = part.index + 1;
+  const next = part.parts[index];
+  if (remembersPart(currentItem, part.parts)) {
+    rememberPartResume(currentItem.id, next?.key, 0, part.epoch);
+  }
+  const sleepDeadline = getState().sleepTimer.until;
+  if (next && !playSession.sleepExpired && (sleepDeadline == null || Date.now() < sleepDeadline)) {
+    playItem(currentItem, { parts: part.parts, index, epoch: part.epoch }).catch(() => {});
+  }
+}
+
+function syncPartControls() {
+  const selection = partPlayback;
+  const multi = Boolean(selection && selection.parts.length > 1);
+  if (elements.previousPartSlot) elements.previousPartSlot.hidden = !multi;
+  if (elements.nextPartSlot) elements.nextPartSlot.hidden = !multi;
+  if (elements.previousPart) {
+    elements.previousPart.hidden = !multi;
+    elements.previousPart.disabled = !multi || selection.index === 0;
+    elements.nextPart.hidden = !multi;
+    elements.nextPart.disabled = !multi || selection.index === selection.parts.length - 1;
+  }
+  if (elements.resumeActions) {
+    const wasHidden = elements.resumeActions.hidden;
+    elements.resumeActions.hidden = !pendingPartResume;
+    if (pendingPartResume) {
+      elements.resumePart.textContent = pendingPartResume.label;
+      if (wasHidden) elements.resumePart.focus?.();
+    }
+  }
+}
+
 function bindMediaEvents(el, generation) {
   unbindMediaEvents(el);
   const owned = (handler) => (event) => {
@@ -985,11 +1144,17 @@ function bindMediaEvents(el, generation) {
   const onTimeUpdate = owned(() => {
     hlsRecoverySession?.noteProgress(el.currentTime);
     notePlaybackProgress(el);
+    rememberCurrentPart(el, { force: false });
     watchForStall();
     syncPlaybackUi('timeupdate');
   });
   const onDurationChange = owned(() => {
     noteDuration(el);
+    const part = partPlayback;
+    if (part?.seekPending && hasSeekableLength(el.duration)) {
+      part.seekPending = false;
+      if (part.position < el.duration) el.currentTime = part.position;
+    }
     syncPlaybackUi('durationchange');
   });
   // The stream delivered data: it answered ("Did not play last time").
@@ -1003,7 +1168,6 @@ function bindMediaEvents(el, generation) {
   // does not count as an interruption of a reconnected stream.
   const onWaiting = owned(() => {
     if (!el.paused && !el.ended) hlsRecoverySession?.noteStalled();
-    liveResume.noteInterrupted();
     syncPlaybackUi('waiting');
     // Buffering: still "playing" for the controls, but no time passes in it.
     setMediaAdvancing(false);
@@ -1015,6 +1179,7 @@ function bindMediaEvents(el, generation) {
     syncPlaybackUi('play');
   });
   const onPlaying = owned(() => {
+    if (partPlayback) partPlayback.started = true;
     setMediaPriority(true);
     // Listed and Auto: the first `playing` of this start (start-failover.js).
     startWatch.playing(playToken);
@@ -1023,10 +1188,7 @@ function bindMediaEvents(el, generation) {
     hlsRecoverySession?.notePlaying();
     if (playSession.lastTime == null) startProgressSample(el);
     noteDuration(el);
-    if (reconnectingCurrentItem()) {
-      reconnectStatus = '';
-      liveResume.notePlaying();
-    }
+    if (reconnectingCurrentItem()) reconnectStatus = '';
     hideBrokenState();
     if (currentItem) setMetaText(currentItem);
     watchForStall();
@@ -1035,7 +1197,7 @@ function bindMediaEvents(el, generation) {
     // Auto (verified): the check waits VERIFY_AFTER_MS of play from the first
     // `playing` of a start, and again after a pause; nothing new when one is
     // already planned for this station.
-    if (currentItem) {
+    if (currentItem && streamAddressesCurrent()) {
       resumeCheck(currentItem, { settings: getState().settings, current: () => currentItem, nowPlaying: getNowPlaying });
     }
   });
@@ -1045,14 +1207,21 @@ function bindMediaEvents(el, generation) {
     stallWatchdog.stop();
     setMediaPriority(false);
     hlsRecoverySession?.notePaused();
-    liveResume.noteInterrupted();
     syncPlaybackUi('pause');
   };
-  const onPaused = owned(pausedNow);
+  const onPaused = owned(() => {
+    rememberCurrentPart(el);
+    pausedNow();
+  });
   const onEnded = owned(() => {
     pausedNow();
+    if (partPlayback) {
+      finishPart(el);
+      return;
+    }
     // A plain live stream (Icecast/MP3) "ends" when its connection closes.
-    const progressive = currentItem?.stream_kind === 'audio' || currentItem?.stream_kind === 'video';
+    const kind = activeStreamKind();
+    const progressive = kind === 'audio' || kind === 'video';
     if (progressive && playSession.unbounded && shouldReconnect()) {
       failPlayback('Playback error');
     }
@@ -1067,7 +1236,16 @@ function bindMediaEvents(el, generation) {
   });
   const bindings = [
     ['timeupdate', onTimeUpdate],
-    ['loadedmetadata', onDurationChange],
+    ['resize', owned(() => {
+      if (el === elements.video) {
+        syncVideoTrack(el);
+        syncPlaybackUi('video-resize');
+      }
+    })],
+    ['loadedmetadata', owned(() => {
+      if (el === elements.video) syncVideoTrack(el);
+      onDurationChange();
+    })],
     ['durationchange', onDurationChange],
     ['loadedmetadata', onData],
     ['loadeddata', onData],
@@ -1077,8 +1255,11 @@ function bindMediaEvents(el, generation) {
     ['pause', onPaused],
     ['ended', onEnded],
     ['seeking', owned(() => noteSeeking(el, true))],
-    ['seeked', owned(() => noteSeeking(el, false))],
-    ['emptied', onPaused],
+    ['seeked', owned(() => {
+      noteSeeking(el, false);
+      rememberCurrentPart(el);
+    })],
+    ['emptied', owned(pausedNow)],
     ['waiting', onWaiting],
     ['stalled', onStalled],
     ['error', onError],
@@ -1092,6 +1273,7 @@ function invalidatePlaybackOwnership() {
   playback.invalidate();
   // The old element's events no longer count, including its `pause`.
   setMediaAdvancing(false);
+  syncPlayerSilence();
   if (!elements) return;
   unbindMediaEvents(elements.audio);
   unbindMediaEvents(elements.video);
@@ -1100,6 +1282,7 @@ function invalidatePlaybackOwnership() {
 function clearMedia(el) {
   try {
     el.pause();
+    el.__seeking = false;
     el.removeAttribute('src');
     el.load();
   } catch (_) {}
@@ -1114,6 +1297,11 @@ function setTitleLine(text) {
 
 function setMetaText(item) {
   setTitleLine(shownTitle(item) || 'Untitled');
+  if (pendingPartResume) {
+    const title = elements.title.textContent;
+    setSourceLine(title, { hover: title, itemLine: true });
+    return;
+  }
   // A reconnect attempt rebuilds the player bar; keep the status visible.
   if (reconnectStatus) {
     setSourceLine(reconnectStatus, { status: true });
@@ -1124,12 +1312,18 @@ function setMetaText(item) {
   // Stream format and bitrate go on hover only, after the normal line: the
   // visible column is too narrow for them.
   // The format and bitrate of the stream that plays, when they are known.
-  const listed = playedQualityLabel(item, playedStream(item));
+  const candidate = playSession.candidate;
+  const listed = playSession.orderedAddresses
+    ? formatStreamQuality({ ...candidate, hls: candidate?.kind === 'hls' })
+    : playedQualityLabel(item, playedStream(item));
   // Auto (verified): said plainly when a verified better stream plays.
   const quality = [listed, verifiedPlaying && currentItem === item ? verifiedLabel(verifiedPlaying) : '']
     .filter(Boolean).join('\n');
   if (!song) {
-    setSourceLine(line, { itemLine: true, hover: quality ? [line, quality].filter(Boolean).join('\n') : '' });
+    const part = partLabel(item, partPlayback);
+    setSourceLine(part || line, {
+      itemLine: true, hover: part || quality ? [part, line, quality].filter(Boolean).join('\n') : '',
+    });
     return;
   }
   // The song replaces the line; its full text and the normal line stay readable on hover.
@@ -1342,6 +1536,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
   activePlaybackRelayed = relayAvailable;
   const generation = playback.activate(target);
   bindMediaEvents(target, generation);
+  syncPlayerSilence();
   const eqPreparation = await prepareEqualizer(target, currentItem || item, relayAvailable);
   if (stale() || !playback.owns(target, generation)) return;
   if (!eqPreparation.safe) {
@@ -1352,8 +1547,8 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
   }
   let playbackStarted = false;
   if (videoKind) {
-    pictureStream = true;
     showVideo(expectsPicture(item) || hasPicture(elements.video));
+    syncPlaybackUi('video-start');
     if (kind === 'hls') {
       const HlsLib = await loadHlsIfNeeded();
       if (stale() || !playback.owns(target, generation)) return;
@@ -1400,7 +1595,18 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
           });
           instance.on(HlsLib.Events.LEVEL_LOADED, (_evt, data) => {
             if (!playback.owns(target, generation) || playSession.token !== token) return;
-            if (typeof data?.details?.live === 'boolean') playSession.hlsLive = data.details.live;
+            if (typeof data?.details?.live === 'boolean') {
+              playSession.hlsLive = data.details.live;
+              syncPlaybackUi('hls-delivery');
+            }
+          });
+          instance.on(HlsLib.Events.LEVEL_SWITCHED, (_evt, data) => {
+            if (stale() || !playback.owns(target, generation) || !streamAddressesCurrent()) return;
+            const level = instance.levels[data.level];
+            const videoTrack = playSession.hasVideoTrack ?? expectsPicture(item);
+            if (videoTrack && playSession.hlsLevel !== level) playedStreamNote.renditionChanged();
+            playSession.hlsLevel = level;
+            if (!videoTrack) noteHlsAudio();
           });
           instance.on(HlsLib.Events.MANIFEST_PARSED, (_evt, data) => {
             if (!playback.owns(target, generation)) return;
@@ -1424,6 +1630,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
             }
           });
       } else if (engine === 'native') {
+        if (!expectsPicture(item)) noteHlsAudio();
         elements.video.src = item.stream_url;
       } else {
         showBrokenState('HLS playback is unavailable in this browser.', { showNext: false });
@@ -1445,6 +1652,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
           return;
         }
         dashSession = session;
+        syncPlaybackUi('dash-delivery');
       } catch (error) {
         if (playback.owns(target, generation)) {
           console.warn('dash.js could not start:', error);
@@ -1488,11 +1696,15 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       }
     }
   } else {
-    pictureStream = false;
     showVideo(false);
     elements.audio.src = item.stream_url;
     elements.video.hidden = true;
     if (stale() || !playback.owns(target, generation)) return;
+    if (partPlayback && playSession.userPaused) {
+      setMediaPriority(false);
+      syncPlaybackUi('sleep');
+      return;
+    }
     try {
       await attemptMediaPlay(elements.audio);
       playbackStarted = playback.owns(target, generation) && !stale();
@@ -1534,10 +1746,11 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
  * checks the token and returns early if the user has since selected something else.
  *
  * Choosing the item that is waiting to reconnect tries it at once inside the
- * same episode; anything else ends the episode and plays normally.
+ * same episode unless a specific part was selected.
  */
-export async function playItem(item) {
-  if (reconnectPending(item)) {
+export async function playItem(item, options = {}) {
+  if (options.parts && !options.parts[options.index]) return;
+  if (!options.parts && reconnectPending(item) && streamAddressesCurrent()) {
     await liveResume.attemptNow();
     return;
   }
@@ -1546,7 +1759,7 @@ export async function playItem(item) {
   startOutcome.begin(item?.id);
   startsInFlight += 1;
   try {
-    await startPlayback(item);
+    await startPlayback(item, options);
   } catch (error) {
     // Blocked before it began (the explicit-content setting): no result.
     startOutcome.cancel(item?.id);
@@ -1578,7 +1791,9 @@ async function playNextStreams(item, tried) {
 // opens a second relay connection.
 let startsInFlight = 0;
 
-async function startPlayback(item, { skipStreams = [] } = {}) {
+async function startPlayback(item, {
+  skipStreams = [], parts = null, index = 0, position = 0, epoch = partResumeGeneration(),
+} = {}) {
   if (!item) {
     showBrokenState('No item');
     return;
@@ -1589,6 +1804,7 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
     emit('content-blocked', { itemId: item.id, source: item.source });
     throw error;
   }
+  rememberCurrentPart();
   const myToken = ++playToken;
   startWatch.end();
   cancelScheduledCheck();
@@ -1598,6 +1814,9 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
   nowPlaying.stop();
   playSession = newPlaySession(myToken);
   playedStreamNote.begin();
+  const addresses = stationStreamAddresses(item);
+  playSession.addressSignature = JSON.stringify(addresses);
+  playSession.orderedAddresses = addresses.ordered;
   stallWatchdog.stop();
   setMediaPriority(true);
   cancelPendingResolution();
@@ -1612,6 +1831,10 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
   clearMedia(elements.video);
   showVideo(false);
   currentItem = item;
+  partPlayback = null;
+  pendingPartResume = null;
+  if (parts?.length) selectPart(parts, index, position, epoch);
+  syncPartControls();
   setCurrentItem(item);
   audioEngine.applyCurve(effectiveEqCurve(item));
   // This is intentionally the first awaited operation: AudioContext.resume()
@@ -1626,7 +1849,9 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
 
   let resolveMessage = '';
   let resolveError = null;
-  if (item._extra?.needsResolve && !item.stream_url) {
+  const needsStream = !addresses.main && item._extra?.needsResolve && !item.stream_url;
+  const needsParts = !parts && hasPartsSource(item);
+  if (needsStream || needsParts) {
     setTitleLine(shownTitle(item) || 'Loading…');
     setSourceLine(reconnectStatus || 'Resolving stream…', { status: Boolean(reconnectStatus) });
     const controller = new AbortController();
@@ -1634,7 +1859,9 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
     try {
       const mod = await loadAdapter(item.source);
       if (myToken !== playToken || controller.signal.aborted) return;
-      if (typeof mod.resolveStream === 'function') {
+      if (needsParts) parts = await loadParts(item);
+      if (myToken !== playToken || controller.signal.aborted) return;
+      if (needsStream && typeof mod.resolveStream === 'function') {
         await mod.resolveStream(item, {
           signal: controller.signal,
           showExplicitContent: getState().settings.showExplicitContent === true,
@@ -1657,12 +1884,24 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
       stop();
       return;
     }
+    if (parts?.length && !partPlayback) {
+      const resume = remembersPart(item, parts) ? resumablePart(item, parts, readPartResume(item.id)) : null;
+      if (resume) {
+        pendingPartResume = { ...resume, parts };
+        setMediaPriority(false);
+        startOutcome.cancel(item.id);
+      } else {
+        selectPart(parts, index, position, epoch);
+      }
+    }
     setMeta(item);
     setCurrentItem(item);
+    syncPlaybackUi('resolved');
   }
 
-  if (myToken !== playToken) return;
-  if (!item.stream_url) {
+  if (myToken !== playToken || pendingPartResume) return;
+  const relayItem = itemForPart(item, partPlayback);
+  if (!relayItem.stream_url && !addresses.ordered) {
     showBrokenState(resolveMessage || 'No stream URL');
     reportUnplayable(item);
     startOutcome.failed(item.id, startFailureKind(resolveError));
@@ -1675,7 +1914,7 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
   try {
     // Current IPTV catalog entries carry alternates. Older saved favorites do
     // not, so let an adapter refresh its bounded candidates before connecting.
-    if (!Array.isArray(item._extra?.streamCandidates)) {
+    if (!partPlayback && !addresses.ordered && !Array.isArray(item._extra?.streamCandidates)) {
       try {
         const mod = await loadAdapter(item.source);
         if (myToken !== playToken) return;
@@ -1691,11 +1930,21 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
     }
     // Auto (verified): a better entry of this station verified before is
     // offered first; nothing is looked up or checked before a start.
-    const verified = verifiedStreamFor(item, getState().settings);
-    const preferBest = bestStreamOn(getState().settings);
+    // A part is a specific file. Station failover must not substitute the
+    // parent item's first file if the selected chapter needs a retry.
+    const verified = partPlayback || addresses.ordered ? null : verifiedStreamFor(item, getState().settings);
+    const preferBest = !partPlayback && bestStreamOn(getState().settings);
     const extraStreams = verified ? [verified] : [];
-    const relay = await connectMediaRelay(item, {
-      signal: connectionController.signal, preferBest, extraStreams, skipUrls: skipStreams,
+    const rotating = addresses.ordered && reconnectingCurrentItem();
+    const attempted = rotating ? reconnectTried : new Set(skipStreams);
+    if (rotating) {
+      // After a full pass, the reconnect backoff still governs the next try.
+      if (!untriedStreams(item, { addresses, tried: attempted }).length) attempted.clear();
+      skipStreams = [...attempted];
+    }
+    const relay = await connectMediaRelay(relayItem, {
+      signal: connectionController.signal, preferBest, extraStreams, skipUrls: skipStreams, addresses,
+      onAttempt: addresses.ordered ? (url) => attempted.add(url) : undefined,
     });
     if (myToken !== playToken) {
       expireMedia(relay.media_id, 0).catch(() => {});
@@ -1706,12 +1955,13 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
     // only if the relay tested it; otherwise its first data says so.
     startOutcome.streamSetUp(item.id);
     if (relayWasProbed(relay)) startOutcome.answered(item.id);
-    playbackItem = { ...item, stream_url: relay.relay_url };
+    playSession.candidate = playedStream(relayItem);
+    playbackItem = { ...relayItem, stream_url: relay.relay_url, stream_kind: activeStreamKind() };
     relayAvailable = true;
     verifiedPlaying = afterBestStreamStart(item, verified) ? verified : null;
     persistFavoriteMetadata(item);
     setMeta(item);
-    setCurrentItem(item);
+    setCurrentItem(item, playSession.candidate);
     emit('media-relay', { available: true, mediaId: relay.media_id });
     // Auto (verified): a new playback session. The background check of this
     // station is planned at its first `playing` (onPlaying), so its wait
@@ -1720,9 +1970,9 @@ async function startPlayback(item, { skipStreams = [] } = {}) {
     // Listed and Auto: should this stream connect but not play, the streams
     // not tried yet get their turn (start-failover.js). Not inside a
     // reconnect, which has its own rules.
-    if (preferBest && !reconnectingCurrentItem()) {
-      const tried = [...skipStreams, playedStream(item)?.url].filter(Boolean);
-      if (untriedStreams(item, { extraStreams, tried }).length) startWatch.arm(myToken, item, tried);
+    if (!partPlayback && (addresses.ordered || preferBest) && !reconnectingCurrentItem() && streamAddressesCurrent()) {
+      const tried = addresses.ordered ? attempted : [...skipStreams, playSession.candidate?.url].filter(Boolean);
+      if (untriedStreams(item, { addresses, extraStreams, tried }).length) startWatch.arm(myToken, item, tried);
     }
   } catch (error) {
     // Remote media is never attached directly. Besides enforcing the network
@@ -1797,10 +2047,15 @@ async function playActive() {
  *  so a broken, reconnecting or given-up stream is rebuilt the same way. */
 async function playFromUser() {
   // A start on its way: let it finish (the first press is being answered).
-  if (startsInFlight > 0) return false;
+  if (startsInFlight > 0 || pendingPartResume) return false;
   if (currentItem && !isContentAllowed(currentItem, getState().settings)) {
     stop();
     return false;
+  }
+  if (currentItem && !streamAddressesCurrent()) {
+    await playItem(currentItem);
+    const target = getActiveEl();
+    return Boolean(target && !playbackProblem && !target.paused);
   }
   // Waiting to reconnect: try now, inside the same episode (one at a time).
   if (reconnectPending()) {
@@ -1813,7 +2068,10 @@ async function playFromUser() {
   // the visible Play-to-retry promise is real.
   if (playbackProblem && currentItem) {
     const retryItem = currentItem;
-    await playItem(retryItem);
+    const part = partPlayback;
+    await playItem(retryItem, part ? {
+      parts: part.parts, index: part.index, position: part.position, epoch: part.epoch,
+    } : {});
     const retryTarget = getActiveEl();
     return Boolean(retryTarget && !playbackProblem && !retryTarget.paused);
   }
@@ -1822,6 +2080,11 @@ async function playFromUser() {
   // media was torn down. play() on that does nothing useful, so the item
   // starts afresh with a new connection, as after Stop.
   const active = getActiveEl();
+  if (partPlayback?.finished && partPlayback.parts[partPlayback.index + 1]) {
+    const { parts, index, epoch } = partPlayback;
+    await playItem(currentItem, { parts, index: index + 1, epoch });
+    return Boolean(getActiveEl() && !playbackProblem && !getActiveEl().paused);
+  }
   if (currentItem && (!active || active.ended || active.error
       || (!active.src && !hlsInstance && !dashSession))) {
     const freshItem = currentItem;
@@ -1830,6 +2093,7 @@ async function playFromUser() {
     return Boolean(freshTarget && !playbackProblem && !freshTarget.paused);
   }
   if (!active) return false;
+  playSession.sleepExpired = false;
   return playActive();
 }
 
@@ -1846,6 +2110,9 @@ export async function togglePlay() {
 
 export function stop() {
   cancelReconnect();
+  rememberCurrentPart();
+  partPlayback = null;
+  pendingPartResume = null;
   startWatch.end();
   // Stopped by the user before a result: no result.
   startOutcome.cancel();
@@ -1909,13 +2176,25 @@ function adoptElementVolume(el) {
   if (change.pct !== null) setVolume(change.pct);
 }
 
-// Silent means nothing can be heard: muted, or the volume turned all the way down.
+// The bar shows mute and the saved volume rounded to a whole percent.
 export function isSilent(muted, volumePct) {
   return !!muted || Math.round(volumePct) <= 0;
 }
 
 export function volumeText(volumePct) {
   return `${Math.round(Math.max(0, Math.min(100, volumePct)))}%`;
+}
+
+export function isPlayerSilent() {
+  const el = getActiveEl();
+  return Boolean(el && (el.muted || el.volume === 0));
+}
+
+function syncPlayerSilence() {
+  const silent = isPlayerSilent();
+  if (silent === playerSilent) return;
+  playerSilent = silent;
+  emit(PLAYER_SILENT_CHANGE, silent);
 }
 
 function syncVolumeUi() {
@@ -1925,16 +2204,23 @@ function syncVolumeUi() {
   const text = volumeText(pct);
   elements.vol.title = `Volume ${text}`;
   elements.vol.setAttribute('aria-valuetext', text);
-  elements.mute.dataset.silent = isSilent(elements.audio.muted, pct) ? 'true' : 'false';
+  elements.mute.dataset.silent = String(isSilent(elements.audio.muted, pct));
   if (elements.volReadout) {
     const level = String(clampVolume(pct));
     elements.volReadout.textContent = level;
     elements.volReadout.setAttribute('aria-label', `Volume ${level}`);
   }
   if (elements.volControl) elements.volControl.title = `Volume ${text}`;
+  syncPlayerSilence();
 }
 
 export function getCurrentItem() { return currentItem; }
+export function getCurrentPart(itemId) {
+  return partPlayback && currentItem?.id === itemId ? partPlayback : null;
+}
+export function getItemForDownload(item) {
+  return itemForPart(item, getCurrentPart(item?.id));
+}
 /** The song the current station announces: { itemId, mediaId, title,
  *  changedAt } or null. Changes are emitted as NOW_PLAYING_EVENT. */
 export function getNowPlaying() {
@@ -1955,7 +2241,7 @@ export function previewEqCurve(curve, { immediate = false } = {}) {
   return audioEngine.applyCurve(curve, { immediate });
 }
 export function getCurrentMediaAction(evidence = {}) {
-  return resolveMediaAction(currentItem, evidence);
+  return resolveMediaAction(getItemForDownload(currentItem), evidence);
 }
 
 export function isMuted() { return elements.audio.muted; }
@@ -1972,6 +2258,20 @@ export function setMuted(m) {
 function bindControls() {
   elements.play.addEventListener('click', () => togglePlay());
   elements.stop.addEventListener('click', () => stop());
+  function movePart(offset) {
+    const part = partPlayback;
+    if (part) playItem(currentItem, { parts: part.parts, index: part.index + offset }).catch(() => {});
+  }
+  function chooseResume(resume) {
+    const offer = pendingPartResume;
+    if (!offer) return;
+    const { parts, index, position } = offer;
+    playItem(currentItem, { parts, index: resume ? index : 0, position: resume ? position : 0 }).catch(() => {});
+  }
+  elements.previousPart?.addEventListener('click', () => movePart(-1));
+  elements.nextPart?.addEventListener('click', () => movePart(1));
+  elements.resumePart?.addEventListener('click', () => chooseResume(true));
+  elements.startOver?.addEventListener('click', () => chooseResume(false));
   elements.mute.addEventListener('click', () => setMuted(!isMuted()));
   elements.vol.addEventListener('input', (e) => setVolume(+e.target.value));
   // Down, the level and up: a click is one step, a held button repeats, the
@@ -2034,6 +2334,7 @@ export function initPlayer() {
   bindControls();
   bindMediaSession();
   bindVideoSizeButton();
+  setPictureItem = bindPicturePanel(elements.video, $);
   bindVideoPicture();
   syncPlaybackUi('init');
   // Keep the player-bar star in sync if a Library card toggles favorites
@@ -2055,17 +2356,34 @@ export function initPlayer() {
   subscribe('playing-change', () => audioSignal.refresh());
   // ...and only while it can be heard: muting or volume 0 rests it.
   for (const el of [elements.audio, elements.video]) {
-    el?.addEventListener?.('volumechange', () => audioSignal.refresh());
-    // The video's own controls change its volume and mute: take that as the
-    // user's volume, as the buttons would (store, readout, icon, saved).
-    el?.addEventListener?.('volumechange', () => adoptElementVolume(el));
+    el?.addEventListener?.('volumechange', () => {
+      // The video's own controls can update the saved volume and mute.
+      adoptElementVolume(el);
+      syncPlayerSilence();
+      audioSignal.refresh();
+    });
   }
   subscribe('content-policy-change', ({ current, currentItem: changedItem } = {}) => {
     if (current !== true && changedItem?.id === currentItem?.id
         && !isContentAllowed(currentItem, false)) stop();
   });
   // The sleep timer pauses the media itself; it must also stop reconnecting.
-  subscribe('sleep-fired', () => { stopReconnecting(); });
+  subscribe('part-resume-cleared', () => { if (pendingPartResume) stop(); });
+  subscribe('sleep-fired', () => {
+    if (partPlayback || hasPartsSource(currentItem)) playSession.sleepExpired = true;
+    if (startsInFlight > 0 && playSession.sleepExpired) {
+      playSession.userPaused = true;
+      startOutcome.cancel(currentItem.id);
+    }
+    stopReconnecting();
+  });
+  subscribe('station-streams-change', (id) => {
+    startOutcome.invalidate(id);
+    if (currentItem?.id !== id) return;
+    reconnectTried = new Set();
+    startWatch.end();
+    cancelScheduledCheck();
+  });
   // "Pick the best stream" changed away from Auto: its check's session ends
   // (timer cleared, check aborted, nothing remembered from a late answer).
   subscribe('settings-change', (settings) => { followBestStreamSetting(settings); });
@@ -2084,6 +2402,7 @@ function bindPageLifecycle() {
   win.addEventListener('online', () => { liveResume.networkBack(); });
   win.addEventListener('pagehide', (event) => {
     // A page kept in the back/forward cache may come back and keep playing.
+    rememberCurrentPart();
     if (event?.persisted) return;
     const relayId = activeRelayId;
     cancelReconnect();

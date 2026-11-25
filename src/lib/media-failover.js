@@ -3,6 +3,7 @@
 import { expireMedia, registerMedia } from './capture-client.js';
 import { detectStreamKind, safeExternalUrl, sanitizeCaptureHeaders } from './item-model.js';
 import { rankStreams } from './best-stream.js';
+import { stationStreamAddresses } from './station-stream-addresses.js';
 
 export const MAX_MEDIA_CANDIDATES = 8;
 // HLS registration can require a master manifest, a child manifest, and a
@@ -79,7 +80,7 @@ function normalizedCandidate(value, item) {
   if (!url) return null;
   let kind = value?.kind || value?.stream_kind;
   if (!['audio', 'video', 'hls', 'dash'].includes(kind)) {
-    kind = detectStreamKind(url, item?.type === 'radio' || item?.type === 'audio' ? 'audio' : 'video');
+    kind = detectStreamKind(new URL(url).pathname, item?.type === 'radio' || item?.type === 'audio' ? 'audio' : 'video');
   }
   if (kind === 'audio' && (item?.type === 'tv' || item?.type === 'video')) kind = 'video';
   const candidate = {
@@ -111,7 +112,7 @@ const playedStreams = new Map();
  *  bitrate?, codec?, quality? }), or null. */
 export function playedStream(itemOrId) {
   const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
-  return (id && playedStreams.get(id)) || null;
+  return (id && playedStreams.get(id)?.candidate) || null;
 }
 
 /** The streams to try for an item, in order. By default: the stream it
@@ -120,31 +121,41 @@ export function playedStream(itemOrId) {
  *  (the setting is off): its own stream, then the alternates.
  *  `preferBest: true`: the same streams plus `extraStreams` (other
  *  directory entries of the same station), best first (best-stream.js);
- *  the item's own stream always keeps a place within the limit. */
-export function streamCandidatesForItem(item, { preferBest, extraStreams = [] } = {}) {
+ *  the item's own stream always keeps a place within the limit.
+ *  Explicit station addresses always keep their order. */
+export function streamCandidatesForItem(item, {
+  preferBest, extraStreams = [], addresses = stationStreamAddresses(item),
+} = {}) {
   const extra = item?._extra || {};
-  const played = preferBest === undefined ? playedStream(item) : null;
-  const values = [...(played ? [played] : []), {
+  const last = preferBest === undefined ? playedStreams.get(item?.id) : null;
+  // An edit can be changed or removed since the last playback.
+  const played = last && last.addressSignature === JSON.stringify(addresses) ? last.candidate : null;
+  const original = {
     url: item?.stream_url,
     kind: item?.stream_kind,
     headers: item?.capture_headers,
     quality: extra.quality,
     bitrate: extra.bitrate,
     codec: extra.codec,
-  }, ...(Array.isArray(extra.streamCandidates) ? extra.streamCandidates : []),
-  ...(preferBest === true && Array.isArray(extraStreams) ? extraStreams : [])];
-  const own = normalizedCandidate(values[played ? 1 : 0], item);
+  };
+  const main = addresses.main ? { url: addresses.main } : original;
+  const alternates = addresses.ordered
+    ? addresses.backups.map((url) => ({ url }))
+    : [...(Array.isArray(extra.streamCandidates) ? extra.streamCandidates : []),
+      ...(preferBest === true && Array.isArray(extraStreams) ? extraStreams : [])];
+  const values = [...(played ? [played] : []), main, ...alternates];
+  const own = normalizedCandidate(main, item);
   const seen = new Set();
   const candidates = [];
   for (const value of values) {
     const candidate = normalizedCandidate(value, item);
     if (!candidate) continue;
-    const key = candidateKey(candidate);
+    const key = addresses.ordered ? candidate.url : candidateKey(candidate);
     if (seen.has(key)) continue;
     seen.add(key);
     candidates.push(candidate);
   }
-  if (preferBest !== true) return candidates.slice(0, MAX_MEDIA_CANDIDATES);
+  if (addresses.ordered || preferBest !== true) return candidates.slice(0, MAX_MEDIA_CANDIDATES);
   const ranked = rankStreams(candidates);
   const ownKey = own ? candidateKey(own) : '';
   const ownAt = ranked.findIndex((candidate) => candidateKey(candidate) === ownKey);
@@ -154,10 +165,13 @@ export function streamCandidatesForItem(item, { preferBest, extraStreams = [] } 
 
 /** Remember the stream `item` connected to (playedStream). The item itself
  *  is left as it is. */
-export function applyStreamCandidate(item, candidate) {
+export function applyStreamCandidate(item, candidate, addresses = stationStreamAddresses(item)) {
   if (!item?.id || !candidate?.url) return item;
   playedStreams.delete(item.id);
-  playedStreams.set(item.id, Object.freeze({ ...candidate, headers: Object.freeze({ ...candidate.headers }) }));
+  playedStreams.set(item.id, {
+    candidate: Object.freeze({ ...candidate, headers: Object.freeze({ ...candidate.headers }) }),
+    addressSignature: JSON.stringify(addresses),
+  });
   while (playedStreams.size > MAX_PLAYED_STREAMS) playedStreams.delete(playedStreams.keys().next().value);
   return item;
 }
@@ -250,6 +264,8 @@ async function probeHls(relayUrl, options) {
   return true;
 }
 
+const plainAudioRelays = new WeakSet();
+
 export async function probeMediaRelay(relay, candidate, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch is unavailable');
@@ -260,6 +276,10 @@ export async function probeMediaRelay(relay, candidate, options = {}) {
     candidate.kind === 'dash' ? 'bytes=0-' : 'bytes=0-0',
     { fetchImpl, signal: options.signal },
   );
+  const contentType = response.headers?.get?.('content-type') || '';
+  if (candidate.kind === 'video' && /^audio\/(?:mpeg|mp3|aacp?|flac|wav)(?:\s*;|$)/i.test(contentType)) {
+    plainAudioRelays.add(relay);
+  }
   try { await response.body?.cancel?.(); } catch (_) {}
   return true;
 }
@@ -295,14 +315,24 @@ async function connectCandidate(item, candidate, index, options, shouldProbe) {
       fetchImpl: options.fetchImpl,
       signal: controller.signal,
     });
-    if (shouldProbe) {
-      await options.probeImpl(relay, candidate, {
-        fetchImpl: options.fetchImpl,
-        signal: controller.signal,
-      });
-      if (relay && typeof relay === 'object') probedRelays.add(relay);
+    const possibleAudioBackup = options.tvBackup && detectStreamKind(new URL(candidate.url).pathname, 'video') === 'audio';
+    if (shouldProbe || possibleAudioBackup) {
+      try {
+        await options.probeImpl(relay, candidate, {
+          fetchImpl: options.fetchImpl,
+          signal: controller.signal,
+        });
+        if (relay && typeof relay === 'object') probedRelays.add(relay);
+      } catch (error) {
+        // A lone backup can still play as video if its format could not be confirmed.
+        if (shouldProbe || options.signal?.aborted) throw error;
+      }
     }
-    return { relay, candidate, index };
+    // A TV backup can use the audio element once the relay confirms plain audio.
+    const playable = options.tvBackup && plainAudioRelays.has(relay)
+      ? { ...candidate, kind: 'audio' }
+      : candidate;
+    return { relay, candidate: playable, index };
   } catch (error) {
     if (!relay && error && typeof error === 'object') error.mediaRegistrationFailed = true;
     if (relay?.media_id) {
@@ -340,18 +370,20 @@ function firstSuccessful(entries) {
   });
 }
 
-/** Register and verify the first reachable candidate, racing only two at once.
- *  With `preferBest` the streams go best first and the better of each pair
- *  gets a head start (BEST_STREAM_HEAD_START_MS); without it, as before. */
+/** Register and verify the first reachable candidate. Explicit station addresses
+ *  take turns. Directory candidates can race in pairs, with a head start for
+ *  the better stream when `preferBest` is enabled. */
 export async function connectMediaRelay(item, options = {}) {
-  const preferBest = options.preferBest === true;
+  const addresses = options.addresses ?? stationStreamAddresses(item);
+  const preferBest = !addresses.ordered && options.preferBest === true;
+  const mainUrl = safeExternalUrl(addresses.main || item?.stream_url);
   const headStartMs = preferBest
     ? Math.max(0, Number(options.headStartMs ?? BEST_STREAM_HEAD_START_MS) || 0) : 0;
   // `skipUrls`: streams that already connected for this start and did not
   // play (start-failover.js); the rest keep their order.
   const skip = new Set(Array.isArray(options.skipUrls) ? options.skipUrls : []);
   const candidates = streamCandidatesForItem(item, {
-    preferBest: options.preferBest, extraStreams: options.extraStreams,
+    preferBest: options.preferBest, extraStreams: options.extraStreams, addresses,
   }).filter((candidate) => !skip.has(candidate.url));
   if (!candidates.length) {
     throw new MediaConnectionError('This item has no valid media stream.', { attempts: 0 });
@@ -367,7 +399,7 @@ export async function connectMediaRelay(item, options = {}) {
     probeImpl: options.probeImpl || probeMediaRelay,
   };
   const errors = [];
-  const concurrency = Math.max(1, Math.min(
+  const concurrency = addresses.ordered ? 1 : Math.max(1, Math.min(
     Number(options.concurrency || MEDIA_PROBE_CONCURRENCY),
     MEDIA_PROBE_CONCURRENCY,
   ));
@@ -386,11 +418,13 @@ export async function connectMediaRelay(item, options = {}) {
     const entries = batch.map((candidate, batchIndex) => {
       const controller = new AbortController();
       const index = offset + batchIndex;
+      const tvBackup = item?.type === 'tv' && candidate.kind === 'video' && candidate.url !== mainUrl;
       const shouldProbe = candidate.kind === 'hls' || candidate.kind === 'dash' || candidates.length > 1;
       const entry = { controller };
-      const begin = () => connectCandidate(item, candidate, index, {
-        ...settings, controller,
-      }, shouldProbe);
+      const begin = () => {
+        options.onAttempt?.(candidate.url);
+        return connectCandidate(item, candidate, index, { ...settings, controller, tvBackup }, shouldProbe);
+      };
       if (headTimer === null || batchIndex === 0) {
         entry.promise = begin();
         if (headTimer !== null) entry.promise.catch(() => releaseLater());
@@ -410,7 +444,7 @@ export async function connectMediaRelay(item, options = {}) {
     });
     try {
       const winner = await firstSuccessful(entries);
-      applyStreamCandidate(item, winner.candidate);
+      applyStreamCandidate(item, winner.candidate, addresses);
       return winner.relay;
     } catch (batchErrors) {
       errors.push(...batchErrors);

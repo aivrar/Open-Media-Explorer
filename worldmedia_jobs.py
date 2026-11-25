@@ -61,6 +61,7 @@ class Job:
     item_id: str | None
     source: str | None
     profile: str | None
+    download_part: str = ""
     state: str = "queued"
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -87,6 +88,7 @@ class Job:
             "title": self.title,
             "media_id": self.media_id,
             "item_id": self.item_id,
+            **({"download_part": self.download_part} if self.download_part else {}),
             "profile": self.profile,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -117,6 +119,7 @@ class JobRegistry:
         item_id: str | None = None,
         source: str | None = None,
         profile: str | None = None,
+        download_part: str = "",
     ) -> Job:
         if kind not in JOB_KINDS:
             raise ValueError("unsupported job kind")
@@ -139,6 +142,7 @@ class JobRegistry:
                 title=normalized_title,
                 media_id=normalized_media,
                 item_id=normalized_item,
+                download_part=download_part,
                 source=str(source)[:128] if source else None,
                 profile=profile if profile in {"compact", "balanced", "high"} else None,
             )

@@ -302,12 +302,15 @@ export function createShuffleTimer({
   let lastNow = Number.NaN;
   let byClock = false;
   let due = false;
+  let holdForInterval = false;
 
   function fallbackSeconds() {
     return Math.min(maxDwell, Math.max(minDwell, (barsWanted * 4 * 60) / SHUFFLE_FALLBACK_BPM));
   }
 
-  function restart() {
+  // Keep the manual hold when the scene installs and restarts the clock.
+  function restart({ hold = holdForInterval } = {}) {
+    holdForInterval = hold;
     due = false;
     dwell = 0;
     startBeats = Number.NaN;
@@ -334,10 +337,10 @@ export function createShuffleTimer({
       return due;
     },
     /** A drop (structure.js): the change is due now, when the scene has
-     *  shown for minDwell (else nothing). It replaces the scheduled change,
-     *  never adds one. Returns true when it brought one forward. */
+     *  shown for minDwell. Manual picks wait for the full timer interval.
+     *  Returns true when the drop replaced the scheduled change. */
     bringForward() {
-      if (due || dwell < minDwell) return false;
+      if (holdForInterval || due || dwell < minDwell) return false;
       due = true;
       return true;
     },

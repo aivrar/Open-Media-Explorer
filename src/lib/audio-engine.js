@@ -5,15 +5,18 @@
  */
 
 import {
-  EQ_MAX_DB, EQ_MIN_DB, EQ_PREAMP_MAX_DB, EQ_PREAMP_MIN_DB, normalizeEqCurve,
-} from './eq-store.js';
+  cloneEqCurve, EQ_DEFAULT_Q, EQ_FILTER_Q, EQ_MAX_DB, EQ_MIN_DB,
+  EQ_PREAMP_MAX_DB, EQ_PREAMP_MIN_DB, normalizeEqCurve,
+} from './eq-curve.js';
+
+export { EQ_FILTER_Q } from './eq-curve.js';
 
 export const EQ_FREQUENCIES = Object.freeze([31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]);
 export const EQ_FILTER_TYPES = Object.freeze([
   'lowshelf', 'peaking', 'peaking', 'peaking', 'peaking',
   'peaking', 'peaking', 'peaking', 'peaking', 'highshelf',
 ]);
-export const EQ_FILTER_Q = Math.SQRT2;
+const SHELF_BANDS = [0, EQ_FREQUENCIES.length - 1];
 export const EQ_SMOOTHING_SECONDS = 0.015;
 export const EQ_SIGNAL_RMS_FLOOR = 1e-5;
 
@@ -93,7 +96,7 @@ export class AudioEngine {
       bypassed: this.bypassed,
       sourceCount: this.sourceNodes.size,
       contextState: this.context?.state || 'none',
-      curve: { ...this.curve, bands: [...this.curve.bands] },
+      curve: cloneEqCurve(this.curve),
     };
   }
 
@@ -131,8 +134,16 @@ export class AudioEngine {
         const filter = context.createBiquadFilter();
         filter.type = EQ_FILTER_TYPES[index];
         configureParam(filter.frequency, frequency, now);
-        configureParam(filter.Q, EQ_FILTER_TYPES[index] === 'peaking' ? EQ_FILTER_Q : 1, now);
+        configureParam(filter.Q, EQ_DEFAULT_Q[index], now);
         configureParam(filter.gain, 0, now);
+        return filter;
+      });
+      // Native shelves ignore Q. A bell at each shelf corner adds adjustable
+      // resonance in the wet path, with unity gain at the original Q of 1.
+      const shelfResonances = SHELF_BANDS.map((index) => {
+        const filter = context.createBiquadFilter();
+        filter.type = 'peaking';
+        configureParam(filter.frequency, EQ_FREQUENCIES[index], now);
         return filter;
       });
       const compressor = context.createDynamicsCompressor();
@@ -149,7 +160,7 @@ export class AudioEngine {
       input.connect(dry);
       input.connect(preamp);
       let previous = preamp;
-      for (const filter of bands) {
+      for (const filter of [...bands, ...shelfResonances]) {
         previous.connect(filter);
         previous = filter;
       }
@@ -159,7 +170,7 @@ export class AudioEngine {
       wet.connect(analyser);
       analyser.connect(context.destination);
 
-      this.graph = { input, dry, preamp, bands, compressor, wet, analyser };
+      this.graph = { input, dry, preamp, bands, shelfResonances, compressor, wet, analyser };
       this.state = context.state === 'running' ? 'ready' : 'suspended';
       this.error = null;
       this._applyParameters(true);
@@ -227,6 +238,13 @@ export class AudioEngine {
     setter(this.graph.preamp.gain, dbToGain(preampDb), now);
     this.graph.bands.forEach((filter, index) => {
       setter(filter.gain, clamp(this.curve.bands[index], EQ_MIN_DB, EQ_MAX_DB), now);
+      if (EQ_FILTER_TYPES[index] === 'peaking') setter(filter.Q, this.curve.q[index], now);
+    });
+    this.graph.shelfResonances.forEach((filter, shelf) => {
+      const index = SHELF_BANDS[shelf];
+      const q = this.curve.q[index];
+      setter(filter.Q, q, now);
+      setter(filter.gain, shelfResonanceGain(this.curve.bands[index], q), now);
     });
     setter(this.graph.dry.gain, this.bypassed ? 1 : 0, now);
     setter(this.graph.wet.gain, this.bypassed ? 0 : 1, now);
@@ -377,6 +395,10 @@ export class AudioEngine {
 
 export function createAudioEngine(options) { return new AudioEngine(options); }
 
+function shelfResonanceGain(gain, q) {
+  return q === 1 ? 0 : gain * (q - 1) / (q + 1);
+}
+
 function biquadCoefficients(type, frequency, gainDb, sampleRate, q = EQ_FILTER_Q) {
   const nyquistSafe = Math.max(1, Math.min(sampleRate * 0.499, frequency));
   const w0 = 2 * Math.PI * nyquistSafe / sampleRate;
@@ -425,15 +447,17 @@ export function computeEqResponseDb(value, frequencies, sampleRate = 48000) {
   const curve = normalizeEqCurve(value);
   const targets = Array.from(frequencies || [], (frequency) => Number(frequency));
   if (curve.bypassed) return Float32Array.from(targets, () => 0);
+  const filters = EQ_FREQUENCIES.map((frequency, index) => biquadCoefficients(
+    EQ_FILTER_TYPES[index], frequency, curve.bands[index], sampleRate, curve.q[index],
+  ));
+  for (const index of SHELF_BANDS) {
+    const gain = shelfResonanceGain(curve.bands[index], curve.q[index]);
+    if (gain) filters.push(biquadCoefficients('peaking', EQ_FREQUENCIES[index], gain, sampleRate, curve.q[index]));
+  }
+  const preamp = dbToGain(curve.preamp);
   return Float32Array.from(targets, (target) => {
-    let magnitude = dbToGain(clamp(curve.preamp, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB));
-    for (let index = 0; index < EQ_FREQUENCIES.length; index++) {
-      const gain = clamp(curve.bands[index], EQ_MIN_DB, EQ_MAX_DB);
-      const coefficients = biquadCoefficients(
-        EQ_FILTER_TYPES[index], EQ_FREQUENCIES[index], gain, sampleRate,
-      );
-      magnitude *= coefficientMagnitude(coefficients, target, sampleRate);
-    }
+    let magnitude = preamp;
+    for (const filter of filters) magnitude *= coefficientMagnitude(filter, target, sampleRate);
     return 20 * Math.log10(Math.max(1e-12, magnitude));
   });
 }

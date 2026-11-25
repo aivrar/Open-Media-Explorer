@@ -208,48 +208,26 @@ class AlignedRelayTests(icy_tests.RelayTestBase):
         self.assertEqual(self.request("GET", media["relay_url"])[1], STREAM)
 
 
-class PassAsAvailableTests(unittest.TestCase):
-    def test_only_an_endless_live_audio_reply_of_a_playback_root(self) -> None:
-        def passes(reg=None, method="GET", resp=None, dash=False):
-            return worldmedia_server.relay_passes_as_available(
-                reg or registration(), method, resp or response(), dash=dash)
-
-        for content_type in ("audio/mpeg", "audio/aacp", "AUDIO/OGG; codecs=opus", "application/ogg"):
-            with self.subTest(content_type):
-                self.assertTrue(passes(resp=response(Content_Type=content_type)))
-        kept = {
-            "HEAD": dict(method="HEAD"),
-            "a DASH template": dict(dash=True),
-            "a file with a length": dict(resp=response(Content_Length="1000")),
-            "a range reply": dict(resp=response(206, Content_Range="bytes 0-9/10")),
-            "video": dict(resp=response(Content_Type="video/mp4")),
-            "a manifest": dict(resp=response(Content_Type="application/vnd.apple.mpegurl")),
-            "no type": dict(resp=response(Content_Type="")),
-            "a child": dict(reg=registration(token="child")),
-            "a recording": dict(reg=registration(capture=True)),
-        }
-        for name, options in kept.items():
-            with self.subTest(name):
-                self.assertFalse(passes(**options))
-
-
 class PlainRelayTimingTests(icy_tests.RelayTestBase):
     """A station that ignores Icy-MetaData: its first bytes, then a pause."""
 
     PAUSE = 1.2
 
     def first_bytes_after(self, path: str, headers: dict[str, str], first: bytes, rest: bytes,
-                          media_type: str = "audio", relayed: bytes | None = None) -> tuple[float, bytes]:
+                          media_type: str = "audio", relayed: bytes | None = None,
+                          *, delivery: str = "live", pause: float | None = None) -> tuple[float, bytes]:
+        status = b"HTTP/1.1 200 OK" if "Transfer-Encoding" in headers else b"HTTP/1.0 200 OK"
         self.station.routes[path] = lambda method, _headers: [
-            icy_tests.reply(b"HTTP/1.0 200 OK", headers, first, method), self.PAUSE, rest,
+            icy_tests.reply(status, headers, first, method), self.PAUSE if pause is None else pause, rest,
         ]
-        media = self.register(f"{self.station.base_url}{path}", media_type=media_type)
+        media = self.register(f"{self.station.base_url}{path}", media_type=media_type, delivery=delivery)
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         self.addCleanup(connection.close)
         started = time.monotonic()
         connection.request("GET", media["relay_url"])
         reply = connection.getresponse()
         self.assertEqual(reply.status, 200)
+        self.assertEqual(reply.getheader("Content-Length"), headers.get("Content-Length"))
         piece = reply.read1(65536)
         waited = time.monotonic() - started
         self.assertEqual(piece + reply.read(), first + rest if relayed is None else relayed)
@@ -268,16 +246,65 @@ class PlainRelayTimingTests(icy_tests.RelayTestBase):
         self.assertLess(waited, self.PAUSE / 2)
         self.assertEqual(piece, SOUND[:len(piece)])
 
-    def test_a_reply_with_a_length_and_a_video_reply_keep_full_reads(self) -> None:
+    def test_slow_generic_and_sized_live_audio_passes_first_bytes_promptly(self) -> None:
+        audio = random.Random(9).randbytes(70 * 1024)
+        cases = {
+            "/generic": ({"Content-Type": "application/octet-stream"}, "live"),
+            "/sized": ({"Content-Type": "audio/mpeg", "Content-Length": str(len(audio))}, "unknown"),
+        }
+        for path, (headers, delivery) in cases.items():
+            with self.subTest(path):
+                waited, piece = self.first_bytes_after(path, headers, audio[:5 * 1024], audio[5 * 1024:],
+                                                       delivery=delivery)
+                self.assertLess(waited, 1.0)
+                self.assertEqual(piece, audio[:len(piece)])
+
+    def test_sized_on_demand_audio_and_video_keep_full_reads(self) -> None:
         audio = random.Random(9).randbytes(4000)
         cases = {
-            "/sized": ({"Content-Type": "audio/mpeg", "Content-Length": str(len(audio))}, "audio"),
-            "/video": ({"Content-Type": "video/mp4"}, "video"),
+            "/sized-file": ({"Content-Type": "audio/mpeg", "Content-Length": str(len(audio))}, "audio", "on-demand"),
+            "/video": ({"Content-Type": "video/mp4"}, "video", "live"),
         }
-        for path, (headers, media_type) in cases.items():
+        for path, (headers, media_type, delivery) in cases.items():
             with self.subTest(path):
-                waited, _piece = self.first_bytes_after(path, headers, audio[:1000], audio[1000:], media_type)
+                waited, _piece = self.first_bytes_after(path, headers, audio[:1000], audio[1000:],
+                                                        media_type, delivery=delivery)
                 self.assertGreaterEqual(waited, self.PAUSE - 0.2)
+
+    def test_aac_startup_timeout_flushes_the_held_bytes_while_upstream_stalls(self) -> None:
+        first = b"held before the next frame"
+        pause = MAX_ALIGN_SECONDS + 0.65
+        for icy in (False, True):
+            with self.subTest(icy=icy):
+                headers = {"Content-Type": "audio/aac"}
+                wire_first, wire_rest = first, SOUND
+                if icy:
+                    headers["icy-metaint"] = str(len(first))
+                    wire = icy_tests.icy_encode(first + SOUND, len(first), [])
+                    headers["Transfer-Encoding"] = "chunked"
+                    headers["Connection"] = "close"
+                    # Stall in the middle of an HTTP chunk carrying ICY audio.
+                    wire_first = f"{len(wire):x}\r\n".encode() + wire[:len(first) + 1]
+                    wire_rest = wire[len(first) + 1:] + b"\r\n0\r\n\r\n"
+                waited, piece = self.first_bytes_after(
+                    "/stalled-icy-aac" if icy else "/stalled-aac", headers, wire_first, wire_rest,
+                    relayed=first + SOUND, pause=pause,
+                )
+                self.assertEqual(piece, first)
+                self.assertGreaterEqual(waited, MAX_ALIGN_SECONDS - 0.1)
+                self.assertLess(waited, MAX_ALIGN_SECONDS + 0.5)
+
+    def test_remote_html_from_the_media_relay_is_sandboxed_and_inert(self) -> None:
+        body = b"<html><body>Upstream document</body></html>"
+        self.station.routes["/document"] = lambda method, _headers: icy_tests.reply(
+            b"HTTP/1.0 200 OK", {"Content-Type": "text/html", "Content-Length": str(len(body))}, body, method,
+        )
+        media = self.register(f"{self.station.base_url}/document")
+        status, data, headers = self.request("GET", media["relay_url"])
+        self.assertEqual((status, data), (200, body))
+        self.assertEqual(headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(headers["content-security-policy"], "sandbox; default-src 'none'")
+        self.assertEqual(headers["x-content-type-options"], "nosniff")
 
 
 if __name__ == "__main__":

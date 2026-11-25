@@ -1,54 +1,28 @@
 /**
- * Colour travel (I7), held: a slow turn of the picture's hues in time with
- * the bars, for the scenes whose colours may move. Not wired yet; released
- * with COLOUR_TRAVEL_RELEASED once measured. All numbers PROPOSED.
- *
- * Luminance does not change, by construction. Each pixel's Rec. 709 luma
- *   Y = 0.2126 r + 0.7152 g + 0.0722 b
- * is kept: the colour is split into Y on the grey axis and a chroma part
- * d = c - Y (whose luma is 0, since the weights add to 1); d is turned about
- * the luma weights' direction n (Rodrigues; n . d = 0, so the turned d stays
- * in the luma-0 plane) and, where the turn would leave the 0..1 cube, shrunk
- * toward grey just enough to fit (a scale of d keeps luma 0). So every
- * pixel's luma, and the frame's mean, is the same before and after, and greys
- * stay grey. (The effect library's hueRot turns about the grey axis instead,
- * which keeps the mean of r, g and b but not luma: pure green turned a third
- * of the way round becomes blue at a tenth of its luma. It is not used.)
- *
- * Rate: the angle follows the drift clock's bars (drift.js: smooth, never
- * faster than DRIFT_BPM_RANGE's top), one full turn every
- * COLOUR_TRAVEL_BARS_PER_TURN bars; at 150 bpm that is 3.5 degrees a
- * second. The clock's wrap is followed through (no jump).
- *
- * Which scenes: colourTravelAllowed(entry). Not the scenes whose colour
- * cycling is held or whose colours were left out by measurement (looks.js
- * LOOK_ADJUSTED, LOOKS_LEFT_OUT, PRESETS_LEFT_OUT), not those drawn without
- * post effects (fxNone: the line scenes, the simulations kept plain), and
- * not the held ones.
- *
- * Wiring (next step, held): one pass at the end of the effects chain
- * (fx-chain.js), so with no effects on it would make the chain's framebuffer
- * that bypass otherwise avoids: a CPU and GPU cost to measure. The pass
- * reads u_travel (the angle) and does nothing at 0.
+ * Turn chroma around the luminance axis in linear light and scale it
+ * toward grey to fit the RGB gamut before encoding back to sRGB.
+ * A gentle hue sweep follows the drift clock while music has a clear tempo.
  */
 
 import { LOOK_ADJUSTED, LOOKS_LEFT_OUT, PRESETS_LEFT_OUT } from './looks.js';
+import { DRIFT_WRAP_BARS } from './drift.js';
 import { HELD_SCENES } from './scenes.js';
 
-export const COLOUR_TRAVEL_RELEASED = false;
-/** Bars for one full turn of the hues (PROPOSED). */
+export const COLOUR_TRAVEL_RELEASED = true;
+/** Bars for one full sweep of the hues. */
 export const COLOUR_TRAVEL_BARS_PER_TURN = 64;
-/** The most of a turn it may be away from the scene's own colours (a full
- *  turn: every hue visited; PROPOSED). */
-export const COLOUR_TRAVEL_SPAN = 1;
+/** Maximum hue displacement in radians (about 20 degrees). */
+export const COLOUR_TRAVEL_SPAN = 0.35;
 export const LUMA = Object.freeze([0.2126, 0.7152, 0.0722]);
 
 /** The same turn in GLSL (for the pass). */
 export const COLOUR_TRAVEL_GLSL = `
 vec3 colourTravel(vec3 c, float angle) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 linear = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
     vec3 w = vec3(0.2126, 0.7152, 0.0722);
-    float y = dot(c, w);
-    vec3 d = c - vec3(y);
+    float y = dot(linear, w);
+    vec3 d = linear - vec3(y);
     vec3 n = normalize(w);
     vec3 t = d * cos(angle) + cross(n, d) * sin(angle);
     float s = 1.0;
@@ -57,20 +31,33 @@ vec3 colourTravel(vec3 c, float angle) {
         if (ti > 1e-6) s = min(s, (1.0 - y) / ti);
         else if (ti < -1e-6) s = min(s, y / -ti);
     }
-    return vec3(y) + t * max(s, 0.0);
+    linear = clamp(vec3(y) + t * max(s, 0.0), 0.0, 1.0);
+    return mix(12.92 * linear, 1.055 * pow(linear, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), linear));
 }
 `;
 
 const NORM = Math.hypot(...LUMA);
 const N = LUMA.map((v) => v / NORM);
 
-/** The turn on the CPU, as the shader does it: [r, g, b] (0..1) turned by
- *  `angle` (radians), luma kept. Into `out` when given. */
+function fromSrgb(value) {
+  const c = Math.max(0, Math.min(1, value));
+  return c < 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+function toSrgb(value) {
+  const c = Math.max(0, Math.min(1, value));
+  return c < 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
+}
+
+/** The turn on the CPU, as the shader does it: sRGB (0..1) turned by
+ *  `angle` (radians), luminance kept. Into `out` when given. */
 export function colourTravel(c, angle, out = [0, 0, 0]) {
-  const y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
-  const d0 = c[0] - y;
-  const d1 = c[1] - y;
-  const d2 = c[2] - y;
+  const r = fromSrgb(c[0]);
+  const g = fromSrgb(c[1]);
+  const b = fromSrgb(c[2]);
+  const y = LUMA[0] * r + LUMA[1] * g + LUMA[2] * b;
+  const d0 = r - y;
+  const d1 = g - y;
+  const d2 = b - y;
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   // n x d
@@ -84,9 +71,9 @@ export function colourTravel(c, angle, out = [0, 0, 0]) {
     else if (ti < -1e-6) s = Math.min(s, y / -ti);
   }
   s = Math.max(0, s);
-  out[0] = y + t[0] * s;
-  out[1] = y + t[1] * s;
-  out[2] = y + t[2] * s;
+  out[0] = toSrgb(y + t[0] * s);
+  out[1] = toSrgb(y + t[1] * s);
+  out[2] = toSrgb(y + t[2] * s);
   return out;
 }
 
@@ -102,14 +89,14 @@ export function colourTravelAllowed(entry) {
 
 /** The angle from the drift clock's bars: step(bars) each drawn frame
  *  returns the angle (radians); a wrap of the clock is followed through. */
-export function createColourTravel({ barsPerTurn = COLOUR_TRAVEL_BARS_PER_TURN, wrapBars = 32 } = {}) {
+export function createColourTravel({ barsPerTurn = COLOUR_TRAVEL_BARS_PER_TURN, wrapBars = DRIFT_WRAP_BARS } = {}) {
   let lastBars = Number.NaN;
   let turns = 0;
   return {
-    get angle() { return 2 * Math.PI * COLOUR_TRAVEL_SPAN * (turns % 1); },
-    step(bars) {
+    get angle() { return COLOUR_TRAVEL_SPAN * Math.sin(2 * Math.PI * turns); },
+    step(bars, playing = true) {
       if (!Number.isFinite(bars)) return this.angle;
-      if (Number.isFinite(lastBars)) {
+      if (playing && Number.isFinite(lastBars)) {
         let delta = bars - lastBars;
         if (delta < -wrapBars / 2) delta += wrapBars; // the clock wrapped
         if (delta > 0 && delta < wrapBars / 2) turns = (turns + delta / barsPerTurn) % 1;

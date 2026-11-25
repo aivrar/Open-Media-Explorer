@@ -7,22 +7,18 @@
  *
  * Pure: no DOM access. Timers and the clock are injected for tests.
  *
- * While an episode is active exactly one of these is pending, so it can never
- * stall and nothing can escape its bound: the wait before the next attempt, a
- * running attempt (with its timeout), the stable timer while the reconnected
- * stream plays, or the "did not come back" timer while it does not. During an
- * attempt, playing/interrupted are only recorded; settle() arms the timer.
- * Every transition arms the next timer before it clears the previous one.
+ * An episode always has one timer for the next attempt, a running attempt's
+ * timeout, or the deadline for the reconnected stream to make progress.
  *
- * Recovery is 30 s of playing time accumulated since the last reconnect;
- * brief buffering pauses the count instead of restarting it.
+ * Recovery requires 30 s of playhead movement since the last reconnect.
+ * Brief buffering pauses the count instead of restarting it.
  */
 
 export const RECONNECT_DELAYS_MS = Object.freeze([2_000, 4_000, 8_000, 16_000, 30_000]);
 export const RECONNECT_WINDOW_MS = 10 * 60_000;
 export const RECONNECT_STABLE_MS = 30_000; // total playing time since the reconnect
-// A reconnected stream that stops (buffering, stalled) and does not play again
-// within this window counts as dropped again.
+// A reconnected stream that makes no playhead progress within this window
+// counts as dropped again.
 export const RECONNECT_RESUME_MS = 20_000;
 // A rebuild can try several endpoints and wait for an HLS start-up buffer.
 // An attempt that has not finished by then is abandoned as a failure.
@@ -83,69 +79,33 @@ export function createLiveResume({
     if (timer != null) clearTimer(timer);
   }
 
-  function clearProbationTimers() {
-    clear(episode.stableTimer);
-    clear(episode.resumeTimer);
-    episode.stableTimer = null;
-    episode.resumeTimer = null;
-  }
-
-  /** Forget the playing time counted towards recovery (a new reconnect). */
   function resetProbation() {
-    clearProbationTimers();
+    clear(episode.probationTimer);
+    episode.probationTimer = null;
     episode.playedMs = 0;
-    episode.playingSince = null;
-    episode.interrupted = false;
   }
 
-  /** Stop counting playing time; the stream is not playing right now. */
-  function pauseStableCount() {
-    if (episode.playingSince != null) {
-      episode.playedMs += Math.max(0, now() - episode.playingSince);
-      episode.playingSince = null;
+  function checkProbation() {
+    const current = now();
+    const stallAt = episode.lastProgressAt + resumeMs;
+    const deadline = Math.min(stallAt, episode.probationDeadline);
+    if (current >= deadline) {
+      scheduleNext();
+      return;
     }
-    clear(episode.stableTimer);
-    episode.stableTimer = null;
+    episode.probationTimer = setTimer(checkProbation, deadline - current);
   }
 
-  /** Playing: count time towards recovery. The stable timer is armed first and
-   *  only then the "did not come back" timer cleared, so one is always set. */
-  function resumeStableCount() {
-    episode.interrupted = false;
-    if (episode.playingSince == null) episode.playingSince = now();
-    if (episode.stableTimer == null) {
-      const remaining = Math.max(0, stableMs - episode.playedMs - (now() - episode.playingSince));
-      episode.stableTimer = setTimer(() => {
-        if (!episode) return;
-        episode.stableTimer = null;
-        finish();
-        onRecovered();
-      }, remaining);
-    }
-    clear(episode.resumeTimer);
-    episode.resumeTimer = null;
-  }
-
-  /** Not playing after a reconnect: if it does not play again soon, it has
-   *  dropped again. Armed before the stable timer is dropped. The window is
-   *  not restarted by further interruptions, so it cannot be pushed back. */
-  function armResumeWindow() {
-    episode.interrupted = true;
-    if (episode.resumeTimer == null) {
-      episode.resumeTimer = setTimer(() => {
-        if (!episode) return;
-        episode.resumeTimer = null;
-        scheduleNext();
-      }, resumeMs);
-    }
-    pauseStableCount();
+  function recover() {
+    finish();
+    onRecovered();
   }
 
   function finish() {
     if (episode) {
       clear(episode.waitTimer);
       clear(episode.attemptTimer);
-      clearProbationTimers();
+      clear(episode.probationTimer);
     }
     episode = null;
     attemptSeq++;
@@ -168,7 +128,7 @@ export function createLiveResume({
     const delay = delayAt(episode.attempts);
     // After an attempt that `online` brought forward, this wait runs in full.
     episode.onlineAllowed = !episode.lastAttemptByOnline;
-    if (current + delay > episode.deadline) {
+    if (current + delay >= episode.deadline) {
       // No attempt may start after the deadline; wait it out, then give up.
       episode.waitTimer = setTimer(() => {
         if (episode) episode.waitTimer = null;
@@ -199,11 +159,12 @@ export function createLiveResume({
     if (outcome === 'ok') {
       // A later drop may use `online` again.
       episode.lastAttemptByOnline = false;
-      // Playing again. The episode ends only after enough playing time. If the
-      // last thing seen during the attempt was an interruption, the stream is
-      // not playing now: wait for it to come back instead.
-      if (episode.interrupted) armResumeWindow();
-      else resumeStableCount();
+      if (episode.playedMs >= stableMs) recover();
+      else {
+        episode.lastProgressAt = now();
+        episode.probationDeadline = episode.lastProgressAt + stableMs + resumeMs;
+        checkProbation();
+      }
       return;
     }
     scheduleNext();
@@ -211,6 +172,7 @@ export function createLiveResume({
 
   function attempt(trigger = 'schedule') {
     if (!episode || episode.inFlight) return episode?.inFlight || null;
+    if (now() >= episode.deadline) { giveUp(); return null; }
     clear(episode.waitTimer);
     episode.waitTimer = null;
     episode.lastAttemptByOnline = trigger === 'online';
@@ -247,11 +209,9 @@ export function createLiveResume({
           lastSettledAt: null,
           waitTimer: null,
           attemptTimer: null,
-          stableTimer: null,
-          resumeTimer: null,
+          probationTimer: null,
           playedMs: 0,
-          playingSince: null,
-          interrupted: false,
+          lastProgressAt: start,
           onlineAllowed: true,
           lastAttemptByOnline: false,
         };
@@ -266,38 +226,12 @@ export function createLiveResume({
       scheduleNext();
       return true;
     },
-    /** Media is playing. While waiting, that counts as a recovery. Playing
-     *  time accumulates towards the stable total. */
-    notePlaying() {
-      if (!episode) return;
-      if (episode.inFlight) {
-        // Only record it: the attempt's timeout stays the one pending timer,
-        // and settle() arms the stable count from what was seen.
-        episode.interrupted = false;
-        if (episode.playingSince == null) episode.playingSince = now();
-        return;
-      }
-      if (episode.waitTimer != null) {
-        resumeStableCount();
-        clear(episode.waitTimer);
-        episode.waitTimer = null;
-        return;
-      }
-      resumeStableCount();
-    },
-    /** A real playback interruption (buffering, an unexpected pause or end):
-     *  the stable count pauses, and if the stream does not play again soon it
-     *  has dropped again. During an attempt this is remembered for settle().
-     *  A user pause must cancel() the episode instead of reporting this. */
-    noteInterrupted() {
-      if (!episode || episode.waitTimer != null) return;
-      if (episode.inFlight) {
-        // Only record it; settle() arms the "did not come back" timer.
-        episode.interrupted = true;
-        pauseStableCount();
-        return;
-      }
-      armResumeWindow();
+    /** Credit confirmed playhead movement, including during a running attempt. */
+    noteProgress(ms) {
+      if (!episode || episode.waitTimer != null || !Number.isFinite(ms) || ms <= 0) return;
+      episode.playedMs += ms;
+      episode.lastProgressAt = now();
+      if (!episode.inFlight && episode.playedMs >= stableMs) recover();
     },
     /** Try at once because the user asked (Play). One attempt at a time. */
     attemptNow() {
@@ -339,7 +273,7 @@ export function createLiveResume({
     /** Timers outstanding (for tests: exactly 1 while active, 0 otherwise). */
     get pendingWork() {
       if (!episode) return 0;
-      return [episode.waitTimer, episode.attemptTimer, episode.stableTimer, episode.resumeTimer]
+      return [episode.waitTimer, episode.attemptTimer, episode.probationTimer]
         .filter((timer) => timer != null).length;
     },
   };

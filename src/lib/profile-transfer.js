@@ -5,19 +5,10 @@
  */
 
 import { controlRequest } from './capture-client.js';
-import { EQ_STORAGE_KEY } from './eq-store.js';
+import { EQ_STORAGE_KEY, MAX_PROFILE_BYTES, PROFILE_STORAGE_KEYS, profileStorageSize, readProfileStorage } from './profile-storage.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 
-export const PROFILE_STORAGE_KEYS = Object.freeze([
-  'worldmedia.favorites.v1',
-  'worldmedia.settings.v1',
-  'worldmedia.volume.v1',
-  'worldmedia.jobs.v1',
-  EQ_STORAGE_KEY,
-  'worldmedia.favgroups.v1', // Favorites categories (lib/favorite-groups.js)
-  'worldmedia.favnames.v1', // The user's names for favorites (lib/favorite-names.js)
-  'worldmedia.ownstream.v1', // Stations kept on their own stream (lib/stream-verify.js)
-]);
+export { PROFILE_STORAGE_KEYS } from './profile-storage.js';
 
 /** The keys every release up to 0.1.8 knows. Only these decide whether this
  *  origin already holds a profile, exactly as in 0.1.8: a newer key on its own
@@ -70,12 +61,13 @@ function nextWriteHeaders() {
 }
 
 const PROFILE_ROUTE = '/api/v1/profile/preferences';
-const MAX_PROFILE_BYTES = 2 * 1024 * 1024;
 const AUTO_SYNC_DELAY_MS = 350;
+const STARTUP_RESTORE_RETRY_MS = 1_000;
 /** Longest one profile request may take before it counts as failed. */
 export const PROFILE_REQUEST_TIMEOUT_MS = 10_000;
 
 let automaticSyncTimer = null;
+let startupRestore = null;
 
 // An automatic save that fails or times out is tried once more, quietly,
 // after this long; the notice is shown only when that try fails too. (On a
@@ -231,30 +223,18 @@ function canUseNativeProfileService(requestImpl) {
 function validValues(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const output = {};
-  let total = 0;
   for (const key of PROFILE_STORAGE_KEYS) {
-    const entry = value[key];
-    if (typeof entry !== 'string') continue;
-    const size = new TextEncoder().encode(entry).byteLength;
-    if (size > MAX_PROFILE_BYTES || total + size > MAX_PROFILE_BYTES) {
-      throw new Error('Profile backup is too large. Port change cancelled to protect your saved data.');
-    }
-    total += size;
-    output[key] = entry;
+    if (typeof value[key] === 'string') output[key] = value[key];
+  }
+  if (profileStorageSize(output) > MAX_PROFILE_BYTES) {
+    throw new Error('Profile backup is too large. Port change cancelled to protect your saved data.');
   }
   return output;
 }
 
 /** Read the supported persistent app keys without parsing or altering them. */
 export function captureProfileStorage(storage) {
-  const selected = resolveStorage(storage);
-  const output = {};
-  if (typeof selected?.getItem !== 'function') throw new Error('Saved profile storage is unavailable.');
-  for (const key of PROFILE_STORAGE_KEYS) {
-    const value = selected.getItem(key);
-    if (typeof value === 'string') output[key] = value;
-  }
-  return validValues(output);
+  return validValues(readProfileStorage(resolveStorage(storage)));
 }
 
 /** True when this origin already holds a profile: any of the legacy keys. */
@@ -320,7 +300,7 @@ export function saveProfileHandoff(options = {}) {
  */
 export function scheduleProfileHandoff(options = {}) {
   const { delayMs = AUTO_SYNC_DELAY_MS, ...requestOptions } = options;
-  if (!canUseNativeProfileService(controlRequest)) return false;
+  if (startupRestore || !canUseNativeProfileService(controlRequest)) return false;
   if (automaticSyncTimer !== null) return true;
   const schedule = globalThis.setTimeout;
   if (typeof schedule !== 'function') {
@@ -393,10 +373,9 @@ export function cancelScheduledProfileHandoff() {
  *  origin lacks. That is the case after an older release moved the port: it
  *  restored the favorites here but not the names it does not know. A key the
  *  extra file holds is never reported as copied, and a key this origin has is
- *  never replaced. Returns true when anything was set. */
-export function restoreCopiedProfileValues(values, copied, storage) {
-  const selected = resolveStorage(storage);
-  if (!Array.isArray(copied) || typeof selected?.setItem !== 'function') return false;
+ *  never replaced. */
+function restoreCopiedProfileOutcome(values, copied, selected) {
+  if (!Array.isArray(copied)) return 'nothing';
   const set = [];
   try {
     const safeValues = validValues(values);
@@ -406,13 +385,17 @@ export function restoreCopiedProfileValues(values, copied, storage) {
       selected.setItem(key, safeValues[key]);
       set.push(key);
     }
-    return set.length > 0;
+    return set.length > 0 ? 'restored' : 'nothing';
   } catch (_) {
     for (const key of set) {
       try { selected.removeItem(key); } catch (_) { /* Storage may be unavailable. */ }
     }
-    return false;
+    return 'failed';
   }
+}
+
+export function restoreCopiedProfileValues(values, copied, storage) {
+  return restoreCopiedProfileOutcome(values, copied, resolveStorage(storage)) === 'restored';
 }
 
 /** Restore the previous origin's handoff before state.js reads localStorage.
@@ -449,7 +432,7 @@ export async function restoreProfileHandoffOutcome(options = {}) {
       if (PROFILE_COPY_KEYS.every((key) => typeof selected.getItem(key) === 'string')) return 'nothing';
       const data = await requestImpl(PROFILE_ROUTE, requestOptions);
       if (!plainValues(data?.values)) return 'failed';
-      return restoreCopiedProfileValues(data.values, data.copied, selected) ? 'restored' : 'nothing';
+      return restoreCopiedProfileOutcome(data.values, data.copied, selected);
     }
     const data = await requestImpl(PROFILE_ROUTE, requestOptions);
     if (!plainValues(data?.values)) return 'failed';
@@ -460,6 +443,22 @@ export async function restoreProfileHandoffOutcome(options = {}) {
   } catch (_) {
     return 'failed';
   }
+}
+
+/** Keep startup and automatic writes waiting while the disk copy is unreadable. */
+export function restoreStartupProfileHandoff() {
+  if (startupRestore) return startupRestore;
+  cancelScheduledProfileHandoff();
+  startupRestore = (async () => {
+    while (await restoreProfileHandoffOutcome() === 'failed') {
+      reportPersistenceFailure('profile-restore', 'Could not restore your saved profile. Retrying.');
+      await new Promise((resolve) => setTimeout(resolve, STARTUP_RESTORE_RETRY_MS));
+    }
+  })().finally(() => {
+    clearPersistenceFailure('profile-restore');
+    startupRestore = null;
+  });
+  return startupRestore;
 }
 
 /** A deliberate cache reset must not be resurrected after a port change. */

@@ -4,7 +4,7 @@
  * The passes are Psychedelia's (engine/post-fx-library.js, unchanged); this
  * runs them the way its post-process.js does, without its Renderer:
  *
- *   - Bypass: with no FX on, begin() returns null and the scene draws
+ *   - Bypass: with no passes needed, begin() returns null and the scene draws
  *     straight to the screen as before: no framebuffer, no texture, no extra
  *     draw call, nothing bound. The global reactions ride on the chain, so
  *     they are off then too.
@@ -12,8 +12,7 @@
  *     ping-pong targets are made on the first frame that needs them, at the
  *     drawing buffer's size (so the quality setting sizes them), and only as
  *     many as the passes need (one FX: just the scene's; the last pass draws
- *     to the screen itself). setPasses([]) frees them all, as does free()
- *     (the tab closing).
+ *     to the screen itself). release() frees them when no passes are needed.
  *   - Programs: compiled without blocking a frame where the context offers
  *     KHR_parallel_shader_compile (a pass joins when its program is ready;
  *     the picture is drawn without it meanwhile). The chain's programs and
@@ -45,7 +44,9 @@
  *     clock (state.drift: { bars, scale }); a link pushes on top. A pass that
  *     stays on keeps its waves.
  *   - The global reactions pass (fx-reactions.js; Psychedelia's audio pass,
- *     below) is the last pass when it has anything to do.
+ *     below) follows the chosen effects. Color travel uses one pass after
+ *     effects and blended overlays. A dissolve, when active, composites the
+ *     frozen outgoing picture over the finished incoming one.
  *   - A lost context: every object went with it; nothing is deleted, all is
  *     made again on the next frame after restore().
  */
@@ -56,6 +57,8 @@ import { fxDriftFor } from './fx-shuffle.js';
 import { FX_SYNC } from './fx-catalog.js';
 import { OVERLAY_EXTRA_BLENDS_RELEASED } from './overlay-catalog.js';
 import { FLASH_LIMITS } from './flash-limiter.js';
+import { COLOUR_TRAVEL_GLSL } from './colour-travel.js';
+import { WARP_AMOUNT, WARP_DISSOLVE_SHADER, WARP_FEATHER, WARP_LAYER_MIX, WARP_SWIRL } from './warp-dissolve.js';
 
 /** Psychedelia's post-process.js audio pass (its AUDIO_PASS_SRC), as there. */
 export const REACTION_SRC = [
@@ -310,7 +313,15 @@ export function fxFrameStep(dt) {
   return step < 0.25 ? 0.25 : (step > 4 ? 4 : step);
 }
 
-const INTERNAL = new Set(['reactions', 'blit', 'overlay']);
+const COLOUR_TRAVEL_SRC = [
+  'uniform sampler2D u_tex;',
+  'uniform float u_angle;',
+  COLOUR_TRAVEL_GLSL,
+  'void main() { gl_FragColor = vec4(colourTravel(texture2D(u_tex, v_uv).rgb, u_angle), 1.0); }',
+].join('\n');
+const WARP_SRC = WARP_DISSOLVE_SHADER.replace(/\bFRAG_OUT\b/g, 'gl_FragColor');
+
+const INTERNAL = new Set(['colour-travel', 'warp-dissolve', 'reactions', 'blit', 'overlay']);
 /** The texture unit a palette pass (Palette Map) reads its look-up texture
  *  from (u_lut), as Psychedelia's post-process.js binds it. */
 export const FX_LUT_UNIT = 2;
@@ -333,6 +344,10 @@ export function createFxChain({
   let ping = null;
   let pong = null;
   let passes = []; // { id, fx, values, links, drawValues, drift, driftValues, hist, beat, firedAt }
+  let colourAngle = 0;
+  let warpTexture = null;
+  let warpInput = null;
+  let warpProgress = 0;
   let reactions = null; // this frame's global reaction values, or null
   // The blended overlay (overlay-layer.js blendSheet getter: () => sheet or
   // null), its texture (one, reused) and the sheet version last uploaded.
@@ -434,7 +449,7 @@ export function createFxChain({
     stats.failed += 1;
   }
   /** Start compiling `src` under `key` (once); returns its entry. */
-  function start(key, src) {
+  function start(key, src, completeNow = false) {
     if (programs.has(key)) return programs.get(key);
     const g = context;
     stats.compiles += 1;
@@ -454,7 +469,7 @@ export function createFxChain({
       g.attachShader(entry.program, entry.vs);
       g.attachShader(entry.program, entry.fs);
       g.linkProgram(entry.program);
-      if (!parallelExtension()) settle(key, entry);
+      if (completeNow || !parallelExtension()) settle(key, entry);
       else linking.push(entry);
     } catch (error) {
       console.error(`visualizer: FX ${key} did not compile:`, error);
@@ -490,7 +505,7 @@ export function createFxChain({
       for (const pass of gone) { freeHistory(pass); if (!failedAsked.includes(pass.id)) failedAsked.push(pass.id); }
       passes = passes.filter((pass) => !gone.includes(pass));
     }
-    if (!passes.length && !overlayOn()) freeTargets();
+    if (!chain.active) freeTargets();
     drawDirty = true;
     evict();
     return true;
@@ -550,6 +565,16 @@ export function createFxChain({
     stats.targetsMade += 1;
     return { fb, tex };
   }
+  function spare(usePing) {
+    if (usePing) return ping ??= makeTarget();
+    return pong ??= makeTarget();
+  }
+  // Capture the incoming picture only if it would have gone to the
+  // screen. Feedback already has a texture.
+  function pictureTarget(warpMade) {
+    if (!warpMade) return null;
+    return warpInput ??= makeTarget();
+  }
   function freeTarget(target) {
     if (!target) return null;
     stats.targetsFreed += 1;
@@ -569,6 +594,7 @@ export function createFxChain({
     capture = freeTarget(capture);
     ping = freeTarget(ping);
     pong = freeTarget(pong);
+    warpInput = freeTarget(warpInput);
     freeOverlayTexture();
     freeLuts();
     for (const pass of passes) freeHistory(pass);
@@ -678,6 +704,34 @@ export function createFxChain({
     stats.overlayDraws += 1;
   }
 
+  function drawFinalPass(made, readTex, target, warp) {
+    const g = context;
+    g.bindFramebuffer(g.FRAMEBUFFER, target?.fb || null);
+    g.viewport(0, 0, width, height);
+    g.useProgram(made.program);
+    g.activeTexture(g.TEXTURE0);
+    g.bindTexture(g.TEXTURE_2D, readTex);
+    if (warp) {
+      set1i(made, 'u_to', 0);
+      g.activeTexture(g.TEXTURE1);
+      g.bindTexture(g.TEXTURE_2D, warpTexture);
+      set1i(made, 'u_from', 1);
+      set1f(made, 'u_progress', warpProgress);
+      set1f(made, 'u_amount', WARP_AMOUNT);
+      set1f(made, 'u_swirl', WARP_SWIRL);
+      set1f(made, 'u_feather', WARP_FEATHER);
+      set1f(made, 'u_layer_mix', WARP_LAYER_MIX);
+    } else {
+      set1i(made, 'u_tex', 0);
+      set1f(made, 'u_angle', colourAngle);
+    }
+    drawQuad(made);
+    if (warp) {
+      g.bindTexture(g.TEXTURE_2D, null);
+      g.activeTexture(g.TEXTURE0);
+    }
+  }
+
   function drawQuad(made) {
     const g = context;
     if (!quad) {
@@ -754,8 +808,8 @@ export function createFxChain({
     /** FX passes asked for now (0: the chain is bypassed); some may still be
      *  linking (drawnIds: those drawn). */
     get count() { return passes.length; },
-    /** Anything to draw through the chain: FX passes, or a blended overlay. */
-    get active() { return passes.length > 0 || overlayOn(); },
+    /** Whether any pass needs the scene capture. */
+    get active() { return passes.length > 0 || overlayOn() || Boolean(colourAngle || warpTexture); },
     /** A blended overlay is set and its pass can draw. */
     get overlayOn() { return overlayReady(); },
     get overlayFailed() { return overlayFailed; },
@@ -765,7 +819,7 @@ export function createFxChain({
     /** The blended overlay's texture is held. */
     get overlayHeld() { return Boolean(overlayTex); },
     release() {
-      if (!passes.length && !overlayOn()) freeTargets();
+      if (!chain.active) freeTargets();
     },
     get ids() { return passes.map((pass) => pass.id); },
     get drawnIds() { return drawable().map((pass) => pass.id); },
@@ -785,7 +839,7 @@ export function createFxChain({
     /** Palette look-up textures held now. */
     get luts() { return luts.size; },
     get targets() {
-      return (capture ? 1 : 0) + (ping ? 1 : 0) + (pong ? 1 : 0)
+      return (capture ? 1 : 0) + (ping ? 1 : 0) + (pong ? 1 : 0) + (warpInput ? 1 : 0)
         + passes.reduce((sum, pass) => sum + (pass.hist ? 2 : 0), 0);
     },
     get size() { return { width, height }; },
@@ -826,7 +880,7 @@ export function createFxChain({
       }
       for (const gone of before.values()) freeHistory(gone);
       passes = next;
-      if (!passes.length && !overlayOn()) freeTargets();
+      if (!chain.active) freeTargets();
       else if (passes.length && alive()) {
         // The helpers, ahead of their first use.
         start('reactions', REACTION_SRC);
@@ -852,7 +906,7 @@ export function createFxChain({
       }
       if (!overlay) {
         freeOverlayTexture();
-        if (!passes.length) freeTargets();
+        chain.release();
       }
     },
 
@@ -860,6 +914,69 @@ export function createFxChain({
      *  texture is freed at once, whether effects stay on or not. */
     freeOverlay() {
       if (overlayTex && !overlayOn()) freeOverlayTexture();
+    },
+
+    setColourTravel(angle) {
+      colourAngle = Number.isFinite(angle) ? angle : 0;
+      if (colourAngle && alive()) {
+        // The first guarded frame must already have the color pass.
+        if (start('colour-travel', COLOUR_TRAVEL_SRC, true).state === 'failed') colourAngle = 0;
+      }
+    },
+
+    /** Copy the outgoing screen once. Returns true or the reason it failed. */
+    captureWarp(w, h, drawOld) {
+      if (!alive() || !w || !h || typeof context.copyTexImage2D !== 'function') return 'snapshot-unavailable';
+      // The small shader is compiled on the first eligible scene change,
+      // so no work is queued ahead of the transition.
+      if (start('warp-dissolve', WARP_SRC, true).state !== 'ready') return 'shader-compile';
+      const g = context;
+      if ((g.drawingBufferWidth !== undefined && g.drawingBufferWidth !== w)
+        || (g.drawingBufferHeight !== undefined && g.drawingBufferHeight !== h)) return 'snapshot-size';
+      try {
+        if (!drawOld()) return 'no-outgoing-frame';
+        g.bindFramebuffer(g.FRAMEBUFFER, null);
+        g.activeTexture(g.TEXTURE0);
+        warpTexture = g.createTexture();
+        if (!warpTexture) return 'snapshot-allocation';
+        g.bindTexture(g.TEXTURE_2D, warpTexture);
+        g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
+        g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
+        g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
+        g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
+        // The window's opaque default framebuffer has no alpha to copy.
+        g.copyTexImage2D(g.TEXTURE_2D, 0, g.RGB, 0, 0, w, h, 0);
+        g.bindTexture(g.TEXTURE_2D, null);
+        // GL reports a failed copy via its error flag, without throwing.
+        if (g.getError && g.getError() !== g.NO_ERROR) {
+          chain.endWarp();
+          return 'snapshot-copy';
+        }
+        warpProgress = 0;
+        return true;
+      } catch (_) {
+        chain.endWarp();
+        return 'snapshot-copy';
+      }
+    },
+
+    setWarpProgress(progress) { warpProgress = progress; },
+    endWarp() {
+      if (!warpTexture) return;
+      if (alive()) context.deleteTexture(warpTexture);
+      warpTexture = null;
+      warpInput = freeTarget(warpInput);
+      chain.release();
+    },
+
+    /** After begin() sized the targets, restore the old picture if the
+     *  first incoming frame is still unavailable after a scene resize. */
+    drawFrozenWarp() {
+      const made = programs.get('warp-dissolve');
+      if (!warpTexture || made?.state !== 'ready' || !alive()) return false;
+      drawFinalPass(made, warpTexture, null, true);
+      context.bindTexture(context.TEXTURE_2D, null);
+      return true;
     },
 
     /** This frame's global reaction values (fx-reactions.js), or null. */
@@ -881,12 +998,13 @@ export function createFxChain({
     begin(w, h) {
       // A blended overlay just went while effects stay on: its texture goes.
       if (overlayTex && !overlayOn()) freeOverlayTexture();
-      if ((!passes.length && !overlayOn()) || !alive()) return null;
+      if (!chain.active || !alive()) return null;
       if (poll()) onChange?.();
-      if (!passes.length && !overlayOn()) return null;
+      if (!chain.active) return null;
       const list = drawable();
       if (list.length < passes.length) stats.waitedLink += 1;
-      if (!list.length && !overlayReady()) return null;
+      const travelReady = colourAngle && programs.get('colour-travel')?.state === 'ready';
+      if (!list.length && !overlayReady() && !travelReady && !warpTexture) return null;
       if (w !== width || h !== height) {
         const had = capture || passes.some((pass) => pass.hist);
         freeTargets();
@@ -901,7 +1019,7 @@ export function createFxChain({
     /** After the scene drew into begin()'s framebuffer: every ready pass,
      *  the last one to the screen. `state` is the loop's. */
     finish(state) {
-      if ((!passes.length && !overlayOn()) || !capture || !alive()) return false;
+      if (!capture || !alive()) return false;
       const g = context;
       // The wall clock for trigger firing: once per frame (a frame drawn
       // twice under a cross-fade moves it once).
@@ -918,27 +1036,24 @@ export function createFxChain({
       const list = drawable();
       const sheet = overlayReady() ? overlaySheet() : null;
       const overlayMade = sheet ? programs.get('overlay') : null;
-      if (!list.length && !overlayMade) return false;
+      const travelMade = colourAngle && programs.get('colour-travel')?.state === 'ready'
+        ? programs.get('colour-travel') : null;
+      const warpMade = warpTexture ? programs.get('warp-dissolve') : null;
+      if (!list.length && !overlayMade && !travelMade && !warpMade) return false;
       const under = Boolean(overlayMade && sheet.blend?.under);
       const over = Boolean(overlayMade && !under);
       const reactionsMade = list.length && reactions && !reactionsIdle(reactions) ? ready('reactions', REACTION_SRC) : null;
-      const total = (under ? 1 : 0) + list.length + (reactionsMade ? 1 : 0) + (over ? 1 : 0);
+      const total = (under ? 1 : 0) + list.length + (reactionsMade ? 1 : 0) + (over ? 1 : 0) + (travelMade ? 1 : 0);
       let readTex = capture.tex;
       let usePing = true;
       let onScreen = false;
       let step = 0; // steps drawn so far (the last one draws to the screen)
       const fstep = lastStep;
       stats.frames += 1;
-      /** The next ping-pong target. */
-      const spare = () => {
-        if (usePing) { if (!ping) ping = makeTarget(); return ping; }
-        if (!pong) pong = makeTarget();
-        return pong;
-      };
       if (under) {
         // Under the effects: blended into the scene before the first pass.
         const last = step === total - 1;
-        const target = last ? null : spare();
+        const target = last ? pictureTarget(warpMade) : spare(usePing);
         drawOverlay(overlayMade, sheet, readTex, target ? target.fb : null);
         step += 1;
         if (target) { readTex = target.tex; usePing = !usePing; } else onScreen = true;
@@ -967,12 +1082,10 @@ export function createFxChain({
           const { hist } = pass;
           prevTex = hist.written < 2 ? readTex : hist.targets[hist.index].tex;
         }
-        if (!feeds && !last) {
-          if (usePing) { if (!ping) ping = makeTarget(); writeFb = ping.fb; writeTex = ping.tex; } else {
-            if (!pong) pong = makeTarget();
-            writeFb = pong.fb;
-            writeTex = pong.tex;
-          }
+        if (!feeds) {
+          const target = last ? pictureTarget(warpMade) : spare(usePing);
+          writeFb = target?.fb || null;
+          writeTex = target?.tex || null;
         }
         g.bindFramebuffer(g.FRAMEBUFFER, writeFb);
         g.viewport(0, 0, width, height);
@@ -1025,7 +1138,7 @@ export function createFxChain({
       }
       if (reactionsMade) {
         const made = reactionsMade;
-        const target = over ? spare() : null;
+        const target = over || travelMade ? spare(usePing) : pictureTarget(warpMade);
         g.bindFramebuffer(g.FRAMEBUFFER, target ? target.fb : null);
         g.viewport(0, 0, width, height);
         g.useProgram(made.program);
@@ -1047,9 +1160,19 @@ export function createFxChain({
         if (target) { readTex = target.tex; usePing = !usePing; } else onScreen = true;
       }
       if (over) {
-        // On top of the effects (and their reactions): the last step.
-        drawOverlay(overlayMade, sheet, readTex, null);
-        step += 1;
+        // Blend over the effects before the final colour and scene passes.
+        const target = travelMade ? spare(usePing) : pictureTarget(warpMade);
+        drawOverlay(overlayMade, sheet, readTex, target?.fb || null);
+        if (target) { readTex = target.tex; usePing = !usePing; } else onScreen = true;
+      }
+      if (travelMade) {
+        const target = pictureTarget(warpMade);
+        drawFinalPass(travelMade, readTex, target, false);
+        if (target) readTex = target.tex;
+        else onScreen = true;
+      }
+      if (warpMade) {
+        drawFinalPass(warpMade, readTex, null, true);
         onScreen = true;
       }
       if (!onScreen) {
@@ -1063,10 +1186,11 @@ export function createFxChain({
           g.bindTexture(g.TEXTURE_2D, readTex);
           set1i(made, 'u_tex', 0);
           drawQuad(made);
+          onScreen = true;
         }
       }
       g.bindTexture(g.TEXTURE_2D, null);
-      return true;
+      return onScreen;
     },
 
     /** Free the framebuffers and textures (they are made again when needed). */
@@ -1074,6 +1198,8 @@ export function createFxChain({
 
     /** The context was lost: everything went with it. */
     contextLost() {
+      warpTexture = null;
+      warpInput = null;
       capture = null;
       ping = null;
       pong = null;
@@ -1107,6 +1233,7 @@ export function createFxChain({
      *  is what made drivers warn (scene-renderer.js); the context is lost next
      *  (the renderer's destroy), which frees it. */
     destroy() {
+      chain.endWarp();
       freeTargets();
       poll(); // links finished by now are deleted below
       for (const entry of programs.values()) {

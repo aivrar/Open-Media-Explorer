@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPlayerDom } from './helpers/fake-dom.js';
-import { getState, subscribe } from '../src/lib/state.js';
+import { createPlayerDom, FakeElement } from './helpers/fake-dom.js';
+import { emit, getState, setMode, subscribe } from '../src/lib/state.js';
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
@@ -261,6 +261,168 @@ test('player owns lifecycle state across pause, errors, rejection, stop, and rap
   elements['audio-el'].emit('playing');
   elements['video-el'].emit('playing');
   assertPlaying(elements, false);
+});
+
+test('fullscreen video measurements leave the windowed clearance unchanged', async (t) => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  t.after(() => {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    if (previousObserver) Object.defineProperty(globalThis, 'ResizeObserver', previousObserver);
+    else delete globalThis.ResizeObserver;
+  });
+
+  const { elements, document } = createPlayerDom();
+  const properties = new Map();
+  elements.app.style.setProperty = (name, value) => properties.set(name, value);
+  globalThis.document = document;
+  globalThis.window = {};
+  let reportSize;
+  globalThis.ResizeObserver = class {
+    constructor(callback) {
+      reportSize = (blockSize) => callback([{ borderBoxSize: [{ blockSize }] }]);
+    }
+    observe(target, options) {
+      assert.equal(target, elements['video-el']);
+      assert.equal(options.box, 'border-box');
+    }
+  };
+
+  const player = await import('../src/lib/player.js?fullscreen-clearance');
+  player.initPlayer();
+  reportSize(180.5);
+  assert.equal(properties.get('--video-height'), '180.5px');
+
+  document.fullscreenElement = elements['video-el'];
+  reportSize(640);
+  assert.equal(properties.get('--video-height'), '180.5px');
+
+  document.fullscreenElement = null;
+  reportSize(270);
+  assert.equal(properties.get('--video-height'), '270px');
+});
+
+test('the Tuner keeps the video band between TV stations and releases it for radio', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const { elements, document } = createPlayerDom();
+  const { app } = elements;
+  const video = elements['video-el'];
+  const audio = elements['audio-el'];
+  const sizeButton = document.register(new FakeElement('video-size-btn'));
+  video.hidden = true;
+  globalThis.document = document;
+  globalThis.window = {};
+  const { mode, settings } = getState();
+  let nextRelay = 0;
+  let refusedUrl = '';
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    if (path === '/api/v1/session') return apiResponse(200, {
+      ok: true, data: { token: 'tuner-test' }, error: null,
+    });
+    if (path === '/api/v1/media/register') {
+      if (JSON.parse(options.body).url === refusedUrl) {
+        return apiResponse(502, { ok: false, error: { code: 'MEDIA_CONNECT_FAILED' } });
+      }
+      const id = `tuner_test_media_1234567890_${++nextRelay}`;
+      return apiResponse(201, { ok: true, data: { media_id: id, relay_url: `/api/v1/media/${id}` }, error: null });
+    }
+    if (options?.headers?.Range) {
+      return new Response(null, { status: 206, headers: { 'Content-Type': 'audio/mpeg' } });
+    }
+    if (path.endsWith('/expire')) return apiResponse(202, { ok: true, data: { state: 'expired' }, error: null });
+    throw new Error(`Unexpected player request: ${path}`);
+  });
+  const player = await import('../src/lib/player.js?tuner-video-clearance');
+  player.initPlayer();
+  t.after(() => {
+    player.stop();
+    getState().settings = settings;
+    setMode(mode);
+  });
+  const reserved = () => app.classList.contains('tuner-video-reserved');
+  const television = (name) => item(name, 'tv', 'video');
+
+  setMode('library');
+  await player.playItem(television('first-tv'));
+  assert.equal(video.hidden, false);
+  assert.equal(reserved(), false);
+  const originalSrc = video.src;
+  const load = t.mock.method(video, 'load');
+  setMode('tuner');
+  assert.equal(reserved(), true);
+  setMode('library');
+  setMode('tuner');
+  assert.equal(reserved(), true);
+  assert.equal(video.src, originalSrc);
+  assert.equal(load.mock.callCount(), 0);
+
+  getState().settings = { ...settings, videoSize: 'large' };
+  emit('settings-change', getState().settings);
+  assert.equal(sizeButton.getAttribute('aria-pressed'), 'true');
+  assert.equal(app.classList.contains('video-large'), true);
+  assert.equal(reserved(), true);
+
+  const changingStation = player.playItem(television('next-tv'));
+  assert.equal(video.hidden, true);
+  assert.equal(reserved(), true);
+  await changingStation;
+  assert.equal(video.hidden, false);
+  assert.equal(reserved(), true);
+  await player.playItem({ ...television('failed-tv'), stream_url: '' });
+  assert.equal(video.hidden, true);
+  assert.equal(reserved(), true);
+  getState().settings = { ...settings, videoSize: 'normal' };
+  emit('settings-change', getState().settings);
+  assert.equal(sizeButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(app.classList.contains('video-large'), false);
+  assert.equal(reserved(), true);
+  player.stop();
+  setMode('library');
+  setMode('tuner');
+  assert.equal(reserved(), true);
+
+  await player.playItem(television('before-radio'));
+  player.setTunerVideoBand('radio');
+  assert.equal(reserved(), false);
+  assert.equal(video.hidden, false);
+  player.setTunerVideoBand('tv');
+  assert.equal(reserved(), false);
+  video.videoWidth = 1920;
+  video.videoHeight = 1080;
+  video.emit('loadedmetadata');
+  video.emit('resize');
+  assert.equal(reserved(), false, 'the still-open box is the same appearance');
+  video.videoWidth = video.videoHeight = 0;
+
+  await player.playItem(television('before-audio-backup'));
+  assert.equal(reserved(), true);
+  audio.autoEvents = false;
+  const tvWithBackup = television('tv-with-audio-backup');
+  refusedUrl = tvWithBackup.stream_url;
+  tvWithBackup._extra = { streamCandidates: [{ url: 'https://media.example/tv-backup.mp3', kind: 'audio' }] };
+  await player.playItem(tvWithBackup);
+  assert.equal(player.getCurrentItem().type, 'tv');
+  assert.ok(audio.src, 'the confirmed MP3 backup uses the audio element');
+  assert.equal(video.hidden, true);
+  assert.equal(reserved(), true, 'the backup has yet to start');
+  audio.emit('playing');
+  assert.equal(reserved(), false);
+
+  const returningToTv = player.playItem(television('back-to-tv'));
+  assert.equal(reserved(), false);
+  await returningToTv;
+  assert.equal(reserved(), true);
+
+  setMode('library');
+  audio.autoEvents = false;
+  await player.playItem(item('audio-in-library', 'audio', 'audio'));
+  assert.equal(reserved(), true, 'a selected audio item has yet to start');
+  audio.emit('playing');
+  assert.equal(reserved(), false);
+  setMode('tuner');
+  assert.equal(reserved(), false);
 });
 
 test.after(() => {

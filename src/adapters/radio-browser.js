@@ -213,11 +213,8 @@ async function fetchStations(path, opts = {}) {
   throw lastError || new Error('Radio Browser fetch failed');
 }
 
-// The Library collects the whole directory. Every request costs about a
-// second before its first byte whatever it asks for, and the directory sends
-// 300 stations in little more time than 30 (measured: 1.1 s for 30, 1.6 s for
-// 300), so a browse page asks for a block of that size: a tenth of the
-// requests, for the user and for the directory alike.
+// A browse page asks for 300 stations. The directory sends them in little
+// more time than 30 (measured: 1.6 s for 300, 1.1 s for 30).
 export const BROWSE_BLOCK = 300;
 
 async function stationPage(query, opts = {}, offsetOverride = null, most = 100) {

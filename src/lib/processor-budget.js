@@ -79,10 +79,6 @@ export const BUDGET_SETTLE_MS = 8_000;
  *  further step-ups (for the scene, until reset). */
 export const BUDGET_BOUNCE_MS = 60_000;
 
-/** The sound comparison of two streams (best-stream Auto, at High only) is
- *  not built: see its note in best-stream-auto.js. The hook stays here. */
-export const SOUND_COMPARISON_BUILT = false;
-
 export function normalizeProcessorUse(value) {
   return PROCESSOR_USE_LEVELS.includes(value) ? value : DEFAULT_PROCESSOR_USE;
 }
@@ -296,11 +292,6 @@ export const DENSITY_SHARE_SCALE = Object.freeze({
 /** The density worker's share scale at `level` (Light's for an unknown one). */
 export function densityShareScale(level) {
   return DENSITY_SHARE_SCALE[normalizeProcessorUse(level)];
-}
-
-/** True for the sound comparison at High, once it exists. */
-export function soundComparisonAllowed(budget) {
-  return SOUND_COMPARISON_BUILT && budget?.level === PROCESSOR_USE_HIGH;
 }
 
 /* ---- Software rendering ---- */

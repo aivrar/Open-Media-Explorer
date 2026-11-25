@@ -242,6 +242,14 @@ For IPTV/PeerTube/Owncast/HLS, a directory record can outlive the broadcaster.
 For finite video, a missing codec or unsupported DRM can make playback
 unavailable even when the metadata card is valid.
 
+## A station starts slowly
+
+Give the station a few seconds to connect. HLS can take longer. A previous
+version waited for a full 64 KiB from some live radio servers. At 40 kbps that
+took about 13 seconds. Use v0.1.17 or newer to start receiving the stream as
+it arrives. If a saved station often fails to start and you have a second
+address, add it with **Stream address...** in the station's details.
+
 ## A stream under Other streams does not play
 
 **Other streams** (in the detail panel of a Radio Browser station) lists other
@@ -333,6 +341,14 @@ reasons for none:
   the song. World Media shows what the station sends.
 - A title can take a few seconds to appear, and again to change.
 
+## A song title is cut short
+
+Point at the title to read the station's full text when the line ends in an
+ellipsis. If the tooltip is cut short too, the station may have sent an
+incomplete title. The SomaFM title reported in issue #6 was already cut short
+in the station's own track data. World Media shows what the station sends.
+[Issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
+
 ## A station shows no format or bitrate
 
 A station shows its stream format and bitrate in its tooltip and in its details,
@@ -340,8 +356,9 @@ and on its card with **Show technical source details** on.
 
 - Radio Browser lists them for its stations. Any other station shows them after
   it has played once; before that, nothing is known.
-- A station delivered as HLS shows none, and neither does a station whose
-  server sends neither an audio type nor a bitrate.
+- HLS streams get a stream line after playback. A line can show only the
+  fields the stream supplies. Video details may take five stable seconds
+  of playback to appear.
 - **Clear local cache** removes what the app remembered, so the stations show
   nothing again until they play.
 - With **Show technical source details** off, the card itself shows nothing, but

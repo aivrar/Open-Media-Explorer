@@ -22,6 +22,7 @@
 import { bestStreamAutoOn } from './best-stream.js';
 import { controlRequest } from './capture-client.js';
 import { playedStream } from './media-failover.js';
+import { stationStreamAddresses } from './station-stream-addresses.js';
 import { stationId, underOwnName } from './other-streams.js';
 import { loadAdapter } from './sources.js';
 import {
@@ -64,7 +65,7 @@ export function checkPlannedFor(itemId) {
 /** The station id Auto works with, or '' (not a Radio Browser station, or
  *  the user chose its own stream, or Auto is off). */
 function autoStation(item, settings) {
-  if (!bestStreamAutoOn(settings) || item?.source !== RADIO_BROWSER) return '';
+  if (!bestStreamAutoOn(settings) || item?.source !== RADIO_BROWSER || stationStreamAddresses(item).ordered) return '';
   const id = stationId(item);
   return id && !keepsOwnStream(id) ? id : '';
 }

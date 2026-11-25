@@ -130,7 +130,7 @@
   gap: 14px;
   width: var(--viz-panel-width);
   max-width: calc(100% - 48px);
-  padding: 10px 12px 16px;
+  padding: 10px 12px calc(16px + var(--video-clearance));
   overflow-y: auto;
   overscroll-behavior: contain;
   border-left: 1px solid rgba(255, 255, 255, 0.14);
@@ -478,6 +478,7 @@
   padding: 16px;
   background: rgba(0, 0, 0, 0.86);
 }
+#app.has-video .viz-notice { padding-right: calc(var(--video-w) + 32px); }
 .viz-notice[hidden] { display: none; }
 .viz-notice-box {
   box-sizing: border-box;
@@ -655,7 +656,7 @@
    inside it), tighter gaps, and the notice and start button keep clear of
    the edges. */
 @media (max-height: 480px) {
-  .viz-panel { gap: 8px; padding-top: 6px; padding-bottom: 10px; }
+  .viz-panel { gap: 8px; padding-top: 6px; padding-bottom: calc(10px + var(--video-clearance)); }
   .viz-scene-options { max-height: none; overflow-y: visible; }
   .viz-notice { padding: 8px; }
   .viz-notice-box { padding: 12px 14px; }

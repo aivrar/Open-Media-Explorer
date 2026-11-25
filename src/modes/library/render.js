@@ -16,12 +16,13 @@ import {
 } from '../../lib/state.js';
 import { FAVORITES_SORT_MANUAL, normalizeFavoritesSort } from '../../lib/favorites-order.js';
 import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
+import { syncFavoriteTitles } from './favorite-titles.js';
 import { buildCategoryButton, closeDetachedCategoryMenu, updateCategoryButton } from './card-category.js';
 import {
   canonicalArtworkUrl, isArtworkRelayUrl, isStationImageSource, stationImageSourceFor,
 } from '../../lib/artwork.js';
 import { SOURCES, getSourceLabel } from '../../lib/sources.js';
-import { el } from './utils.js';
+import { el, setDescriptionReference } from './utils.js';
 import { artworkInitials, initialsHue } from '../../lib/initials.js';
 import { stationStreamLabel, streamTooltipLine } from '../../lib/played-streams.js';
 import { shownLicense } from '../../lib/item-model.js';
@@ -118,6 +119,12 @@ export function renderResults() {
   // the search box doesn't wipe what you favorited.
   const pool = libraryPool();
   const filtered = filteredItemsForCurrentView(pool);
+  const exportButton = view.activeSource === 'favorites' ? ui.favoritesExport
+    : view.activeSource === 'playlists' ? ui.playlistExport : null;
+  if (exportButton) {
+    exportButton.disabled = !filtered.some((item) => item.__contentHidden !== true);
+    exportButton.title = exportButton.disabled ? 'No items match this view.' : 'Export the items shown';
+  }
   const signature = JSON.stringify([
     view.activeSource, view.lastQuery, view.filters.type, view.filters.country,
     view.playlistId, isPersonalSource() ? personalFilters() : null,
@@ -199,8 +206,11 @@ export function renderResults() {
     if (isPersonalSource() || onlyHolds || slowSources.length > 0 || !viewHasPendingSources()) {
       // Hold notices explain the empty page only when nothing else is pending.
       const notices = onlyHolds ? currentSourceNotices() : [];
-      const title = slowSources.length > 0 ? notAnsweringText(slowSources) : 'No matching items';
-      const message = slowSources.length > 0
+      const sourceOff = getState().settings.enabledSources[view.activeSource] === false;
+      const title = sourceOff ? 'Source is off'
+        : slowSources.length > 0 ? notAnsweringText(slowSources) : 'No matching items';
+      const message = sourceOff ? 'Turn it on in Settings under Sources.'
+        : slowSources.length > 0
         ? 'World Media tries again by itself every few minutes. Retry now, below, tries at once.'
         : notices.length > 0 ? notices.join(' ') : isPersonalSource()
         ? personalEmptyMessage() : view.query
@@ -237,6 +247,7 @@ export function renderResults() {
     renderedIds.add(it.id);
   }
   if (frag.childNodes.length > 0) ui.resultsHost.appendChild(frag);
+  if (view.activeSource === 'favorites') syncFavoriteTitles();
   syncFavoriteCategoryControls();
   syncFavoriteOrderControls(filtered);
   syncDidNotPlayMarks();
@@ -262,7 +273,7 @@ function setCardTroubleMark(card) {
     if (!mark) return;
     mark.remove();
     card.__trouble = null;
-    card.__open?.removeAttribute?.('aria-describedby');
+    setDescriptionReference(card.__open, mark.getAttribute('id'), false);
     card.classList?.remove?.('has-trouble');
     return;
   }
@@ -281,7 +292,7 @@ function setCardTroubleMark(card) {
     mark.setAttribute('aria-label', text);
     mark.setAttribute('title', text);
   }
-  card.__open?.setAttribute?.('aria-describedby', mark.getAttribute('id'));
+  setDescriptionReference(card.__open, mark.getAttribute('id'), true);
 }
 
 /** Bring the marks of every mounted card in line with the stored results.
@@ -295,22 +306,7 @@ export function syncDidNotPlayMarks() {
 
 /* ============ Stream format and bitrate ============ */
 
-/** The card's technical column: the license and, under it, the stream's
- *  format and bitrate (played-streams.js). Like the license, the card shows
- *  them only with "Show technical source details" on (library.css). */
-function cardLicenseNode(license, quality) {
-  if (!quality) {
-    return license ? el('span', { className: 'card-license', text: license, attrs: { title: license } }) : null;
-  }
-  return el('span', {
-    className: 'card-license has-quality' + (license ? '' : ' is-quality-only'),
-    attrs: { title: [license, streamTooltipLine(quality)].filter(Boolean).join('\n') },
-  }, license ? el('span', { text: license }) : null, el('span', { className: 'card-quality', text: quality }));
-}
-
-/** Give a card its stream format and bitrate: in the technical column, and
- *  in the tooltip under the name, which shows whatever the setting. Changed in
- *  place when a station played with new values; the card stays. */
+/** Update the stream label in its own row and in the card's tooltip. */
 function setCardStream(card) {
   const item = card?.__item;
   if (!item || !card.__meta) return;
@@ -318,11 +314,13 @@ function setCardStream(card) {
   const title = item.title || 'Untitled';
   if (card.__streamShown && card.__streamShown.quality === quality && card.__streamShown.title === title) return;
   card.__streamShown = { quality, title };
-  const license = shownLicense(item);
-  card.__license?.remove?.();
-  card.__license = cardLicenseNode(license, quality);
-  if (card.__license) card.__meta.appendChild(card.__license);
-  const tooltip = [title, streamTooltipLine(quality)].filter(Boolean).join('\n');
+  const streamLine = streamTooltipLine(quality);
+  card.__quality?.remove();
+  card.__quality = quality
+    ? el('span', { className: 'card-quality', text: quality, attrs: { title: streamLine } })
+    : null;
+  if (card.__quality) card.__meta.appendChild(card.__quality);
+  const tooltip = [title, streamLine].filter(Boolean).join('\n');
   card.__open?.setAttribute?.('title', tooltip);
   card.__titleNode?.setAttribute?.('title', tooltip);
 }
@@ -903,6 +901,8 @@ function renderCard(item, opts = {}) {
     text: item.country,
   }));
   if (facts.childElementCount > 0) meta.appendChild(facts);
+  const license = shownLicense(item);
+  if (license) meta.appendChild(el('span', { className: 'card-license', text: license, attrs: { title: license } }));
   body.appendChild(meta);
   openButton.appendChild(body);
   card.appendChild(openButton);
@@ -982,7 +982,7 @@ export function effectiveStatusSources() {
     const t = view.activeSource.slice('type:'.length);
     return all.filter((s) => s.types.includes(t)).map((s) => s.id);
   }
-  return [view.activeSource];
+  return all.some((source) => source.id === view.activeSource) ? [view.activeSource] : [];
 }
 
 export function setSourceStatus(sourceId, status) {
@@ -1122,7 +1122,7 @@ export function currentSourceNotices(sourceIds = effectiveStatusSources()) {
 }
 
 function compactSourceStatus(status, disabled) {
-  if (disabled || status?.state === 'disabled') {
+  if (disabled) {
     return { text: 'Off', kind: 'off', title: 'Source disabled' };
   }
   if (status?.state === 'rate-limited') {
@@ -1301,12 +1301,6 @@ export function updateSidebarCounts() {
     if (!span) continue;
     const isDirectSource = SOURCE_ID_SET.has(id);
     const isDisabled = isDirectSource && !enabled.has(id);
-    const disabledState = isDisabled ? 'true' : 'false';
-    if (li.dataset.disabledState !== disabledState) {
-      li.dataset.disabledState = disabledState;
-      li.classList.toggle('is-disabled', isDisabled);
-      li.setAttribute('aria-disabled', disabledState);
-    }
     let n = 0;
     if (id === 'all') n = totalAll;
     else if (id === 'favorites') n = getState().favorites.length;

@@ -61,8 +61,8 @@ export const COMPILE_LIMIT_MS = 30000;
  *  until then. */
 export const BLOCKING_COMPILE_DELAY_MS = 50;
 
-/** No antialiasing, depth or stencil (a full-screen quad needs none); no
- *  preserved drawing buffer (that is only for snapshots and costs a copy). */
+/** No antialiasing, depth or stencil (a full-screen quad needs none). The
+ *  visualizer tab requests a retained buffer for scene snapshots. */
 export const CONTEXT_ATTRIBUTES = Object.freeze({
   alpha: false,
   antialias: false,
@@ -75,10 +75,11 @@ export const CONTEXT_ATTRIBUTES = Object.freeze({
 });
 
 /** WebGL 2 where available, else WebGL 1; null when neither can be had. */
-export function createWebglContext(canvas) {
+export function createWebglContext(canvas, { preserveDrawingBuffer = false } = {}) {
+  const attributes = preserveDrawingBuffer ? { ...CONTEXT_ATTRIBUTES, preserveDrawingBuffer: true } : CONTEXT_ATTRIBUTES;
   for (const [kind, mode] of [['webgl2', 'webgl2'], ['webgl', 'webgl'], ['experimental-webgl', 'webgl']]) {
     try {
-      const gl = canvas.getContext(kind, CONTEXT_ATTRIBUTES);
+      const gl = canvas.getContext(kind, attributes);
       if (gl) return { gl, mode };
     } catch (_) {}
   }

@@ -35,6 +35,16 @@ export const CONTENT_RATINGS = Object.freeze(['explicit', 'not-explicit', 'unrat
 
 const MAX_EXTERNAL_URL_LENGTH = 4096;
 
+/** Stable opaque key for matching an upstream media address. */
+export function mediaAddressKey(url) {
+  if (typeof url !== 'string' || !url) return '';
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(url)) {
+    hash = BigInt.asUintN(64, (hash ^ BigInt(byte)) * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
 /**
  * Return a canonical public web URL suitable for a user-clickable external
  * link. Provider metadata is untrusted: never allow script/data schemes,

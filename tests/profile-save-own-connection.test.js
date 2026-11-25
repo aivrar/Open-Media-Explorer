@@ -93,7 +93,7 @@ test('every profile write, saves and clears, asks for its own connection', async
   ]);
 });
 
-test('the stream registration for Play is answered while six slow catalogue requests hold the browser\'s connections', async (t) => {
+test('the first stream registration gets its session while six slow requests hold the browser\'s connections', async (t) => {
   setup(t);
   const pool = browserConnections((path) => {
     if (path === '/api/v1/session') return json(200, { ok: true, data: { token: 'pool-token' } });
@@ -102,19 +102,21 @@ test('the stream registration for Play is answered while six slow catalogue requ
     }
     return null; // catalogue pages and feeds from slow outside servers
   });
-  await getControlSession({ fetchImpl: pool.fetch });
   for (let index = 0; index < 6; index += 1) {
-    void controlRequest('/api/v1/catalog/feed/resolve', { fetchImpl: pool.fetch, method: 'POST', body: { url: `https://feeds.example/${index}` } });
+    void pool.fetch('/assets/slow-' + index, { credentials: 'same-origin' });
   }
   await drain();
   const episode = {
     id: 'gpodder:episode-902', title: 'Episode', source: 'gpodder', type: 'audio', stream_kind: 'audio',
     stream_url: 'https://media.example/episode-902.mp3', delivery: 'on-demand', capture_headers: {},
   };
-  const relay = await registerMedia(episode, { fetchImpl: pool.fetch });
-  assert.equal(relay.media_id, 'pool_media_1234567890');
-  assert.deepEqual(pool.sent.filter((entry) => entry.path === '/api/v1/media/register'),
-    [{ path: '/api/v1/media/register', credentials: 'omit' }]);
+  const registration = registerMedia(episode, { fetchImpl: pool.fetch });
+  await drain();
+  assert.deepEqual(pool.sent.slice(6), [
+    { path: '/api/v1/session', credentials: 'omit' },
+    { path: '/api/v1/media/register', credentials: 'omit' },
+  ]);
+  assert.equal((await registration).media_id, 'pool_media_1234567890');
 });
 
 test('a profile save is answered while six slow catalogue requests hold the browser\'s connections', async (t) => {

@@ -10,8 +10,10 @@ import {
   addFavoriteEq, addFavoritesEq, EQ_STORAGE_KEY, freshEqState, getEffectiveEq, normalizeEqState, setScopedEq,
 } from '../src/lib/eq-store.js';
 import { clearPersistenceFailure } from '../src/lib/persistence-notice.js';
-import { loadPlaylists } from '../src/lib/playlists.js';
-import { STAR_ALL_CONFIRM_ABOVE, starAllListed, starAllMessage } from '../src/modes/library/personal-controls.js';
+import { exportPlaylist, loadPlaylists } from '../src/lib/playlists.js';
+import { FAVORITE_NAMES_KEY } from '../src/lib/favorite-names.js';
+import { STATION_STREAMS_KEY } from '../src/lib/station-stream-addresses.js';
+import { libraryExportSelection, STAR_ALL_CONFIRM_ABOVE, starAllListed, starAllMessage } from '../src/modes/library/personal-controls.js';
 import { renderResults } from '../src/modes/library/render.js';
 import { view } from '../src/modes/library/state.js';
 import { ui } from '../src/modes/library/shell-refs.js';
@@ -63,12 +65,10 @@ test('bulk add keeps the given order at the front, skips saved items, and saves 
     assert.deepEqual(result, { added: 2, already: 2, refused: 2, leftOut: 0, failed: false, eqFailed: false });
     assert.deepEqual(state.favorites.map((f) => f.id), ['playlist:b', 'playlist:c', 'playlist:a']);
     assert.equal(writes.get(STORAGE_KEYS.favorites), 1);
-    assert.equal(writes.get(EQ_STORAGE_KEY), 1);
+    assert.equal(writes.has(EQ_STORAGE_KEY), false);
     assert.equal(events() - before, 1);
-    // Storage and memory agree, and each new favorite has its own equalizer curve.
+    // New station favorites follow the main equalizer until assigned a preset.
     assert.deepEqual(JSON.parse(values.get(STORAGE_KEYS.favorites)).map((f) => f.id), state.favorites.map((f) => f.id));
-    const eq = JSON.parse(values.get(EQ_STORAGE_KEY));
-    assert.deepEqual(Object.keys(eq.favorites).sort(), ['playlist:a', 'playlist:b', 'playlist:c']);
     // Nothing new: no save and no event.
     writes.clear();
     assert.deepEqual(addFavorites([channel('a'), channel('c')]), { added: 0, already: 2, refused: 0, leftOut: 0, failed: false });
@@ -139,6 +139,15 @@ test('Star all covers every channel listed, not just the rendered cards, and ask
     view.activeSource = 'playlists';
     view.playlistId = 'list-a';
     view.personalFilters.playlists = { query: 'news', type: 'tv' };
+    const selection = libraryExportSelection();
+    assert.equal(selection.format, 'm3u8');
+    assert.equal(selection.collection, 'a.m3u');
+    assert.equal(selection.type, 'TV');
+    assert.deepEqual(selection.stations.map(({ name, group }) => [name, group]), news.map(({ title }) => [title, 'a.m3u']));
+    await exportPlaylist(selection, async (url, options) => {
+      assert.equal(url, '/api/v1/playlists/export');
+      assert.deepEqual(options, { method: 'POST', body: selection });
+    });
     withStorage(({ state }) => {
       const asked = [];
       const cancelled = starAllListed({ confirmImpl: (text) => { asked.push(text); return false; } });
@@ -166,6 +175,67 @@ test('Star all covers every channel listed, not just the rendered cards, and ask
   }
 });
 
+test('Favorites export uses the selected category, search, type, name and effective addresses', () => {
+  const previous = { source: view.activeSource, filters: view.personalFilters.favorites };
+  try {
+    view.activeSource = 'favorites';
+    view.personalFilters.favorites = { query: 'renamed', type: 'tv', category: 'news' };
+    withStorage(({ state, values }) => {
+      const station = channel('one', { _extra: { artworkUrl: 'https://cdn.example.org/tv.png' } });
+      const wrongCategory = channel('two', { title: 'Renamed elsewhere' });
+      const wrongType = channel('three', { type: 'radio', title: 'Renamed radio' });
+      const wrongSearch = channel('four');
+      const hidden = channel('five', { title: 'Renamed hidden', content_rating: 'explicit' });
+      state.favorites = [station, wrongCategory, wrongType, wrongSearch, hidden];
+      values.set(FAVORITE_NAMES_KEY, JSON.stringify({ version: 1, names: { [station.id]: 'Renamed TV' } }));
+      values.set(STORAGE_KEYS.favoriteGroups, JSON.stringify({
+        version: 1, groups: [{ id: 'news', name: 'News' }],
+        assign: Object.fromEntries([station, wrongType, wrongSearch, hidden].map(({ id }) => [id, 'news'])),
+      }));
+      const main = 'https://streams.example.org/new.m3u8';
+      const backups = ['https://streams.example.org/backup.m3u8'];
+      values.set(STATION_STREAMS_KEY, JSON.stringify({ version: 1, stations: { [station.id]: { main, backups } } }));
+      const selection = libraryExportSelection('json');
+      assert.deepEqual([selection.format, selection.collection, selection.type], ['json', 'Favorites - News', 'TV']);
+      assert.deepEqual(selection.stations.map(({ name, url, logo, group, backups }) => ({ name, url, logo, group, backups })), [
+        { name: 'Renamed TV', url: main, logo: 'https://cdn.example.org/tv.png', group: 'News', backups },
+      ]);
+      view.activeSource = 'all';
+      assert.equal(libraryExportSelection(), null);
+    });
+  } finally {
+    view.activeSource = previous.source;
+    view.personalFilters.favorites = previous.filters;
+  }
+});
+
+test('Favorites export uses only stream addresses already available', () => {
+  const previous = { source: view.activeSource, filters: view.personalFilters.favorites };
+  try {
+    view.activeSource = 'favorites';
+    view.personalFilters.favorites = { query: '', type: '', category: '' };
+    withStorage(({ state }) => {
+      const book = { type: 'audio', source: 'librivox', stream_url: '', download_url: 'https://books.example/audio.ZIP?get=1' };
+      const archive = { type: 'audio', source: 'internet-archive', stream_url: '', download_url: '' };
+      const clip = { type: 'audio', stream_url: '', download_url: 'https://books.example/audio.mp3?get=1' };
+      state.favorites = [
+        channel('book', book),
+        channel('archive', archive),
+        channel('clip', clip),
+        channel('played', { ...book, stream_url: 'https://books.example/chapter.mp3', stream_kind: 'audio' }),
+      ];
+      const stations = libraryExportSelection().stations;
+      assert.deepEqual(stations.map(({ url }) => url), [
+        '', '', clip.download_url, 'https://books.example/chapter.mp3',
+      ]);
+      assert.equal(stations[2].kind, 'audio');
+    });
+  } finally {
+    view.activeSource = previous.source;
+    view.personalFilters.favorites = previous.filters;
+  }
+});
+
 class Element extends FakeElement {
   append(...children) { children.forEach((child) => this.appendChild(child)); }
 }
@@ -187,6 +257,8 @@ test('an empty My Playlists or Favorites shows its own message, even after an em
     globalThis.document = { createElement: (tag) => new Element('', tag), createDocumentFragment: () => new Element('', 'fragment') };
     ui.resultsHost = new Host('', 'div');
     ui.windowBack = null;
+    ui.favoritesExport = new Element('', 'button');
+    ui.playlistExport = new Element('', 'button');
     state.favorites = [];
     const shown = () => ui.resultsHost.children.map((node) => node.children[1].textContent);
     view.activeSource = 'all';
@@ -198,9 +270,12 @@ test('an empty My Playlists or Favorites shows its own message, even after an em
     view.playlistId = 'no-such-list';
     renderResults();
     assert.deepEqual(shown(), ['Import a playlist above, or clear your filters.']);
+    assert.equal(ui.playlistExport.disabled, true);
+    assert.equal(ui.playlistExport.title, 'No items match this view.');
     view.activeSource = 'favorites';
     renderResults();
     assert.deepEqual(shown(), ['Star items to save them here, or clear your filters.']);
+    assert.equal(ui.favoritesExport.disabled, true);
     // The same message is not rebuilt on every render.
     const node = ui.resultsHost.children[0];
     renderResults();
@@ -239,7 +314,7 @@ test('bulk add of 1,000 channels stays quick with many equalizer entries already
     const result = addFavorites(Array.from({ length: 1000 }, (_, i) => channel(`n${i}`)));
     const elapsed = performance.now() - started;
     assert.equal(result.added, 1000);
-    assert.equal(Object.keys(JSON.parse(values.get(EQ_STORAGE_KEY)).favorites).length, 1900);
+    assert.equal(values.get(EQ_STORAGE_KEY), JSON.stringify(seeded));
     assert.ok(elapsed < 2000, `took ${Math.round(elapsed)} ms`);
   });
 });
@@ -260,7 +335,7 @@ test('identity uses the stored id: non-string ids are refused, repeats are count
 test('favorites saved without their equalizer entries are reported', () => {
   withStorage(({ storage, values, state }) => {
     storage.failEq = true;
-    const result = addFavorites([channel('a'), channel('b')]);
+    const result = addFavorites([channel('a', { type: 'audio' }), channel('b', { type: 'audio' })]);
     assert.equal(result.added, 2);
     assert.equal(result.eqFailed, true);
     assert.deepEqual(JSON.parse(values.get(STORAGE_KEYS.favorites)).map((f) => f.id), state.favorites.map((f) => f.id));

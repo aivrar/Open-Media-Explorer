@@ -44,13 +44,20 @@ test('every card in a row has the same height and its content stays centred; not
   // The grid stretches each card to the row's height (no align-items set).
   assert.doesNotMatch(rule(css, '.library-root.is-personal-view .cards-grid'), /align-items/);
   assert.doesNotMatch(rule(css, '.cards-grid'), /align-items/);
-  // The card's content fills the stretched card, so it stays centred on the
-  // buttons, which are centred on the card.
-  const open = rule(css, '.library-root.is-personal-view .card-open');
-  assert.ok(open.includes('flex: 1 1 auto') && open.includes('align-items: center'));
-  assert.match(rule(css, '.library-root.is-personal-view .card-star'), /top: 50%/);
-  assert.match(rule(css, '.card-order'), /top: 50%/);
-  assert.match(rule(css, '.card-category'), /top: 50%/);
+  // All controls and the card content contribute to the same track height
+  // with technical details either on or off.
+  const card = '.library-root.is-personal-view .card';
+  assert.match(rule(css, card), /display: grid;/);
+  assert.match(rule(css, card + ' > :is(.card-open, .card-category, .card-order, .card-star)'), /grid-area: 1 \/ 1;/);
+  const controls = rule(css, card + ' > :is(.card-category, .card-order, .card-star)');
+  assert.match(controls, /position: relative;/);
+  assert.match(controls, /align-self: center;/);
+  assert.match(rule(css, '.library-root.is-personal-view .card-open'), /align-items: center;/);
+  for (const selector of ['.card-order', '.card-category']) {
+    assert.doesNotMatch(rule(css, selector), /position: absolute/);
+  }
+  const [normal, narrow] = [...css.matchAll(/\n\s*\.results \{([^}]+)\}/g)].map(([, block]) => block);
+  for (const results of [normal, narrow]) assert.ok(px(results, 'padding') >= 12);
   // The body's right padding keeps the wrapped name clear of the star, the
   // category button and the move buttons, whichever the card has.
   assert.match(css, /\.library-root\.is-personal-view \.card\.has-order-controls \.card-body \{ padding-right: 100px; \}/);

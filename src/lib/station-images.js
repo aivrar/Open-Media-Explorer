@@ -25,7 +25,7 @@
  * spellings.
  */
 
-import { controlRequest, getControlSession, resetControlSession } from './capture-client.js';
+import { controlRequest, getControlSession, invalidateControlSession } from './capture-client.js';
 import { getState } from './state.js';
 import { getPlaylistItems } from './playlists.js';
 
@@ -483,9 +483,14 @@ async function fetchStationImage(source, { fetchImpl = globalThis.fetch, sleep, 
       }
       return blob.type === type ? blob : new Blob([blob], { type });
     }
+    if (response.status === 403) {
+      try {
+        const payload = await response.json();
+        if (payload?.error?.code === 'INVALID_TOKEN') invalidateControlSession(session.token);
+      } catch (_) { /* A refusal without a token error leaves the session alone. */ }
+    }
     try { await response.body?.cancel?.(); } catch (_) { /* nothing to read */ }
     // A new session after a restart, or a briefly busy server, gets one more try.
-    if (response.status === 403) resetControlSession();
     const retry = (response.status === 403 && attempt === 0)
       || ((response.status === 429 || response.status === 503) && attempt < 2);
     if (!retry) throw requestError('The station picture could not be loaded.', response.status);

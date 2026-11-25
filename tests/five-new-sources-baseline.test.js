@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { SOURCES } from '../src/lib/sources.js';
 import { normalizeSettings } from '../src/lib/state.js';
+import { EQ_STORAGE_KEY } from '../src/lib/eq-store.js';
 
 const FIXTURE_DIR = new URL('./fixtures/five-new-sources/', import.meta.url);
 const readFixture = (name, encoding = null) => readFile(new URL(name, FIXTURE_DIR), encoding || undefined);
@@ -103,13 +104,12 @@ test('all Phase 8 source IDs, rating default, metadata, and stable identity vect
 
   const iptv = await readFile(new URL('../src/adapters/iptv-org.js', import.meta.url), 'utf8');
   const state = await readFile(new URL('../src/lib/state.js', import.meta.url), 'utf8');
-  const eqStore = await readFile(new URL('../src/lib/eq-store.js', import.meta.url), 'utf8');
   assert.match(iptv, /content_rating:\s*isNsfw[\s\S]*?showExplicitContent !== true/,
     'IPTV must retain ratings and filter reversibly from the shared preference');
   assert.doesNotMatch(iptv, /if \(isNsfw\) continue;/,
     'Phase 8 must not irreversibly discard explicit IPTV rows at load time');
   assert.match(state, /favorites:\s*['"]worldmedia\.favorites\.v1['"]/);
-  assert.match(eqStore, /worldmedia\.eq\.v1/);
+  assert.equal(EQ_STORAGE_KEY, contracts.persistence.eqKey);
   assert.match(state, /Object\.assign\(state\.favorites\[index\], normalized\)/,
     'favorite refresh must update in place instead of replacing the saved array entry');
 });
@@ -144,7 +144,8 @@ test('the ten-source paging, UI, settings, and packaged-chunk connections share 
   }
   assert.match(sidebar, /items:\s*SOURCES\.map/);
   assert.match(sidebar, /headingNonFav\s*&&\s*\(\(poolIsEmpty\s*&&\s*chainIdle\)\s*\|\|\s*pendingQuery\)/);
-  assert.match(sidebar, /const headingNonFav = !isPersonalSource\(sourceId\)/);
+  assert.match(sidebar, /const sourceOff = getState\(\)\.settings\.enabledSources\[sourceId\] === false/);
+  assert.match(sidebar, /const headingNonFav = !sourceOff && !isPersonalSource\(sourceId\)/);
   assert.match(sidebar, /renderResults\(\);\s*renderStatus\(\);\s*updateSentinelStatus\(\);/s);
   assert.match(about, /import \{ SOURCES, getSourceColor \} from ['"]\.\.\/lib\/sources\.js['"]/);
   assert.match(about, /SOURCES\.map/);

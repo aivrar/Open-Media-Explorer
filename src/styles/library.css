@@ -110,17 +110,13 @@
 }
 .source-item:hover { background: var(--bg-elev-2); color: var(--text); }
 .source-item:focus-visible { scroll-margin: 8px; }
-/* A source switched off in Settings is left out of the list entirely; it
-   can be switched back on in Settings > Sources. */
-.source-item.is-disabled { display: none; }
-/* A section heading with no visible source rows after it (every source
-   switched off) is hidden too. "By archive" is the last section. */
-.source-section-header:not(:has(~ .source-item:not(.is-disabled))) { display: none; }
 .source-item.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 500;
 }
+.source-item.is-disabled { color: var(--text-mute); }
+.source-item.is-disabled .source-dot { opacity: .45; }
 .source-item .source-name { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .source-item .source-label {
   min-width: 0;
@@ -260,7 +256,7 @@
 
 .results {
   overflow-y: auto;
-  padding: 18px;
+  padding: 18px 18px calc(18px + var(--video-clearance));
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -359,6 +355,7 @@
   text-align: left;
   cursor: pointer;
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
 }
 .card-open:focus-visible {
@@ -442,7 +439,7 @@
 .card-body {
   padding: 12px;
   display: grid;
-  grid-template-rows: 18px 40px;
+  grid-template-rows: 18px auto;
   gap: 8px;
   min-height: 90px;
 }
@@ -457,9 +454,9 @@
 }
 .card-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px minmax(62px, 0.78fr);
+  grid-template-columns: minmax(0, 1fr) max-content minmax(62px, 0.78fr);
   align-items: center;
-  gap: 6px;
+  column-gap: 6px;
   font-size: 11px;
   color: var(--text-dim);
   min-width: 0;
@@ -485,10 +482,9 @@
 .card-facts {
   grid-column: 2;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 4px;
   line-height: 15px;
   white-space: nowrap;
 }
@@ -498,25 +494,23 @@
 .card-license {
   grid-column: 3;
   min-width: 0;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  line-height: 16px;
-}
-/* License on the first line, stream format and bitrate on the second. */
-.card-license.has-quality {
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-}
-.card-license.has-quality > span {
-  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  line-height: 16px;
 }
-.card-quality { font-variant-numeric: tabular-nums; }
+.card-quality {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
 .card-star {
   position: absolute;
   top: 8px;
@@ -569,15 +563,14 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  /* When the global video overlay is showing (bottom-right of the screen),
-     reserve room at the bottom of this panel so its long description text
-     can be scrolled clear of the video: a 16:9 video at the current width
-     plus a little breathing room (260 px at the 320 px base width). */
-  scroll-padding-bottom: var(--video-clearance);
 }
 
-#app.has-video .detail-panel {
-  padding-bottom: var(--video-clearance);
+/* At narrower widths the detail panel opens above the video. */
+@media (width > 980px) {
+  .detail-panel {
+    padding-bottom: calc(18px + var(--video-clearance));
+    scroll-padding-bottom: var(--video-clearance);
+  }
 }
 .detail-panel .detail-close {
   align-self: flex-end;
@@ -660,6 +653,26 @@
 .detail-rename-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .detail-rename-message { margin: 0; font-size: 12px; color: var(--danger); }
 .detail-rename-hint { margin: 0; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+.detail-stream-fields, .detail-backup-streams {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.detail-stream-fields {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.detail-backup-streams:empty { display: none; }
+.detail-backup-controls {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+.detail-backup-controls > .btn {
+  padding-inline: 7px;
+  white-space: nowrap;
+}
 
 /* "Did not play last time" in the panel: the same sentence as on the card. */
 .detail-trouble {
@@ -708,6 +721,23 @@
   width: 16px;
   height: 16px;
   font-size: 11px;
+}
+
+.detail-parts h3 { margin: 0 0 8px; font-size: 13px; }
+.detail-parts ol { margin: 0; padding-inline-start: 24px; }
+.detail-parts li + li { margin-top: 4px; }
+.detail-part.btn {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: start;
+}
+
+.detail-part[aria-current="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* "Other streams": other Radio Browser entries for the same station. */
@@ -910,7 +940,7 @@
   }
 
   .results {
-    padding: 12px;
+    padding: 12px 12px calc(12px + var(--video-clearance));
     gap: 12px;
   }
 
@@ -928,15 +958,17 @@
    Technical status labels, boxed source badges, and license notes are for
    people debugging sources. By default they step back; the same information
    stays available on hover, in the detail panel, or by turning the setting on. */
-:root:not([data-tech-details="on"]) .source-item .source-health { display: none; }
-:root:not([data-tech-details="on"]) .source-item .source-health.is-wait {
-  display: block;
+:root:not([data-tech-details="on"]) .source-item .source-health {
+  visibility: hidden;
   flex: 0 0 7px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--warning, #f5a524);
   color: transparent;
+}
+:root:not([data-tech-details="on"]) .source-item .source-health.is-wait {
+  visibility: visible;
+  background: var(--warning, #f5a524);
 }
 :root:not([data-tech-details="on"]) .card-body {
   grid-template-rows: 18px 16px;
@@ -970,7 +1002,7 @@
   line-height: inherit;
 }
 :root:not([data-tech-details="on"]) .card-facts > span::before { content: ' · '; white-space: pre; }
-:root:not([data-tech-details="on"]) .card-license { display: none; }
+:root:not([data-tech-details="on"]) :is(.card-license, .card-quality) { display: none; }
 :root:not([data-tech-details="on"]) .card { contain-intrinsic-size: auto 220px; }
 
 /* ============ Compact cards for saved collections (Favorites / My Playlists) ============
@@ -980,13 +1012,28 @@
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
 }
-.library-root.is-personal-view .card { contain-intrinsic-size: auto 80px; }
+.library-root.is-personal-view .card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  contain-intrinsic-size: auto 80px;
+}
+/* The open button and the controls share one grid cell. Each contributes
+   to its height, so even the shortest card fits the move buttons. */
+.library-root.is-personal-view .card > :is(.card-open, .card-category, .card-order, .card-star) {
+  grid-area: 1 / 1;
+}
+.library-root.is-personal-view .card > :is(.card-category, .card-order, .card-star) {
+  position: relative;
+  top: auto;
+  align-self: center;
+  justify-self: end;
+  margin-block: 3px;
+}
 .library-root.is-personal-view .card:hover { transform: none; }
 /* The card's content fills the card, so when a long name makes one card in a
    row taller (the grid gives every card in the row that height), the picture
    and text of the others stay centred on their buttons. */
 .library-root.is-personal-view .card-open {
-  flex: 1 1 auto;
   flex-direction: row;
   align-items: center;
 }
@@ -1036,9 +1083,37 @@
   grid-template-rows: auto auto;
   gap: 4px;
 }
+.favorite-song-title {
+  min-width: 0;
+  block-size: 32px;
+  overflow: hidden;
+  line-height: 16px;
+  font-size: 12px;
+}
+.favorite-song-title > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.favorite-song-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.favorite-song-name:only-child {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.favorite-song-performer {
+  color: var(--text-dim);
+  font-size: 11px;
+}
 .library-root.is-personal-view .card-meta { min-height: 0; }
 .library-root.is-personal-view .source-badge { height: auto; }
-.library-root.is-personal-view .card-license { height: auto; }
 /* With technical details on, the compact card gives its source badge the
    room there is: no column is kept for facts or a license the card does not
    have, the badge stays on one line (cut short only when it does not fit
@@ -1049,6 +1124,12 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 6px;
+}
+:root[data-tech-details="on"] .library-root.is-personal-view .card-meta:has(> .card-quality) {
+  row-gap: 0;
+}
+:root[data-tech-details="on"] .library-root.is-personal-view .card-body:has(.card-quality) {
+  padding-block: 6px;
 }
 :root[data-tech-details="on"] .library-root.is-personal-view .source-badge {
   display: block;
@@ -1066,38 +1147,23 @@
 }
 :root[data-tech-details="on"] .library-root.is-personal-view .card-facts { flex: 0 0 auto; }
 :root[data-tech-details="on"] .library-root.is-personal-view .card-license { flex: 1 1 62px; max-width: 100%; }
-/* The stream's format and bitrate alone stay on the badge's line, in the room
-   left beside it (cut short when that is little; the whole text is on hover),
-   so the card keeps its height. */
-:root[data-tech-details="on"] .library-root.is-personal-view .card-license.is-quality-only { flex: 1 1 0; min-width: 0; }
-:root[data-tech-details="on"] .library-root.is-personal-view .card-license:not(.has-quality) {
-  display: block;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+:root[data-tech-details="on"] .library-root.is-personal-view .card-quality { flex: 0 0 100%; }
 .library-root.is-personal-view .card-star {
-  top: 50%;
   right: 10px;
-  transform: translateY(-50%);
   background: transparent;
 }
 /* No dark square behind the star here, so an empty star takes the text color
    (a white one cannot be seen on a light theme's card). */
 .library-root.is-personal-view .card-star:not(.is-fav) { color: var(--text); }
-.library-root.is-personal-view .card-star:hover { transform: translateY(-50%) scale(1.08); }
 
 /* Favorites in "My order": the move buttons (top, up / down, bottom) in a
    2 x 2 block just left of the star. The star keeps its place; the text makes
    room. Each is drawn 24 px and answers over 26 x 26 (a transparent layer 1 px
    past each side; with the 2 px gaps the layers touch but never overlap), so
    at a fractional display scale (175%) it still answers over at least 24 x
-   24. The block (50 px) fits the 76 px card; the category button sits 5 px
-   left of its layers. */
+   24. The category button sits 5 px left of the block's hit layers. */
 .card-order {
-  position: absolute;
-  top: 50%;
   right: 40px;
-  transform: translateY(-50%);
   display: grid;
   grid-template-columns: repeat(2, 24px);
   grid-auto-rows: 24px;
@@ -1160,10 +1226,7 @@
 /* The category button on a Favorites card: left of the move buttons (or of
    the star in A-Z), so the order on screen is the tab order. */
 .card-category {
-  position: absolute;
-  top: 50%;
   right: 40px;
-  transform: translateY(-50%);
   width: 22px;
   height: 22px;
   padding: 0;

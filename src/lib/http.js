@@ -15,7 +15,7 @@ function rewriteForProxy(url) {
 }
 
 const DEFAULT_HEADERS = {
-  'User-Agent': 'WorldMediaWindows/0.1.16',
+  'User-Agent': 'WorldMediaWindows/0.1.17',
   Accept: 'application/json, text/plain, */*',
 };
 

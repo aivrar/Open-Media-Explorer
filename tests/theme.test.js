@@ -80,23 +80,25 @@ function contrast(a, b) {
   return (high + 0.05) / (low + 0.05);
 }
 
-test('the seek track stands out from the player bar in the light palettes (3:1)', async () => {
+test('the seek and volume controls stand out from the player bar in the light palettes (3:1)', async () => {
   const css = await readFile(new URL('../src/styles/base.css', import.meta.url), 'utf8');
   const token = (block, name) => block.match(new RegExp(`${name}: (#[0-9a-f]{6});`))?.[1];
   const light = css.match(/:root\[data-theme='light'\]\s*\{([^}]*)\}/s)[1];
   const system = css.match(/@media \(prefers-color-scheme: light\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{([^}]*)\}/s)[1];
   for (const block of [light, system]) {
-    const track = token(block, '--slider-track');
-    assert.ok(track, 'the light palette sets --slider-track');
+    assert.match(block, /--slider-track: var\(--text-mute\);/);
+    const track = token(block, '--text-mute');
     assert.ok(contrast(track, token(block, '--chrome')) >= 3, `track ${track} on the player bar`);
   }
   // The dark palettes keep their track: only the light ones set the token.
   assert.equal(css.match(/--slider-track:/g).length, 2);
   for (const pseudo of ['::-webkit-slider-runnable-track', '::-moz-range-track']) {
+    assert.ok(!css.includes('#player-volume' + pseudo));
     const rule = css.match(new RegExp(`\\.player-seek${pseudo} \\{([^}]*)\\}`))[1];
     assert.match(rule, /background: var\(--slider-track, var\(--bg-elev-3\)\);/);
     assert.match(rule, /height: 4px;/);
   }
+  assert.match(css, /\.player-volume > \.volume-stepper:not\(:focus-within\) \{\s*border-color: var\(--slider-track, var\(--border\)\);/);
 });
 
 

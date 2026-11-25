@@ -220,9 +220,9 @@ function compile(gl, type, source) {
   return shader;
 }
 
-function makeProgram(gl) {
+function makeProgram(gl, fragment) {
   const vs = compile(gl, gl.VERTEX_SHADER, VERTEX);
-  const fs = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT);
+  const fs = compile(gl, gl.FRAGMENT_SHADER, fragment);
   if (!vs || !fs) {
     drop(gl, 'Shader', vs);
     drop(gl, 'Shader', fs);
@@ -278,7 +278,13 @@ export function suspendDensityWorker() {
  * @param {function} [options.startWorker]  makes the worker (tests give a fake)
  * @param {function} [options.now]  a clock in milliseconds
  */
-export function createDensityRenderer(G, { startWorker: makeWorker = startDensityWorker, now = () => globalThis.performance?.now?.() ?? Date.now() } = {}) {
+export function createDensityRenderer(G, {
+  startWorker: makeWorker = startDensityWorker, now = () => globalThis.performance?.now?.() ?? Date.now(),
+  backingLift = 0,
+} = {}) {
+  const backdrop = [0.004, 0.005, 0.010].map((channel) => backingLift + (1 - backingLift) * channel);
+  const fragment = backingLift ? FRAGMENT.replace('mix(back, front, u_mix)',
+    'mix(mix(back, front, u_mix), vec3(1.0), ' + backingLift + ')') : FRAGMENT;
   const Renderer = G.Renderer || {};
   const qualityNow = () => densityLimits(typeof G.sceneQuality === 'function' ? G.sceneQuality() : null);
   const stats = {
@@ -361,7 +367,7 @@ export function createDensityRenderer(G, { startWorker: makeWorker = startDensit
     this.cleaned = false;
     this.gl = gl;
     this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096;
-    this.program = makeProgram(gl);
+    this.program = makeProgram(gl, fragment);
     if (!this.program) return false;
     this.buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
@@ -689,7 +695,7 @@ export function createDensityRenderer(G, { startWorker: makeWorker = startDensit
     const back = this.back;
     const showFront = front.has && this.mix > 0;
     if (!this.program || (!showFront && !back.has)) {
-      gl.clearColor(0.004, 0.005, 0.010, 1);
+      gl.clearColor(backdrop[0], backdrop[1], backdrop[2], 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       return;
     }

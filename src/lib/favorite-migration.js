@@ -10,17 +10,17 @@
  * finds each favorite that came from the old copy and whose channel now has
  * the other type (same address and same name), and moveFavoritesToNewIds()
  * gives it the new id: same place in "My order", same category, same own
- * equalizer curve. The favorites list, the equalizer curves and the
- * categories are written together; if any write fails, the ones already
- * written are put back and nothing changes.
+ * equalizer curve and stream addresses. The related settings are written
+ * together; if any write fails, the ones already written are put back.
  */
 
 import { emit, getState, normalizeFavoriteItem, STORAGE_KEYS } from './state.js';
-import { EQ_STORAGE_KEY, loadEqState, normalizeEqState } from './eq-store.js';
+import { EQ_STORAGE_KEY, eqStorageEntries, loadEqState } from './eq-store.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupsTextWithNewIds } from './favorite-groups.js';
 import { favoriteNamesTextWithNewIds } from './favorite-names.js';
 import { scheduleProfileHandoff } from './profile-transfer.js';
 import { clearPersistenceFailure } from './persistence-notice.js';
+import { STATION_STREAMS_KEY, stationStreamsTextWithNewIds } from './station-stream-addresses.js';
 
 const addressKey = (item) => `${item?.stream_url || ''}\n${item?.title || ''}`;
 
@@ -85,24 +85,33 @@ export function moveFavoritesToNewIds(moves, storage = globalThis.localStorage) 
   if (live.size === 0) return { moved: 0, failed: false };
   if (!storage) return { moved: 0, failed: true };
   const ids = new Map([...live].map(([oldId, item]) => [oldId, item.id]));
+  let streamsRaw;
+  try { streamsRaw = storage.getItem(STATION_STREAMS_KEY); } catch (_) { return { moved: 0, failed: true }; }
+  const streamsNext = stationStreamsTextWithNewIds(streamsRaw, ids);
   const next = state.favorites.map((favorite) => {
     const item = live.get(favorite.id);
     return item ? (normalizeFavoriteItem(item) || favorite) : favorite;
   });
+  const currentId = state.currentItem?.id;
+  const playingMoved = Boolean(currentId) && ids.has(currentId);
+  if (playingMoved) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
   const writes = [[STORAGE_KEYS.favorites, JSON.stringify(next)]];
   let eqRaw = null;
   try { eqRaw = storage.getItem(EQ_STORAGE_KEY); } catch (_) { eqRaw = null; }
   if (eqRaw != null) {
     const eq = loadEqState(storage);
-    const curves = { ...eq.favorites };
     let changed = false;
-    for (const [oldId, newId] of ids) {
-      if (!Object.hasOwn(curves, oldId)) continue;
-      if (!Object.hasOwn(curves, newId)) curves[newId] = curves[oldId];
-      delete curves[oldId];
-      changed = true;
+    for (const values of [eq.favorites, eq.assignments]) {
+      for (const [oldId, newId] of ids) {
+        if (!Object.hasOwn(values, oldId)) continue;
+        if (!Object.hasOwn(values, newId)) {
+          Object.defineProperty(values, newId, { value: values[oldId], enumerable: true, configurable: true, writable: true });
+        }
+        delete values[oldId];
+        changed = true;
+      }
     }
-    if (changed) writes.push([EQ_STORAGE_KEY, JSON.stringify(normalizeEqState({ ...eq, favorites: curves }))]);
+    if (changed) writes.push(...eqStorageEntries(eq));
   }
   let groupsRaw = null;
   try { groupsRaw = storage.getItem(STORAGE_KEYS.favoriteGroups); } catch (_) { groupsRaw = null; }
@@ -113,10 +122,8 @@ export function moveFavoritesToNewIds(moves, storage = globalThis.localStorage) 
   try { namesRaw = storage.getItem(STORAGE_KEYS.favoriteNames); } catch (_) { namesRaw = null; }
   const namesNext = favoriteNamesTextWithNewIds(namesRaw, ids);
   if (namesNext !== namesRaw) writes.push([STORAGE_KEYS.favoriteNames, namesNext]);
+  if (streamsNext !== streamsRaw) writes.push([STATION_STREAMS_KEY, streamsNext]);
 
-  const currentId = state.currentItem?.id;
-  const playingMoved = Boolean(currentId) && ids.has(currentId);
-  if (playingMoved) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
   if (!writeAll(storage, writes)) {
     if (playingMoved) emit('eq-scope-change', { itemId: currentId, scope: 'favorite' });
     return { moved: 0, failed: true };

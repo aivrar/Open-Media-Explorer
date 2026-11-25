@@ -20,6 +20,7 @@ import {
   keepOwnStream, keepsOwnStream, storedVerification, verifiedLabel,
 } from '../../lib/stream-verify.js';
 import { bestStreamAutoOn } from '../../lib/best-stream.js';
+import { stationStreamAddresses } from '../../lib/station-stream-addresses.js';
 import { checkPlannedFor, onBestStreamChange } from '../../lib/best-stream-auto.js';
 import { getState, subscribe } from '../../lib/state.js';
 import { el } from './utils.js';
@@ -58,6 +59,7 @@ export function bestStreamStatusText(item, { settings = {}, playing = null, chec
   if (!bestStreamAutoOn(settings) || item?.source !== OTHER_STREAMS_SOURCE) return null;
   const id = stationId(item);
   if (!id) return null;
+  if (stationStreamAddresses(item).ordered) return '';
   if (playing && playing.itemId === item.id) return verifiedLabel(playing);
   if (keepsOwnStream(id)) return '';
   const found = storedVerification(id, now);
@@ -76,7 +78,7 @@ export function bestStreamStatusText(item, { settings = {}, playing = null, chec
 function verifiedState(item, settings, playing, now = Date.now()) {
   if (!bestStreamAutoOn(settings) || item?.source !== OTHER_STREAMS_SOURCE) return null;
   const id = stationId(item);
-  if (!id) return null;
+  if (!id || stationStreamAddresses(item).ordered) return null;
   if (playing && playing.itemId === item.id) return 'playing';
   if (keepsOwnStream(id)) return null;
   return storedVerification(id, now)?.ok ? 'next' : null;
@@ -139,7 +141,7 @@ export function createBestStreamStatus(item, {
       use = null;
     }
   };
-  const stops = [onAutoChange(update), on('media-relay', update), on('settings-change', update)];
+  const stops = [onAutoChange(update), on('media-relay', update), on('settings-change', update), on('station-streams-change', update)];
   update();
   return {
     node,

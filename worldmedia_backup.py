@@ -21,7 +21,9 @@ from datetime import datetime
 from pathlib import Path
 
 from worldmedia_downloads import DownloadError, _validated_download_root
-from worldmedia_playlists import MAX_STORE_BYTES, PlaylistStore, _web_url, parse_playlist
+from worldmedia_playlists import (
+    BACKUP_STREAM_TAG, MAX_BACKUP_STREAMS, MAX_STORE_BYTES, PlaylistStore, _web_url, parse_playlist,
+)
 from worldmedia_runtime import (
     LEGACY_PROFILE_TRANSFER_KEYS,
     PORTABLE_STATE_DIR,
@@ -53,6 +55,7 @@ FAVORITE_GROUPS_KEY = "worldmedia.favgroups.v1"
 # The user's own names for favorites (src/lib/favorite-names.js): a renamed
 # favorite is written under that name in the exports.
 FAVORITE_NAMES_KEY = "worldmedia.favnames.v1"
+STATION_STREAMS_KEY = "worldmedia.stationstreams.v1"
 # The old job-history key is never written by this version, and job records can
 # hold local file paths, so it stays out of the copy in the ZIP.
 STRIPPED_PROFILE_KEYS = frozenset({"worldmedia.jobs.v1"})
@@ -245,12 +248,34 @@ def _export_logo(*values: object) -> str:
     return ""
 
 
-def _m3u_entry(name: str, url: str, logo: str, group: str) -> str:
+def _effective_streams(item: dict, edits: dict) -> tuple[str, list[str]]:
+    item_id = item.get("id")
+    edit = edits.get(item_id) if isinstance(item_id, str) else None
+    if not isinstance(edit, dict) or item.get("type") not in {"radio", "tv"}:
+        edit = {}
+    url = _export_url(edit.get("main")) or _export_url(item.get("stream_url"))
+    extra = item.get("_extra") if isinstance(item.get("_extra"), dict) else {}
+    backups = edit.get("backups")
+    if not isinstance(backups, list):
+        backups = extra.get("backupStreamUrls")
+    clean_backups = []
+    if isinstance(backups, list):
+        for value in backups[:MAX_BACKUP_STREAMS]:
+            backup = _export_url(value)
+            if backup and backup not in clean_backups:
+                clean_backups.append(backup)
+    if not url and clean_backups:
+        url = clean_backups.pop(0)
+    return url, clean_backups
+
+
+def _m3u_entry(name: str, url: str, logo: str, group: str, backups: list[str]) -> str:
     """One extended M3U entry. Every value must already be cleaned."""
 
     attributes = f' tvg-logo="{logo}"' if logo else ""
     attributes += f' group-title="{group}"' if group else ""
-    return f"#EXTINF:-1{attributes},{name}\n{url}\n"
+    backup_lines = "".join(f"{BACKUP_STREAM_TAG}{backup}\n" for backup in backups if backup != url)
+    return f"#EXTINF:-1{attributes},{name}\n{backup_lines}{url}\n"
 
 
 def _favorite_bucket(item: dict) -> str:
@@ -258,8 +283,9 @@ def _favorite_bucket(item: dict) -> str:
     return kind if kind in {"radio", "tv"} else "other"
 
 
-def _favorite_entry(item: dict, index: int, category: str = "", own_name: str = "") -> str | None:
-    url = _export_url(item.get("stream_url")) or _export_url(item.get("download_url"))
+def _favorite_entry(item: dict, index: int, category: str, own_name: str, edits: dict) -> str | None:
+    url, backups = _effective_streams(item, edits)
+    url = url or _export_url(item.get("download_url"))
     if not url:
         return None
     extra = item.get("_extra") if isinstance(item.get("_extra"), dict) else {}
@@ -273,7 +299,7 @@ def _favorite_entry(item: dict, index: int, category: str = "", own_name: str = 
         group = _clean_attribute(SOURCE_NAMES.get(source, source))
     name = (_clean_text(own_name) or _clean_text(item.get("title")) or _clean_text(item.get("id"))
             or f"Favorite {index}")
-    return _m3u_entry(name, url, logo, group)
+    return _m3u_entry(name, url, logo, group, backups)
 
 
 def _favorites_from_profile(values: dict[str, str]) -> tuple[list[dict], bool]:
@@ -336,21 +362,33 @@ def favorite_names(values: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _station_stream_edits(values: dict[str, str]) -> dict:
+    try:
+        parsed = json.loads(values.get(STATION_STREAMS_KEY, "null"))
+    except (ValueError, RecursionError):
+        return {}
+    if not isinstance(parsed, dict) or parsed.get("version") != 1:
+        return {}
+    stations = parsed.get("stations")
+    return stations if isinstance(stations, dict) else {}
+
+
 def build_favorite_exports(favorites: list[dict], categories: dict[str, str] | None = None,
-                           names: dict[str, str] | None = None,
+                           names: dict[str, str] | None = None, edits: dict | None = None,
                            ) -> tuple[dict[str, str], int, int]:
     """Extended M3U text per favorites file, how many were written, how many skipped.
 
     ``categories`` maps a favorite id to the name of the category it is in,
     ``names`` to the user's own name for it."""
 
+    edits = edits or {}
     entries: dict[str, list[str]] = {bucket: [] for bucket, _ in FAVORITE_FILES}
     skipped = 0
     for index, item in enumerate(favorites, start=1):
         item_id = item.get("id")
         category = (categories or {}).get(item_id, "") if isinstance(item_id, str) else ""
         own_name = (names or {}).get(item_id, "") if isinstance(item_id, str) else ""
-        entry = _favorite_entry(item, index, category, own_name)
+        entry = _favorite_entry(item, index, category, own_name, edits)
         if entry is None:
             skipped += 1
             continue
@@ -363,7 +401,7 @@ def build_favorite_exports(favorites: list[dict], categories: dict[str, str] | N
     return files, written, skipped
 
 
-def playlist_export_text(entry: dict) -> tuple[str, int]:
+def playlist_export_text(entry: dict, edits: dict | None = None) -> tuple[str, int]:
     """An extended M3U file for one imported playlist, and how many entries it has.
 
     Built only from the entries the app's own parser accepts (with the stored
@@ -375,15 +413,16 @@ def playlist_export_text(entry: dict) -> tuple[str, int]:
         parsed = parse_playlist(entry.get("text"), entry.get("default_type"), entry.get("base_url", ""))
     except ValueError:
         return "#EXTM3U\n", 0
+    edits = edits or {}
     lines: list[str] = []
     for index, item in enumerate(parsed["items"], start=1):
-        url = _export_url(item.get("stream_url"))
+        url, backups = _effective_streams(item, edits)
         if not url:
             continue
         extra = item.get("_extra") if isinstance(item.get("_extra"), dict) else {}
         name = _clean_text(item.get("title")) or f"Channel {index}"
         lines.append(_m3u_entry(name, url, _export_logo(extra.get("artworkUrl")),
-                                _clean_attribute(item.get("description"))))
+                                _clean_attribute(item.get("description")), backups))
     return "#EXTM3U\n" + "".join(lines), len(lines)
 
 
@@ -511,6 +550,7 @@ def _readme(*, created: datetime, favorites: int, skipped: int,
         "player's window. Most players and IPTV or internet radio apps accept .m3u8",
         "files; some call them M3U playlists. Each entry is the station's or channel's",
         "own address, so the other player connects to it directly.",
+        "World Media also reads backup addresses saved in these files.",
         "",
         "RESTORING BY HAND",
         "",
@@ -669,14 +709,15 @@ def _create_backup(paths: RuntimePaths, store: PlaylistStore, secrets_to_exclude
             state_names.append(STARRED_FILENAME)
 
     favorites, favorites_readable = _favorites_from_profile(profile_values)
+    edits = _station_stream_edits(profile_values)
     favorite_files, written, skipped = build_favorite_exports(
-        favorites, favorite_categories(profile_values), favorite_names(profile_values))
+        favorites, favorite_categories(profile_values), favorite_names(profile_values), edits)
     used_names: set[str] = {filename.casefold() for _, filename in FAVORITE_FILES}
     exports: list[tuple[str, str]] = [
         (filename, favorite_files[filename]) for _, filename in FAVORITE_FILES if filename in favorite_files
     ]
     for entry in playlist_entries or []:
-        text, count = playlist_export_text(entry)
+        text, count = playlist_export_text(entry, edits)
         if count:
             exports.append((safe_export_name(entry.get("name"), used_names), text))
     export_names = [filename for filename, _ in exports]

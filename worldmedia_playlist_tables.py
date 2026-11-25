@@ -9,7 +9,8 @@ JSON: a list of stations, or an object holding one under "stations",
 "channels", "items", "entries", "playlist", "tracks" or "streams" (an
 object's own "name" or "title" names the list). A station is an object with
 at least a stream address, or just the address as a string. A Radio Browser
-export works as it is.
+export works as it is. A station object can include a "backups" list of
+alternate stream addresses in the order to try them.
 
 CSV: a header row naming the columns (comma, semicolon or tab separated);
 a list without one is read when a cell of the first row is a web address.
@@ -39,7 +40,8 @@ import re
 from dataclasses import dataclass
 
 from worldmedia_playlists import (
-    MAX_PLAYLIST_BYTES, TRUE_MARKS, FALSE_MARKS, _URL_SCHEME, _label, _web_url, _xspf_link, _xspf_name, is_pls,
+    BACKUP_STREAM_TAG, MAX_BACKUP_STREAMS, MAX_PLAYLIST_BYTES, PLAYLIST_TYPES, TRUE_MARKS, FALSE_MARKS,
+    _LINE_BREAK, _URL_SCHEME, _label, _playlist_url, _web_url, _xspf_link, _xspf_name, is_pls,
 )
 
 MAX_TABLE_ENTRIES = 50_000
@@ -131,8 +133,8 @@ def _radio_mark(fields: dict[str, object]) -> str:
     return ''
 
 
-def _entry_lines(fields: dict[str, object]) -> list[str]:
-    """The two M3U lines of one station, or [] when it has no address."""
+def _entry_lines(fields: dict[str, object], base_url: str = '') -> list[str]:
+    """The M3U lines of one station, or [] when it has no address."""
     url = _address(fields)
     if not url:
         return []
@@ -158,7 +160,102 @@ def _entry_lines(fields: dict[str, object]) -> list[str]:
     if language:
         attributes += f' tvg-language="{language}"'
     name = _xspf_name(_text(_pick(fields, 'name')))
-    return [f'#EXTINF:-1{attributes},{name}', url]
+    backups = fields.get('backups')
+    backup_lines = []
+    if isinstance(backups, list):
+        seen = {_playlist_url(url, base_url)}
+        for value in backups:
+            backup = _playlist_url(_xspf_link(_text(value)), base_url)
+            if backup and backup not in seen:
+                seen.add(backup)
+                backup_lines.append(f'{BACKUP_STREAM_TAG}{backup}')
+                if len(backup_lines) >= MAX_BACKUP_STREAMS:
+                    break
+    return [f'#EXTINF:-1{attributes},{name}', *backup_lines, url]
+
+
+def _export_text(value, limit=512):
+    return _label(_LINE_BREAK.sub(' ', value), limit) if isinstance(value, str) else ''
+
+
+def _export_url(value):
+    return _web_url(value.strip()) if isinstance(value, str) and not _LINE_BREAK.search(value) else ''
+
+
+def clean_export_station(value: object) -> dict | None:
+    """The portable fields of a Library item, subject to the playlist import rules."""
+    if not isinstance(value, dict) or not isinstance(value.get('type'), str):
+        return None
+    media_type = value['type']
+    if media_type not in PLAYLIST_TYPES:
+        return None
+    raw_backups = value.get('backups')
+    backups = list(dict.fromkeys(filter(None, map(_export_url, raw_backups)))) if isinstance(raw_backups, list) else []
+    url = _export_url(value.get('url'))
+    kind = _export_text(value.get('kind'))
+    headers = value.get('headers')
+    if not url and backups:
+        url, *backups = backups
+        kind, headers = '', None
+    if not url:
+        return None
+    clean_headers = {}
+    if isinstance(headers, dict):
+        for key in ('referer', 'userAgent'):
+            header = headers.get(key)
+            if isinstance(header, str) and _export_text(header, 1024) == header:
+                if key != 'referer' or _export_url(header):
+                    clean_headers[key] = header
+    return {
+        'url': url,
+        'name': _export_text(value.get('name')) or 'Untitled',
+        'type': media_type,
+        'kind': kind,
+        'delivery': _export_text(value.get('delivery')),
+        'content_rating': _export_text(value.get('content_rating')),
+        'group': _export_text(value.get('group')),
+        'logo': _export_url(value.get('logo')) or _export_url(value.get('thumbnail')),
+        'country': _export_text(value.get('country'), 16),
+        'language': _export_text(value.get('language'), 32),
+        'headers': clean_headers,
+        'backups': [backup for backup in backups if backup != url][:MAX_BACKUP_STREAMS],
+    }
+
+
+def _export_attribute(key, value):
+    if not value:
+        return ''
+    if '"' not in value:
+        return f' {key}="{value}"'
+    if "'" not in value:
+        return f" {key}='{value}'"
+    return ' ' + key + '="' + value.replace('"', '&quot;') + '"'
+
+
+def export_station_lines(station: dict) -> list[str]:
+    """The M3U entry shared by both Library export formats."""
+    media_type = station['type']
+    attrs = _export_attribute('radio', 'true' if media_type in {'radio', 'audio'} else 'false')
+    attrs += _export_attribute('worldmedia-type', media_type)
+    if station['kind'] in {'audio', 'video', 'hls', 'dash'}:
+        attrs += _export_attribute('worldmedia-kind', station['kind'])
+    if station['delivery'] in {'live', 'on-demand', 'unknown'}:
+        attrs += _export_attribute('worldmedia-delivery', station['delivery'])
+    if station['content_rating'] in {'explicit', 'not-explicit'}:
+        attrs += _export_attribute('worldmedia-rating', station['content_rating'])
+    for key, field in (('tvg-name', 'name'), ('tvg-logo', 'logo'), ('group-title', 'group'),
+                       ('tvg-country', 'country'), ('tvg-language', 'language')):
+        attrs += _export_attribute(key, station[field])
+    lines = [f"#EXTINF:-1{attrs},{station['name']}"]
+    if '"' in station['group'] and "'" in station['group']:
+        lines.append(f"#EXTGRP:{station['group']}")
+    if referer := station['headers'].get('referer'):
+        lines.append(f'#EXTVLCOPT:http-referrer={referer}')
+    if agent := station['headers'].get('userAgent'):
+        lines.append(f'#EXTVLCOPT:http-user-agent={agent}')
+    lines.extend(f'{BACKUP_STREAM_TAG}{backup}' for backup in station['backups'])
+    lines.append(station['url'])
+    return lines
 
 
 def _lower_keys(value: dict) -> dict[str, object]:
@@ -180,7 +277,7 @@ def looks_like_json(text: str) -> bool:
     return isinstance(text, str) and bool(_JSON_START.match(text)) and not is_pls(text)
 
 
-def read_json_playlist(text: str) -> TablePlaylist:
+def read_json_playlist(text: str, *, base_url: str = '') -> TablePlaylist:
     _check_size(text)
     if not text.strip('\ufeff \t\r\n'):
         raise ValueError('This JSON playlist is empty.')
@@ -195,6 +292,7 @@ def read_json_playlist(text: str) -> TablePlaylist:
         raise ValueError('This JSON playlist could not be read. The file is not valid JSON, '
                          'or its lists are nested too deeply.') from None
     title = ''
+    worldmedia = isinstance(value, dict) and value.get('worldmedia') == 1
     entries = value
     if isinstance(value, dict):
         fields = _lower_keys(value)
@@ -212,7 +310,11 @@ def read_json_playlist(text: str) -> TablePlaylist:
     for entry in entries:
         if isinstance(entry, str):
             entry = {'url': entry}
-        found = _entry_lines(_lower_keys(entry)) if isinstance(entry, dict) else []
+        if worldmedia:
+            station = clean_export_station(entry)
+            found = export_station_lines(station) if station else []
+        else:
+            found = _entry_lines(_lower_keys(entry), base_url) if isinstance(entry, dict) else []
         if found:
             lines += found
         else:
@@ -350,7 +452,7 @@ def read_csv_playlist(text: str) -> TablePlaylist:
     return TablePlaylist('', '\n'.join(lines) + '\n', dropped)
 
 
-def read_table_playlist(text: object, file_name: str = '') -> TablePlaylist | None:
+def read_table_playlist(text: object, file_name: str = '', *, base_url: str = '') -> TablePlaylist | None:
     """A JSON or CSV list as M3U, or None for any other playlist text.
 
     A file named .json or .csv is always read as that format (and refused with
@@ -359,11 +461,11 @@ def read_table_playlist(text: object, file_name: str = '') -> TablePlaylist | No
         return None
     suffix = file_name.lower().rpartition('.')[2] if '.' in file_name else ''
     if suffix == 'json':
-        return read_json_playlist(text)
+        return read_json_playlist(text, base_url=base_url)
     if suffix == 'csv':
         return read_csv_playlist(text)
     if looks_like_json(text):
-        return read_json_playlist(text)
+        return read_json_playlist(text, base_url=base_url)
     if looks_like_csv(text):
         return read_csv_playlist(text)
     return None

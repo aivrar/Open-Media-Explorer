@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import stat
 import tempfile
 import threading
 import time
@@ -64,6 +65,22 @@ class DownloadServiceTests(unittest.TestCase):
     def assert_no_temporary_outputs(self) -> None:
         root = self.paths.downloads_root
         self.assertEqual(list(root.glob("*.part")) + list(root.glob(".*.part")), [])
+
+    def test_chapter_job_retains_the_book_and_opaque_download_part(self) -> None:
+        registration = self.registry.register({
+            "item_id": "librivox:4441",
+            "url": f"{self.fixture.base_url}/media/audio.mp3",
+            "delivery": "on-demand",
+            "media_type": "audio",
+            "title": "A book",
+            "download_part": "0123456789abcdef",
+        })
+        started = self.service.start(registration.token)
+        self.assertEqual(started["item_id"], "librivox:4441")
+        self.assertEqual(started["download_part"], "0123456789abcdef")
+        completed = self.wait(started["id"])
+        self.assertEqual(completed["state"], "completed")
+        self.assertEqual(completed["download_part"], "0123456789abcdef")
 
     def test_shutdown_reaps_cancelled_stream_worker_and_partial(self) -> None:
         registration = self.register("/stream/endless", title="Endless")
@@ -372,10 +389,12 @@ class DownloadServiceTests(unittest.TestCase):
             opened = self.service.open_downloads_folder()
         self.assertEqual(Path(opened), self.paths.downloads_root.resolve())
         startfile.assert_called_once_with(str(self.paths.downloads_root.resolve()))
-        with mock.patch("pathlib.Path.is_symlink", return_value=True):
-            with self.assertRaises(Exception) as error:
-                self.service.open_downloads_folder()
-        self.assertEqual(error.exception.code, "UNSAFE_DOWNLOAD_ROOT")
+        for mode, tag in ((stat.S_IFLNK, 0), (stat.S_IFDIR, stat.IO_REPARSE_TAG_MOUNT_POINT)):
+            info = mock.Mock(st_mode=mode, st_reparse_tag=tag)
+            with self.subTest(mode=mode, tag=tag), mock.patch("pathlib.Path.lstat", return_value=info):
+                with self.assertRaises(worldmedia_downloads.DownloadError) as error:
+                    self.service.open_downloads_folder()
+                self.assertEqual(error.exception.code, "UNSAFE_DOWNLOAD_ROOT")
 
 
 if __name__ == "__main__":

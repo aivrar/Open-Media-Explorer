@@ -151,7 +151,7 @@ test('the tab stretches the fade into the density labs only, judged by DENSITY_R
   assert.deepEqual([...DENSITY_LAB_IDS], ['attractor_density_lab', 'buddhabrot_lab', 'flam3_density_lab']);
   assert.equal(DENSITY_READY_MEAN, 0.05);
   const tab = readFileSync(new URL('../src/visualizer/index.js', import.meta.url), 'utf8');
-  assert.match(tab, /beforeInstall: \(id\) => transition\.begin\(densityFadeFor\(id\)\),/);
+  assert.match(tab, /transition\.begin\(\{ \.\.\.densityFadeFor\(id\), dissolve \}\)/);
   assert.match(tab, /if \(!DENSITY_LAB_IDS\.includes\(id\)\) return \{\};/);
   assert.match(tab, /return \{ ready: \(\) => densityShownMean\(after\) >= DENSITY_READY_MEAN \};/);
 });

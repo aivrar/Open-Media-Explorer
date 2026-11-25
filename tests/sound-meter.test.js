@@ -959,11 +959,11 @@ test('the setting defaults to on and is stored inside the saved settings, never 
   assert.match(main, /subscribeSettings: \(fn\) => subscribe\('settings-change', fn\)/);
 });
 
-test('both meter blocks are decorative, after EQ, and never take focus', async () => {
+test('both meter blocks are decorative, after the action buttons, and never take focus', async () => {
   const html = await read('src/index.html');
   const actions = html.match(/<div class="player-actions"[\s\S]*?\n {8}<\/div>/)[0];
-  assert.match(actions, /<\/button>\s+<div id="player-meter-compact" class="player-meter" data-player-meter aria-hidden="true">/);
-  assert.ok(actions.indexOf('id="player-eq"') < actions.indexOf('player-meter-compact'));
+  const eq = actions.match(/<button id="player-eq"[^>]*>[\s\S]*?<\/button>/)[0];
+  assert.match(actions.slice(actions.indexOf(eq) + eq.length), /^\s+<span id="player-picture-slot"[^>]*>\s+<button id="player-picture"[^>]*>Picture<\/button>\s+<\/span>\s+<div id="player-meter-compact" class="player-meter" data-player-meter aria-hidden="true">/);
   const progress = html.match(/<div class="player-progress">[\s\S]*?<\/div>\s+<span id="player-time"/)[0];
   assert.match(progress, /<div id="player-meter" class="player-meter" data-player-meter aria-hidden="true">\s+<canvas class="player-meter-canvas" width="90" height="36"><\/canvas>/);
   assert.equal((html.match(/data-player-meter/g) || []).length, 2);
@@ -978,7 +978,7 @@ test('the bar keeps its height and controls: the meter only uses spare room', as
   // Wide bar: inside the progress cell, only when that cell has 330 px.
   assert.match(block, /\.player-progress \{ container: player-progress \/ inline-size; \}/);
   assert.match(block, /@media \(min-width: 1001px\) \{\s+@container player-progress \(min-width: 330px\) \{\s+#player-meter \{ display: block; flex: none; \}/);
-  // Stacked bar: after EQ, needs no width, gives way first, hides when squeezed.
+  // Stacked bar: after the action buttons, needs no width, gives way first, hides when squeezed.
   // (98 px: the 8 px gap the -8px margin cancels, then the 90 px canvas.)
   assert.match(block, /@media \(max-width: 1000px\) \{\s+#player-meter-compact \{\s+display: grid;\s+grid-template-columns: minmax\(0, 98px\);\s+flex: 0 1000 auto;\s+min-width: 0;\s+margin-left: -8px;\s+overflow: hidden;/);
   assert.match(block, /\.player-meter-well > \.player-meter-canvas \{ margin-left: 8px; \}/);

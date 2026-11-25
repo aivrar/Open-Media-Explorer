@@ -51,8 +51,22 @@ API. Local relay IDs are short-lived and are removed from persisted favorites.
   volume or mute with a video's own controls moves the number and the speaker
   icon too, and that volume is the one that is saved.
 - The player star changes the same favorite record as a card star.
-- The small video overlay sits above the bottom player and supports the browser
-  media element's full-screen controls.
+- The floating video keeps its play and pause, volume, fullscreen and menu
+  controls for live TV. It hides the video timeline and time numbers, which
+  showed only the station's short live window. On-demand video keeps the
+  timeline, and a stream that turns out to be finite gets it back.
+- **Picture** next to **EQ** adjusts the displayed video. **Fit** can show the
+  whole picture, fill the box or zoom in to crop black bars. Fit applies in
+  fullscreen. See [Window layout](02-using-the-application.md#window-layout).
+
+### Tracks and chapters
+
+Internet Archive audio with several tracks and LibriVox books play in order.
+The next part starts by itself. The player bar shows **Track N of M** or
+**Chapter N of M**, with **Previous part** and **Next part**. You can also pick
+a track or chapter in the item's details. When a position is saved, reopening
+the item offers a resume button in the player bar with the part and time,
+such as **Resume chapter 2 at 3:10**. **Start over** plays from the beginning.
 
 ### HLS and DASH behavior
 
@@ -118,7 +132,9 @@ song starts, and it goes away when playback stops or the station is changed.
   show formatted text.
 
 Every new title is added to the **Song log** (the musical note in the top bar).
-See [Using the application](02-using-the-application.md) for the log.
+See [Using the application](02-using-the-application.md) for the log and
+[Show what's playing](02-using-the-application.md#show-whats-playing)
+in Favorites.
 
 ### Stream format and other streams
 
@@ -138,9 +154,16 @@ the station has played for a second, and it fills in only what the directory
 leaves out; so a station from your own playlists, or from any other source,
 shows its label after it has played once. Nothing is probed or asked for to get
 it. The values are a cache in the browser storage (at most 1,000 stations, the
-oldest go first), are not in backups, and **Clear local cache** removes them. A
-station delivered as HLS does not get a format this way, and a station whose
-server sends neither shows no label.
+oldest go first). **Clear local cache** removes them. Backups leave out
+this cache.
+
+HLS streams now get a stream line too. Video details can include resolution,
+frame rate, video codec and bitrate. World Media remembers them per item after
+five stable seconds of playback. For example, "Stream: HLS · 1080p · 50 fps ·
+H.264 · 6.22 Mbps". Bitrates use up to three significant digits. The line
+appears in the item's details, its tooltip and the Now Playing **Format** row.
+On a Library card it gets up to two lines when **Show technical source
+details** is on. The line shows the fields available from the stream.
 
 The detail panel of a Radio Browser station also has an **Other streams**
 button. It lists other Radio Browser entries for the same station (the same
@@ -207,8 +230,9 @@ that a quiet station still moves the bars.
 - The **Visualizer** tab reads the sound in the same way, so when the meter is
   flat, the Visualizer has no sound to follow either. See
   [Visualizer](09-visualizer.md).
-- A recording reads the station separately, so the meter shows what you hear,
-  not what is being saved.
+- A recording reads the station separately. The meter shows what you hear.
+- The large meter in **Now Playing** turns red and shows **Muted** when
+  muted. Screen readers announce the change.
 
 ### Playback priority and thumbnails
 
@@ -243,6 +267,16 @@ Classical, Jazz, Electronic, and Night. **New preset** creates a named custom
 preset; custom presets can be renamed or deleted. **Reset to flat** sets the
 current scope to a neutral curve.
 
+Open **Stations...** to assign a preset to stations in **Favorites** or
+**My Playlists**. Select the stations, choose a preset under **Use preset**,
+then press **Apply to selected**. To use your current curve, first press
+**Save new preset**. To remove assignments, choose **Clear preset
+assignment** and press **Apply to selected**.
+
+Open **Advanced** to set each band's Q from 0.25 to 8. Q sets the band width
+and adjusts resonance on the 31 Hz and 16 kHz shelf bands. The defaults
+preserve the equalizer's existing sound.
+
 Web Audio applies smoothing to live playback. A boosted curve uses a limiter to
 avoid clipping. If the same-origin relay or Web Audio signal cannot be made
 safe, the app reports EQ unavailability rather than silently playing a muted
@@ -254,7 +288,8 @@ Download is available only for finite on-demand originals/derivatives. A live
 HLS/DASH playlist is not treated as a finite download.
 
 1. Select an item with a Download capability.
-2. Press **Download** in the detail/player capture control.
+2. If the item has tracks or chapters, select the part you want. Press
+   **Download** to save the selected part.
 3. The app creates a job, validates content type and size, and writes a hidden
    `.part` file in `downloads`.
 4. If the provider supports byte ranges and a stable validator, an interrupted
@@ -267,7 +302,8 @@ or cancelled states. **Cancel download** is safe; completed jobs can open the
 folder or be started again. The backend enforces a small concurrent-download
 limit and de-duplicates equivalent active jobs.
 
-Files are sanitized and kept under the approved `downloads` root. Oversized,
+Files are sanitized and kept under the approved `downloads` root. The app
+checks the Downloads folder for links and junctions before writing. Oversized,
 HTML/error, empty, truncated, or audio/video-mismatched responses are rejected.
 
 ## Live recording
@@ -288,8 +324,10 @@ FFmpeg and writes its own file.
 
 The **Record** button's hover text, which screen readers also read as its
 description, says why it cannot be pressed (for example "Recording is available
-once this item plays."); nothing is written under the buttons. A capture's
-progress, result or error shows beside the button.
+once this item plays."). **Record audio**, **Record video** and **Stop
+recording** have the same width. The status area beside them shows **Preparing**,
+then **Recording** with time and size, or **Saved** with size and time. Point at
+the status for the full text.
 
 The app chooses audio/video recording kind from the item or a bounded FFprobe
 inspection. Video recordings require H.264/AAC-compatible output; audio uses
@@ -303,14 +341,13 @@ MP3. Output names are sanitized and collision-safe.
 | Balanced (default) | 160 kbps | 720p | CRF 23 |
 | High | 256 kbps audio (192 kbps in video) | 1080p | CRF 20 |
 
-The profile is a ceiling/encoding choice; the source is never upscaled.
 FFmpeg runs below normal priority on Windows so interactive playback remains
 responsive.
 
 ### EQ in recordings
 
-The exact normalized EQ curve active when **Record** is pressed is passed to
-FFmpeg and baked into the saved audio. Later changes to the player EQ, volume,
+The EQ curve active when **Record** is pressed, including each band's Q,
+is passed to FFmpeg and baked into the saved audio. Later changes to the player EQ, volume,
 mute, or favorite scope do not rewrite an existing file. Bypass at recording
 start produces an un-EQ'd recording.
 

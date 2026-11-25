@@ -273,27 +273,27 @@ test('the next start leaves out the streams that connected without playing and t
   assert.ok(!registered.includes(order[0]));
 });
 
-test('the player wires the start watch in Listed and Auto only, and v0.1.11\'s connection failover stays in all three modes', async () => {
+test('the player wires the start watch for Listed, Auto and saved backups', async () => {
   const player = await read('src/lib/player.js');
-  // Armed after a connect with "Pick the best stream" on (Listed or Auto), not in a reconnect.
-  assert.match(player, /if \(preferBest && !reconnectingCurrentItem\(\)\) \{[\s\S]{0,200}startWatch\.arm\(myToken, item, tried\)/);
+  // Arm after connecting if a station still has an untried stream.
+  assert.match(player, /if \(!partPlayback && \(addresses\.ordered \|\| preferBest\) && !reconnectingCurrentItem\(\) && streamAddressesCurrent\(\)\) \{\s*const tried = addresses\.ordered \? attempted : [^;]+;\s*if \(untriedStreams\(item, \{ addresses, extraStreams, tried \}\)\.length\) startWatch\.arm\(myToken, item, tried\);/);
   // The player's failures before a stream played release the next streams.
   assert.match(player, /if \(!shouldReconnect\(\)\) \{\s*\/\/[^\n]*\n\s*if \(startWatch\.failed\(playToken\)\) return;/);
   assert.equal((player.match(/e\?\.name === 'NotAllowedError' \|\| !startWatch\.failed\(token\)/g) || []).length, 2);
   // Its first `playing`, and its position moving after it, go to the watch:
   // a `playing` alone does not lift the start time limit.
-  assert.match(player, /const onPlaying = owned\(\(\) => \{\s*setMediaPriority\(true\);\s*\/\/[^\n]*\n\s*startWatch\.playing\(playToken\);/);
+  assert.match(player, /const onPlaying = owned\(\(\) => \{[^}]*setMediaPriority\(true\);\s*\/\/[^\n]*\n\s*startWatch\.playing\(playToken\);/);
   assert.match(player, /playSession\.progressed \+= step;\s*\/\/[^\n]*\n\s*startWatch\.moved\(playToken\);/);
   assert.equal((player.match(/startWatch\.moved\(/g) || []).length, 1, 'only forward, credited movement');
   // Played a second, paused, stopped, or another start: the watch ends.
   assert.match(player, /playSession\.played = true;\s*startWatch\.end\(\);/);
   assert.match(player, /function pauseFromUser\(\) \{\s*startWatch\.end\(\);/);
-  assert.match(player, /export function stop\(\) \{\s*cancelReconnect\(\);\s*startWatch\.end\(\);/);
+  assert.match(player, /export function stop\(\) \{\s*cancelReconnect\(\);[^}]*startWatch\.end\(\);/);
   assert.match(player, /const myToken = \+\+playToken;\s*startWatch\.end\(\);/);
   assert.match(player, /await startPlayback\(item, \{ skipStreams: tried \}\);/);
   // Connection failover (as in v0.1.11): every start goes through it, in
   // all three modes (preferBest is false with the setting off).
-  assert.match(player, /connectMediaRelay\(item, \{\s*signal: connectionController\.signal, preferBest, extraStreams, skipUrls: skipStreams,/);
+  assert.match(player, /connectMediaRelay\(relayItem, \{\s*signal: connectionController\.signal, preferBest, extraStreams, skipUrls: skipStreams, addresses,\s*onAttempt: addresses\.ordered \? \(url\) => attempted\.add\(url\) : undefined,/);
   const off = streamCandidatesForItem(tvItem(), { preferBest: false }).map((stream) => stream.url);
   assert.deepEqual(off, ['https://a.example/576.m3u8', 'https://b.example/720.m3u8', 'https://c.example/360.m3u8']);
   // Off: a first stream that fails to connect still hands over to the next.

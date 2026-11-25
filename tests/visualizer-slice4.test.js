@@ -321,12 +321,15 @@ test('the slice 4 settings: defaults, checked values, kept by normalizeSettings'
   const {
     visualizerFx, visualizerFxShuffle, visualizerFxIntensity, visualizerFxTiming, visualizerFxFlash, visualizerFxSet,
     visualizerOverlays, visualizerOverlayShuffle, visualizerOverlaySet, visualizerOverlayGlow, visualizerDrift,
-    visualizerOverlayStyles, visualizerFolded, visualizerFavouritesAll, visualizerOverlaySetAll, ...slice4
+    visualizerColorTravel, visualizerOverlayStyles, visualizerFolded, visualizerFavouritesAll, visualizerOverlaySetAll, ...slice4
   } = normalizeVisualizerExtras({});
   assert.deepEqual([visualizerFavouritesAll, visualizerOverlaySetAll], [[], []], 'the whole lists, kept beside the fields release 0.1.12 reads');
   assert.deepEqual(visualizerFolded, [], 'every section of the side panel open');
   assert.deepEqual(visualizerOverlayStyles, {}, 'no Style picked: Any');
   assert.equal(visualizerDrift, true, 'slow drift: on');
+  assert.equal(visualizerColorTravel, true);
+  assert.equal(normalizeSettings({ visualizerColorTravel: 'false' }).visualizerColorTravel, true);
+  assert.equal(normalizeSettings({ visualizerColorTravel: false }).visualizerColorTravel, false);
   assert.equal(visualizerOverlayGlow, false, 'extra glow: off');
   assert.deepEqual([visualizerOverlays, visualizerOverlayShuffle, visualizerOverlaySet], [false, true, []], 'the overlays (slice 6): off');
   assert.deepEqual([visualizerFx, visualizerFxShuffle, visualizerFxIntensity, visualizerFxTiming, visualizerFxFlash, visualizerFxSet], [false, true, 'normal', 'scene', false, []], 'the effects (slice 5): off');
@@ -691,6 +694,77 @@ test('shuffle in the tab: prepared ahead and shown from the staging slot, with a
   assert.equal(session.shuffleTimer.due, false);
   session.destroy();
   assert.equal(m.h.pending(), 0);
+});
+
+test('a scene picked by hand holds for the normal shuffle interval even on a drop', async () => {
+  const m = await mount({
+    settings: { visualizerShuffle: true, visualizerShuffleBars: 16 },
+    scenes: ['plasma', 'tunnel'].map(sceneById), animate: true,
+  });
+  const { session } = m;
+  try {
+    m.start();
+    await m.until(() => session.switcher.staged('tunnel'), 'manual choice ready');
+    session.sceneList.pick('tunnel');
+    await m.until(() => session.switcher.current === 'tunnel', 'manual choice installed');
+    await m.until(() => session.switcher.staged('plasma'), 'next auto choice ready');
+    session.structure.step = () => 'drop';
+    const fullInterval = session.shuffleTimer.fallbackSeconds();
+    await m.play((SHUFFLE_MIN_DWELL_S + 1) * 1000);
+    assert.ok(session.shuffleTimer.dwell >= SHUFFLE_MIN_DWELL_S);
+    assert.equal(session.shuffleTimer.due, false);
+    assert.equal(session.switcher.current, 'tunnel');
+    await m.play((fullInterval - SHUFFLE_MIN_DWELL_S) * 1000);
+    assert.equal(session.switcher.current, 'plasma');
+    assert.equal(session.shuffleStats.changes, 1);
+  } finally {
+    session.destroy();
+  }
+});
+
+test('reselecting the current scene cancels a shuffle that is still dipping out', async () => {
+  const m = await mount({
+    settings: { visualizerShuffle: true, visualizerShuffleBars: 8 },
+    scenes: ['plasma', 'tunnel'].map(sceneById),
+  });
+  const { session } = m;
+  try {
+    m.start();
+    await m.until(() => session.switcher.staged('tunnel'), 'next scene ready');
+    await m.play(SHUFFLE_MIN_DWELL_S * 1000);
+    await m.until(() => session.transition.phase === 'out', 'shuffle dipping out');
+    session.sceneList.pick('plasma');
+    m.h.run(CROSSFADE_MS);
+    assert.equal(session.switcher.current, 'plasma');
+    assert.equal(session.transition.phase, 'idle');
+    assert.equal(session.canvas.style.opacity, '');
+    assert.equal(session.shuffleTimer.due, false);
+  } finally {
+    session.destroy();
+  }
+});
+
+test('color travel follows the flash guard for checkbox and settings changes', async () => {
+  const m = await mount({ animate: true });
+  const { session, controls } = m;
+  try {
+    const charges = session.bridge.limiter.stats.transitions;
+    controls.colorTravel.checked = false;
+    controls.colorTravel.dispatchEvent(new Event('change'));
+    assert.deepEqual(m.saved.at(-1), { visualizerColorTravel: false });
+    assert.equal(session.transition.phase, 'fading');
+    assert.equal(m.fades.animations[0].options.duration, CROSSFADE_MS);
+    assert.equal(session.bridge.limiter.stats.transitions, charges + 1);
+
+    m.apply({ visualizerColorTravel: true });
+    assert.equal(controls.colorTravel.checked, true);
+    assert.equal(m.fades.animations.length, 1, 'waits for the fade already in progress');
+    m.h.run(CROSSFADE_MS);
+    assert.equal(m.fades.animations.length, 2);
+    assert.equal(session.bridge.limiter.stats.transitions, charges + 2);
+  } finally {
+    session.destroy();
+  }
 });
 
 test('shuffle never shows a blank: a scene not ready when due is waited for, and a full flash budget delays the change', async () => {

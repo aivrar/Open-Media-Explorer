@@ -93,7 +93,7 @@ test('the dial keeps its size when the player bar appears on the first play', as
   // (and the dial sized from it) is as tall before the first play as after.
   const idle = block(css, '#app:not(.has-player) .tuner-root');
   assert.match(idle, /box-sizing: border-box;/);
-  assert.match(idle, /padding-bottom: var\(--player-h\);/);
+  assert.match(idle, /padding-bottom: calc\(var\(--player-h\) \+ var\(--tuner-video-padding\)\);/);
 });
 
 test('the strip is as tall with a message as with cards', async () => {

@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- Recorded sections from the AudioSilo LibriVox mirror (id 4441), rendered
+     using LibriVox catalog application/views/rss/rss.php. -->
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title><![CDATA[Trees of Pride]]></title>
+    <item>
+      <title><![CDATA[1 - The Tale of the Peacock Trees]]></title>
+      <itunes:episode><![CDATA[1]]></itunes:episode>
+      <enclosure url="https://www.archive.org/download/trees_of_pride_1007_librivox/treesofpride_1_chesterton_64kb.mp3" length="0" type="audio/mpeg" />
+      <itunes:duration>
+        <![CDATA[00:33:48]]>
+      </itunes:duration>
+    </item>
+    <item>
+      <title><![CDATA[2 - The Wager of Squire Vane]]></title>
+      <itunes:episode><![CDATA[2]]></itunes:episode>
+      <enclosure url="https://www.archive.org/download/trees_of_pride_1007_librivox/treesofpride_2_chesterton_64kb.mp3" length="0" type="audio/mpeg" />
+      <itunes:duration>
+        <![CDATA[00:32:50]]>
+      </itunes:duration>
+    </item>
+    <item>
+      <title><![CDATA[3 - The Mystery of the Well]]></title>
+      <itunes:episode><![CDATA[3]]></itunes:episode>
+      <enclosure url="https://www.archive.org/download/trees_of_pride_1007_librivox/treesofpride_3_chesterton_64kb.mp3" length="0" type="audio/mpeg" />
+      <itunes:duration>
+        <![CDATA[00:34:37]]>
+      </itunes:duration>
+    </item>
+  </channel>
+</rss>

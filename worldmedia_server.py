@@ -60,8 +60,10 @@ from worldmedia_media import (
 )
 from worldmedia_recording import RecordingError, RecordingService, normalize_recording_eq
 from worldmedia_stream_probe import ProbeBusy, client_went_away, probe_pair
+from worldmedia_stream_title import peek_stream_title
 from worldmedia_processor import PROCESSOR_USE
-from worldmedia_playlists import PlaylistStore
+from worldmedia_playlists import PlaylistStore, validate_stream_addresses
+from worldmedia_playlist_export import EXPORT_BODY_LIMIT as PLAYLIST_EXPORT_BODY_LIMIT, export_library_playlist
 from worldmedia_station_images import MAX_SAVE_BODY_BYTES as STATION_IMAGE_SAVE_BODY_LIMIT
 from worldmedia_station_images import StationImages, decode_picture_data
 from worldmedia_songlog import (
@@ -106,7 +108,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.16 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.17 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -156,6 +158,8 @@ ICY_REFUSED_HOSTS = RefusedIcyHosts()
 CATALOG_BODY_LIMITS = {
     "/api/v1/streams/probe": 8 * 1024,
     "/api/v1/playlists/import": 48 * 1024 * 1024 + 8 * 1024,
+    "/api/v1/playlists/export": PLAYLIST_EXPORT_BODY_LIMIT,
+    "/api/v1/playlists/validate-stream-addresses": 128 * 1024,
     "/api/v1/catalog/feed/resolve": 12 * 1024,
     "/api/v1/catalog/peertube/resolve": 16 * 1024,
     "/api/v1/catalog/cache/clear": 1024,
@@ -365,28 +369,17 @@ def relay_frame_aligner(
     return AdtsAligner()
 
 
-def relay_passes_as_available(
-    registration: MediaRegistration, method: str, response, *, dash: bool,
-) -> bool:
-    """True for an endless live audio reply relayed without icy blocks: a GET
-    of a playback root (never a capture job's, never a DASH template)
-    answered 200 with an audio/* or application/ogg type and no length or
-    range. Its bytes are passed on as they arrive; a 64 KiB read would hold
-    a 32 kbps stream for 16 s before the player got anything. Everything else
-    (files with a length, video, manifests, segments, ranged replies, HEAD)
-    keeps full reads."""
-    if not (
-        method == "GET"
-        and not dash
-        and registration.token == registration.root_token
-        and not registration.capture
-        and response.status == HTTPStatus.OK
-        and response.getheader("Content-Length") is None
-        and response.getheader("Content-Range") is None
-    ):
-        return False
-    content_type = str(response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
-    return content_type.startswith("audio/") or content_type == "application/ogg"
+def validated_upstream_content_type(value: str) -> str:
+    if len(value) > 2048 or re.search(r"[\r\n\0]", value):
+        return "application/octet-stream"
+    return value
+
+
+def safe_upstream_content_type(value: str) -> str:
+    types = {part.split(";", 1)[0].strip().lower() for part in value.split(",")}
+    if types & {"text/html", "application/xhtml+xml", "image/svg+xml"}:
+        return "text/plain; charset=utf-8"
+    return value
 
 
 def stream_title_recorder(registration: MediaRegistration, response) -> Callable[[bytes], None]:
@@ -740,11 +733,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     "/api/v1/assets/register",
                 } or re.fullmatch(r"/api/v1/assets/[A-Za-z0-9_-]{22,128}/expire", path):
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
-                if path == "/api/v1/streams/probe":
+                if path in {"/api/v1/streams/probe", "/api/v1/streams/title-peek"}:
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 if path in {
                     "/api/v1/jobs/download", "/api/v1/jobs/record", "/api/v1/backup/create",
-                    "/api/v1/song-log/export", "/api/v1/starred-songs/export",
+                    "/api/v1/song-log/export", "/api/v1/starred-songs/export", "/api/v1/playlists/export",
                 }:
                     raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 now_playing = re.fullmatch(r"/api/v1/media/([A-Za-z0-9_-]{22,128})/now-playing", path)
@@ -775,6 +768,14 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     SESSION_TOKEN,
                     max_bytes=body_limit,
                 )
+                if path == "/api/v1/playlists/export":
+                    return self._send_api_success(export_library_playlist(body, RUNTIME_PATHS))
+                if path == "/api/v1/playlists/validate-stream-addresses":
+                    try:
+                        validate_stream_addresses(body)
+                    except ValueError as error:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_PLAYLIST", str(error)) from error
+                    return self._send_api_success({"valid": True})
                 if path in {"/api/v1/playlists/import", "/api/v1/playlists/link", "/api/v1/playlists/remove"}:
                     try:
                         if path.endswith("/link") or path.endswith("/import"):
@@ -796,6 +797,13 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         return self._send_api_success({"removed": True})
                     except ValueError as error:
                         raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_PLAYLIST", str(error)) from error
+                if path == "/api/v1/streams/title-peek":
+                    try:
+                        return self._send_api_success(peek_stream_title(
+                            MEDIA_REGISTRY, body, client_gone=lambda: client_went_away(self.connection),
+                        ))
+                    except ProbeBusy as error:
+                        raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "STREAM_TITLE_BUSY", "Stream checks are busy.") from error
                 if path == "/api/v1/streams/probe":
                     # "Pick the best stream: Auto (verified)": a short look at
                     # two streams through the relay's connector, one at a time
@@ -893,11 +901,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 if path == "/api/v1/jobs/record":
                     if (
                         not {"media_id", "profile"}.issubset(body)
-                        or set(body) - {"media_id", "profile", "eq"}
+                        or set(body) - {"media_id", "profile", "eq", "delivery"}
                     ):
                         raise ApiError(
                             HTTPStatus.BAD_REQUEST, "INVALID_RECORDING_REQUEST",
-                            "Recording start requires a media registration ID, quality profile, and optional EQ snapshot.",
+                            "Recording start requires a media registration ID and quality profile."
                         )
                     media_id = body.get("media_id")
                     profile = body.get("profile")
@@ -907,10 +915,15 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         raise ApiError(
                             HTTPStatus.BAD_REQUEST, "INVALID_RECORDING_PROFILE", "Recording quality is invalid."
                         )
+                    delivery = body.get("delivery")
+                    if "delivery" in body and (
+                        not isinstance(delivery, str) or delivery not in {"live", "on-demand", "unknown"}
+                    ):
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_MEDIA_DELIVERY", "Media delivery is invalid.")
                     eq = normalize_recording_eq(body.get("eq"))
                     relay_origin = f"http://127.0.0.1:{self.server.server_port}"
                     return self._send_api_success(
-                        RECORDING_SERVICE.start(media_id, profile, relay_origin, eq),
+                        RECORDING_SERVICE.start(media_id, profile, relay_origin, eq, delivery=delivery),
                         status=HTTPStatus.ACCEPTED,
                     )
                 if path == "/api/v1/downloads/open-folder":
@@ -1166,8 +1179,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "private, max-age=60")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self._send_upstream_safety_headers()
             self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
             self.end_headers()
             if status == HTTPStatus.OK and method != "HEAD":
@@ -1216,7 +1228,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_response(HTTPStatus.NOT_MODIFIED)
                 self.send_header("ETag", blob.etag)
                 self.send_header("Cache-Control", "private, max-age=300")
-                self.send_header("X-Content-Type-Options", "nosniff")
+                self._send_upstream_safety_headers()
                 self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
                 self.end_headers()
                 return None
@@ -1250,7 +1262,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{len(blob.data)}")
             self.send_header("ETag", blob.etag)
             self.send_header("Cache-Control", "private, max-age=300")
-            self.send_header("X-Content-Type-Options", "nosniff")
+            self._send_upstream_safety_headers()
             self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
             self.end_headers()
             if method != "HEAD":
@@ -1296,7 +1308,14 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 )
             if not RELAY_SLOTS.acquire(blocking=False):
                 raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "RELAY_BUSY", "Media relay is busy.", retryable=True)
+            playing_audio = (
+                method == "GET" and dash_query is None and registration.media_type == "audio"
+                and registration.delivery in {"live", "unknown"} and registration.token == registration.root_token
+                and not registration.capture
+            )
             try:
+                if playing_audio:
+                    MEDIA_REGISTRY.begin_playing_relay(registration.token)
                 headers = dict(registration.headers)
                 if range_value and not manifest_probe:
                     headers["Range"] = range_value
@@ -1307,10 +1326,10 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     ),
                 )
                 try:
-                    content_type = upstream.response.getheader("Content-Type", "application/octet-stream")
-                    if len(content_type) > 2048 or re.search(r"[\r\n\0]", content_type):
-                        content_type = "application/octet-stream"
-                    content_type_lower = content_type.lower()
+                    upstream_type = validated_upstream_content_type(
+                        upstream.response.getheader("Content-Type", "application/octet-stream"),
+                    )
+                    content_type_lower = upstream_type.lower()
                     is_hls = registration.media_type == "hls" or "mpegurl" in content_type_lower
                     is_dash = registration.media_type == "dash" or "dash+xml" in content_type_lower
                     is_manifest = is_hls or is_dash
@@ -1347,6 +1366,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                             len(rewritten),
                             body=rewritten,
                         )
+                    content_type = safe_upstream_content_type(upstream_type)
                     if metaint is not None and not is_manifest:
                         # The stripped body is shorter than upstream's and its byte
                         # offsets differ, so no Content-Length, Content-Range,
@@ -1355,6 +1375,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         # gone). The connection close ends the body.
                         self.send_response(HTTPStatus.OK)
                         self.send_header("Content-Type", content_type)
+                        self._send_upstream_safety_headers()
                         self.send_header("Cache-Control", "no-store")
                         self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
                         self.send_header("Connection", "close")
@@ -1366,22 +1387,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                             registration, method, upstream.response,
                             dash=dash_query is not None, range_value=range_value,
                         )
-                        # Forward audio as it arrives (iter_available), not in full
-                        # 64 KiB reads: the stripped first chunk is a few bytes
-                        # short, and the element would wait a whole further read.
-                        for chunk in upstream.iter_available(chunk_size=RELAY_CHUNK_SIZE):
-                            audio = stripper.feed(chunk)
-                            if aligner is not None and audio:
-                                audio = aligner.feed(audio)
-                            if audio:
-                                self.wfile.write(audio)
-                                self.wfile.flush()
-                        if aligner is not None and (rest := aligner.finish()):
-                            self.wfile.write(rest)
-                            self.wfile.flush()
+                        self._copy_relay_body(upstream, available=True, aligner=aligner, stripper=stripper)
                         return None
                     self.send_response(upstream.response.status)
                     self.send_header("Content-Type", content_type)
+                    self._send_upstream_safety_headers()
                     for name in ("Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag", "Content-Encoding"):
                         value = upstream.response.getheader(name)
                         if value and len(value) <= 2048 and not re.search(r"[\r\n\0]", value):
@@ -1399,24 +1409,15 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                         registration, method, upstream.response,
                         dash=dash_query is not None, range_value=range_value,
                     )
-                    live = relay_passes_as_available(
-                        registration, method, upstream.response, dash=dash_query is not None,
-                    )
-                    chunks = upstream.iter_available if live else upstream.iter_chunks
-                    for chunk in chunks(chunk_size=RELAY_CHUNK_SIZE):
-                        if aligner is not None:
-                            chunk = aligner.feed(chunk)
-                            if not chunk:
-                                continue
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                    if aligner is not None and (rest := aligner.finish()):
-                        self.wfile.write(rest)
-                        self.wfile.flush()
+                    # Live audio needs its first bytes without a full 64 KiB read.
+                    available = playing_audio and not is_manifest and 200 <= upstream.response.status < 300
+                    self._copy_relay_body(upstream, available=available, aligner=aligner)
                     return None
                 finally:
                     upstream.close()
             finally:
+                if playing_audio:
+                    MEDIA_REGISTRY.end_playing_relay(registration.token)
                 RELAY_SLOTS.release()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             self._abort_relay_response()
@@ -1457,6 +1458,28 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
         except OSError:
             pass
 
+    def _copy_relay_body(self, upstream, *, available: bool, aligner=None, stripper=None) -> None:
+        def write(chunk: bytes) -> None:
+            if chunk:
+                self.wfile.write(chunk)
+                self.wfile.flush()
+
+        chunks = upstream.iter_available if available else upstream.iter_chunks
+        if aligner is not None:
+            upstream.set_read_deadline(aligner.time_left, lambda: write(aligner.finish()))
+        for chunk in chunks(chunk_size=RELAY_CHUNK_SIZE):
+            if stripper is not None:
+                chunk = stripper.feed(chunk)
+            if aligner is not None and chunk:
+                chunk = aligner.feed(chunk)
+            write(chunk)
+        if aligner is not None:
+            write(aligner.finish())
+
+    def _send_upstream_safety_headers(self) -> None:
+        self.send_header("Content-Security-Policy", "sandbox; default-src 'none'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+
     def _send_relay_headers(
         self,
         status: int,
@@ -1468,6 +1491,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(content_length))
+        self._send_upstream_safety_headers()
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
         self.end_headers()
@@ -1641,7 +1665,10 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
     def _stream_upstream(self, upstream, status: int, *, content_encoding: str = "") -> None:
         try:
             response = getattr(upstream, "response", upstream)
-            content_type = response.headers.get("Content-Type", "application/octet-stream")
+            upstream_type = validated_upstream_content_type(
+                response.headers.get("Content-Type", "application/octet-stream"),
+            )
+            content_type = safe_upstream_content_type(upstream_type)
             content_length = response.headers.get("Content-Length")
             if content_length and content_length.isdigit() and int(content_length) > MAX_SIZE:
                 self.close_connection = True
@@ -1649,6 +1676,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
 
             self.send_response(status)
             self.send_header("Content-Type", content_type)
+            self._send_upstream_safety_headers()
             if content_encoding:
                 # Compressed bytes pass through unchanged; Content-Length
                 # below is the upstream's compressed length.

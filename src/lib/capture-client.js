@@ -1,6 +1,6 @@
 /** Authenticated same-origin control client and opaque media relay lifecycle. */
 
-let sessionPromise = null;
+let sessionCache = { data: null, pending: new Map(), generation: 0, appliedGeneration: 0 };
 
 export class ControlApiError extends Error {
   constructor(code, message, status = 0, retryable = false, retryAfter = null) {
@@ -32,28 +32,62 @@ export function isDefinitiveRejection(error) {
 }
 
 export async function getControlSession({ fetchImpl = fetch, signal } = {}) {
-  if (!sessionPromise) {
-    const options = {
-      method: 'GET', credentials: 'same-origin', cache: 'no-store',
-    };
-    if (signal) options.signal = signal;
-    sessionPromise = fetchImpl('/api/v1/session', options).then(async (response) => {
-      const envelope = await response.json();
-      if (!response.ok || !envelope?.ok || !envelope.data?.token) {
-        throw new ControlApiError(
-          envelope?.error?.code, envelope?.error?.message, response.status, envelope?.error?.retryable,
-        );
-      }
-      return envelope.data;
-    }).catch((error) => {
-      sessionPromise = null;
-      throw error;
+  signal?.throwIfAborted();
+  const cache = sessionCache;
+  if (cache.data) return cache.data;
+  // Only share a pending lookup among callers with the same cancellation
+  // signal. Cancelling one cold Play or stream candidate must not fail another.
+  const pending = cache.pending.get(signal);
+  if (pending) return pending.request;
+
+  const generation = ++cache.generation;
+  const controller = new AbortController();
+  const lookupSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  let rejectAbort;
+  const cancelled = new Promise((_, reject) => {
+    rejectAbort = () => reject(lookupSignal.reason);
+    lookupSignal.addEventListener('abort', rejectAbort, { once: true });
+  });
+
+  // Cold Play needs its own connection for the session too.
+  const lookup = (async () => {
+    const response = await fetchImpl('/api/v1/session', {
+      method: 'GET', credentials: 'omit', cache: 'no-store', signal: lookupSignal,
     });
-  }
-  return sessionPromise;
+    const envelope = await response.json();
+    lookupSignal.throwIfAborted();
+    if (!response.ok || !envelope?.ok || !envelope.data?.token) {
+      throw new ControlApiError(
+        envelope?.error?.code, envelope?.error?.message, response.status, envelope?.error?.retryable,
+      );
+    }
+    // A slower lookup may have reached the previous server instance.
+    if (generation > cache.appliedGeneration) {
+      cache.appliedGeneration = generation;
+      cache.data = envelope.data;
+    }
+  })();
+  const request = Promise.race([lookup, cancelled]).finally(() => {
+    lookupSignal.removeEventListener('abort', rejectAbort);
+    cache.pending.delete(signal);
+  }).then(() => {
+    lookupSignal.throwIfAborted();
+    // A newer token may already have been rejected. Retry with the same signal.
+    return cache.data ?? getControlSession({ fetchImpl, signal });
+  });
+  cache.pending.set(signal, { request, controller });
+  return request;
 }
 
-export function resetControlSession() { sessionPromise = null; }
+export function invalidateControlSession(token) {
+  if (sessionCache.data && sessionCache.data.token === token) sessionCache.data = null;
+}
+
+export function resetControlSession() {
+  const previous = sessionCache;
+  sessionCache = { data: null, pending: new Map(), generation: 0, appliedGeneration: 0 };
+  for (const { controller } of previous.pending.values()) controller.abort();
+}
 
 export function listCaptureJobs(options = {}) {
   return controlRequest('/api/v1/jobs', options).then((data) => data?.jobs || []);
@@ -72,7 +106,7 @@ export function listCaptureJobs(options = {}) {
  */
 export async function controlRequest(path, {
   method = 'GET', body, fetchImpl = fetch, signal, keepalive = false, headers: extraHeaders = null,
-  ownConnection = false,
+  ownConnection = false, beforeSend,
 } = {}) {
   const session = await getControlSession({ fetchImpl, signal });
   // Extra headers (the profile write order, see profile-transfer.js) never
@@ -88,11 +122,15 @@ export async function controlRequest(path, {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
+  signal?.throwIfAborted();
+  beforeSend?.();
   const response = await fetchImpl(path, options);
   let envelope = null;
   try { envelope = await response.json(); } catch (_) { /* normalized below */ }
   if (!response.ok || !envelope?.ok) {
-    if (response.status === 403 && envelope?.error?.code === 'INVALID_TOKEN') resetControlSession();
+    if (response.status === 403 && envelope?.error?.code === 'INVALID_TOKEN') {
+      invalidateControlSession(session.token);
+    }
     throw new ControlApiError(
       envelope?.error?.code,
       envelope?.error?.message,
@@ -148,6 +186,7 @@ export async function registerDownloadMedia(item, options = {}) {
       item_id: item.id,
       url: item.download_url,
       delivery: 'on-demand',
+      ...(item.download_part ? { download_part: item.download_part } : {}),
       media_type: mediaTypeForItem(item),
       capture_headers: item.capture_headers || {},
       title: item.title,

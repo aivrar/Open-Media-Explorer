@@ -62,12 +62,15 @@
  */
 
 import { simSupported } from './sim-host.js';
-import { LINE_QUALITY_CAPS, OFFERED_LINE_SCENES } from './line-scenes.js';
+import { LINE_QUALITY_CAPS, LINE_SCENE_ENTRIES, OFFERED_LINE_SCENES } from './line-scenes.js';
+import { difsTunnelShading, hypercomplexPreviewShading, withFlightShader } from './flight-shading.js';
 
 // The line-drawing scenes (line-scenes.js): held out of SCENES until
 // LINE_SCENES_RELEASED.
 export { LINE_SCENE_ENTRIES, LINE_SCENES_RELEASED } from './line-scenes.js';
-import { ACCUMULATING_QUALITY_CAPS, OFFERED_ACCUMULATING_SCENES } from './accumulating-scenes.js';
+import {
+  ACCUMULATING_QUALITY_CAPS, ACCUMULATING_RELEASED_IDS, ACCUMULATING_SCENE_ENTRIES, OFFERED_ACCUMULATING_SCENES,
+} from './accumulating-scenes.js';
 // The accumulating labs (accumulating-scenes.js): each held out of SCENES
 // until it is in ACCUMULATING_RELEASED_IDS.
 export { ACCUMULATING_RELEASED_IDS, ACCUMULATING_SCENE_ENTRIES } from './accumulating-scenes.js';
@@ -782,12 +785,14 @@ const ALL_SCENES = Object.freeze([
   scene('mandelbulb_flight', 'Mandelbulb Flight', 'Fractals', 'mandelbulb-flight', 'medium', 'motion', () => import('./vendor/psychedelia/effects/mandelbulb-flight.js')),
   scene('triplex_mutation_flight', 'Triplex Mutation Flight', 'Fractals', 'triplex-mutation-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/triplex-mutation-flight.js')),
   scene('kifs_flight', 'KIFS Fold Flight', 'Fractals', 'kifs-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/kifs-flight.js')),
-  scene('difs_tunnel_flight', 'DIFS Tunnel Flight', 'Fractals', 'difs-tunnel-flight', 'heavy', 'motion', () => import('./vendor/psychedelia/effects/difs-tunnel-flight.js'), {
+  scene('difs_tunnel_flight', 'DIFS Tunnel Flight', 'Fractals', 'difs-tunnel-flight', 'heavy', 'shader',
+    () => import('./vendor/psychedelia/effects/difs-tunnel-flight.js').then((module) => withFlightShader(module, difsTunnelShading)), {
     // It starts on its Koch Vault Orbit preset: its own start look stepped
     // by 0.092 at 1x over 360 s of its clock (its surface appearing at the
     // camera), Koch Vault Orbit by 0.024 (0.0244 again as its start look,
     // the surge at its most under its cap of 1x, never under 0.05; its
-    // other presets are left out, looks.js PRESETS_LEFT_OUT).
+    // other presets are left out, looks.js PRESETS_LEFT_OUT). Those readings
+    // were taken before the local lighting and palette changes.
     defaults: {
       family: 0, iterations: 9, fold_scale: 2.72, fold_offset: 0.86, fold_bias: 0.12, symmetry: 6, twist: 0.62, thickness: 0.76, bailout: 4.2,
       detail: 1.2, flight_speed: 1.55, tunnel_depth: 1.25, orbit_radius: 1.18, orbit_spin: 1.28, motion_mode: 0, motion_phase: 0.14,
@@ -894,8 +899,25 @@ export const SCENES = Object.freeze([
 export function sceneCost(id) {
   return SCENES.find((entry) => entry.id === id)?.cost || null;
 }
-/** The held scenes' entries (for the flash check and the tests; never offered). */
+/** Ported scenes excluded from the released list. */
 export const HELD_SCENE_ENTRIES = Object.freeze(ALL_SCENES.filter((entry) => Object.hasOwn(HELD_SCENES, entry.id)));
+
+/** The tester's list adds manual previews without expanding the shuffle pool. */
+export function scenesForVisualizer(tryHeld) {
+  if (!tryHeld) return SCENES;
+  const held = [
+    ...HELD_SCENE_ENTRIES,
+    ...ACCUMULATING_SCENE_ENTRIES.filter((entry) => !ACCUMULATING_RELEASED_IDS.includes(entry.id)),
+    ...LINE_SCENE_ENTRIES.filter((entry) => !OFFERED_LINE_SCENES.includes(entry)),
+  ];
+  return [...SCENES, ...held.map((entry) => {
+    const preview = { ...entry, devOnly: true, fxNone: true, maxSpeed: 1, drift: false };
+    if (entry.id === 'hypercomplex_slice_flight') {
+      preview.load = () => entry.load().then((module) => withFlightShader(module, hypercomplexPreviewShading));
+    }
+    return preview;
+  })];
+}
 
 /** The scenes as the list shows them: by category, then by name. Previous
  *  and next follow this order. */

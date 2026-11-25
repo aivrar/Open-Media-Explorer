@@ -57,7 +57,7 @@ async function setup(t, { storage = new MemoryStorage() } = {}) {
   const { elements, document } = createPlayerDom();
   const win = new EventTarget();
   const net = {
-    mode: 'ok', expireMode: 'ok', registrations: 0, expired: [], held: [], keepalive: [],
+    mode: 'ok', expireMode: 'ok', registrations: 0, urls: [], expired: [], held: [], keepalive: [],
   };
   globalThis.document = document;
   globalThis.window = win;
@@ -76,6 +76,7 @@ async function setup(t, { storage = new MemoryStorage() } = {}) {
     if (path === '/api/v1/session') return envelope(200, { token: 'live-resume-token' });
     if (path === '/api/v1/media/register') {
       net.registrations++;
+      net.urls.push(JSON.parse(options.body).url);
       const id = `live_media_${String(net.registrations).padStart(12, '0')}`;
       const ok = envelope(201, { media_id: id, relay_url: `/api/v1/media/${id}` });
       if (net.mode === 'down') {
@@ -96,6 +97,7 @@ async function setup(t, { storage = new MemoryStorage() } = {}) {
       if (net.expireMode === 'hold') return new Promise((resolve) => net.held.push(() => resolve(ok)));
       return ok;
     }
+    if (path.startsWith('/api/v1/media/')) return new Response('probe bytes');
     throw new Error(`Unexpected request: ${path}`);
   };
   resetControlSession();
@@ -129,6 +131,12 @@ async function setup(t, { storage = new MemoryStorage() } = {}) {
       audio.emit('timeupdate');
     }
   };
+  const playFor = async (ms) => {
+    for (let elapsed = 0; elapsed < ms; elapsed += 1000) {
+      await tick(1000);
+      progress(1);
+    }
+  };
   /** Drop the connection; the reconnecting state follows a microtask later. */
   const drop = async (type = 'error') => {
     audio.emit(type);
@@ -142,15 +150,15 @@ async function setup(t, { storage = new MemoryStorage() } = {}) {
     await drop();
   };
   return {
-    player, elements, audio, net, win, storage, tick, progress, drop, playThenDrop, mediaActions,
+    player, elements, audio, net, win, storage, tick, progress, playFor, drop, playThenDrop, mediaActions,
   };
 }
 
 const sourceText = (elements) => elements['player-source'].textContent;
 
 test('a live station that drops reconnects on the backoff and settles after stable play', { timeout: TEST_TIMEOUT_MS }, async (t) => {
-  const { player, elements, net, tick, progress, drop, playThenDrop } = await setup(t);
-  await playThenDrop(liveItem('a'));
+  const { player, elements, net, tick, playFor, drop, playThenDrop } = await setup(t);
+  await playThenDrop(liveItem('a', { _extra: { backupStreamUrls: ['https://backup.example/a'] } }));
   assert.equal(sourceText(elements), RECONNECTING_TEXT);
   assert.equal(getState().isPlaying, false);
   assert.equal(elements['player-play'].hidden, false, 'Play stays available while reconnecting');
@@ -166,12 +174,41 @@ test('a live station that drops reconnects on the backoff and settles after stab
   assert.equal(elements['player-next-broken'].hidden, true);
 
   // Stable for 30 s: the episode ends, so the next drop starts again at 2 s.
-  await tick(30_000);
-  progress();
+  await playFor(10_000);
+  await tick(5000);
+  await playFor(20_000);
+  assert.equal(net.registrations, before + 1, 'the main address kept playing');
   await drop();
   assert.equal(sourceText(elements), RECONNECTING_TEXT);
   await tick(2000);
   assert.equal(net.registrations, before + 2);
+  assert.equal(getState().isPlaying, true);
+  player.stop();
+});
+
+test('reconnect gives backups a turn after a stream answers but cannot decode', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, audio, net, tick, playThenDrop } = await setup(t);
+  const backup = 'https://backup.example/live';
+  const item = liveItem('rotating', { _extra: { backupStreamUrls: [backup] } });
+  await playThenDrop(item);
+  const play = audio.play.bind(audio);
+  audio.play = async () => {
+    if (net.urls.length < 5) throw new DOMException('No decodable media', 'NotSupportedError');
+    return play();
+  };
+
+  await tick(2000);
+  assert.deepEqual(net.urls, [item.stream_url, item.stream_url]);
+  await tick(3999);
+  assert.equal(net.urls.length, 2);
+  await tick(1);
+  assert.deepEqual(net.urls, [item.stream_url, item.stream_url, backup]);
+  await tick(7999);
+  assert.equal(net.urls.length, 3);
+  await tick(1);
+  assert.equal(net.urls.at(-1), item.stream_url);
+  await tick(16000);
+  assert.deepEqual(net.urls, [item.stream_url, item.stream_url, backup, item.stream_url, backup]);
   assert.equal(getState().isPlaying, true);
   player.stop();
 });
@@ -395,12 +432,12 @@ test('the playback relay id is remembered for a reload and a leftover is release
 });
 
 test('a reconnected stream that stalls and never plays again counts as dropped', { timeout: TEST_TIMEOUT_MS }, async (t) => {
-  const { player, elements, audio, net, tick, playThenDrop } = await setup(t);
+  const { player, elements, audio, net, tick, playFor, playThenDrop } = await setup(t);
   await playThenDrop(liveItem('stall'));
   await tick(2000);
   const afterFirst = net.registrations;
   assert.equal(getState().isPlaying, true);
-  await tick(10_000);
+  await playFor(10_000);
   audio.emit('waiting'); // buffering forever, and no error ever arrives
   await tick(19_999);
   assert.notEqual(sourceText(elements), RECONNECTING_TEXT);
@@ -474,13 +511,13 @@ test('a failure queued just before the sleep timer fires never starts an episode
 });
 
 test('stalled alone (buffered media still playing) does not tear down a reconnected stream', { timeout: TEST_TIMEOUT_MS }, async (t) => {
-  const { player, elements, audio, net, tick, playThenDrop } = await setup(t);
+  const { player, elements, audio, net, tick, playFor, playThenDrop } = await setup(t);
   await playThenDrop(liveItem('stalled-fetch'));
   await tick(2000);
   const after = net.registrations;
-  await tick(5000);
+  await playFor(5000);
   audio.emit('stalled'); // fetching paused; no `waiting`, no new `playing`
-  await tick(25_000);
+  await playFor(25_000);
   assert.notEqual(sourceText(elements), RECONNECTING_TEXT);
   assert.equal(getState().isPlaying, true);
   assert.equal(net.registrations, after);
@@ -1032,8 +1069,8 @@ test('player wiring: failures, cancellation and lifecycle hooks go through the r
   assert.match(source, /failPlayback\('Playback error'\);/);
   assert.match(source, /Events\.LEVEL_LOADED/);
   assert.match(source, /export function stop\(\) \{\s+cancelReconnect\(\);/);
-  assert.match(source, /export async function playItem\(item\) \{[\s\S]*?cancelReconnect\(\);\s+(?:\/\/[^\n]*\n\s+)?startOutcome\.begin\(item\?\.id\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item\);/);
-  assert.match(source, /subscribe\('sleep-fired', \(\) => \{ stopReconnecting\(\); \}\)/);
+  assert.match(source, /export async function playItem\(item, options = \{\}\) \{[\s\S]*?cancelReconnect\(\);\s+(?:\/\/[^\n]*\n\s+)?startOutcome\.begin\(item\?\.id\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item, options\);/);
+  assert.match(source, /subscribe\('sleep-fired', \(\) => \{[\s\S]*?\n    stopReconnecting\(\);\s+\}\)/);
   assert.match(source, /addEventListener\('online', \(\) => \{ liveResume\.networkBack\(\); \}\)/);
   assert.match(source, /addEventListener\('pagehide'/);
   assert.match(source, /expireMedia\(relayId, 0, \{ keepalive: true \}\)/);
@@ -1049,9 +1086,26 @@ test('player wiring: failures, cancellation and lifecycle hooks go through the r
   assert.match(fail, /queueMicrotask\(/);
   assert.doesNotMatch(fail, /stopLoad|showReconnecting/);
   assert.match(source, /\['seeking', owned\(\(\) => noteSeeking\(el, true\)\)\]/);
-  assert.match(source, /\['seeked', owned\(\(\) => noteSeeking\(el, false\)\)\]/);
+  assert.match(source, /\['seeked', owned\(\(\) => \{\s+noteSeeking\(el, false\);/);
   // The first-tier HLS recovery budgets are untouched.
   const hls = readFileSync(new URL('../src/lib/hls-recovery.js', import.meta.url), 'utf8');
   assert.match(hls, /const NETWORK_DELAYS_MS = Object\.freeze\(\[1200, 3500\]\);/);
   assert.match(hls, /const STABLE_RESET_MS = 30_000;/);
+});
+
+test('a reconnect that plays without progress gives the backup a turn after probation', { timeout: TEST_TIMEOUT_MS }, async (t) => {
+  const { player, audio, net, tick, playThenDrop } = await setup(t);
+  const backup = 'https://backup.example/probation';
+  const item = liveItem('probation', { _extra: { backupStreamUrls: [backup] } });
+  await playThenDrop(item);
+  await tick(2000);
+  assert.deepEqual(net.urls, [item.stream_url, item.stream_url]);
+  await walk(tick, 10_000);
+  audio.currentTime += 0.5;
+  audio.emit('timeupdate');
+  await walk(tick, 15_000);
+  assert.equal(net.urls.length, 2, 'a brief hiccup does not abandon the main address');
+  await walk(tick, 10_000);
+  assert.deepEqual(net.urls, [item.stream_url, item.stream_url, backup]);
+  player.stop();
 });

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  EQ_DEFAULT_Q,
+  EQ_EXTRA_STORAGE_KEY,
   EQ_STORAGE_KEY,
   addFavoriteEq,
   deleteFavoriteEq,
@@ -14,6 +16,7 @@ import {
   saveEqState,
   setCustomEqPreset,
   setScopedEq,
+  setStationEqPreset,
 } from '../src/lib/eq-store.js';
 import { getRecordingProfile, normalizeRecordingQuality } from '../src/lib/recording-profiles.js';
 import {
@@ -308,10 +311,11 @@ test('state favorite transitions persist EQ scope and clear cache preserves medi
 
     for (const key of Object.values(STORAGE_KEYS)) storage.setItem(key, 'remove');
     storage.setItem(EQ_STORAGE_KEY, '{}');
+    storage.setItem(EQ_EXTRA_STORAGE_KEY, '{}');
     storage.setItem('worldmedia.downloads.keep', 'media');
     storage.setItem('worldmedia.ffmpeg.keep', 'tool');
     clearCache();
-    for (const key of [...Object.values(STORAGE_KEYS), EQ_STORAGE_KEY]) assert.equal(storage.getItem(key), null);
+    for (const key of [...Object.values(STORAGE_KEYS), EQ_STORAGE_KEY, EQ_EXTRA_STORAGE_KEY]) assert.equal(storage.getItem(key), null);
     assert.equal(storage.getItem('worldmedia.downloads.keep'), 'media');
     assert.equal(storage.getItem('worldmedia.ffmpeg.keep'), 'tool');
   } finally {
@@ -350,5 +354,66 @@ test('dynamic favorite persistence cannot erase a freshly resolved runtime strea
     removeFavorite(item.id);
     setCurrentItem(null);
     globalThis.localStorage = originalStorage;
+  }
+});
+
+test('station assignments share presets and use the main bypass', () => {
+  const ids = ['radio:one', 'tv:two', '__proto__'];
+  let eq = setScopedEq(freshEqState(), '', false, { preamp: -3, bypassed: true });
+  eq = addFavoriteEq(eq, ids[0], { preamp: 4 });
+  eq = setCustomEqPreset(eq, 'mine', 'Mine', { preamp: -6, bands: [5], q: [3] });
+  eq = setStationEqPreset(eq, ids, 'custom:mine');
+  eq = setStationEqPreset(eq, ['tv:other'], 'bass-boost');
+  assert.equal(Object.getPrototypeOf(eq.assignments), Object.prototype);
+  assert.equal(getEffectiveEq(eq, 'tv:other').bands[0], 6);
+  assert.equal(getEffectiveEq(eq, 'unassigned').preamp, -3);
+  for (const id of ids) {
+    const curve = getEffectiveEq(eq, id, true);
+    assert.equal(curve.preamp, -6);
+    assert.equal(curve.q[0], 3);
+    assert.equal(curve.bypassed, true);
+  }
+  eq = setCustomEqPreset(eq, 'mine', 'Renamed', { preamp: -4, q: [5] });
+  assert.equal(getEffectiveEq(eq, ids[0], true).q[0], 5);
+  assert.equal(getEffectiveEq(eq, ids[1]).q[0], 5);
+  eq = setStationEqPreset(eq, [ids[0]]);
+  assert.equal(getEffectiveEq(eq, ids[0], true).preamp, 4);
+  eq = removeCustomEqPreset(eq, 'mine');
+  assert.deepEqual(eq.assignments, { 'tv:other': 'bass-boost' });
+  assert.deepEqual(getEffectiveEq(eq, ids[1]), eq.global);
+});
+
+test('advanced widths and assignments round trip through only the extra EQ key', () => {
+  const storage = new MemoryStorage();
+  let eq = setScopedEq(freshEqState(), '', false, { q: [0.01, 9, null, 'bad'] });
+  eq = addFavoriteEq(eq, 'legacy:favorite', { preamp: -4, q: [2.5] });
+  eq = setCustomEqPreset(eq, 'wide', 'Wide', { q: [4] });
+  eq = setStationEqPreset(eq, ['radio:one'], 'custom:wide');
+  saveEqState(eq, storage);
+
+  const legacy = JSON.parse(storage.getItem(EQ_STORAGE_KEY));
+  const extra = JSON.parse(storage.getItem(EQ_EXTRA_STORAGE_KEY));
+  assert.equal(legacy.assignments, undefined);
+  assert.equal(legacy.global.q, undefined);
+  assert.equal(legacy.favorites['legacy:favorite'].q, undefined);
+  assert.equal(legacy.customPresets.wide.q, undefined);
+  assert.deepEqual(extra.assignments, { 'radio:one': 'custom:wide' });
+  assert.deepEqual(loadEqState(storage), eq);
+  assert.deepEqual(eq.global.q.slice(0, 4), [0.25, 8, ...EQ_DEFAULT_Q.slice(2, 4)]);
+
+  storage.setItem(EQ_EXTRA_STORAGE_KEY, '{cannot read this');
+  assert.deepEqual(loadEqState(storage).global.q, EQ_DEFAULT_Q);
+  assert.equal(loadEqState(storage).favorites['legacy:favorite'].preamp, -4);
+});
+
+test('removing a shared assignment restores the favorite snapshot and bypass', () => {
+  const id = 'radio:legacy';
+  const legacy = setScopedEq(freshEqState(), id, true, { bands: [2], bypassed: true });
+  const withPreset = setCustomEqPreset(legacy, 'test', 'Test', { bands: [8] });
+  const assigned = setStationEqPreset(withPreset, [id], 'custom:test');
+  assert.equal(getEffectiveEq(assigned, id, true).bands[0], 8);
+  for (const cleared of [setStationEqPreset(assigned, [id]), removeCustomEqPreset(assigned, 'test')]) {
+    assert.equal(getEffectiveEq(cleared, id, true).bands[0], 2);
+    assert.equal(getEffectiveEq(cleared, id, true).bypassed, true);
   }
 });

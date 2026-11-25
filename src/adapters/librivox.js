@@ -1,13 +1,12 @@
 /**
  * LibriVox adapter.
  * API: https://librivox.org/api/feed/audiobooks
- *
- * v1 strategy: resolve the first chapter MP3 by reading the book's RSS feed
- * lazily on first play, since the audiobooks API only gives us metadata + RSS URL.
  */
 
 import { getJson, getText } from '../lib/http.js';
-import { makeItem, prefixId, filenameFromUrl } from '../lib/item-model.js';
+import { makeItem, prefixId, filenameFromUrl, safeExternalUrl } from '../lib/item-model.js';
+
+import { partDuration } from '../lib/media-parts.js';
 
 export const id = 'librivox';
 export const displayName = 'LibriVox';
@@ -68,19 +67,47 @@ async function fetchRss(url) {
 // Audio the embedded browser plays, besides MP3.
 const OTHER_AUDIO_FILE = /\.(?:m4a|m4b|aac|ogg|oga|opus|flac|wav)(?:[?#]|$)/i;
 
-/** The book's first audio file: its first MP3 (LibriVox feeds carry MP3), or
- *  else its first enclosure of another playable audio kind. */
-function findFirstAudio(xml) {
-  const m = xml.match(/<enclosure[^>]+url=["']([^"']+\.mp3[^"']*)["']/i);
-  if (m) return m[1];
-  const m2 = xml.match(/(https?:\/\/[^"'<>\s]+\.mp3)/i);
-  if (m2) return m2[1];
+function xmlText(value) {
+  const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>|&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi,
+    (match, cdata, entity) => {
+      if (cdata !== undefined) return cdata;
+      if (!entity.startsWith('#')) return entities[entity] ?? match;
+      const code = entity[1].toLowerCase() === 'x' ? parseInt(entity.slice(2), 16) : Number(entity.slice(1));
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }).trim();
+}
+
+function audioEnclosure(xml) {
+  let fallback = '';
   for (const [tag] of xml.matchAll(/<enclosure\b[^>]*>/gi)) {
-    const url = tag.match(/\burl=["'](https?:\/\/[^"']+)["']/i)?.[1] || '';
-    const type = tag.match(/\btype=["']([^"']+)["']/i)?.[1] || '';
-    if (url && (/^audio\//i.test(type) || OTHER_AUDIO_FILE.test(url))) return url;
+    const rawUrl = tag.match(/\burl\s*=\s*(["'])(.*?)\1/i)?.[2] || '';
+    const type = tag.match(/\btype\s*=\s*(["'])(.*?)\1/i)?.[2] || '';
+    const url = safeExternalUrl(xmlText(rawUrl));
+    if (!url) continue;
+    if (/\.mp3(?:[?#]|$)/i.test(url)) return url;
+    if (!fallback && (/^audio\//i.test(type) || OTHER_AUDIO_FILE.test(url))) fallback = url;
   }
-  return '';
+  return fallback;
+}
+
+export function buildParts(xml) {
+  const parts = [];
+  for (const [, section] of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item\s*>/gi)) {
+    const url = audioEnclosure(section);
+    if (!url) continue;
+    const title = xmlText(section.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1] || '');
+    const duration = section.match(/<(?:[\w-]+:)?duration\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?duration\s*>/i)?.[1];
+    parts.push({
+      key: url, url, title: title || 'Chapter ' + (parts.length + 1),
+      duration: partDuration(xmlText(duration || '')), downloadName: filenameFromUrl(url, 'chapter.mp3'),
+    });
+  }
+  return parts;
+}
+
+export async function resolveParts(item) {
+  return buildParts(await fetchRss(item?._extra?.rssUrl));
 }
 
 function findArtwork(xml) {
@@ -101,21 +128,18 @@ export async function resolveArtwork(item) {
   return item;
 }
 
-/**
- * Lazy resolver — resolve the first chapter's audio from the book RSS feed on
- * click. Only that file plays; the player does not go on to the next chapter.
- * Keeps the search/browse loop fast.
- */
+/** Resolve the first playable chapter and the existing download target. */
 export async function resolveStream(item) {
   if (!item?._extra?.needsResolve || !item._extra.rssUrl) return item;
   try {
     const xml = await fetchRss(item._extra.rssUrl);
-    const audio = findFirstAudio(xml);
+    const audio = buildParts(xml)[0]?.url || audioEnclosure(xml)
+      || safeExternalUrl(xml.match(/(https?:\/\/[^"'<>\s]+\.mp3)/i)?.[1]);
     if (audio) {
       item.stream_url = audio;
       if (!item.download_url) {
         item.download_url = audio;
-        item.download_name = filenameFromUrl(audio, `${item.title || 'LibriVox audio'}.mp3`);
+        item.download_name = filenameFromUrl(audio, (item.title || 'LibriVox audio') + '.mp3');
       }
       item._extra.needsResolve = false;
     }

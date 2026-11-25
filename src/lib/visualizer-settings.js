@@ -420,6 +420,7 @@ export function normalizeVisualizerExtras(source = {}) {
     visualizerOverlayStyles: normalizeVisualizerOverlayStyles(value.visualizerOverlayStyles),
     // Only an explicit false turns it off.
     visualizerDrift: value.visualizerDrift !== false,
+    visualizerColorTravel: value.visualizerColorTravel !== false,
     visualizerFolded: normalizeVisualizerFolded(value.visualizerFolded),
   };
 }

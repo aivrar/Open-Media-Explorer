@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { FakeElement } from './helpers/fake-dom.js';
-import { resetControlSession } from '../src/lib/capture-client.js';
+import { getControlSession, listCaptureJobs, resetControlSession } from '../src/lib/capture-client.js';
 import {
   STATION_IMAGES_HINT, applyStationImageList, bindStationImageControls, isStationImageSource,
   loadStationImages, markStationImageFailed, normalizeStationName, onStationImagesChange,
@@ -347,6 +347,33 @@ test('Refresh tries a picture again after it failed to load, even when the list 
   } finally {
     off();
   }
+});
+
+test('a late picture refusal retries with the current token without clearing it', async () => {
+  applyStationImageList(list(entry('Station', '7')));
+  let sessions = 0;
+  let finishOld;
+  const oldRequest = new Promise((resolve) => { finishOld = resolve; });
+  let markSent;
+  const sent = new Promise((resolve) => { markSent = resolve; });
+  const refusal = () => Response.json({ ok: false, error: { code: 'INVALID_TOKEN' } }, { status: 403 });
+  const fetchImpl = async (url, options) => {
+    if (url === '/api/v1/session') return Response.json({ ok: true, data: { token: `session-${++sessions}` } });
+    if (url === '/api/v1/jobs') return refusal();
+    if (options.headers['X-WorldMedia-Token'] === 'session-1') {
+      markSent();
+      return oldRequest;
+    }
+    assert.equal(options.headers['X-WorldMedia-Token'], 'session-2');
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } });
+  };
+  const picture = stationImageUrl(source('7'), { fetchImpl, sleep: async () => {} });
+  await sent;
+  await assert.rejects(listCaptureJobs({ fetchImpl }), { code: 'INVALID_TOKEN' });
+  await getControlSession({ fetchImpl });
+  finishOld(refusal());
+  assert.match(await picture, /^blob:/);
+  assert.equal(sessions, 2);
 });
 
 test('no profile data is stored for station pictures', async () => {

@@ -88,19 +88,40 @@ test('the player bar is one row: no status line under the buttons, and a lower b
   assert.doesNotMatch(capture, /Open Settings|'settings'|settings-btn/);
 });
 
-test('even 8 px gaps between the bar controls; EQ keeps one width in every state', async () => {
+test('even 8 px gaps between the bar controls; Record and EQ keep fixed widths', async () => {
   const css = (await read('src/styles/base.css')).replace(/\r\n/g, '\n');
   for (const selector of ['.player-controls', '.player-actions', '.player-progress']) {
     const rule = css.match(new RegExp(`\\n${selector.replace('.', '\\.')} \\{\\n  grid-area:([^}]*)\\}`))[1];
     assert.match(rule, /gap: 8px;/, selector);
   }
+  assert.match(css, /@media \(width < 1001px\), \(width > 1080px\) \{\s*\.player-action \{ flex: none; width: 126px; \}/);
+  assert.match(css, /@media \(max-width: 1080px\) and \(min-width: 1001px\) \{\s*\.player-action-label \{ display: none; \}\s*\.player-action \{ width: 38px; padding: 0; \}/);
   // (The first "\n.player-eq {" is the rule it shares with the Record button.)
   const eq = css.match(/\n\.player-eq \{\n  width: 68px;([^}]*)\}/);
   assert.ok(eq, 'EQ is 68 px wide');
   assert.doesNotMatch(eq[1], /min-width/);
-  // Every button in the row is 36 px tall (Record, its second action, EQ).
-  const buttons = css.match(/\n\.player-action,\n\.player-action-secondary,\n\.player-eq \{([^}]*)\}/)[1];
+  // Record, its second action, EQ and Picture share the 36 px height.
+  const buttons = css.match(/\n\.player-action,\n\.player-action-secondary,\n\.player-picture,\n\.player-eq \{([^}]*)\}/)[1];
   assert.match(buttons, /height: 36px;/);
+});
+
+test('Settings, EQ and Song Log scroll inside the space above the active player bar', async () => {
+  const css = await read('src/styles/base.css');
+  const html = await read('src/index.html');
+  assert.match(html, /<audio id="audio-el" hidden><\/audio>\s*<\/div>\s*<div id="modal-host">/);
+  assert.match(css, /#app\.has-player \+ #modal-host \.modal-backdrop \{\s*padding-block: 10px calc\(var\(--player-h\) \+ 10px\);/);
+  assert.match(css, /\.modal \{[^}]*max-height: min\(85vh, 100%\);/);
+  assert.match(css, /\.modal \{[^}]*max-height: min\(92vh, 100%\);/);
+  assert.match(css, /\.eq-modal \{[^}]*max-height: min\(88vh, 760px, 100%\);/);
+  assert.match(css, /\.eq-modal \{[^}]*max-height: min\(94vh, 100%\);/);
+  assert.match(css, /\.modal-body \{[^}]*overflow: auto;/);
+  assert.match(css, /\.eq-content \{[^}]*overflow: auto;/);
+  assert.match(css, /#app\.has-player:has\([^\r\n]+\) \+ #modal-host,/);
+  assert.match(css, /#app\.has-capture-only \+ #modal-host,/);
+  const songLog = await read('src/lib/song-log-panel.js');
+  assert.match(songLog, /make\('div', 'modal-backdrop'\)/);
+  assert.match(songLog, /make\('div', 'modal song-log-modal'\)/);
+  assert.match(songLog, /make\('div', 'modal-body song-log-body'\)/);
 });
 
 test('the EQ graph shows "0 dB" above its flat line, not across it', async () => {
