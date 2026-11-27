@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 
 import { expectsPicture, hasPicture } from '../src/lib/video-picture.js';
 import { carriesFiles, initPlaylistDrop, pickPlaylistFile } from '../src/lib/playlist-drop.js';
-import { centeredScrollLeft } from '../src/modes/tuner.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -32,20 +31,11 @@ test('the player shows the square from the stream itself, never hides a TV pictu
   assert.doesNotMatch(player.match(/function syncVideoPicture\(\) \{[^}]*\}/)[0], /showVideo\(false\)/);
 });
 
-test('the station strip centres the current station', () => {
-  // Pill at 900 px in a 600 px strip that has not scrolled: centre it.
-  assert.equal(centeredScrollLeft({ stripLeft: 0, stripWidth: 600, scrollLeft: 0, pillLeft: 900, pillWidth: 100 }), 650);
-  // Same pill after the strip has scrolled 650 px is already centred.
-  assert.equal(centeredScrollLeft({ stripLeft: 0, stripWidth: 600, scrollLeft: 650, pillLeft: 250, pillWidth: 100 }), 650);
-  // The strip's own offset on the page does not matter.
-  assert.equal(centeredScrollLeft({ stripLeft: 220, stripWidth: 600, scrollLeft: 0, pillLeft: 1120, pillWidth: 100 }), 650);
-  // The first stations cannot be centred; never scroll past the start.
-  assert.equal(centeredScrollLeft({ stripLeft: 0, stripWidth: 600, scrollLeft: 0, pillLeft: 10, pillWidth: 100 }), 0);
-});
-
-test('the strip is centred on every rebuild', async () => {
+test('the list, caption and dial share the measured stage', async () => {
   const tuner = await read('src/modes/tuner.js');
-  assert.match(tuner, /ui\.strip\.appendChild\(pill\);\s*\}\s*centerActivePill\(\);/);
+  assert.match(tuner, /ui\.listColumn = el\('div', \{ className: 'tuner-station-column' \}, ui\.list, ui\.empty, ui\.status\);/);
+  assert.match(tuner, /stage\.appendChild\(ui\.listColumn\);[\s\S]*?stage\.appendChild\(dialWrap\);/);
+  assert.doesNotMatch(tuner, /tuner-strip|tuner-source-status/);
 });
 
 test('only real file drags are handled, and only playlist files are imported', () => {
@@ -128,7 +118,7 @@ test('a dropped playlist is imported and never handed to Windows', async () => {
 
 test('a drop goes through the Library import and lands on My Playlists', async () => {
   const main = await read('src/main.js');
-  assert.match(main, /initPlaylistDrop\(\{\s*onPlaylist: importDroppedPlaylist,\s*onPicture: dropStationPicture,\s*describePictureDrop: pictureDropText,\s*\}\)/);
+  assert.match(main, /initPlaylistDrop\(\{\s*onPlaylist: importDroppedPlaylist,\s*onPicture: dropStationPicture,\s*getPictureTarget: pictureDropTarget,\s*\}\)/);
   assert.match(main, /getState\(\)\.mode === 'tuner' \? tunerBand\(\) : ''/);
   assert.match(main, /showMyPlaylists\(\);\s*if \(getState\(\)\.mode !== 'library'\) setMode\('library'\);\s*await importLocalPlaylist\(file, type\);/);
   const controls = await read('src/modes/library/personal-controls.js');

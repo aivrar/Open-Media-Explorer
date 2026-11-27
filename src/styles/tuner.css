@@ -1,46 +1,56 @@
 /* Tuner mode */
 
-/* Animate the reservation itself. Window and size changes update both
-   the dock and the space it takes immediately, even during the transition. */
-@property --tuner-video-space {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-#app:has(> #view-host[data-mode='tuner']) {
-  /* The dock and the band share the limit measured from the Tuner layout. */
-  --tuner-video-height: min(calc(var(--video-w) * 9 / 16),
-    var(--tuner-video-height-limit, max(2px, 100vh - var(--player-h) - 96px)));
-}
-
-#app.tuner-video-floating:has(> #view-host[data-mode='tuner']) {
-  --tuner-video-height: var(--tuner-video-height-limit);
-}
-
+/* The dock remains a sibling of the view so native controls, fullscreen
+   and Picture keep their original video element and stacking context. */
 #view-host[data-mode='tuner'] ~ .video-dock {
   display: grid;
-  width: calc(var(--tuner-video-height) * 16 / 9);
-}
-#app.tuner-video-reserved:not(.tuner-video-floating) > #view-host[data-mode='tuner'] ~ .video-dock {
-  inset-inline: 0;
-  margin-inline: auto;
+  grid-template-columns: minmax(0, 1fr);
+  left: var(--tuner-picture-left);
+  right: auto;
+  bottom: calc(var(--player-h) + var(--tuner-picture-bottom));
+  width: var(--tuner-picture-width);
+  transition: left 180ms ease, bottom 180ms ease, width 180ms ease;
 }
 :where(#view-host[data-mode='tuner']) ~ .video-dock video:where(:not(:fullscreen)) {
-  height: var(--tuner-video-height);
+  height: var(--tuner-picture-height);
+  transition: height 180ms ease;
+  min-width: 0;
   object-fit: contain;
   max-height: none;
 }
 
+#view-host:has(.tuner-stage[data-band='radio'], .tuner-picture-placeholder:not([hidden])) ~ .video-dock {
+  visibility: hidden;
+}
+.tuner-picture-placeholder {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-elev-2) 82%, transparent);
+  display: grid;
+  gap: 3px;
+  place-content: center;
+  justify-items: center;
+  text-align: center;
+  padding: 6px 12px;
+  overflow: hidden;
+  transition: left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease;
+}
+.tuner-picture-placeholder canvas { width: 44px; height: 44px; }
+.tuner-picture-placeholder strong {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tuner-picture-placeholder small { color: var(--text-dim); }
+
 .tuner-root {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   overflow-y: auto;
-  --tuner-video-space: 0;
-  --tuner-video-padding: calc((var(--tuner-video-height, 0px) + var(--video-gap)) * var(--tuner-video-space));
-  padding-bottom: var(--tuner-video-padding);
-  transition: --tuner-video-space 200ms ease;
   background:
     radial-gradient(ellipse at 50% 18%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
     linear-gradient(180deg, var(--bg-elev-1), var(--bg));
@@ -50,48 +60,53 @@
    the dial does not jump smaller when the bar appears on the first play. */
 #app:not(.has-player) .tuner-root {
   box-sizing: border-box;
-  padding-bottom: calc(var(--player-h) + var(--tuner-video-padding));
-}
-
-#app.tuner-video-reserved .tuner-root {
-  --tuner-video-space: 1;
-}
-
-/* Keep the reservation state so it can take effect immediately when the window grows. */
-#app.tuner-video-floating .tuner-root {
-  --tuner-video-padding: 0px;
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tuner-root { transition: none; }
+  padding-bottom: var(--player-h);
 }
 
 .tuner-controls {
-  display: flex;
+  --tuner-control-height: 34px;
+  --tuner-control-gap: 8px;
+  --tuner-control-radius: var(--radius-sm);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   padding: 14px 20px;
-  gap: 24px;
+  gap: var(--tuner-control-gap);
+  line-height: 20px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
   backdrop-filter: blur(12px);
 }
-.tuner-band-switch {
+.tuner-band-switch,
+.tuner-filter,
+.tuner-tools,
+.tuner-viz-level {
   display: flex;
-  gap: 4px;
-  background: var(--bg-elev-2);
-  border-radius: var(--radius);
-  padding: 3px;
+  align-items: center;
+  gap: var(--tuner-control-gap);
+}
+
+.tuner-band-switch button,
+.tuner-filter select,
+.tuner-tools > .tuner-toggle,
+.tuner-viz-level > .volume-stepper {
+  height: var(--tuner-control-height);
   border: 1px solid var(--border);
+  border-radius: var(--tuner-control-radius);
+}
+.tuner-viz-level > .volume-stepper {
+  box-sizing: border-box;
+  /* Keep the edge inside the 34px box at fractional WebView zoom. */
+  border: 0;
+  padding: 1px;
+  box-shadow: inset 0 0 0 1px var(--viz-stepper-border, var(--border));
 }
 .tuner-band-switch button {
   appearance: none;
-  background: transparent;
-  border: 0;
+  background: var(--bg-elev-2);
   color: var(--text-dim);
-  padding: 5px 14px;
-  border-radius: 6px;
+  width: 68px;
+  padding: 0;
   font: inherit;
   cursor: pointer;
 }
@@ -101,68 +116,134 @@
   font-weight: 600;
 }
 
-.tuner-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.tuner-filter { min-width: 0; }
 .tuner-filter select {
-  appearance: none;
-  background: var(--bg-elev-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 6px 28px 6px 10px;
-  border-radius: var(--radius-sm);
+  min-width: 0;
+  padding-block: 0;
   font: inherit;
   cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-/* A long favorites category name on the Source list is cut, not widening the bar. */
-.tuner-filter select { max-width: min(260px, 40vw); text-overflow: ellipsis; }
+.tuner-filter select:first-of-type { width: 160px; }
+.tuner-filter select:last-of-type { width: 260px; }
+
+.tuner-filter label,
+.tuner-viz-level-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tuner-tools { justify-self: end; }
+
+.tuner-tools > .tuner-toggle {
+  width: var(--tuner-control-height);
+  padding: 0;
+  flex: none;
+}
+.tuner-toggle:focus:not(:focus-visible) { outline: none; }
+.tuner-toggle[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
 
 .tuner-stage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
+  min-height: 0;
   position: relative;
   overflow: hidden;
-  /* Lets the dial size itself from the stage's height as well as its width. */
-  container-type: size;
+  --dial-shadow-color: rgba(0, 0, 0, 0.5);
+  --dial-glow-ring: color-mix(in srgb, var(--accent) 30%, transparent);
+  --dial-glow-halo: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
-/* Fit the dial inside the stage both ways: a short window (or the player
-   bar taking room) used to cut off its top and bottom. */
 .tuner-dial {
-  width: min(540px, 78cqw, 100cqh);
-  aspect-ratio: 1;
-  /* The station name below is limited to the knob's width at any dial size. */
   container-type: inline-size;
-  position: relative;
-  filter: drop-shadow(0 12px 32px rgba(0,0,0,0.5));
-  /* Round, so the wheel and drag area is the dial itself, not the square around it. */
+  position: absolute;
+  filter: drop-shadow(0 12px 32px var(--dial-shadow-color));
+  /* The drawn rim is the wheel and drag area. */
   border-radius: 50%;
   overflow: hidden;
-  transition: box-shadow 0.15s ease;
+  transition: left 180ms ease, top 180ms ease, box-shadow 0.15s ease;
 }
 /* Soft glow while the pointer is over a dial the wheel can turn. */
 @media (hover: hover) {
   .tuner-dial.can-turn:hover {
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
-      0 0 16px 2px color-mix(in srgb, var(--accent) 32%, transparent);
+      0 0 0 1px var(--dial-glow-ring),
+      0 0 16px 2px var(--dial-glow-halo);
+  }
+  .tuner-dial.can-turn:hover ~ .tuner-tone-column .tuner-tone-knob svg {
+    box-shadow:
+      0 0 0 max(0.5px, calc(1px * var(--tone-glow-scale))) var(--dial-glow-ring),
+      0 0 max(3px, calc(16px * var(--tone-glow-scale)))
+        max(0.75px, calc(2px * var(--tone-glow-scale))) var(--dial-glow-halo);
   }
 }
 
 .tuner-dial svg {
+  display: block;
+  /* The bezel and its stroke fill 382 of the 400 viewBox units. */
+  scale: calc(400 / 382);
   width: 100%;
   height: 100%;
   cursor: grab;
 }
 .tuner-dial.dragging svg { cursor: grabbing; }
 
+.tuner-tone-knob {
+  position: absolute;
+  transition: left 180ms ease, top 180ms ease;
+  border-radius: 50%;
+  color: var(--text);
+  font-size: var(--tone-label-font);
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.tuner-tone-knob:active { cursor: grabbing; }
+.tuner-tone-knob:focus { outline: none; }
+.tuner-tone-knob:focus-visible:not(.is-pointer-input) .tuner-bezel {
+  stroke: var(--accent);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+@media (forced-colors: active) {
+  .tuner-tone-knob:focus { outline: none !important; }
+  .tuner-tone-knob:focus-visible:not(.is-pointer-input) .tuner-bezel { stroke: Highlight; }
+}
+.tuner-tone-knob svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  border-radius: 50%;
+  filter: drop-shadow(0 2px 3px var(--dial-shadow-color));
+  transition: box-shadow 0.15s ease;
+}
+.tuner-list-caption,
+.tuner-tone-label,
+.tuner-empty {
+  -webkit-text-stroke: 2px var(--bg);
+  paint-order: stroke fill;
+  text-shadow: 0 0 4px var(--bg);
+}
+.tuner-tone-label {
+  position: absolute;
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* The dial body is always drawn dark, so its text stays light in every
    theme (in the light theme, --text is near-black and was unreadable here). */
 .tuner-frequency {
+  width: var(--dial-name-width, 32cqw);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.8cqw;
   --dial-text: #eef2f6;
   --dial-text-dim: #a3adba;
   position: absolute;
@@ -174,229 +255,173 @@
 }
 .tuner-frequency .freq-num {
   font-family: var(--font-mono);
-  font-size: 28px;
+  font-size: min(7cqw, 38px);
+  line-height: 1.1;
   font-weight: 600;
   color: var(--accent);
   text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 36%, transparent);
 }
 .tuner-frequency .freq-unit {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: min(4.5cqw, 15px);
+  line-height: 1.2;
   color: var(--dial-text-dim);
   letter-spacing: 1px;
 }
-/* The name grows with the window on large screens (13 px up to about 1150 px
-   wide, 17 px from about 2500 px). */
-.tuner-frequency .station-name {
-  margin-top: 6px;
-  font-size: clamp(13px, 0.3vw + 9.5px, 17px);
-  color: var(--dial-text);
-  /* Grows with the name's size: 221 px at 13 px, 289 px at 17 px. */
-  max-width: min(17em, 46cqw);
-  white-space: nowrap;
+.tuner-frequency .freq-num,
+.tuner-frequency .freq-unit {
+  width: 32cqw;
+  max-width: 100%;
+  justify-self: center;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+}
+.tuner-frequency .station-name {
+  font-size: clamp(12px, 3.6cqw, 18px);
+  color: var(--dial-text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  overflow: hidden;
 }
 
 /* The light theme's teal is tuned for white pages; use a brighter teal on the dark dial. */
 :root[data-theme='light'] .tuner-frequency .freq-num { color: #2dd4bf; }
 
-.tuner-strip {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
-  /* As tall with the "Loading stations" or "No stations" message as with
-     cards (border 1 + padding 24 + card 39 + scrollbar 6), so the dial keeps
-     its size while a list loads or is empty. */
-  box-sizing: border-box;
-  min-height: 70px;
+.tuner-station-list {
+  position: absolute;
+  overflow: hidden auto;
+  overflow-anchor: none;
+  overscroll-behavior-y: contain;
+  /* The inline width is the item width. Extend the scrollport into the
+     margin and keep the items at that explicit width, even with overlay bars. */
+  --station-scrollbar: 8px;
+  box-sizing: content-box;
+  padding-right: calc(var(--station-scrollbar) + 2px);
+  scrollbar-gutter: stable;
 }
-.tuner-strip::-webkit-scrollbar { height: 6px; }
-/* Room at both ends of the strip, so every station can scroll to the centre,
-   even when the cards on one side are short. Half the strip is always enough
-   for any card. Left out for the empty-list message. */
-.tuner-strip:not(:has(> .tuner-empty))::before,
-.tuner-strip:not(:has(> .tuner-empty))::after {
-  content: '';
-  flex: 0 0 50%;
+.tuner-station-list::-webkit-scrollbar {
+  width: var(--station-scrollbar);
 }
-/* Every card is the same height, whatever its name. With the default line
-   height ("normal") a name in another script (Chinese, for example) is drawn
-   with a fallback font that has a taller line: its card grew 2 px, every card
-   in the strip stretched with it, and the dial above lost those pixels while
-   that station was in the strip. Fixed line heights keep the usual 39 px. */
+.tuner-station-list:focus { outline: none !important; }
+.tuner-list-content {
+  width: inherit;
+  position: relative;
+}
 .station-pill {
-  box-sizing: border-box;
-  height: 39px;
-  max-width: min(24em, 70vw);
-  line-height: 14px;
-  flex: 0 0 auto;
-  padding: 6px 12px;
+  position: absolute;
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text-dim);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  display: grid;
-  grid-template-columns: auto auto;
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--station-row-height);
+  display: flex;
   align-items: center;
-  gap: 1px 8px;
-  text-align: left;
-}
-/* A long name (a station's, or one the user gave it) ends in an ellipsis,
-   as on a Library card; the card's title carries the whole name. */
-.station-pill > span:not(.content-rating-badge):not(.pill-art) {
-  min-width: 0;
-  max-width: 18em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.station-pill > small {
-  grid-column: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-mute);
-  font-size: 9px;
-  font-weight: 500;
-  line-height: 10px;
-}
-.station-pill > .content-rating-badge { grid-column: 2; grid-row: 1 / span 2; }
-/* With "Show technical source details" on and the stream's format and bitrate
-   known, the small line reads format, bitrate, then source (one text, cut
-   short at its end, so the source name goes first). The card keeps its height
-   and its width at every card size: that text counts for nothing when the
-   card is sized (contain: inline-size); the plain source text, moved to a
-   second row of no height and clipped, still sizes it with the name, as
-   before. Off, or with nothing known, the line is the plain source name. The
-   tooltip has everything. */
-:root:not([data-tech-details="on"]) .pill-quality { display: none; }
-:root[data-tech-details="on"] .pill-with-quality {
-  display: grid;
-  grid-template-columns: minmax(0, auto);
-  grid-template-rows: auto 0;
-}
-.pill-with-quality > .pill-quality {
-  grid-area: 1 / 1;
-  min-width: 0;
-  contain: inline-size;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-variant-numeric: tabular-nums;
-}
-.station-pill.is-active > small { color: color-mix(in srgb, var(--accent-contrast) 72%, transparent); }
-.station-pill:hover { color: var(--text); border-color: var(--border-strong); }
-/* Saved stations stand out in the strip even when browsing all sources. */
-.station-pill.is-favorite:not(.is-active) {
+  gap: 7px;
+  padding: 4px 16px 4px 8px;
   color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  font-size: var(--card-name, 13px);
+  line-height: var(--card-name-line, 15px);
+  cursor: pointer;
 }
+.tuner-station-text { flex: 1; min-width: 0; }
+.tuner-station-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.station-pill > .content-rating-badge { flex: none; }
+.station-pill small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--card-source, 12px);
+  line-height: var(--card-source-line, 14px);
+  font-weight: 500;
+}
+.station-pill:hover { color: var(--text); border-color: var(--border-strong); }
 .station-pill.is-active {
-  background: var(--accent);
-  color: var(--accent-contrast);
-  border-color: transparent;
-  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev-2));
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+  box-shadow: inset 3px 0 var(--accent);
+  font-weight: 650;
 }
 
-/* "Did not play last time" (the user's own stations): a small round mark on
-   the card's top right corner, laid over it so the card keeps its size. */
-.station-pill.has-trouble { position: relative; }
+.tuner-station-list:focus .station-pill.is-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+@media (forced-colors: active) {
+  .tuner-station-list:focus .station-pill.is-focused { outline-color: Highlight; }
+}
+
 .station-pill > .pill-trouble {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: 4px;
+  right: 3px;
   width: 12px;
   height: 12px;
-  min-width: 0;
-  max-width: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
   background: var(--danger);
   color: #fff;
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
-  overflow: hidden;
 }
-
 .tuner-empty {
-  color: var(--text-dim);
+  position: absolute;
+  display: grid;
+  align-content: center;
+  padding-inline: 12px;
+  color: var(--text);
   text-align: center;
+  font-size: 14px;
 }
+.tuner-list-caption {
+  position: absolute;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.tuner-list-caption:empty { display: none; }
 
-/* Tuner card size (Settings > Appearance). Small is the card above, exactly
-   as it was, with no picture. Medium and Large show the station's picture
-   beside bigger text. Each size has one fixed card height built from fixed
-   parts (border 1 + padding + picture + padding + border 1), and the strip's
-   minimum grows by exactly as much (border-top 1 + padding 12 + 12 + card +
-   scrollbar 6; padding 10 + 10 at 760 px or narrower), so the dial keeps its
-   size within a size: with cards or a message, with or without pictures. */
+/* Card size changes the rows and artwork without changing the dial rim. */
 .tuner-root[data-card-size='medium'] {
-  --card-h: 56px;
-  --card-pad: 7px;
   --card-art: 40px;
   --card-name: 14px;
   --card-name-line: 18px;
-  --card-source: 10px;
-  --card-source-line: 12px;
-  --card-line-gap: 2px;
+  --card-source: 12px;
+  --card-source-line: 14px;
   --card-initials: 15px;
 }
 .tuner-root[data-card-size='large'] {
-  --card-h: 84px;
-  --card-pad: 9px;
   --card-art: 64px;
   --card-name: 16px;
   --card-name-line: 20px;
-  --card-source: 11px;
+  --card-source: 12px;
   --card-source-line: 14px;
-  --card-line-gap: 3px;
   --card-initials: 22px;
 }
-.tuner-root[data-card-size='medium'] .tuner-strip { min-height: 87px; }
-.tuner-root[data-card-size='large'] .tuner-strip { min-height: 115px; }
-.tuner-root[data-card-size='medium'] .tuner-empty,
-.tuner-root[data-card-size='large'] .tuner-empty { align-self: center; }
-/* The picture fills the card's content box; the two rows split it, the name
-   sitting on the middle line and the source just under it. */
-.station-pill.has-art {
-  height: var(--card-h);
-  padding: var(--card-pad) 14px var(--card-pad) var(--card-pad);
-  grid-template-columns: var(--card-art) auto auto;
-  grid-template-rows: 1fr 1fr;
-  gap: var(--card-line-gap) 10px;
-  font-size: var(--card-name);
-  line-height: var(--card-name-line);
-  border-radius: 9px;
-}
-.station-pill.has-art > .pill-art { grid-column: 1; grid-row: 1 / span 2; }
-.station-pill.has-art > .pill-art + span {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: end;
-  max-width: 18em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.station-pill.has-art > small {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: start;
-  font-size: var(--card-source);
-  line-height: var(--card-source-line);
-}
-.station-pill.has-art > .content-rating-badge { grid-column: 3; grid-row: 1 / span 2; }
 /* A fixed box: the initials on the station's colour until a picture has
    loaded over them, and for good when there is none or it fails. */
 .pill-art {
+  flex: none;
   position: relative;
   width: var(--card-art);
   height: var(--card-art);
@@ -446,29 +471,16 @@
 }
 .pill-art:has(> .pill-art-img.is-station-image.loaded) { background: transparent; }
 .pill-art:has(> .pill-art-img.is-station-image.loaded) > .pill-initials { visibility: hidden; }
-/* Bigger cards leave a smaller dial in a short window. When the dial is too
-   small for all three lines on its knob, the station name (also on the
-   highlighted card below) and then the count step aside, instead of being
-   cut off by the round dial. Laid over the dial, so its size never changes. */
+/* If the window is shorter than the supported minimum, keep the dial
+   readout within the inner disc. */
+@container (max-width: 199px) {
+  .tuner-frequency .station-name { font-size: 6cqw; }
+}
 @container (max-width: 159px) {
-  .tuner-root[data-card-size='medium'] .tuner-frequency .station-name,
-  .tuner-root[data-card-size='large'] .tuner-frequency .station-name { display: none; }
+  .tuner-frequency .station-name { display: none; }
 }
 @container (max-width: 99px) {
-  .tuner-root[data-card-size='medium'] .tuner-frequency .freq-unit,
-  .tuner-root[data-card-size='large'] .tuner-frequency .freq-unit { display: none; }
-}
-
-/* One line, so a longer message never takes height from the dial. */
-.tuner-source-status {
-  min-height: 26px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 4px 16px 8px;
-  background: color-mix(in srgb, var(--bg-elev-1) 72%, transparent);
-  color: var(--text-mute);
-  font-size: 11px;
+  .tuner-frequency .freq-unit { display: none; }
 }
 
 .tuner-pointer { fill: var(--accent); }
@@ -480,75 +492,36 @@
 
 @media (max-width: 760px) {
   .tuner-controls {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 10px 12px;
   }
 
-  .tuner-band-switch button {
-    flex: 1;
-  }
-
-  .tuner-filter {
-    justify-content: space-between;
-  }
-
-  .tuner-filter select {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .tuner-stage {
-    padding: 12px;
-  }
-
-  .tuner-dial {
-    width: min(420px, 92vw, 100cqh);
-  }
-
-  .tuner-frequency .freq-num {
-    font-size: 24px;
-  }
-
-  .tuner-frequency .station-name {
-    max-width: min(170px, 46cqw);
-    font-size: 12px;
-  }
-
-  .tuner-strip {
-    padding: 10px 12px;
-    min-height: 66px;
-  }
-
-  .tuner-root[data-card-size='medium'] .tuner-strip { min-height: 83px; }
-  .tuner-root[data-card-size='large'] .tuner-strip { min-height: 111px; }
+  .tuner-band-switch { grid-column: 1 / -1; }
 }
 
 /* How strongly the Visualizer shows behind the Tuner (modes/tuner.js
    buildVizLevel): a label like Country and Source, then the stepper. At 0
    (the setting off) its number is dimmed. */
-.tuner-viz-level {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+@media (max-width: 560px) {
+  .tuner-controls { grid-template-columns: minmax(0, 1fr); }
+}
+
+.tuner-viz-level .volume-led {
+  box-sizing: border-box;
   flex: none;
+  width: 36px;
+  line-height: inherit;
+  font-variant-numeric: tabular-nums;
 }
-.tuner-viz-level-label {
-  color: var(--text-dim);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.tuner-viz-level:focus .volume-stepper { border-color: var(--border-strong); }
+.tuner-viz-level:focus .volume-stepper,
+.tuner-viz-level .volume-stepper:focus-within { --viz-stepper-border: var(--border-strong); }
 .tuner-viz-level.is-off .volume-led {
   color: var(--text-dim);
   text-shadow: none;
 }
 
-/* The dimmed Visualizer behind the Tuner (modes/tuner-background.js): one
-   layer under the Tuner's own content, over its own background. Opacity
-   0.08 keeps every text colour at 4.5:1 or more in every theme, whatever the
-   picture (lib/tuner-background.js TUNER_BACKGROUND_OPACITY). */
+/* The backdrop fills the Tuner, including the reserved picture space.
+   The separate video dock sits above the view host. */
 .tuner-root.has-viz-bg {
   position: relative;
   isolation: isolate;
@@ -561,6 +534,5 @@
   pointer-events: none;
   overflow: hidden;
 }
-.tuner-viz-bg .viz-stage > :not(.viz-canvas):not(.viz-fade) {
-  display: none !important;
-}
+
+.tuner-root.has-viz-bg > .tuner-controls { background: var(--bg-elev-1); }

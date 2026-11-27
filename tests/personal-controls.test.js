@@ -105,6 +105,9 @@ test('Library shell exposes local collection controls without triggering provide
 test('the media type buttons wrap instead of squashing in a narrow Library', async () => {
   const { readFile } = await import('node:fs/promises');
   const css = await readFile(new URL('../src/styles/library.css', import.meta.url), 'utf8');
+  assert.match(css, /\.chip \{\s*appearance: none;/);
+  assert.match(css, /\.personal-controls select \{\s*background-image: linear-gradient/);
+  assert.match(css, /\.chip:hover:where\(:not\(:disabled\)\) \{[^}]*border-color: var\(--border-strong\);/);
   assert.match(css, /\.personal-type \{ display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; \}/);
   const controls = await readFile(new URL('../src/modes/library/personal-controls.js', import.meta.url), 'utf8');
   assert.doesNotMatch(controls, /'All media'/);

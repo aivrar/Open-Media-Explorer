@@ -9,7 +9,6 @@ import {
 } from '../src/lib/tuner-background.js';
 import { attachTunerBackground } from '../src/modes/tuner-background.js';
 import { bindVolumeStepper } from '../src/lib/volume-stepper.js';
-import { sceneCost } from '../src/visualizer/scenes.js';
 
 const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -101,7 +100,7 @@ test('saved where the switch is saved: inside the one settings key, no new key o
 
 /** The background's controller with a stepper driving the settings, as the
  *  Tuner wires them (modes/tuner.js buildVizLevel). */
-function rig({ settings = {}, isPlaying = true } = {}) {
+function rig({ settings = {}, isPlaying = true, currentItem } = {}) {
   const listeners = new Map();
   const on = (event, fn) => {
     if (!listeners.has(event)) listeners.set(event, new Set());
@@ -110,7 +109,7 @@ function rig({ settings = {}, isPlaying = true } = {}) {
   };
   const app = {
     state: {
-      mode: 'tuner', isPlaying,
+      mode: 'tuner', isPlaying, currentItem,
       settings: normalizeSettings({ tunerVisualizerBackground: true, visualizerNoticeSeen: true, ...settings }),
     },
     mounts: [],
@@ -144,7 +143,6 @@ function rig({ settings = {}, isPlaying = true } = {}) {
         app.mounts.push(mount);
         return mount;
       },
-      sceneCost,
     }),
     setTimer: () => 0,
     clearTimer: () => {},
@@ -235,8 +233,8 @@ test('held down through 0 and back up: it stops once at 0 and starts once from 0
   app.detach();
 });
 
-test('the Settings switch and the stepper keep in step: off shows 0, on brings the level back', async () => {
-  const app = rig({ settings: { tunerVisualizerLevel: 40 } });
+test('for TV, the Settings switch and strength 0 both remove the backdrop', async () => {
+  const app = rig({ settings: { tunerVisualizerLevel: 40 }, currentItem: { type: 'tv' } });
   await settle();
   assert.equal(app.layer().style.opacity, '0.4');
   // The Settings switch off: the stepper reads 0, nothing drawn.
@@ -253,6 +251,8 @@ test('the Settings switch and the stepper keep in step: off shows 0, on brings t
   for (let i = 0; i < 4; i += 1) app.group.dispatchEvent(Object.assign(new Event('keydown', { cancelable: true }), { key: 'PageDown' }));
   assert.equal(tunerBackgroundShownLevel(app.state.settings), 0);
   assert.equal(app.state.settings.tunerVisualizerBackground, false);
+  assert.equal(app.layer(), null);
+  assert.equal(app.live(), 0);
   app.save({ tunerVisualizerBackground: true });
   await settle();
   assert.equal(tunerBackgroundShownLevel(app.state.settings), 8);
@@ -279,7 +279,7 @@ test('without the notice accepted or without sound, a level above 0 turns the se
 
 test('the Tuner shows the stepper in its bar, and the Settings switch follows it while Settings is open', async () => {
   const tuner = await read('src/modes/tuner.js');
-  assert.match(tuner, /if \(TUNER_BACKGROUND_RELEASED\) filter\.appendChild\(buildVizLevel\(\)\);/);
+  assert.match(tuner, /if \(TUNER_BACKGROUND_RELEASED\) tools\.appendChild\(buildVizLevel\(\)\);/);
   assert.match(tuner, /className: 'volume-stepper is-row',\s+attrs: \{ role: 'group', 'aria-label': 'Visualizer behind the Tuner' \},\s+\}, down, readout, up\);/);
   assert.match(tuner, /el\('output', \{ className: 'volume-led', attrs: \{ 'aria-live': 'polite' \} \}\)/);
   assert.match(tuner, /getVolume: \(\) => tunerBackgroundShownLevel\(getState\(\)\.settings\),/);
@@ -299,9 +299,9 @@ test('the Tuner shows the stepper in its bar, and the Settings switch follows it
   const settings = await read('src/lib/settings.js');
   assert.match(settings, /unsubscribeTunerVisualizer = subscribe\('settings-change', \(settings\) => \{\n\s+tunerVisualizerToggle\.checked = settings\.tunerVisualizerBackground === true;/);
   assert.match(settings, /function close\(\) \{[\s\S]*?unsubscribeTunerVisualizer\?\.\(\);[\s\S]*?\n {2}\}/);
-  // A row of the same stepper, 24 px tall.
+  // A row of the same stepper, sized with the other Tuner controls.
   const css = await read('src/styles/base.css');
-  assert.match(css, /\.volume-stepper\.is-row \{\s+flex-direction: row;\s+height: 24px;/);
+  assert.match(css, /\.volume-stepper\.is-row \{\s+flex-direction: row;/);
   // The player bar's own row rules on the stacked bar do not reach it.
   assert.doesNotMatch(css, /\n {2}\.volume-stepper \{ flex-direction: row-reverse/);
 });

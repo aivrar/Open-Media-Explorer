@@ -35,6 +35,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.15.md
 |   |-- RELEASE_NOTES_0.1.16.md
 |   |-- RELEASE_NOTES_0.1.17.md
+|   |-- RELEASE_NOTES_0.1.18.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -50,6 +51,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.15.md
 |   |-- RELEASE_RECORD_0.1.16.md
 |   |-- RELEASE_RECORD_0.1.17.md
+|   |-- RELEASE_RECORD_0.1.18.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -187,7 +189,12 @@ WorldMediaWindows/
 | `src/modes/now-playing.js`, `src/styles/now-playing.css` | The Now Playing tab: the picture, name, category, song with star and Copy, stream details and a large sound meter over a blurred copy of the picture; everything it uses is removed when the tab closes. |
 | `src/lib/play-clock.js` | How long the loaded item has been playing (only while its media advances, as player.js reports), for the Now Playing tab. |
 | `src/lib/tuner-card-size.js` | The Tuner card size choice (Small, Medium, Large) and which sizes show pictures. |
-| `src/lib/tuner-card-art.js` | Pictures on Medium and Large Tuner cards: initials first, pictures only for cards in view once the strip has stopped moving. |
+| `src/lib/tuner-card-art.js` | Pictures on Medium and Large Tuner entries: initials first, pictures only for entries in view once the list rests. |
+| `src/modes/tuner-layout.js` | Sizes and positions the dial, knobs, station list, caption and TV picture for the available space. |
+| `src/modes/tuner-dial.js` | Draws the dial, fits the station name to its face and turns wheel motion into station steps. |
+| `src/modes/tuner-station-list.js` | Renders visible station rows and keeps the tuned station and keyboard focus in view. |
+| `src/modes/tuner-tone-knobs.js` | The Bass, Treble and Loudness knobs, their input controls and their readouts. |
+| `src/lib/tuner-tone.js` | Maps tone knob changes to the main or favorite EQ curve. |
 | `src/lib/favorite-migration.js` | After a playlist is imported again, moves the favorites of channels that changed between radio and TV to the new channel, keeping place, category and equalizer. |
 | `src/lib/visualizer-settings.js` | The Visualizer's saved choices (quality, frame rate, brightness, scene, shuffle, effects, overlays, Strobe style, slow drift, folded panel sections, favorites, notice) and their checks. Small on purpose: it is in the main bundle. |
 | `src/modes/visualizer.js` | The Visualizer tab's shell: loads the Visualizer when the tab first opens and tears it down when the tab closes. |
@@ -214,14 +221,17 @@ WorldMediaWindows/
 | `src/lib/eq-stations.js` | Collects stations from Favorites and My Playlists for batch EQ assignment. |
 | `src/lib/media-parts.js` | Loads audio tracks and chapters and builds the playback and download information for the selected part. |
 | `src/lib/part-resume.js` | Keeps the saved track or chapter and playback position for audio items. |
-| `src/lib/picture-panel.js` | Connects the Picture controls to the current video and saves the selected look and fit. |
+| `src/lib/picture-panel.js` | Connects the Picture controls to the current video and saves the selected look, fit and quality. |
 | `src/lib/picture-settings.js` | Stores picture settings for all video or a saved channel and applies color and fit to video. |
+| `src/lib/video-quality.js` | Lists levels, matches saved choices and adapts video quality to picture size. |
+| `src/lib/player-bar-fit.js` | Measures which player controls fit before the bar uses a second row. |
 | `src/lib/profile-storage.js` | Lists the browser keys copied to the saved profile and checks the shared size limit. |
 | `src/lib/station-stream-addresses.js` | Stores and reads edited main and backup stream addresses for saved stations. |
 | `src/lib/station-stream-edit.js` | Checks station ownership and validates new addresses before saving an edit. |
 | `src/lib/top-tabs.js` | Applies **Tabs shown** and falls back to Library when the active tab is hidden. |
 | `src/modes/library/favorite-title-scheduler.js` | Queues and refreshes song title reads for visible radio Favorites. |
 | `src/modes/library/favorite-titles.js` | Shows song and performer on Favorites cards and the station text in a tooltip. |
+| `src/modes/library/reorder-scroll.js` | Scrolls Favorites near the top or bottom edge during a card drag. |
 | `src/modes/library/stream-addresses.js` | The **Stream address...** form for editing a station and ordering its backups. |
 | `src/visualizer/dev-flags.js` | Reads Visualizer diagnostic switches when the tab opens. |
 | `src/visualizer/flight-shading.js` | Adjusts the shading for DIFS Tunnel Flight and Hypercomplex Slice Flight. |
@@ -234,7 +244,7 @@ WorldMediaWindows/
 | `tests_python/production_ui_harness.py` | Opt-in real-Edge acceptance run of the exact production bundle (see its docstring). |
 | `tests_python/single_exe_real_smoke.py` | Opt-in real FFmpeg/download/MP3/MP4 gate that executes the classic one-file artifact under isolated roots. |
 | `tests/favorites-order.test.js`, `tests/favorite-groups.test.js`, `tests/favorite-categories-ui.test.js` | Favorites order and categories: sorting, moving and dragging, saved data, and the Library controls. |
-| `tests/slice1-mute-volume.test.js`, `tests/slice2-tuner-strip.test.js` | Crossed-out speaker and volume percentage; the Tuner strip centring and dial glow. |
+| `tests/slice1-mute-volume.test.js`, `tests/slice2-tuner-strip.test.js` | Crossed-out speaker and volume percentage; the Tuner list window and dial glow. |
 | `tests/slice4-pls-import.test.js`, `tests/slice4-xspf-import.test.js`, `tests/slice5-star-all.test.js` | `.pls` and `.xspf` playlist import, and **Star all**. |
 | `tests/now-playing.test.js`, `tests/now-playing-player.test.js`, `tests/song-log.test.js`, `tests/song-log-panel.test.js` | Song title following, its use in the player bar, and the song log and its panel. |
 | `tests/live-resume.test.js`, `tests/live-resume-capture.test.js`, `tests/live-resume-player.test.js` | Live stream reconnect: the retry schedule, the capture bar text, and the player. |
@@ -261,7 +271,7 @@ WorldMediaWindows/
 | `tests_python/test_connect_first.py` | Connecting to a host with several addresses: all tried together, IPv4 first, the last good one remembered. |
 | `tests/played-streams.test.js` | The format and bitrate stations played with: reading them from the relay's reply, remembering them once a start has played, the label, and where it shows. |
 | `tests/volume-stepper.test.js`, `tests/volume-sleep-fade.test.js` | The volume control (clicks, hold, wheel, keys, limits), a video's own volume controls, and the volume set during a sleep-timer fade. |
-| `tests/tuner-strip-wheel.test.js`, `tests/tuner-viz-level.test.js` | The mouse wheel over the Tuner's station strip, and the Visualizer strength control with its Settings switch. |
+| `tests/tuner-strip-wheel.test.js`, `tests/tuner-viz-level.test.js` | Wheel scrolling in the station list and station steps on the dial, and the Visualizer strength control with its Settings switch. |
 | `tests_python/test_adts_align.py` | Starting a live AAC stream at its first whole frame, and passing live audio on as it arrives. |
 | `tests_python/test_single_instance.py` | One copy per data folder: the claim, the request to bring the window forward, a killed copy, racing starts, and the window and windowless starts. |
 | `tests/about-credits.test.js` | The About page's Visualizer credits, and that `CREDITS.md` and the notices name every borrowed piece. |
@@ -274,10 +284,15 @@ WorldMediaWindows/
 | `tests/fixtures/librivox-parts.xml` | LibriVox RSS with chapters in playback order. |
 | `tests/library-sidebar.test.js` | Disabled source order, dimming and re-enabling in the Library. |
 | `tests/multi-part-items.test.js` | Track and chapter ordering, resume, auto-advance, detail controls and downloads. |
+| `tests/tuner-layout.test.js` | Tuner positions and sizes by window size, band and toggle, and the dial readout. |
+| `tests/tuner-station-list.test.js` | Station rows, focus, scroll position and the tuned station. |
+| `tests/tuner-tone-knobs.test.js` | EQ changes, knob controls and display, and saved Tuner toggles. |
+| `tests/video-quality.test.js` | Level labels and selection, Auto size limits and fallback from a fixed level. |
 | `tests/picture-settings.test.js` | Picture scope, filter and fit, saved settings and live video timeline controls. |
 | `tests/station-stream-addresses.test.js` | Stream address validation, edit controls, failover order and saved profile behavior. |
 | `tests/top-tabs.test.js` | Tab visibility, Library fallback and settings persistence. |
 | `tests/visualizer-release.test.js` | Held scenes, warped dissolves and DIFS Tunnel Flight brightness. |
+| `tests_python/test_tuner_tone_profile.py` | Saves and restores the Tuner toggles in the extra profile. |
 | `tests_python/test_part_resume_profile.py` | Track and chapter bookmarks in the extra profile and their removal on cache clear. |
 | `tests_python/test_playlist_export.py` | Export and re-import, unique filenames, skipped items and safe Downloads paths. |
 | `tests_python/test_station_stream_addresses.py` | Stream address validation, saved profile and backups. |
@@ -302,3 +317,5 @@ WorldMediaWindows/
 | `docs/RELEASE_RECORD_0.1.16.md` | What was checked for v0.1.16, with artifact hashes and limits. |
 | `docs/RELEASE_NOTES_0.1.17.md` | GitHub release notes for the `v0.1.17` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.17.md` | What was checked for v0.1.17, with artifact sizes and hashes. |
+| `docs/RELEASE_NOTES_0.1.18.md` | GitHub release notes for the `v0.1.18` tag and its release assets. |
+| `docs/RELEASE_RECORD_0.1.18.md` | What was checked for v0.1.18, with artifact sizes and hashes. |

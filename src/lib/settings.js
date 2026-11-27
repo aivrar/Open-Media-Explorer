@@ -34,7 +34,13 @@ import {
   startFfmpegInstall,
 } from './ffmpeg-client.js';
 
-const VERSION = '0.1.17';
+const BEST_STREAM_DESCRIPTIONS = {
+  listed: 'starts with the best listed stream and tries the next if it fails or is slow to start.',
+  auto: 'does the same and looks for a better stream in other radio directory entries. It can use one on a later start if both streams match on two different songs.',
+  off: 'tries the first two listed streams together and plays whichever answers first.',
+};
+
+const VERSION = '0.1.18';
 
 function buildModal() {
   const state = getState();
@@ -78,7 +84,7 @@ function buildModal() {
           <div class="row">
             <div>
               <label for="settings-tuner-card-size">Tuner card size</label>
-              <span class="description">The station cards under the Tuner dial. Medium and Large show bigger names and each station's picture. Updates immediately.</span>
+              <span class="description">The rows of the Tuner's station list. Medium and Large show bigger names and each station's picture. Updates immediately.</span>
             </div>
             <select id="settings-tuner-card-size" data-field="tunerCardSize">
               ${TUNER_CARD_SIZES.map((id) => `<option value="${id}">${TUNER_CARD_SIZE_LABELS[id]}</option>`).join('')}
@@ -133,7 +139,12 @@ function buildModal() {
           <div class="row">
             <div>
               <label for="settings-best-stream">Pick the best stream</label>
-              <span class="description" id="settings-best-stream-hint">Listed streams: when a station or channel lists several streams, the best one is tried first; the next one is tried too if the best has not started playing within a few seconds or fails, and the rest if it connects but does not play within 30 seconds. Auto also checks other directory entries of a radio station in the background and uses one from the next start, only when two checks a few minutes apart found the same station playing the same song, a different song each time; a station that does not announce song titles cannot be verified and keeps its own stream. Off: as in earlier versions, the first two listed streams are tried together and the first to answer plays.</span>
+              <div class="description" id="settings-best-stream-hint">
+                When a station or channel lists several streams:
+                <ul>
+                  ${BEST_STREAM_MODES.map((id) => `<li><strong>${BEST_STREAM_MODE_LABELS[id]}</strong>: ${BEST_STREAM_DESCRIPTIONS[id]}</li>`).join('')}
+                </ul>
+              </div>
             </div>
             <select id="settings-best-stream" data-field="bestStreamMode" aria-describedby="settings-best-stream-hint">
               ${BEST_STREAM_MODES.map((id) => `<option value="${id}">${BEST_STREAM_MODE_LABELS[id]}</option>`).join('')}

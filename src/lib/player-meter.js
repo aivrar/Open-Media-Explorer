@@ -465,9 +465,7 @@ export function createPlayerMeter({
   };
 }
 
-/** The app's meters: the [data-player-meter] blocks in the player bar (one
- *  for the wide bar, one for the stacked bar; CSS lays out at most one), all
- *  switched by the `soundMeter` setting. */
+/** Bind the player bar's meter to the audio signal and the Sound meter setting. */
 export function initPlayerMeter({ signal, getSettings, subscribeSettings, doc = globalThis.document }) {
   const meters = [];
   for (const root of doc?.querySelectorAll?.('[data-player-meter]') || []) {

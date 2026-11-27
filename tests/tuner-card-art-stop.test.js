@@ -9,7 +9,7 @@ import { loadArtworkImage } from '../src/lib/artwork.js';
 import { createTunerCardArt } from '../src/lib/tuner-card-art.js';
 
 /* Review points on the Tuner card pictures:
-   1. Leaving the Tuner (or a card leaving the strip) must also stop a user's
+   1. Leaving the Tuner (or a card leaving the list window) must also stop a user's
       station picture that is still being fetched: no further request or retry,
       and a result that arrives late is ignored.
    2. A change of the station-images list while a card is loading is checked
@@ -220,7 +220,7 @@ test('leaving the Tuner stops a station picture being fetched for a card: no ret
   assert.equal(stationImageSourceFor(item), source('f'));
 });
 
-test('a card leaving the strip stops its station picture fetch the same way', async () => {
+test('a card leaving the list window stops its station picture fetch the same way', async () => {
   applyStationImageList({ images: [{ key: 'jazz fm', id: id('7'), v: 'abc123' }] });
   const server = backend();
   const { made, createUrl } = urls();
@@ -235,7 +235,7 @@ test('a card leaving the strip stops its station picture fetch the same way', as
   await flush();
   assert.equal(server.pictureCalls(), 1);
   art.box({ id: 'rb:4', source: 'radio-browser', title: 'Other', thumbnail: '' });
-  art.commit(); // rb:3 is no longer in the strip
+  art.commit(); // rb:3 is no longer in the list window
   await flush();
   assert.equal(server.calls.at(-1).options.signal.aborted, true);
   server.answer(200);

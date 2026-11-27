@@ -137,7 +137,7 @@ test('"Use the station\'s own stream" outside the Library: focus moves to the co
 
 test('Settings: the best stream choice and the processor limit are described by their lines; the limit is a real disabled input at Light', () => {
   const settings = read('src/lib/settings.js');
-  assert.match(settings, /<span class="description" id="settings-best-stream-hint">Listed streams:/);
+  assert.match(settings, /<div class="description" id="settings-best-stream-hint">\s+When a station or channel lists several streams:\s+<ul>[\s\S]*?<\/ul>\s+<\/div>/);
   assert.match(settings, /<select id="settings-best-stream" data-field="bestStreamMode" aria-describedby="settings-best-stream-hint">/);
   assert.match(settings, /<span class="description" id="settings-processor-limit-hint" data-processor-limit-hint><\/span><span class="description processor-limit-note" role="status" data-processor-limit-note><\/span>/);
   assert.match(settings, /<input id="settings-processor-limit" type="number" data-field="processorLimit" aria-describedby="settings-processor-limit-hint"/);

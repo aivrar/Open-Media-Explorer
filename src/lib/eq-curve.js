@@ -3,6 +3,11 @@ export const EQ_MIN_DB = -12;
 export const EQ_MAX_DB = 12;
 export const EQ_PREAMP_MIN_DB = -12;
 export const EQ_PREAMP_MAX_DB = 6;
+export const EQ_GAIN_STEP_DB = 0.5;
+
+export function roundEqDb(value) {
+  return Math.round(value / EQ_GAIN_STEP_DB) * EQ_GAIN_STEP_DB || 0;
+}
 
 function clampDb(value, minimum = EQ_MIN_DB, maximum = EQ_MAX_DB) {
   const number = Number(value);

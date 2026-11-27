@@ -48,7 +48,8 @@ test('the song in the player bar is larger than the old source line and grows wi
 
 test('a long song or station name still ends in an ellipsis', async () => {
   const [css, tunerCss] = await Promise.all([read('src/styles/base.css'), read('src/styles/tuner.css')]);
-  for (const body of [rule(css, '.player-title'), rule(css, '.player-source'), rule(tunerCss, '.tuner-frequency .station-name')]) {
+  assert.match(rule(tunerCss, '.tuner-frequency .station-name'), /-webkit-line-clamp: 2;/);
+  for (const body of [rule(css, '.player-title'), rule(css, '.player-source')]) {
     assert.match(body, /white-space: nowrap;/);
     assert.match(body, /overflow: hidden;/);
     assert.match(body, /text-overflow: ellipsis;/);
@@ -58,11 +59,8 @@ test('a long song or station name still ends in an ellipsis', async () => {
 test('the Tuner dial\'s station name grows with the window too', async () => {
   const css = await read('src/styles/tuner.css');
   const name = rule(css, '.tuner-frequency .station-name');
-  assert.deepEqual([1024, 1920, 3840].map((width) => clampAt(fontSize(name), width)), [13, 15.3, 17]);
-  // The width limit grows with the size: 17em, so 221 px at 13 px and 289 px
-  // at 17 px (always inside the knob: 46cqw).
-  assert.match(name, /max-width: min\(17em, 46cqw\);/);
-  assert.deepEqual([13, 17].map((size) => 17 * size), [221, 289]);
+  assert.equal(fontSize(name), 'clamp(12px, 3.6cqw, 18px)');
+  assert.match(rule(css, '.tuner-frequency'), /width: var\(--dial-name-width, 32cqw\);/);
   const tuner = await read('src/modes/tuner.js');
   assert.match(tuner, /ui\.stationName\.setAttribute\('title', s\.title \|\| ''\);/);
 });

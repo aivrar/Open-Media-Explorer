@@ -64,6 +64,7 @@
  * is off by default and costs nothing while off.
  */
 
+import { TUNER_BACKGROUND_FPS_MAX } from '../lib/tuner-background.js';
 import { createVisualizerLoop, LOOP_MODES } from './loop.js';
 import { createSceneRenderer, createWebglContext, ownsPasses, sceneDefaults } from './scene-renderer.js';
 import { simSupport } from './sim-host.js';
@@ -337,7 +338,7 @@ function buildVisualizer(root, {
   // The app's processor use (processor-budget.js), asked only at Balanced or
   // High while the Visualizer plays.
   readProcessorUse = () => controlRequest('/api/v1/system/processor-use'),
-  // Drawn behind the Tuner (modes/tuner-background.js): no keys of its own.
+  // Presentation at mount time. The same picture can move to the other view.
   background = false,
 } = {}, unfinished = {}) {
   const cleanups = [];
@@ -382,7 +383,7 @@ function buildVisualizer(root, {
     root.classList?.remove('viz-panel-open');
   }
   unfinished.teardown = teardown;
-  const dev = background ? null : readVisualizerDevFlags(win);
+  const dev = readVisualizerDevFlags(win);
   scenes ||= scenesForVisualizer(dev?.tryHeld);
   const colourTravelEnabled = COLOUR_TRAVEL_RELEASED && dev?.colorTravel;
   const initial = getSettings?.() || {};
@@ -772,7 +773,12 @@ function buildVisualizer(root, {
     setInert: (on) => { for (const node of [canvas, readout, note, hud.element, panel]) node.inert = on; },
   });
 
-  stage.append(canvas, fade, overlayCanvas, message, readout, note, hud.element, panel, notice.element, notice.startBox);
+  // Keep the tab controls with this session while the Tuner hosts the picture.
+  const controlsHolder = doc.createElement('div');
+  const tabControls = [message, readout, note, hud.element, panel, notice.element, notice.startBox];
+  cleanups.push(() => controlsHolder.replaceChildren());
+  stage.append(canvas, fade, overlayCanvas);
+  (background ? controlsHolder : stage).append(...tabControls);
   root.append(stage);
 
   const say = (text) => {
@@ -1227,8 +1233,10 @@ function buildVisualizer(root, {
   let debugDue = 0;
   const snapshot = () => ({ ...bridge.snapshot(), mood: mood.mood });
   function showDebug() {
+    if (background) return;
     if (debug && !debugEl) {
       debugEl = el('div', 'viz-debug', { 'aria-hidden': 'true' });
+      tabControls.push(debugEl);
       stage.append(debugEl);
     }
     if (debugEl) {
@@ -1328,6 +1336,7 @@ function buildVisualizer(root, {
     setMoodData('data-tempo-confidence', mood.tempo.confidence.toFixed(2));
   }
   function showMood() {
+    if (background) return;
     if (started) showMoodData();
     // The tracker's own word, the one the shuffle and the strength use: after
     // a fresh start (another station, a resume, a gap) it keeps the last word
@@ -1353,13 +1362,14 @@ function buildVisualizer(root, {
   cleanups.push(() => { if (moodAnnounce !== null) clearTimer(moodAnnounce); moodAnnounce = null; });
 
   /* ---- The frame loop ---- */
+  const frameRate = () => background ? Math.min(stepDown.fps, TUNER_BACKGROUND_FPS_MAX) : stepDown.fps;
   let lastState = null;
   const loop = renderer
     ? createVisualizerLoop({
       signal,
       doc,
       win,
-      fps: stepDown.fps,
+      fps: frameRate(),
       // Every tick of the sound loop, drawn or only heard, also teaches the
       // step-down the display's frame cadence, and steps the mood and shuffle.
       react: (state, source, nowSec, dt) => {
@@ -1375,11 +1385,11 @@ function buildVisualizer(root, {
         stepDrift(state);
         // Redraws reuse the last blend. Only a new animation frame advances it.
         const drawn = drawFrame(state, !state.still && state.dt > 0);
-        if (debug && debugEl) tickDebug();
+        if (!background && debug && debugEl) tickDebug();
         // Frame intervals only: nothing is read back from the GPU.
         // Not while another scene is being prepared: the one being drawn is
         // on its way out.
-        if (drawn && state.live && !switcher?.busy && stepDown.frame(clock())) budgetSteer.changed(clock());
+        if (drawn && state.live && !switcher?.busy && stepDown.frame(clock(), frameRate())) budgetSteer.changed(clock());
         return drawn;
       },
       ...loopOptions,
@@ -1610,7 +1620,7 @@ function buildVisualizer(root, {
       beforeInstall: (id) => {
         const from = switcher.current;
         let dissolve = false;
-        if (!background && from && id !== from) {
+        if (from && id !== from) {
           if (!WARP_DISSOLVE_RELEASED || !dev?.warpDissolve) dissolve = 'disabled';
           else if (loop.reducedMotion) dissolve = 'reduced-motion';
           else if (loop.mode === LOOP_MODES.rest) dissolve = 'at-rest';
@@ -1643,7 +1653,7 @@ function buildVisualizer(root, {
             applySize(true, { keepDissolve: true });
           }
           showQualityNote();
-          if (levelChanged) loop?.setFps(stepDown.fps);
+          if (levelChanged) loop?.setFps(frameRate());
           transition.applied();
           // The chosen effects and overlays, as this scene allows them, from
           // its first frame.
@@ -2760,7 +2770,7 @@ function buildVisualizer(root, {
   /** Draw with the step-down's quality and frame rate now. */
   function applyStepDown() {
     applySize();
-    loop?.setFps(stepDown.fps);
+    loop?.setFps(frameRate());
     trimFx();
     trimOverlays();
     redrawUnderCaps();
@@ -2934,7 +2944,7 @@ function buildVisualizer(root, {
     started = true;
     everStarted = true;
     notice.hide();
-    hud.setActive(true);
+    hud.setActive(!background);
     loop.start();
     if (switcher.wanted !== sceneAsked || !switcher.current) askScene(sceneAsked);
     // Effects: their library is loaded the first time they are on.
@@ -3113,6 +3123,7 @@ function buildVisualizer(root, {
   }
 
   function applySettings(settings) {
+    if (destroyed) return;
     const nextQuality = normalizeVisualizerQuality(settings?.visualizerQuality);
     const nextFps = normalizeVisualizerFps(settings?.visualizerFps);
     const drawnBefore = drawQuality();
@@ -3389,8 +3400,8 @@ function buildVisualizer(root, {
     listen(noticeLine, 'click', () => showNoticeAgain());
     if (doc?.addEventListener) {
       listen(doc, 'visibilitychange', onVisibility);
-      if (!background) listen(doc, 'keydown', (event) => {
-        if (!isDebugKey(event)) return;
+      listen(doc, 'keydown', (event) => {
+        if (background || !isDebugKey(event)) return;
         event.preventDefault?.();
         debug = !debug;
         showDebug();
@@ -3537,6 +3548,18 @@ function buildVisualizer(root, {
       brightValue,
       fpsToggle,
       readout,
+    },
+    setBackground(on) {
+      if (background === on) return;
+      background = on;
+      (background ? controlsHolder : stage).append(...tabControls);
+      stepDown.restart();
+      loop?.setFps(frameRate());
+      hud.setActive(started && !background);
+      if (!background) {
+        showDebug();
+        showMood();
+      }
     },
     destroy() {
       teardown();

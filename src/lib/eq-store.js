@@ -87,8 +87,12 @@ export function isEqStation(item) {
   return item?.type === 'radio' || item?.type === 'tv';
 }
 
+export function canSaveFavoriteEq(itemId, favorited) {
+  return Boolean(favorited && itemId && itemId.length <= 512);
+}
+
 export function hasFavoriteEq(state, itemId, favorited) {
-  return Boolean(favorited && itemId && Object.hasOwn(state.favorites, itemId));
+  return canSaveFavoriteEq(itemId, favorited) && Object.hasOwn(state.favorites, itemId);
 }
 
 export function getEffectiveEq(eqState, itemId, favorited = false) {
@@ -151,6 +155,13 @@ export function setScopedEq(eqState, itemId, favorited, curve) {
     return { ...state, favorites: { ...state.favorites, [itemId]: normalized } };
   }
   return { ...state, global: normalized };
+}
+
+export function setEqBypassed(eqState, itemId, favorited, bypassed) {
+  const state = normalizeEqState(eqState);
+  const stationCurve = !Object.hasOwn(state.assignments, itemId) && hasFavoriteEq(state, itemId, favorited);
+  const base = stationCurve ? state.favorites[itemId] : state.global;
+  return setScopedEq(state, itemId, stationCurve, { ...base, bypassed });
 }
 
 export function setCustomEqPreset(eqState, presetId, name, curve) {

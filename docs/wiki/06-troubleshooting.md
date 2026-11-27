@@ -82,8 +82,9 @@ handoff; a complete directory copy is still the safest migration.
 
 The Tuner shows the favorites saved as the type you are on: radio stations on
 the **Radio** dial and TV channels on the **TV** dial. When some of your
-favorites are saved as the other type, the status line says so, for example "3
-more saved as TV (switch to TV to see them)". Switch the band to see them.
+favorites are saved as the other type, the caption below the station list
+says so, for example "19 favorite stations · 17 more in TV". If the list is
+hidden, turn on **Stations**. Switch the band to see the other favorites.
 
 This usually happens with a station from your own playlist whose address does
 not say radio or TV. It is saved as the type of the playlist's **Add as**
@@ -98,11 +99,25 @@ a favorite.
 
 ## The Tuner says the stations could not be loaded
 
-A live source did not answer within 20 seconds; the Tuner's status line counts
-it as unavailable. Press **Radio** or **TV** above the dial to load the list
+A live source that does not answer within 20 seconds is counted as unavailable
+in the caption below the station list. Press **Radio** or **TV** to load it
 again. Public directories are slow at times, so wait a moment between tries.
 "No stations found for this country." means the sources answered and have no
 station for the chosen country; choose **All countries** or another one.
+
+## The Tuner picture says Loading… or Stopped
+
+The panel above the TV station list holds the picture's place while the
+channel loads and after **Stop**. Click a channel in the list or focus it
+and press Enter to play it. Use **Stations** to bring back a hidden list.
+
+## Quality is missing or the picture switches to Auto
+
+Open **Picture** while video is playing. **Quality** appears under **Fit**
+when the stream offers at least two levels. If a fixed level fails, the
+player switches to **Auto** for the session. The note beside the menu,
+such as **Now 720p**, shows the current resolution when known.
+[Picture quality](04-playback-eq-downloads-recording.md#picture-quality)
 
 ## My Playlists is empty or shows an error
 
@@ -193,6 +208,12 @@ event; rebuilding from the current source includes this fix.
 
 ## My own station picture does not show
 
+Drop a picture onto a station card in **Favorites** or **My Playlists**.
+The target card reads "Drop to set this station's picture". It previews the
+image with **Saving…** and goes back to its previous picture if saving fails.
+Read the reason in the refusal message. Escape, a click or a new drag clears
+the message, or it clears by itself after 6 seconds (8 for longer messages).
+
 Pictures in the `station-images` folder (Settings → Station images → **Open
 folder**) are matched by file name. Check:
 
@@ -224,7 +245,7 @@ folder**) are matched by file name. Check:
 - A picture that is not square is shown whole, with plain space beside or
   above it. This is on purpose (since v0.1.10): nothing of it is cut off. For
   a picture that fills the box, use a square one.
-- On the Tuner's station cards, pictures show only with **Settings >
+- In the Tuner's station list, pictures show with **Settings >
   Appearance > Tuner card size** set to Medium or Large, and only once the
   dial has stopped turning.
 
@@ -373,9 +394,8 @@ The bars beside **EQ** in the player bar move only while sound is playing:
 - Check **Settings > Appearance > Sound meter in the player bar**. When it is
   off, the meter is not shown at all.
 - The meter also stays still when Windows is set to show fewer animations.
-- In a window wider than 1000 px the meter sits in the progress row and is
-  left out when that row has no room for it beside a usable seek slider. Make
-  the window wider.
+- The player bar hides the meter when it runs out of room. Widen the window
+  to bring it back.
 - Flat bars while you can hear the station mean the sound is not going through
   World Media's audio engine, for example when the stream had to be played
   directly because the local relay could not be used. The EQ is unavailable

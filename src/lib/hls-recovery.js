@@ -107,9 +107,9 @@ export function waitForHlsStartupBuffer(media, {
 export function hlsPlaybackConfig() {
   return {
     enableWorker: true,
-    capLevelToPlayerSize: true,
-    // Wait until the manifest has been inspected and a safe <=720p ceiling
-    // has been installed. player.js starts loading immediately afterward.
+    // The player combines its event-driven size cap with the recovery cap.
+    capLevelToPlayerSize: false,
+    // Install the Picture preference before starting the loader.
     autoStartLoad: false,
     startLevel: -1,
     // IPTV stability is more important than being within one segment of the
@@ -143,39 +143,6 @@ export function hlsPlaybackConfig() {
   };
 }
 
-/** Rank HLS levels for stable public-IPTV playback.
- *
- * Start with the best rendition no taller than the recording-quality default
- * (720p), then walk downward before trying oversized or undeclared levels.
- * Returning source indexes lets player.js install a downward-only ceiling
- * while leaving hls.js automatic bandwidth selection enabled underneath it.
- */
-export function stableHlsLevelOrder(levels, targetHeight = 720) {
-  if (!Array.isArray(levels)) return [];
-  const target = Math.max(1, Number(targetHeight) || 720);
-  const normalized = levels.map((level, index) => ({
-    index,
-    height: Math.max(0, Number(level?.height) || 0),
-    width: Math.max(0, Number(level?.width) || 0),
-    bitrate: Math.max(0, Number(level?.bitrate) || 0),
-  }));
-  const descending = (left, right) => (
-    right.height - left.height || right.bitrate - left.bitrate || right.width - left.width || left.index - right.index
-  );
-  const within = normalized.filter((level) => level.height > 0 && level.height <= target).sort(descending);
-  if (within.length) return within.map((level) => level.index);
-  const oversized = normalized.filter((level) => level.height > target).sort((left, right) => (
-    left.height - right.height || left.bitrate - right.bitrate || left.width - right.width || left.index - right.index
-  ));
-  // If every declared video rendition exceeds the target, choose only the
-  // smallest one. A later "fallback" must never upshift to a larger stream.
-  if (oversized.length) return [oversized[0].index];
-  const unsized = normalized.filter((level) => level.height === 0).sort((left, right) => (
-    right.bitrate - left.bitrate || left.index - right.index
-  ));
-  return unsized.map((level) => level.index);
-}
-
 export function createHlsRecoveryController({
   hls,
   errorTypes = {},
@@ -184,6 +151,7 @@ export function createHlsRecoveryController({
   onRecovered = () => {},
   onTerminal = () => {},
   selectLowerRendition = () => false,
+  fallBackToAuto = () => false,
   getCurrentTime = () => Number.NaN,
   setTimer = (fn, delay) => setTimeout(fn, delay),
   clearTimer = (timer) => clearTimeout(timer),
@@ -260,6 +228,11 @@ export function createHlsRecoveryController({
     // hls.js and the media element can surface the same underlying failure
     // more than once. Do not let duplicates consume every retry before the
     // already-scheduled recovery has even run.
+    const resetFixed = fallBackToAuto();
+    if (resetFixed) {
+      networkAttempts = 0;
+      mediaAttempts = 0;
+    }
     if (recovering) return true;
     cancelTimer(stableTimer);
     cancelTimer(recoveryWatchdog);
@@ -281,7 +254,7 @@ export function createHlsRecoveryController({
       return true;
     }
 
-    if (data.type === networkType) {
+    if (data.type === networkType || resetFixed) {
       if (networkAttempts >= NETWORK_DELAYS_MS.length) {
         return terminal('HLS network recovery was exhausted.');
       }

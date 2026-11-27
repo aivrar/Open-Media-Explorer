@@ -73,6 +73,19 @@ test('a source that fails on a reload keeps its earlier stations and the status 
   assert.deepEqual(failedSourceState(undefined, 'x', undefined), { state: 'error', count: 0, error: '' });
 });
 
+test('compact Tuner captions keep the count and a short source status', () => {
+  const caption = (count, states, loading = false) => liveStatusText({
+    count, noun: 'stations', sourceStates: new Map(Object.entries(states)), loading, compact: true,
+  });
+  assert.equal(caption(0, { a: { state: 'loading' } }, true), 'Loading 1 live source…');
+  assert.equal(caption(0, {}), '0 stations');
+  assert.equal(caption(0, { a: { state: 'error' } }), '0 stations · 1 unavailable');
+  assert.equal(caption(80, { a: { state: 'ready' }, b: { state: 'ready' }, c: { state: 'ready' } }),
+    '80 stations from 3 sources');
+  assert.equal(caption(80, { a: { state: 'stale' }, b: { state: 'loading' } }, true),
+    '80 stations from 1 source · 1 out of date · updating…');
+});
+
 test('the live status line counts sources and names failures, refreshes and pending sources', () => {
   const map = (entries) => new Map(Object.entries(entries));
   assert.equal(liveStatusText({ count: 0, noun: 'stations', sourceStates: new Map(), loading: true, sourceCount: 4 }),
@@ -96,16 +109,16 @@ test('the live status line counts sources and names failures, refreshes and pend
   assert.equal(pendingSourcesText(map({ a: { state: 'loading', refreshing: true }, b: { state: 'loading' } })), ' \u00b7 loading 2 more sources\u2026');
 });
 
-test('the Tuner and the Grid mark the sources a load asks before the status line is first drawn', async () => {
-  for (const [path, start, end, list] of [
-    ['src/modes/tuner.js', 'async function loadStations(', 'function finishLoad()', 'state.stations'],
-    ['src/modes/grid.js', 'async function load(', 'function finishLoad()', 'state.tiles'],
+test('the Tuner and the Grid mark the requested sources before drawing their counts', async () => {
+  for (const [path, start, end, list, render] of [
+    ['src/modes/tuner.js', 'async function loadStations(', 'function finishLoad()', 'state.stations', 'renderStationCaption'],
+    ['src/modes/grid.js', 'async function load(', 'function finishLoad()', 'state.tiles', 'renderSourceStatus'],
   ]) {
     const source = await read(path);
     const load = source.slice(source.indexOf(start), source.indexOf(end));
     const asked = load.indexOf('const candidates = liveSources().filter(');
     const marked = load.indexOf("state.sourceStates.set(source.id, refresh\n");
-    const drawn = load.indexOf('renderSourceStatus();');
+    const drawn = load.indexOf(`${render}();`);
     assert.ok(asked > 0 && marked > asked, `${path}: the sources are chosen, then marked`);
     assert.ok(drawn > marked, `${path}: the first status line comes after they are marked`);
     assert.equal(load.split("state.sourceStates.set(source.id, refresh\n").length, 2, `${path}: marked once`);

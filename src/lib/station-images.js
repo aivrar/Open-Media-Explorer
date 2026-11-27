@@ -111,6 +111,19 @@ function reservedHead(key) {
   return RESERVED_NAME.test((dot < 0 ? key : key.slice(0, dot)).replace(/ +$/, ''));
 }
 
+/** The normalized filename a new picture will get on the server, or ''. */
+export function stationPictureFileKey(title) {
+  if (typeof title !== 'string' || title.length > MAX_NAME_INPUT) return '';
+  const stem = title.normalize('NFKC').replace(SPACES, ' ').replace(/[\x00-\x1f\x7f-\x9f]/g, '')
+    .replace(/[\\/:*?"<>|]/g, '-').replace(SPACE_RUNS, ' ').trim().replace(/[. ]+$/, '');
+  if (!stem || stem.startsWith('._') || /[\u200e\u200f\u202a-\u202e\u2066-\u2069\ud800-\udfff]/u.test(stem)) return '';
+  const dot = stem.indexOf('.');
+  const head = dot < 0 ? stem : stem.slice(0, dot);
+  const filename = reservedHead(stem.toLowerCase()) ? head + '_' + stem.slice(head.length) : stem;
+  // The server tests the stem with its longest allowed extension, .webp.
+  return [...filename].length <= 250 ? normalizeStationName(filename) : '';
+}
+
 /** How a station's name is matched, or null when it can never match. */
 function stationName(title) {
   const exact = normalizeStationName(title);
@@ -570,8 +583,12 @@ export function stationImageUrl(source, options = {}) {
 }
 
 /** Ask the backend for the list (it scans the folder) and take it in. */
-export function loadStationImages({ request = controlRequest } = {}) {
-  if (loading) return loading;
+export function loadStationImages({ request = controlRequest, afterCurrent = false } = {}) {
+  if (loading) {
+    // A write may have finished after the active scan took its snapshot.
+    if (afterCurrent) return loading.catch(() => {}).then(() => loadStationImages({ request }));
+    return loading;
+  }
   loading = Promise.resolve()
     .then(() => request(STATION_IMAGES_ROUTE))
     .then((data) => {

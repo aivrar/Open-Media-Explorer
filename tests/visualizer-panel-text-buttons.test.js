@@ -23,6 +23,10 @@ test('"New effects now" and "New overlays now" have the size of the panel\'s oth
     assert.ok(css.lastIndexOf(`${selector}`) > css.indexOf('.viz-btn {'), selector);
   }
   assert.match(lastRule(css, '.viz-select'), /padding: 3px 6px;/);
+  const hover = lastRule(css, '.viz-btn:enabled:hover');
+  assert.equal(hover.trim(), lastRule(css, '.viz-section-head:hover').trim().replace('background:', 'background-color:'));
+  assert.equal(lastRule(css, '.viz-seg:enabled:hover:not([aria-pressed="true"])'), hover);
+  assert.match(lastRule(css, '.viz-notice-btn'), /appearance: none;/);
   const index = await read('src/visualizer/index.js');
   assert.match(index, /el\('button', 'viz-btn viz-fx-now', \{ type: 'button' \}, 'New effects now'\)/);
   assert.match(index, /el\('button', 'viz-btn viz-ov-now', \{ type: 'button' \}, 'New overlays now'\)/);

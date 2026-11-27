@@ -21,17 +21,18 @@
    pointer-events stay off so it never becomes the drag target itself. */
 .drop-hint {
   position: fixed;
-  inset: 12px;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  border: 2px dashed var(--accent);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-elev-2);
   color: var(--text);
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 13px;
   text-align: center;
   pointer-events: none;
 }
@@ -270,6 +271,7 @@ html, body {
 
 #app {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   height: 100vh;
   width: 100vw;
@@ -282,10 +284,14 @@ html, body {
 /* ============ Topbar ============ */
 
 .topbar {
+  --topbar-control-height: 32px;
+  --topbar-gap: 8px;
+  --topbar-radius: var(--radius-sm);
+  --topbar-line-height: 20px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 24px;
+  gap: var(--topbar-gap);
   min-height: var(--topbar-h);
   padding: 0 18px;
   background: color-mix(in srgb, var(--chrome) 96%, transparent);
@@ -297,7 +303,8 @@ html, body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--topbar-gap);
+  line-height: var(--topbar-line-height);
   font-weight: 600;
   letter-spacing: 0.2px;
 }
@@ -318,23 +325,29 @@ html, body {
 
 .modes {
   display: flex;
+  align-items: center;
   justify-self: center;
-  gap: 4px;
+  gap: var(--topbar-gap);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
   background: var(--bg-elev-2);
-  padding: 3px;
+  padding: 5px;
   border-radius: var(--radius);
   border: 1px solid var(--border);
 }
 
+.modes::-webkit-scrollbar { display: none; }
+
 .mode-btn {
   appearance: none;
   background: transparent;
-  border: 0;
   color: var(--text-dim);
   font: inherit;
   font-size: 13px;
-  padding: 7px 14px;
-  border-radius: 6px;
+  flex: none;
+  padding: 0 14px;
   cursor: pointer;
   /* A tab's name never wraps ("Now Playing" is the two-word one). */
   white-space: nowrap;
@@ -351,25 +364,15 @@ html, body {
 .topbar-tools {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-self: end;
+  gap: var(--topbar-gap);
 }
 
-/* Seven tabs on one row from 1001 px: up to 1240 px a little less room
-   around them, so they fit beside the brand and the tools, also while the
-   sleep timer counts down (about 985 px needed with "Sleep 720:00"). Should
-   they still not fit (another font), the row is held to its column and
-   scrolls sideways, as in the two-row bar below, instead of running under
-   the tools; a tab reached with the keyboard is scrolled into view. */
+/* Keep seven tabs beside the brand and the full Sleep countdown down to
+   1001 px. The strip scrolls if the font needs more room. */
 @media (min-width: 1001px) and (max-width: 1240px) {
-  .topbar { gap: 12px; padding: 0 12px; }
-  .mode-btn { padding: 7px 8px; }
-  .modes {
-    min-width: 0;
-    max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .modes::-webkit-scrollbar { display: none; }
+  .topbar { padding: 0 12px; }
+  .mode-btn { padding: 0 4px; }
 }
 
 .icon-btn {
@@ -390,25 +393,17 @@ html, body {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--topbar-gap);
   /* Used once per session: a quiet outline that only turns red on hover. */
   background: transparent;
   color: var(--text-dim);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 5px 11px;
+  padding: 0 9px;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.3px;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
-}
-.shutdown-btn:hover,
-.shutdown-btn:focus-visible {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  border-color: var(--danger);
-  color: var(--danger);
 }
 .shutdown-btn:active { transform: scale(0.97); }
 .shutdown-btn[disabled] { opacity: 0.5; cursor: default; }
@@ -418,16 +413,31 @@ html, body {
   color: var(--text-dim);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--topbar-gap);
+}
+
+.sleep-timer label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  /* The 20px icon, 8px gap, and 76px countdown keep their full width. */
+  min-width: 104px;
+  gap: var(--topbar-gap);
+  cursor: pointer;
+  line-height: var(--topbar-line-height);
+}
+
+.sleep-timer label span {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .sleep-timer select {
   appearance: none;
   background: var(--bg-elev-2);
-  border: 1px solid var(--border);
-  border-radius: 7px;
   color: var(--text);
-  padding: 4px 22px 4px 8px;
+  width: 88px;
+  padding: 0 22px 0 8px;
   font: inherit;
   cursor: pointer;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%), linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
@@ -436,15 +446,42 @@ html, body {
   background-repeat: no-repeat;
 }
 
+.mode-btn,
+.topbar-tools > .icon-btn,
+.shutdown-btn,
+.sleep-timer select {
+  height: var(--topbar-control-height);
+  border: 1px solid transparent;
+  border-radius: var(--topbar-radius);
+  line-height: var(--topbar-line-height);
+}
+
+.topbar-tools > .icon-btn {
+  width: var(--topbar-control-height);
+  padding: 0;
+}
+
+.sleep-timer select,
+.shutdown-btn {
+  border-color: var(--border);
+}
+
+.shutdown-btn:hover,
+.shutdown-btn:focus-visible {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 .grid-controls select,
 .tuner-filter select,
-.modal select {
+.modal select,
+.picture-panel select {
   appearance: none;
   background-color: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: 7px;
   color: var(--text);
-  min-height: 34px;
   padding: 6px 28px 6px 10px;
   font: inherit;
   font-size: 13px;
@@ -452,6 +489,26 @@ html, body {
   background-position: calc(100% - 12px) 50%, calc(100% - 8px) 50%;
   background-size: 4px 4px;
   background-repeat: no-repeat;
+}
+
+.grid-controls select,
+.modal select,
+.picture-panel select { min-height: 34px; }
+
+@media (forced-colors: active) {
+  .picture-panel select { appearance: auto; }
+}
+
+.sleep-timer select:enabled:hover,
+.grid-controls select:enabled:hover,
+.tuner-filter select:enabled:hover,
+.modal select:enabled:hover,
+.picture-panel select:enabled:hover,
+.modal input[type="number"]:enabled:hover,
+.eq-preset-row input[type="text"]:enabled:hover,
+.eq-station-controls input[type="search"]:enabled:hover {
+  background-color: var(--bg-elev-3);
+  border-color: var(--border-strong);
 }
 
 /* Number boxes in Settings match the dropdowns beside them. */
@@ -523,17 +580,11 @@ html, body {
 
 /* ============ Player bar ============ */
 
-/* The name and song column: its share of the room (1.1 to the seek bar's
-   1.5), and on wide windows at least 75vw - 760px (680 px at 1920 px wide,
-   1160 px at 2560 px, at most 1400 px), so a long song is not cut short
-   while the bar has room. Below about 1500 px the share is the larger, so
-   nothing changes there.
-   One row: every control sits on the same centre line. A capture's progress,
-   result or error is shown in that row too (.player-capture-status, beside
-   the Record button); standing hints are on the button's hover only. */
+/* Live titles use all remaining room. Recorded media shares it with the seek bar. */
 .player-bar {
   display: grid;
-  grid-template-columns: minmax(clamp(190px, 75vw - 760px, 1400px), 1.1fr) auto auto minmax(180px, 1.5fr) auto;
+  min-width: 0;
+  grid-template-columns: minmax(160px, 1.4fr) auto auto minmax(max-content, 1fr) auto;
   grid-template-areas: "meta controls actions progress volume";
   grid-template-rows: minmax(56px, auto);
   align-items: center;
@@ -544,6 +595,8 @@ html, body {
   z-index: 10;
   box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.28);
 }
+
+.player-primary { display: contents; }
 
 .player-meta {
   grid-area: meta;
@@ -750,12 +803,6 @@ html, body {
 
 #player-start-over { flex: none; }
 
-@media (min-width: 1001px) {
-  .player-bar:has(.player-resume-actions:not([hidden])) {
-    grid-template-columns: minmax(270px, 1.1fr) auto auto minmax(180px, 1.5fr) auto;
-  }
-}
-
 .player-btn {
   appearance: none;
   background: transparent;
@@ -794,24 +841,9 @@ html, body {
   min-width: 0;
 }
 
-/* Reserve the action row before capture starts. At 1280px it has room for
-   Record, a recording status, EQ and the Picture slot. */
-@media (min-width: 1001px) {
-  .player-bar:not(.is-capture-only) .player-actions {
-    width: clamp(330px, 75vw - 520px, 440px);
-  }
-
-  .player-bar:not(.is-capture-only) .player-actions:not(:has(> .player-action[data-state="completed"])) > :is(.player-action, .player-eq) {
-    order: -1;
-    flex-shrink: 0;
-  }
-
-  /* Let the grid fit both file actions and as much of the Saved text as it can. */
-  .player-bar:not(.is-capture-only) .player-actions:has(> .player-action[data-state="completed"]) {
-    width: auto;
-  }
+.player-bar:not(.is-capture-only) .player-actions:not(:has(> .player-action[data-state="completed"])) > :is(.player-action, .player-eq) {
+  order: -1;
 }
-
 .player-action,
 .player-action-secondary,
 .player-picture,
@@ -849,8 +881,10 @@ html, body {
 .player-picture:active,
 .player-eq:active:not(:disabled) { transform: scale(.97); }
 
+.player-action, .player-eq { flex-shrink: 0; }
 .player-picture-slot { display: flex; flex: none; }
-.player-picture-slot[inert] { visibility: hidden; }
+.player-picture-slot[inert] { display: none; }
+.player-picture { width: 64px; }
 
 .picture-panel {
   position: fixed;
@@ -876,6 +910,8 @@ html, body {
 .picture-panel p { color: var(--text-mute); }
 .picture-panel select, .picture-panel input { width: 100%; min-width: 0; }
 .picture-panel input { margin: 0; accent-color: var(--accent); }
+.picture-quality-row:not([hidden]) { display: flex; align-items: center; gap: 8px; }
+#picture-quality-now { flex: none; color: var(--text-mute); }
 .picture-panel button { grid-column: 1 / -1; justify-self: start; }
 .picture-panel #picture-feedback:empty { position: absolute; }
 
@@ -884,8 +920,12 @@ html, body {
 #app.video-large {
   --video-w: min(calc(100vw - 32px), clamp(480px, 40vw, 1400px));
 }
+#app[data-video-clearance="reserved"],
 #app.has-video {
   --video-clearance: calc(var(--video-height, 0px) + var(--video-gap));
+}
+#app[data-video-clearance="released"] {
+  --video-clearance: 0px;
 }
 .video-dock {
   position: absolute;
@@ -916,6 +956,24 @@ html, body {
 .video-dock video.video-fit-zoom-110 { object-view-box: inset(4.54545%); }
 .video-dock video.video-fit-zoom-125 { object-view-box: inset(10%); }
 .video-dock video.video-fit-zoom-133 { object-view-box: inset(12.40602%); }
+
+/* Keep the native controls and confine their scrim to the control row. */
+#video-el::-webkit-media-controls-panel {
+  background: linear-gradient(to top, rgb(0 0 0 / 45%), transparent 48px) !important;
+}
+#video-el:fullscreen::-webkit-media-controls-panel {
+  background: linear-gradient(to top, rgb(0 0 0 / 45%), transparent 64px) !important;
+}
+#video-el::-webkit-media-controls-play-button,
+#video-el::-webkit-media-controls-mute-button,
+#video-el::-webkit-media-controls-fullscreen-button,
+#video-el::-webkit-media-controls-overlay-play-button,
+#video-el::-webkit-media-controls-current-time-display,
+#video-el::-webkit-media-controls-time-remaining-display,
+#video-el::-webkit-media-controls-volume-slider,
+#video-el::-webkit-media-controls-timeline {
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 90%)) drop-shadow(0 1px 1px rgb(0 0 0 / 80%));
+}
 
 .video-dock video.is-live-video::-webkit-media-controls-timeline,
 .video-dock video.is-live-video::-webkit-media-controls-current-time-display,
@@ -1007,19 +1065,8 @@ html, body {
 }
 .player-eq.is-unavailable .player-eq-state { color: var(--danger); }
 
-/* Sound meter (lib/player-meter.js), after the action buttons. The same small canvas
-   exists twice, once for each bar layout; at most one is laid out, and only
-   a laid-out one listens to the sound.
-   - Wide bar (over 1000 px): #player-meter opens the progress cell. It shows
-     only while that cell is at least 330 px wide, so the seek slider keeps
-     120 px or more; the title, the buttons and the volume never move for it.
-     With less room it is simply not there.
-   - Stacked bar (1000 px and under): #player-meter-compact ends the actions
-     row. Its block wants 98 px but needs none (min-content 0) and gives way
-     before any button (flex-shrink 1000); squeezed below 98 px its canvas is
-     not shown. The -8px margin cancels the row's flex gap.
-   Nothing plays while the bar only shows a capture, so it is hidden then. */
-.player-meter { display: none; }
+/* Sound meter (lib/player-meter.js). Only a visible canvas listens to audio. */
+.player-meter { display: block; flex: none; }
 /* Switched off in Settings (the hidden attribute): neither copy is laid out at
    any width, whatever the layout rules below say. */
 .player-meter[hidden] { display: none !important; }
@@ -1042,32 +1089,6 @@ html, body {
     border-color: #b86a00;
     --meter-off-alpha: 0.2;
   }
-}
-.player-progress { container: player-progress / inline-size; }
-@media (min-width: 1001px) {
-  @container player-progress (min-width: 330px) {
-    #player-meter { display: block; flex: none; }
-    /* Beside the meter the time labels keep their full 44 px. */
-    .player-progress:has(> #player-meter:not([hidden])) .player-time { flex-shrink: 0; }
-  }
-}
-@media (max-width: 1000px) {
-  #player-meter-compact {
-    display: grid;
-    grid-template-columns: minmax(0, 98px);
-    flex: 0 1000 auto;
-    min-width: 0;
-    margin-left: -8px;
-    overflow: hidden;
-  }
-  .player-meter-well {
-    container-type: inline-size;
-    min-width: 0;
-  }
-  .player-meter-well > .player-meter-canvas { margin-left: 8px; }
-}
-@container (max-width: 97.98px) {
-  .player-meter-well > .player-meter-canvas { display: none; }
 }
 .player-bar.is-capture-only .player-meter { display: none !important; }
 
@@ -1137,7 +1158,9 @@ html, body {
 .player-seek {
   appearance: none;
   -webkit-appearance: none;
-  width: 100%;
+  flex: 1 1 96px;
+  width: 96px;
+  min-width: 96px;
   height: 24px;                     /* WCAG-friendly tap target */
   background: transparent;          /* track painted via ::-webkit-slider-runnable-track */
   outline: none;
@@ -1181,26 +1204,11 @@ html, body {
 /* A live stream has no length to move along (lib/player.js): the seek bar
    and the length are not shown, but keep their space so the bar stays put. */
 .player-seek.is-no-length, .player-time.is-no-length { visibility: hidden; }
-/* Wide bar, live media (no seek bar from the press of Play on; lib/player.js
-   marks the seek bar is-live): the progress cell keeps only the sound meter
-   and the time played, and the name column takes the rest, so a long song
-   title has room. The layout stays the same while the item plays; with a
-   seek bar the bar is laid out as before. */
-@media (min-width: 1001px) {
-  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) {
-    grid-template-columns: minmax(clamp(190px, 75vw - 760px, 1400px), 1.1fr) auto auto auto auto;
-  }
-  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) .player-progress {
-    container-type: normal;
-  }
-  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) #player-meter {
-    display: block;
-    flex: none;
-  }
-  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) .player-time { flex-shrink: 0; }
-  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) #player-seek,
-  .player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live) #player-dur { display: none; }
+.player-bar:not(.is-capture-only):has(:where(#player-seek.is-live)) {
+  grid-template-columns: minmax(160px, 1fr) auto auto auto auto;
 }
+.player-time { flex: none; }
+.player-progress:has(#player-seek.is-live) > :is(#player-seek, #player-dur) { display: none; }
 
 .player-volume {
   grid-area: volume;
@@ -1216,7 +1224,7 @@ html, body {
    two buttons are thin 16 px strips as wide as the column. The column is
    54 px tall, inside the wide bar's 56 px row and on its centre; the speaker
    (38 px) stays beside it, as four in a column would not fit comfortably.
-   The stacked bar (1000 px and under) gives the volume a 24 px row of its
+   The stacked bar gives the volume a 24 px row of its
    own, so there they lie in a row, down - level - up (see the media rule).
    The level is an LED readout in the sound meter's lit colour (--accent),
    three digits wide so 9, 83 and 100 take the same room, and centred on
@@ -1327,12 +1335,9 @@ html, body {
   text-shadow: none;
 }
 
-/* The same stepper in a row, in its markup order down - level - up (the
-   Tuner's Visualizer strength, modes/tuner.js): 24 px tall. */
+/* The Tuner's stepper reads left to right: down, level, up. */
 .volume-stepper.is-row {
   flex-direction: row;
-  height: 24px;
-  box-sizing: border-box;
 }
 .volume-stepper.is-row .volume-step { width: 18px; height: auto; }
 .volume-stepper.is-row .volume-led {
@@ -1661,6 +1666,8 @@ html, body {
 /* A link in a setting's description ("What this means") in the app's link
    color, like the links under Recording tools. */
 .modal-body .description a { color: var(--accent); }
+#settings-best-stream-hint ul { margin: 3px 0 0; padding-inline-start: 16px; }
+#settings-best-stream-hint li + li { margin-top: 3px; }
 /* A description line of its own under a row (the local port status) in the
    same size and color as the descriptions in the rows. */
 .modal-body p.description { font-size: 12px; color: var(--text-dim); }
@@ -1748,7 +1755,7 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   font: inherit;
   font-size: 13px;
 }
-.btn:hover { border-color: var(--border-strong); }
+.btn:hover:where(:not(:disabled)) { border-color: var(--border-strong); }
 .btn.btn-primary { background: var(--accent); color: var(--accent-contrast); border-color: transparent; }
 .btn.btn-danger { background: var(--danger); color: white; border-color: transparent; }
 /* Settings: a button keeps its size and stays on one line; the text beside
@@ -1873,76 +1880,30 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
 @media (max-width: 1000px) {
-  /* Rows 44 + 36 + 24 + 24, three 6 px gaps, 10 px above and below and the
-     1 px border (167 px), with 1 px to spare. */
-  :root { --player-h: 168px; }
-
   .topbar {
     grid-template-columns: 1fr auto;
     grid-template-areas:
       "brand tools"
       "modes modes";
-    gap: 8px 12px;
     padding: 10px 12px;
   }
 
   .brand { grid-area: brand; }
-  .topbar-tools { grid-area: tools; justify-self: end; }
-  .modes {
-    grid-area: modes;
-    justify-self: stretch;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .modes::-webkit-scrollbar { display: none; }
+  .topbar-tools { grid-area: tools; }
+  .modes { grid-area: modes; }
   .mode-btn {
-    flex: 1 0 auto;
     min-width: 82px;
-    padding: 8px 12px;
+    padding: 0 12px;
   }
 
-  .player-bar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "meta controls"
-      "actions actions"
-      "progress progress"
-      "volume volume";
-    grid-template-rows: 44px 36px 24px 24px;
-    gap: 6px 12px;
-    padding: 10px 12px;
-  }
-  .player-actions { justify-content: flex-end; }
-  .player-volume { justify-content: flex-end; }
-  /* The volume's own 24 px row: down - level - up in a row (the markup is
-     up, level, down, so the column reads top to bottom). */
-  .player-volume .volume-stepper { flex-direction: row-reverse; height: 24px; box-sizing: border-box; }
-  .player-volume .volume-step { width: 18px; height: auto; }
-  .player-volume .volume-led {
-    height: auto;
-    border-top: 0;
-    border-bottom: 0;
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-  }
-  .player-art-box {
-    width: 44px;
-    height: 44px;
-    flex-basis: 44px;
-  }
-  .player-art-initials { font-size: 15px; }
+
 }
 
 @media (max-width: 560px) {
 
   .brand-name { font-size: 13px; }
-  .topbar-tools { gap: 4px; }
+  .sleep-timer label { min-width: 0; }
   .sleep-timer label span { display: none; }
-  .sleep-timer select {
-    max-width: 74px;
-    padding-left: 7px;
-    padding-right: 20px;
-  }
   .mode-btn {
     min-width: 78px;
     font-size: 12px;
@@ -1950,7 +1911,6 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .player-title { font-size: 13px; }
   .player-source { font-size: 11px; }
   .player-source.is-song { font-size: 13px; }
-  .player-actions { justify-content: stretch; }
   .player-action-secondary { max-width: 112px; }
   .player-eq { flex: none; }
   .player-capture-status { font-size: 10px; }
@@ -1962,37 +1922,55 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .runtime-card-footer { align-items: stretch; flex-direction: column; }
 }
 
-/* Stop recording: 17px icon + 6px gap + 81px text + 20px padding + 2px borders. */
-@media (width < 1001px), (width > 1080px) {
-  .player-action { flex: none; width: 126px; }
-  .player-action-label { overflow: hidden; text-overflow: ellipsis; }
-}
+/* player-bar-fit.js measures these same controls at their minimum one-row width. */
+.player-action { flex: none; width: 126px; }
+.player-action-label { overflow: hidden; text-overflow: ellipsis; }
+.player-volume > .volume-stepper { width: 30px; }
+.player-bar:is([data-fit="meter"], [data-fit="time"], [data-fit="record"], [data-fit="eq"], [data-fit="stack"]) .player-meter,
+.player-bar:is([data-fit="time"], [data-fit="record"], [data-fit="eq"], [data-fit="stack"]) .player-time,
+.player-bar:is([data-fit="record"], [data-fit="eq"], [data-fit="stack"]) .player-action-label,
+.player-bar:is([data-fit="eq"], [data-fit="stack"]) .player-eq-state { display: none; }
+.player-bar:is([data-fit="record"], [data-fit="eq"], [data-fit="stack"]) .player-action,
+.player-bar:is([data-fit="eq"], [data-fit="stack"]) .player-eq { width: 38px; padding: 0; }
 
-@media (max-width: 1080px) and (min-width: 1001px) {
-  .player-action-label { display: none; }
-  .player-action { width: 38px; padding: 0; }
-  .player-eq-state { display: none; }
-  .player-eq { min-width: 38px; width: 38px; padding: 0; }
+/* With no live progress controls, remove that grid track and its gap. */
+.player-bar:has(:where(#player-seek.is-live)):is([data-fit="time"], [data-fit="record"], [data-fit="eq"]) {
+  grid-template-columns: minmax(160px, 1fr) auto auto auto;
+  grid-template-areas: "meta controls actions volume";
 }
+.player-bar:has(:where(#player-seek.is-live)):is([data-fit="time"], [data-fit="record"], [data-fit="eq"]) .player-progress { display: none; }
 
-/* A failed multipart item can show Try next alongside both part buttons. */
-@media (min-width: 1001px) and (max-width: 1100px) {
-  #app.has-player:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) + #modal-host,
-  #app.has-player:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) {
-    --player-h: 120px;
-  }
-  .player-bar:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) {
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 1fr) auto;
-    grid-template-areas:
-      "meta controls controls"
-      "actions progress volume";
-    grid-template-rows: 56px 40px;
-    row-gap: 6px;
-  }
-  .player-bar:has(.player-controls:has(#player-next-broken:not([hidden])) > .player-part-slot:not([hidden])) .player-actions {
-    width: auto;
-  }
+/* Intrinsic width includes the currently visible capture, part and Picture
+   buttons. Only the title track needs an explicit measuring width. */
+#player-bar[data-measuring] {
+  width: max-content;
+  grid-template-columns: 160px repeat(4, max-content);
 }
+#player-bar[data-measuring]:has(#player-seek.is-live):is([data-fit="time"], [data-fit="record"], [data-fit="eq"]) {
+  grid-template-columns: 160px repeat(3, max-content);
+}
+#app.has-player:has(.player-bar[data-fit="stack"]),
+#app.has-player:has(.player-bar[data-fit="stack"]) + #modal-host { --player-h: 120px; }
+#player-bar[data-fit="stack"] {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-areas: "primary primary primary" "actions progress volume";
+  grid-template-rows: 56px 36px;
+  gap: 8px;
+}
+.player-bar[data-fit="stack"] .player-primary { display: flex; }
+.player-bar[data-fit="stack"] .player-actions { overflow-x: auto; }
+.player-bar[data-fit="stack"] .volume-stepper { width: auto; flex-direction: row-reverse; height: 24px; }
+.player-bar[data-fit="stack"] .volume-step { width: 18px; height: auto; }
+.player-bar[data-fit="stack"] .volume-led { height: auto; }
+
+.player-primary {
+  grid-area: primary;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.player-primary > .player-meta { flex: 1; }
+.player-primary > .player-controls { flex: none; }
 
 #app.has-capture-only + #modal-host,
 #app.has-capture-only { --player-h: 72px; }
@@ -2005,6 +1983,7 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   gap: 12px;
 }
 .player-bar.is-capture-only .player-capture-status { max-width: 360px; }
+.player-bar.is-capture-only .player-primary,
 .player-bar.is-capture-only .player-meta,
 .player-bar.is-capture-only .player-controls,
 .player-bar.is-capture-only .player-progress,

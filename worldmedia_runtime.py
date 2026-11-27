@@ -27,6 +27,7 @@ PROFILE_TRANSFER_KEYS = frozenset({
     "worldmedia.jobs.v1",
     "worldmedia.eq.v1",
     "worldmedia.eq-extra.v1",
+    "worldmedia.settings-extra.v1",
     "worldmedia.picture.v1",
     "worldmedia.favgroups.v1",  # Favorites categories (src/lib/favorite-groups.js)
     "worldmedia.favnames.v1",  # The user's names for favorites (src/lib/favorite-names.js)

@@ -329,7 +329,7 @@ test('detail panel: a picture still on its way, or replaced by remote artwork, i
 test('detail panel finds its picture to swap even when it carries the station-picture class', async () => {
   // In a browser the class name of a station picture is "detail-thumb is-station-image".
   const detail = await read('src/modes/library/detail.js');
-  assert.match(detail, /String\(node\.className \|\| ''\)\.split\(\/\\s\+\/\)\.includes\('detail-thumb'\)/);
+  assert.match(detail, /detail-picture-drop\|detail-thumb/);
   assert.doesNotMatch(detail, /className === 'detail-thumb'/);
 });
 

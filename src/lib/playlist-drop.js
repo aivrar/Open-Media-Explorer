@@ -6,7 +6,7 @@
  * kept inside the app: a .m3u/.m3u8/.pls/.xspf/.json/.csv file is imported through the same path as
  * Library > My Playlists > Import playlist, wherever it is dropped. A picture
  * goes to `onPicture` with the element it was dropped on (the Library gives
- * it to the station whose card that is, or says where to drop it; see
+ * it to the saved station at the drop target; see
  * modes/library/picture-drop.js). Anything else is ignored with a short
  * message. A favorite card dragged to a new place carries no files, so it is
  * never taken for either.
@@ -17,7 +17,9 @@ const PICTURE_NAME = /\.(png|jpe?g|jfif|webp|gif|svgz?|bmp|ico|avif|tiff?|heic)$
 const HINT_TEXT = 'Drop a playlist file (.m3u, .m3u8, .pls, .xspf, .json or .csv) to import it into My Playlists';
 const REJECT_TEXT = 'Only .m3u, .m3u8, .pls, .xspf, .json or .csv playlist files can be dropped here.';
 const REJECT_SHOW_MS = 3500;
-const RESULT_SHOW_MS = 5000;
+const PICTURE_REJECT_SHOW_MS = 6000;
+const PICTURE_REJECT_LONG_SHOW_MS = 8000;
+const PICTURE_TARGET_TEXT = "Drop to set this station's picture";
 
 /** True when a drag carries files from outside the page (not text or links). */
 export function carriesFiles(dataTransfer) {
@@ -58,7 +60,7 @@ export function pickPictureFile(files) {
 }
 
 export function initPlaylistDrop({
-  onPlaylist, onPicture = null, describePictureDrop = null,
+  onPlaylist, onPicture = null, getPictureTarget = null,
   target = globalThis.window, documentImpl = globalThis.document,
 } = {}) {
   if (!target?.addEventListener || !documentImpl?.body) return () => {};
@@ -68,9 +70,30 @@ export function initPlaylistDrop({
   hint.setAttribute('role', 'status');
   hint.setAttribute('aria-live', 'polite');
   documentImpl.body.appendChild(hint);
+  const announcement = onPicture ? documentImpl.createElement('span') : null;
+  if (announcement) {
+    announcement.className = 'sr-only';
+    announcement.setAttribute('role', 'status');
+    announcement.setAttribute('aria-live', 'polite');
+    documentImpl.body.appendChild(announcement);
+  }
   let hideTimer = null;
+  let pictureTarget = null;
+  let disposed = false;
+  let pictureRejected = false;
+  let dropGeneration = 0;
+
+  const highlight = (next) => {
+    if (next === pictureTarget) return;
+    pictureTarget?.classList.remove('is-picture-drop-target');
+    pictureTarget?.removeAttribute('data-picture-drop-label');
+    pictureTarget = next;
+    pictureTarget?.setAttribute('data-picture-drop-label', PICTURE_TARGET_TEXT);
+    pictureTarget?.classList.add('is-picture-drop-target');
+  };
 
   const show = (text, rejected = false) => {
+    if (pictureRejected) hide();
     clearTimeout(hideTimer);
     hideTimer = null;
     hint.textContent = text;
@@ -81,6 +104,11 @@ export function initPlaylistDrop({
     clearTimeout(hideTimer);
     hideTimer = null;
     hint.hidden = true;
+    if (pictureRejected) {
+      pictureRejected = false;
+      hint.removeAttribute('aria-hidden');
+      announcement.textContent = '';
+    }
   };
   const showFor = (text, rejected, ms) => {
     show(text, rejected);
@@ -89,36 +117,60 @@ export function initPlaylistDrop({
 
   const onDragOver = (event) => {
     if (!carriesFiles(event.dataTransfer)) return;
+    dropGeneration += 1;
     // Required for the drop event to fire at all, and stops the default
     // "open this file" behaviour.
     event.preventDefault();
     try { event.dataTransfer.dropEffect = 'copy'; } catch (_) {}
-    // A picture: say where it goes (or where to drop it) under the pointer.
-    if (onPicture && describePictureDrop && carriesPicture(event.dataTransfer)) {
-      const text = describePictureDrop(event.target);
-      if (text && (hint.hidden || hint.textContent !== text || hint.classList.contains('is-rejected'))) show(text);
+    if (onPicture && carriesPicture(event.dataTransfer)) {
+      const next = getPictureTarget?.(event.target) || null;
+      highlight(next);
+      hide();
+      try { event.dataTransfer.dropEffect = next ? 'copy' : 'none'; } catch (_) {}
       return;
     }
+    highlight(null);
     if (hint.hidden || hint.classList.contains('is-rejected') || hint.textContent !== HINT_TEXT) show(HINT_TEXT);
   };
   const onDragLeave = (event) => {
     // relatedTarget is null only when the pointer leaves the window.
-    if (!event.relatedTarget && !hint.classList.contains('is-rejected')) hide();
+    if (!event.relatedTarget) {
+      highlight(null);
+      if (!hint.classList.contains('is-rejected')) hide();
+    }
   };
-  const onDrop = (event) => {
+  const onPointerDown = () => {
+    if (pictureRejected) hide();
+  };
+  const onKeyDown = (event) => {
+    if (event.key !== 'Escape') return;
+    dropGeneration += 1;
+    if (pictureRejected) hide();
+  };
+  const onDrop = async (event) => {
     if (!carriesFiles(event.dataTransfer)) return;
     event.preventDefault();
+    highlight(null);
+    const generation = ++dropGeneration;
     const file = pickPlaylistFile(event.dataTransfer.files);
     const picture = !file && onPicture ? pickPictureFile(event.dataTransfer.files) : null;
     if (picture) {
       hide();
-      const dropTarget = event.target;
-      Promise.resolve()
-        .then(() => onPicture(picture, dropTarget))
-        .then((result) => {
-          if (result?.text) showFor(result.text, result.rejected === true, RESULT_SHOW_MS);
-        })
-        .catch((error) => console.warn('Dropped picture failed:', error));
+      announcement.textContent = '';
+      try {
+        const result = await onPicture(picture, event.target);
+        if (disposed || !result?.text) return;
+        if (result.rejected) {
+          if (generation !== dropGeneration) return;
+          const duration = result.text.length > 80 ? PICTURE_REJECT_LONG_SHOW_MS : PICTURE_REJECT_SHOW_MS;
+          showFor(result.text, true, duration);
+          pictureRejected = true;
+          hint.setAttribute('aria-hidden', 'true');
+          announcement.textContent = result.text;
+        } else if (!pictureRejected) announcement.textContent = result.text;
+      } catch (error) {
+        console.warn('Dropped picture failed:', error);
+      }
       return;
     }
     if (!file) {
@@ -134,8 +186,19 @@ export function initPlaylistDrop({
   target.addEventListener('dragover', onDragOver);
   target.addEventListener('dragleave', onDragLeave);
   target.addEventListener('drop', onDrop);
+  if (onPicture) {
+    target.addEventListener('pointerdown', onPointerDown);
+    target.addEventListener('keydown', onKeyDown, true);
+  }
   return () => {
+    disposed = true;
     hide();
+    highlight(null);
+    announcement?.remove?.();
+    if (onPicture) {
+      target.removeEventListener('pointerdown', onPointerDown);
+      target.removeEventListener('keydown', onKeyDown, true);
+    }
     target.removeEventListener('dragover', onDragOver);
     target.removeEventListener('dragleave', onDragLeave);
     target.removeEventListener('drop', onDrop);

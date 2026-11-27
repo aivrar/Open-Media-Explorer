@@ -359,35 +359,28 @@ separately, and they keep the way the picture looks, not a station.
 ## The Visualizer behind the Tuner
 
 **Settings > Appearance > Show the Visualizer behind the Tuner** is off by
-default. When it is on, the Visualizer is drawn faintly behind the Tuner while
-sound plays. It starts only after you have accepted the notice about flashing in
-the Visualizer tab, and it stops a few seconds after the sound stops and when
-you leave the Tuner. Only Light scenes are drawn there: if the scene you chose
-in the Visualizer is not Light, Plasma is drawn instead, and your choice is not
-changed. With the shuffle on, it picks Light scenes only. There are no overlays
-and no effects, the picture is drawn at Low quality and at most 30 frames a
-second, and the flash limiter still applies.
+default. When it is on, the Visualizer is drawn behind the Tuner during
+music, TV and video playback. Spoken-word audio, such as talk radio,
+audio podcasts and audiobooks, is skipped when identified. Accept the
+flashing notice in the Visualizer tab first.
 
-How strongly it shows is set with the **Visualizer:** control at the right of the
-Tuner's top bar (a down button, a number and an up button), from 0 to 100. The
-number is the picture's opacity in percent: the default, 8, is the faint look it
-had before this control existed, and 100 shows it at full strength. 0 is the setting off, and
-pressing up from 0 turns it on; the switch in Settings and the control follow
-each other, and turning the switch off in Settings keeps the level. Only
-crossing 0 starts or stops the picture; any other level only changes how
-strongly it shows. The notice, the flash limiter, the Light scenes, Low quality
-and the 30 frames a second are the same at every level, and nothing is drawn
-before the notice has been accepted. The text on the Tuner is kept readable
-(4.5:1 or more against the picture, in every theme) up to the default level;
-above it the picture can make text harder to read. Processor use measured the
-same at 8 and at 100.
+The background shares the Visualizer's scene, look, effects, overlays and
+quality settings. You can switch between the Visualizer tab and the Tuner
+without restarting the scene. The background draws at up to 30 frames a
+second and uses the same flash limiter. It stops a few seconds after
+playback stops.
+
+The **Visualizer:** control in the Tuner bar sets the background opacity
+from 0 to 100. The default, 8, is faint. Set it to 0 to turn the background
+off. Press up from 0 to turn it on. Turning it off in Settings keeps the
+level for the next time you turn it on.
 
 ## Keep it light on a weak computer
 
 The Visualizer costs nothing while its tab is closed, apart from the picture
-behind the Tuner if you turned that on. Leaving the tab stops every timer and
-frame, drops the sound subscription and gives the graphics back. While the tab
-is open, these choices make it lighter:
+behind the Tuner if you turned that on. When the Visualizer closes, it
+stops timers and frames, drops the sound subscription and releases the
+graphics resources. These choices reduce the work while it runs:
 
 - Set **Quality** to Low.
 - Set **Frame rate** to 15 or 30.

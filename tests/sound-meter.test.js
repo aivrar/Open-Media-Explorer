@@ -959,43 +959,35 @@ test('the setting defaults to on and is stored inside the saved settings, never 
   assert.match(main, /subscribeSettings: \(fn\) => subscribe\('settings-change', fn\)/);
 });
 
-test('both meter blocks are decorative, after the action buttons, and never take focus', async () => {
+test('one decorative meter follows the actions in the progress group', async () => {
   const html = await read('src/index.html');
   const actions = html.match(/<div class="player-actions"[\s\S]*?\n {8}<\/div>/)[0];
-  const eq = actions.match(/<button id="player-eq"[^>]*>[\s\S]*?<\/button>/)[0];
-  assert.match(actions.slice(actions.indexOf(eq) + eq.length), /^\s+<span id="player-picture-slot"[^>]*>\s+<button id="player-picture"[^>]*>Picture<\/button>\s+<\/span>\s+<div id="player-meter-compact" class="player-meter" data-player-meter aria-hidden="true">/);
+  assert.doesNotMatch(actions, /data-player-meter/);
   const progress = html.match(/<div class="player-progress">[\s\S]*?<\/div>\s+<span id="player-time"/)[0];
   assert.match(progress, /<div id="player-meter" class="player-meter" data-player-meter aria-hidden="true">\s+<canvas class="player-meter-canvas" width="90" height="36"><\/canvas>/);
-  assert.equal((html.match(/data-player-meter/g) || []).length, 2);
-  assert.doesNotMatch(html.match(/<div id="player-meter[\s\S]*?<\/div>\s*<\/div>/)[0], /tabindex|role=/);
+  assert.equal((html.match(/data-player-meter/g) || []).length, 1);
+  assert.doesNotMatch(progress, /tabindex|role=/);
 });
 
 test('the bar keeps its height and controls: the meter only uses spare room', async () => {
   const css = await read('src/styles/base.css');
   const block = css.slice(css.indexOf('/* Sound meter (lib/player-meter.js)'), css.indexOf('.player-capture-status {'));
-  assert.match(block, /\.player-meter \{ display: none; \}/);
+  assert.match(block, /\.player-meter \{ display: block; flex: none; \}/);
   assert.match(block, /\.player-meter-canvas \{\s+display: block;\s+width: 90px;\s+height: 36px;/);
-  // Wide bar: inside the progress cell, only when that cell has 330 px.
-  assert.match(block, /\.player-progress \{ container: player-progress \/ inline-size; \}/);
-  assert.match(block, /@media \(min-width: 1001px\) \{\s+@container player-progress \(min-width: 330px\) \{\s+#player-meter \{ display: block; flex: none; \}/);
-  // Stacked bar: after the action buttons, needs no width, gives way first, hides when squeezed.
-  // (98 px: the 8 px gap the -8px margin cancels, then the 90 px canvas.)
-  assert.match(block, /@media \(max-width: 1000px\) \{\s+#player-meter-compact \{\s+display: grid;\s+grid-template-columns: minmax\(0, 98px\);\s+flex: 0 1000 auto;\s+min-width: 0;\s+margin-left: -8px;\s+overflow: hidden;/);
-  assert.match(block, /\.player-meter-well > \.player-meter-canvas \{ margin-left: 8px; \}/);
-  assert.match(block, /@container \(max-width: 97\.98px\) \{\s+\.player-meter-well > \.player-meter-canvas \{ display: none; \}/);
+  assert.match(css, /\.player-bar:is\(\[data-fit="meter"\][^\n]*\.player-meter,/);
   assert.match(block, /\.player-bar\.is-capture-only \.player-meter \{ display: none !important; \}/);
-  // Its rows are untouched: 36 px fits the 36 px actions row and the 56 px row.
+  // The meter fits the bar's normal 56px track.
   assert.match(css, /grid-template-rows: minmax\(56px, auto\);/);
-  assert.match(css, /grid-template-rows: 44px 36px 24px 24px;/);
+  assert.match(css, /grid-template-rows: 56px 36px;/);
   assert.match(css, /--player-h: 74px;/);
-  // The flex gap the compact meter's margin cancels is the actions row's.
+  // Media actions retain the bar's 8px spacing.
   assert.match(css, /\.player-actions \{\s+grid-area: actions;\s+display: flex;\s+align-items: center;\s+gap: 8px;/);
   // Colours come from the theme tokens; Light gets a darker hot colour.
   assert.match(block, /color: var\(--accent\);\s+border: 0 solid var\(--warm\);/);
   assert.match(block, /:root\[data-theme='light'\] \.player-meter-canvas \{\s+border-color: #b86a00;/);
 });
 
-test('switched off, neither meter copy is laid out at any width', async () => {
+test('switched off, the meter stays hidden at every width', async () => {
   const css = await read('src/styles/base.css');
   // The hidden attribute wins over every layout rule for the meter blocks.
   assert.match(css, /\n\[hidden\] \{ display: none !important; \}/);
@@ -1005,18 +997,15 @@ test('switched off, neither meter copy is laid out at any width', async () => {
   for (const match of block.matchAll(/display:\s*([^;]+);/g)) {
     if (/!important/.test(match[1])) assert.match(match[1], /^none\s*!important$/);
   }
-  // Both copies carry the attribute the setting toggles, and the meter
-  // toggles exactly that attribute on each block.
   const html = await read('src/index.html');
   assert.match(html, /<div id="player-meter" class="player-meter" data-player-meter/);
-  assert.match(html, /<div id="player-meter-compact" class="player-meter" data-player-meter/);
   const roots = [{ hidden: false }, { hidden: false }];
   const meters = roots.map((root) => createPlayerMeter({ root, canvas: fakeCanvas(), signal: fakeSignal(), win: {}, doc: null }));
   meters.forEach((meter) => meter.setEnabled(false));
   assert.ok(roots.every((root) => root.hidden === true));
   // The seek's full width depends only on the meter being displayed: the
   // time labels are pinned only while a visible meter is in the cell.
-  assert.match(block, /\.player-progress:has\(> #player-meter:not\(\[hidden\]\)\) \.player-time \{ flex-shrink: 0; \}/);
+  assert.match(css, /\.player-time \{ flex: none; \}/);
 });
 
 test('new files are ASCII only', async () => {

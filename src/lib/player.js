@@ -30,8 +30,9 @@ import { createAudioSignal } from './audio-signal.js';
 import { bindVolumeStepper, clampVolume, elementVolumeChange } from './volume-stepper.js';
 import { getEffectiveEq, loadEqState } from './eq-store.js';
 import { createDashPlayback } from './dash-player.js';
+import { createHlsVideoQuality, createVideoQuality, observePictureSize, videoQualityLevel } from './video-quality.js';
 import {
-  createHlsRecoveryController, hlsPlaybackConfig, stableHlsLevelOrder,
+  createHlsRecoveryController, hlsPlaybackConfig,
   selectHlsPlaybackEngine, waitForHlsStartupBuffer,
 } from './hls-recovery.js';
 import { isContentAllowed } from './content-rating.js';
@@ -59,6 +60,9 @@ export const PLAYER_SILENT_CHANGE = 'player-silent-change';
 let Hls = null;
 let hlsInstance = null;
 let hlsRecoverySession = null;
+let hlsVideoQuality = null;
+let videoQuality = null;
+let stopObservingPictureSize = null;
 let dashSession = null;
 let currentItem = null;
 let partPlayback = null;
@@ -423,6 +427,7 @@ async function loadHlsIfNeeded() {
 function syncVideoSize() {
   const large = getState().settings.videoSize === 'large';
   document.getElementById('app')?.classList.toggle('video-large', large);
+  videoQuality?.sync();
   const button = document.getElementById('video-size-btn');
   if (!button) return;
   const label = large ? 'Smaller video' : 'Larger video';
@@ -441,10 +446,55 @@ function bindVideoSizeButton() {
 }
 
 let setPictureItem = () => {};
+let videoClearanceTimer = null;
+
+function setVideoClearance(state) {
+  clearTimeout(videoClearanceTimer);
+  videoClearanceTimer = null;
+  const app = $('app');
+  if (!app) return;
+  if (state) app.dataset.videoClearance = state;
+  else delete app.dataset.videoClearance;
+}
+
+function releaseVideoClearance() {
+  if (videoClearanceTimer !== null) setVideoClearance('released');
+}
+
+function reserveVideoClearance(item) {
+  const expected = expectsPicture(item);
+  if (expected && videoClearanceTimer !== null) return;
+  if (!expected || elements.video.hidden || !hasPicture(elements.video)) {
+    setVideoClearance();
+    return;
+  }
+  setVideoClearance('reserved');
+  videoClearanceTimer = setTimeout(releaseVideoClearance, START_FAILOVER_MS);
+}
+
+function syncVideoClearance(height) {
+  const app = $('app');
+  const video = elements.video;
+  if (!app?.dataset.videoClearance || getActiveEl() !== video || !(video.readyState >= 2)) return;
+  if (!hasPicture(video)) {
+    releaseVideoClearance();
+    return;
+  }
+  if (video.hidden) return;
+  if (!document.fullscreenElement) {
+    // The first real picture can have the same box size as the loading box,
+    // so there may be no new ResizeObserver notification.
+    const measuredHeight = height ?? video.getBoundingClientRect().height;
+    if (!(measuredHeight > 0)) return;
+    app.style.setProperty('--video-height', `${measuredHeight}px`);
+  }
+  setVideoClearance();
+}
 
 function syncVideoPicture() {
   const pictureStream = getActiveEl() === elements.video;
   if (pictureStream && hasPicture(elements.video)) showVideo(true);
+  syncVideoClearance();
 }
 
 // A visible box counts once, even if metadata or a fullscreen change
@@ -477,15 +527,20 @@ function bindVideoPicture() {
     }
   });
   elements.video.addEventListener?.('loadedmetadata', syncVideoPicture);
+  elements.video.addEventListener?.('loadeddata', () => syncVideoClearance());
   elements.video.addEventListener?.('resize', syncVideoPicture);
   const app = $('app');
-  if (app && typeof ResizeObserver === 'function') {
-    new ResizeObserver(([entry]) => {
+  stopObservingPictureSize?.();
+  stopObservingPictureSize = observePictureSize(elements.video, videoQuality.sync, {
+    onObserved: ([entry]) => {
       // Keep the windowed height so the page keeps its scroll position.
-      if (document.fullscreenElement) return;
-      app.style.setProperty('--video-height', `${entry.borderBoxSize[0].blockSize}px`);
-    }).observe(elements.video, { box: 'border-box' });
-  }
+      if (document.fullscreenElement || !app) return;
+      const height = entry.borderBoxSize[0].blockSize;
+      // Keep the old height through the hidden and provisional video boxes.
+      if (app.dataset.videoClearance) syncVideoClearance(height);
+      else app.style.setProperty('--video-height', `${height}px`);
+    },
+  });
 }
 
 function noteHlsAudio() {
@@ -510,6 +565,7 @@ function showVideo(show) {
   $('app')?.classList.toggle('has-video', !!show);
   if (show) reserveTunerVideoSpace();
   else tunerVideoHandled = false;
+  if (show) videoQuality?.sync();
 }
 
 function getActiveEl() {
@@ -526,6 +582,8 @@ function setMediaPriority(active) {
 function destroyHls() {
   hlsRecoverySession?.destroy();
   hlsRecoverySession = null;
+  if (hlsVideoQuality) videoQuality?.clearSource(hlsVideoQuality);
+  hlsVideoQuality = null;
   if (hlsInstance) {
     try { hlsInstance.destroy(); } catch (_) {}
     hlsInstance = null;
@@ -796,6 +854,7 @@ function reportUnplayable(item) {
 }
 
 function showBrokenState(msg, { showNext = true, retry = false } = {}) {
+  releaseVideoClearance();
   stallWatchdog.stop();
   setTitleLine(shownTitle(currentItem) || 'Stream unavailable');
   // While a reconnect episode runs, a failed attempt keeps saying so.
@@ -980,6 +1039,7 @@ function abandonReconnectAttempt() {
   clearMedia(elements.video);
   activePlaybackRelayed = false;
   showVideo(false);
+  releaseVideoClearance();
   syncPlaybackUi('reconnect-abandoned');
 }
 
@@ -1179,6 +1239,7 @@ function bindMediaEvents(el, generation) {
     syncPlaybackUi('play');
   });
   const onPlaying = owned(() => {
+    if (el === elements.video) syncVideoClearance();
     if (partPlayback) partPlayback.started = true;
     setMediaPriority(true);
     // Listed and Auto: the first `playing` of this start (start-failover.js).
@@ -1230,9 +1291,16 @@ function bindMediaEvents(el, generation) {
     // The play() promise is the authoritative result while an attempt is
     // pending. Some streams emit an interim error while negotiating a redirect
     // or codec; pausing here aborts an attempt that may otherwise succeed.
-    if (pendingPlay?.element === el) return;
     if (hlsRecoverySession?.isRecovering) return;
-    failPlayback('Playback error');
+    if ((el.error || pendingPlay?.element !== el) && el === elements.video) {
+      if (dashSession?.recoverFixed()) return;
+      if (hlsVideoQuality && !hlsInstance.autoLevelEnabled) {
+        hlsVideoQuality.resumeAuto();
+        hlsRecoverySession?.handleFatal({ fatal: true, type: 'mediaError' });
+        return;
+      }
+    }
+    if (pendingPlay?.element !== el) failPlayback('Playback error');
   });
   const bindings = [
     ['timeupdate', onTimeUpdate],
@@ -1370,6 +1438,7 @@ export function syncPlayerStationImage() {
  *  station picture first, then the item's relay artwork. A station picture
  *  that will not load falls back to the item's own artwork. */
 function setPlayerArtwork(item) {
+  elements.art.dataset.stationId = item.id;
   const artworkToken = ++metadataArtworkToken;
   playerStationImage = stationImageSourceFor(item);
   const current = () => artworkToken === metadataArtworkToken && currentItem === item;
@@ -1511,7 +1580,7 @@ async function resumeEqualizerFromGesture() {
   return result.processed;
 }
 
-async function attachStream(item, token, { relayAvailable = false } = {}) {
+async function attachStream(item, token, { relayAvailable = false, dashStart } = {}) {
   invalidatePlaybackOwnership();
   destroyHls();
   destroyDash();
@@ -1558,9 +1627,10 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       });
       if (engine === 'hlsjs') {
           const instance = new HlsLib(hlsPlaybackConfig());
-          let stableLevels = [];
-          let stableLevelPosition = -1;
+          const qualitySource = createHlsVideoQuality(instance);
+          hlsVideoQuality = qualitySource;
           hlsInstance = instance;
+          videoQuality?.setSource(qualitySource);
           hlsRecoverySession = createHlsRecoveryController({
             hls: instance,
             errorTypes: HlsLib.ErrorTypes,
@@ -1574,23 +1644,8 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
               if (!playback.owns(target, generation)) return;
               attemptMediaPlay(target).catch(() => {});
             },
-            selectLowerRendition: () => {
-              if (stableLevelPosition < 0 || stableLevelPosition + 1 >= stableLevels.length) return false;
-              stableLevelPosition++;
-              const lowerLevel = stableLevels[stableLevelPosition];
-              // Keep automatic throughput selection enabled beneath a ceiling
-              // that only moves downward during this channel session.
-              // nextAutoLevel forces one lower fragment and then resets itself;
-              // unlike nextLevel it does not switch hls.js into manual mode.
-              // Only force it when the loaded rendition is actually higher;
-              // ABR may already have chosen an even safer lower level.
-              instance.autoLevelCapping = lowerLevel;
-              const currentLevel = Number(instance.currentLevel);
-              if (Number.isInteger(currentLevel) && currentLevel > lowerLevel) {
-                instance.nextAutoLevel = lowerLevel;
-              }
-              return true;
-            },
+            selectLowerRendition: qualitySource.lower,
+            fallBackToAuto: () => videoQuality?.fallBack(qualitySource),
             onTerminal: (message) => failPlayback(message, { showNext: true }),
           });
           instance.on(HlsLib.Events.LEVEL_LOADED, (_evt, data) => {
@@ -1600,32 +1655,37 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
               syncPlaybackUi('hls-delivery');
             }
           });
+          instance.on(HlsLib.Events.FRAG_BUFFERED, (_evt, { frag }) => {
+            if (frag.type === 'main' && playback.owns(target, generation)) {
+              qualitySource.fragmentReady(frag.level);
+            }
+          });
           instance.on(HlsLib.Events.LEVEL_SWITCHED, (_evt, data) => {
             if (stale() || !playback.owns(target, generation) || !streamAddressesCurrent()) return;
+            qualitySource.fragmentReady(data.level);
             const level = instance.levels[data.level];
             const videoTrack = playSession.hasVideoTrack ?? expectsPicture(item);
             if (videoTrack && playSession.hlsLevel !== level) playedStreamNote.renditionChanged();
             playSession.hlsLevel = level;
+            videoQuality?.rendered(qualitySource, level);
             if (!videoTrack) noteHlsAudio();
           });
-          instance.on(HlsLib.Events.MANIFEST_PARSED, (_evt, data) => {
+          const refreshLevels = () => {
             if (!playback.owns(target, generation)) return;
-            stableLevels = stableHlsLevelOrder(data?.levels || instance.levels, 720);
-            stableLevelPosition = stableLevels.length ? 0 : -1;
-            if (stableLevelPosition >= 0) {
-              // Cap automatic ABR at the best declared rendition no taller
-              // than 720p. Beneath that ceiling hls.js uses real fragment
-              // throughput and buffer starvation to choose a sustainable
-              // level; repeated stalls can lower the ceiling but never raise
-              // it again during this viewing session.
-              instance.autoLevelCapping = stableLevels[stableLevelPosition];
-            }
+            videoQuality?.setLevels(qualitySource, instance.levels
+              .map((level, index) => videoQualityLevel(level, index)));
+          };
+          instance.on(HlsLib.Events.MANIFEST_PARSED, () => {
+            if (!playback.owns(target, generation)) return;
+            refreshLevels();
             instance.startLoad(-1);
           });
+          instance.on(HlsLib.Events.LEVELS_UPDATED, refreshLevels);
           instance.loadSource(item.stream_url);
           instance.attachMedia(elements.video);
           instance.on(HlsLib.Events.ERROR, (_evt, data) => {
             if (data?.fatal && playback.owns(target, generation)) {
+              qualitySource.resumeAuto();
               hlsRecoverySession?.handleFatal(data);
             }
           });
@@ -1641,10 +1701,23 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       try {
         const session = await createDashPlayback(elements.video, item.stream_url, {
           autoplay: false,
-          onError: () => {
-            if (playback.owns(target, generation)) {
+          startTime: dashStart,
+          quality: videoQuality,
+          owns: () => !stale() && playback.owns(target, generation),
+          onError: (_error, { retryInAuto = false } = {}) => {
+            if (stale() || !playback.owns(target, generation)) return;
+            if (!retryInAuto) {
               failPlayback('DASH playback failed.', { showNext: true });
+              return;
             }
+            const position = dashLiveNow() === false && target.currentTime > 0 ? target.currentTime : undefined;
+            queueMicrotask(() => {
+              if (stale() || !playback.owns(target, generation)) return;
+              playedStreamNote.renditionChanged();
+              attachStream(item, token, { relayAvailable, dashStart: position }).catch(() => {
+                if (!stale()) failPlayback('DASH playback failed.', { showNext: true });
+              });
+            });
           },
         });
         if (stale() || !playback.owns(target, generation)) {
@@ -1684,7 +1757,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
     } catch (e) {
       if (pausedDuringStart(e, token)) {
         syncPlaybackUi('paused-during-start');
-      } else if (playback.owns(target, generation)) {
+      } else if (playback.owns(target, generation) && !hlsRecoverySession?.isRecovering) {
         console.warn('video play() rejected:', e);
         noteStartFailure(e, token);
         if (e?.name === 'NotAllowedError' || !startWatch.failed(token)) {
@@ -1696,6 +1769,7 @@ async function attachStream(item, token, { relayAvailable = false } = {}) {
       }
     }
   } else {
+    releaseVideoClearance();
     showVideo(false);
     elements.audio.src = item.stream_url;
     elements.video.hidden = true;
@@ -1754,6 +1828,7 @@ export async function playItem(item, options = {}) {
     await liveResume.attemptNow();
     return;
   }
+  videoQuality?.resetSession();
   cancelReconnect();
   // A start the user asked for: its result is remembered (did-not-play.js).
   startOutcome.begin(item?.id);
@@ -1807,6 +1882,7 @@ async function startPlayback(item, {
   rememberCurrentPart();
   const myToken = ++playToken;
   startWatch.end();
+  reserveVideoClearance(item);
   cancelScheduledCheck();
   verifiedPlaying = null;
   // Before any await: a poll still on its way for the previous station must
@@ -2136,6 +2212,7 @@ export function stop() {
   bar.hidden = true;
   document.getElementById('app')?.classList.remove('has-player');
   showVideo(false);
+  setVideoClearance();
   currentItem = null;
   setCurrentItem(null);
   syncPlaybackUi('stop');
@@ -2334,7 +2411,8 @@ export function initPlayer() {
   bindControls();
   bindMediaSession();
   bindVideoSizeButton();
-  setPictureItem = bindPicturePanel(elements.video, $);
+  videoQuality = createVideoQuality(elements.video, () => setPictureItem.renderQuality?.());
+  setPictureItem = bindPicturePanel(elements.video, $, videoQuality);
   bindVideoPicture();
   syncPlaybackUi('init');
   // Keep the player-bar star in sync if a Library card toggles favorites

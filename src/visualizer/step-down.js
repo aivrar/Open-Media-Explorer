@@ -210,9 +210,9 @@ export function createStepDown({
       return levels[level] !== was;
     },
 
-    /** A frame was drawn while live at `now` (ms). Returns true when it took a
-     *  notch off (onStep has then been called with the new { quality, fps }). */
-    frame(now) {
+    /** A frame was drawn while live at `now` (ms). Judge it against the
+     *  current draw cap when the host sets one. Returns true after a step down. */
+    frame(now, targetFps = levels[level].fps) {
       if (!Number.isFinite(now)) return false;
       const gap = now - lastFrame;
       lastFrame = now;
@@ -233,7 +233,7 @@ export function createStepDown({
       const rate = (windowFrames * 1000) / elapsed;
       // Late only against the frames the display offered: 60 chosen on a
       // 40 Hz display expects 40.
-      const target = Math.min(levels[level].fps, displayFps());
+      const target = Math.min(targetFps, displayFps());
       const frames = windowFrames;
       const longA = gapA;
       const longB = gapB;

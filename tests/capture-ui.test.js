@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import { RECORDER_OFF_HINT, initCaptureUi } from '../src/lib/capture-ui.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
+import { loadEqState, saveEqState, setEqBypassed } from '../src/lib/eq-store.js';
 import {
   emit, saveSettings, setCurrentItem, setMode, setShowExplicitContent,
 } from '../src/lib/state.js';
+import { TUNER_TONES, turnTunerTone } from '../src/lib/tuner-tone.js';
 import { createPlayerDom } from './helpers/fake-dom.js';
 
 const response = (data) => ({ ok: true, status: 200, json: async () => ({ ok: true, data }) });
@@ -31,6 +33,8 @@ function memoryStorage() {
 test('polling keeps capture status attached to item identity across item and mode switches', async () => {
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
+  const originalStorage = globalThis.localStorage;
+  globalThis.localStorage = memoryStorage();
   const { elements, document } = createPlayerDom();
   document.visibilityState = 'visible';
   globalThis.document = document;
@@ -89,6 +93,10 @@ test('polling keeps capture status attached to item identity across item and mod
       curve: { preamp: -3, bands: [5, 0, 0, 0, 0, 0, 0, 0, 0, 0], bypassed: true },
     });
     assert.equal(elements['player-eq-state'].textContent, 'Bypassed');
+    saveEqState(setEqBypassed(loadEqState(), 'archive:second', false, true));
+    assert.equal(turnTunerTone(TUNER_TONES.bass, 2), true);
+    assert.equal(elements['player-eq-state'].textContent, 'Active');
+    assert.equal(elements['player-eq'].getAttribute('aria-pressed'), 'true');
 
     jobs = [{
       id: 'job_record_global_123', kind: 'record-video', state: 'running', title: 'Other TV',
@@ -134,6 +142,7 @@ test('polling keeps capture status attached to item identity across item and mod
     setCurrentItem(null);
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
+    globalThis.localStorage = originalStorage;
     resetControlSession();
   }
 });

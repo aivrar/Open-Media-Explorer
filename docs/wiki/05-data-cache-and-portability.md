@@ -65,8 +65,10 @@ Version 0.1.12 adds these, kept in the same way:
 - the new settings (**Pick the best stream**, **Processor use** and its limit,
   and the Visualizer's new choices) are fields inside the existing settings.
 
-Version 0.1.17 mirrors picture settings, edited stream addresses with backups,
-and track and chapter bookmarks to `state/profile-preferences-extra.json`.
+Version 0.1.18 mirrors picture settings (including **Quality**), edited stream
+addresses with backups, and track and chapter bookmarks to
+`state/profile-preferences-extra.json`. The Tuner's **Stations** and
+**Tone knobs** choices are also saved there.
 Backups include them. **Clear local cache** removes them. **Tabs shown**,
 **Now Playing background blur**, **Show what's playing** and **Color travel**
 are saved with the other settings.

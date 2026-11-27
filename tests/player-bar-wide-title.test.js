@@ -1,101 +1,79 @@
+import { bindPlayerBarFit } from '../src/lib/player-bar-fit.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { FakeElement } from './helpers/fake-dom.js';
 
 const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
-// Star, Play and Stop take 120 px. Volume takes 70 px.
-const FIXED = 120 + 70;
-const PADDING = 2 * 14;
-const GAPS = 4 * 8;
-
-function actionWidth(css, width) {
-  const match = css.match(/\.player-bar:not\(\.is-capture-only\) \.player-actions \{\s*width: clamp\((\d+)px, (\d+)vw - (\d+)px, (\d+)px\);/);
-  assert.ok(match, 'the action row reserves a width');
-  const [, min, vw, offset, max] = match.map(Number);
-  return Math.min(max, Math.max(min, vw / 100 * width - offset));
+// Live with a 160px title area; a song occupies a second line in that track.
+function liveWidths(picture) {
+  const controls = 38 + 8 + 38;
+  const actions = 126 + 8 + 68 + (picture ? 8 + 64 : 0);
+  const volume = 38 + 4 + 30;
+  const base = 28 + 4 * 8 + 160 + controls + actions + volume;
+  return [base + 90 + 8 + 44, base + 44, base - 8, base - 8 - 88, base - 8 - 88 - 30];
 }
 
-/** The name column and the seek bar column at `width` px, worked out as
- *  the grid does it from the bar's column list. */
-function columns(template, width, actions) {
-  const match = template.match(
-    /^minmax\(clamp\((\d+)px, (\d+)vw - (\d+)px, (\d+)px\), ([\d.]+)fr\) auto auto minmax\((\d+)px, ([\d.]+)fr\) auto$/,
-  );
-  assert.ok(match, template);
-  const [, low, vw, minus, high, metaFr, progressMin, progressFr] = match.map(Number);
-  const free = width - PADDING - GAPS - FIXED - actions;
-  const floor = Math.min(high, Math.max(low, (vw / 100) * width - minus));
-  const share = (free * metaFr) / (metaFr + progressFr);
-  const meta = Math.max(floor, share);
-  const progress = Math.max(progressMin, free - meta);
-  return { meta: Math.round(meta), progress: Math.round(progress), share: Math.round(share), actions };
-}
-
-test('the song in the player bar uses the room a wide window has; at 1024 and 1280 px it has its share', async () => {
-  const css = await read('src/styles/base.css');
-  const rule = css.match(/\n\.player-bar \{[^}]*grid-template-columns: ([^;]+);/);
-  assert.ok(rule, 'the player bar lists its columns');
-  const atWidth = (width) => columns(rule[1], width, actionWidth(css, width));
-  // 1024 and 1280 px: the column's share of the room (the room the smaller
-  // volume control gave back is shared out with the seek bar).
-  for (const width of [1024, 1280]) {
-    const { meta, share } = atWidth(width);
-    assert.equal(meta, Math.max(190, share), `${width} px`);
+test('the live footer refits at each boundary and after content changes', t => {
+  const bar = new FakeElement('player-bar', 'footer');
+  let resize, mutation;
+  class Observer {
+    observe(target) { assert.equal(target, bar); }
+    disconnect() {}
   }
-  assert.equal(atWidth(1024).meta, 190);
-  assert.equal(atWidth(1280).meta, 250);
-  // Wide windows: a column that grows with the window.
-  const at1920 = atWidth(1920);
-  const at2560 = atWidth(2560);
-  assert.equal(at1920.meta, 680);
-  assert.equal(at2560.meta, 1160);
-  assert.ok(at1920.meta > at1920.share + 90, 'more than its share');
-  // The seek bar and the times keep room beside it, and nothing leaves the bar.
-  for (const width of [1920, 2195, 2560, 3840]) {
-    const { meta, progress, actions } = atWidth(width);
-    assert.ok(progress >= 400, `${width} px: ${progress} px for the seek bar and the times`);
-    assert.ok(PADDING + GAPS + FIXED + actions + meta + progress <= width, `${width} px fits`);
+  class Resize extends Observer {
+    constructor(fn) { super(); resize = fn; }
   }
-  // The narrow layout (up to 1000 px) uses a separate grid.
-  assert.match(css, /@media \(max-width: 1000px\) \{[\s\S]*?\.player-bar \{\n\s+grid-template-columns: minmax\(0, 1fr\) auto;/);
+  class Mutation extends Observer {
+    constructor(fn) { super(); mutation = fn; }
+  }
+  const states = ['full', 'meter', 'time', 'record', 'eq'];
+  let width = 1024, picture = true, extra = 0;
+  bar.getBoundingClientRect = () => ({
+    width: bar.dataset.measuring === undefined ? width : liveWidths(picture)[states.indexOf(bar.dataset.fit)] + extra,
+  });
+  t.after(bindPlayerBarFit(bar, { ResizeObserver: Resize, MutationObserver: Mutation }));
+  for (picture of [true, false]) {
+    mutation([{ type: 'attributes', target: bar }]);
+    const steps = liveWidths(picture);
+    assert.deepEqual(steps, picture ? [792, 694, 642, 554, 524] : [720, 622, 570, 482, 452]);
+    for (const w of [1024, 967, ...steps.flatMap(n => [n + 1, n, n - 1])]) {
+      width = w;
+      resize();
+      assert.equal(bar.dataset.fit, states[steps.findIndex(n => n <= width)] || 'stack');
+      assert.equal(bar.dataset.measuring, undefined);
+    }
+  }
+  width = 967;
+  resize();
+  assert.equal(bar.dataset.fit, 'full');
+  extra = 280;
+  mutation([{ type: 'childList', target: { closest: () => true } }]);
+  assert.equal(bar.dataset.fit, 'meter');
+  extra = 0;
+  mutation([{ type: 'attributes', target: bar }]);
+  assert.equal(bar.dataset.fit, 'full');
 });
 
-test('the wide player bar reserves space for capture before its status appears', async () => {
+test('one-row measurement uses the visible buttons, gaps and title floor', async () => {
   const css = await read('src/styles/base.css');
-  assert.match(css, /@media \(min-width: 1001px\) \{\s*\.player-bar:not\(\.is-capture-only\) \.player-actions \{/);
-  for (const width of [1001, 1024, 1080]) assert.equal(actionWidth(css, width), 330);
-  const record = Number(css.match(/\.player-action \{ flex: none; width: (\d+)px; \}/)[1]);
-  const eq = Number(css.match(/\n\.player-eq \{\s*width: (\d+)px;/)[1]);
-  const gap = Number(css.match(/\.player-actions \{[^}]*gap: (\d+)px;/)[1]);
-  // Picture needs about 62 px, including its padding and border. The same
-  // slot takes up space when inert, so this budget applies to both item types.
-  assert.match(css, /\.player-picture-slot\[inert\] \{ visibility: hidden; \}/);
-  assert.ok(actionWidth(css, 1280) - record - eq - 62 - 3 * gap >= 160);
-  // Outside the saved state, Record and EQ precede the variable-width
-  // notice and Cancel button, including during Preparing and Recording.
-  assert.match(css, /\.player-actions:not\(:has\(> \.player-action\[data-state="completed"\]\)\) > :is\(\.player-action, \.player-eq\) \{\s*order: -1;\s*flex-shrink: 0;/);
-  assert.match(css, /\.player-capture-status \{\s*flex: 0 1 auto;\s*min-width: 0;/);
+  assert.match(css, /#player-bar\[data-measuring\] \{\s*width: max-content;\s*grid-template-columns: 160px repeat\(4, max-content\)/);
+  assert.match(css, /grid-template-columns: minmax\(160px, 1\.4fr\) auto auto minmax\(max-content, 1fr\) auto/);
+  assert.match(css, /\.player-picture \{ width: 64px;/);
+  assert.match(css, /\.player-volume > \.volume-stepper \{ width: 30px;/);
+  assert.match(css, /\.player-picture-slot\[inert\] \{ display: none;/);
+  assert.match(css, /\.player-action \{ flex: none; width: 126px;/);
+  assert.match(css, /\.player-eq \{\s*width: 68px;/);
+  for (const [selector, states] of [['player-meter', ['meter', 'time', 'record', 'eq', 'stack']],
+    ['player-time', ['time', 'record', 'eq', 'stack']], ['player-action-label', ['record', 'eq', 'stack']],
+    ['player-eq-state', ['eq', 'stack']]]) {
+    const rule = css.split('\n').find(line => line.startsWith('.player-bar:is(') && line.includes(' .' + selector));
+    assert.deepEqual([...rule.matchAll(/data-fit="(\w+)"/g)].map(m => m[1]), states);
+  }
+  assert.match(css, /#player-bar\[data-fit="stack"\] \{[^}]*grid-template-areas: "primary primary primary" "actions progress volume"/);
+  assert.match(css, /\.player-bar\.is-capture-only \{[^}]*grid-template-areas: "actions"/);
   assert.match(css, /#player-capture-status-text \{\s*overflow: hidden;\s*text-overflow: ellipsis;\s*white-space: nowrap;/);
-  assert.match(css, /--player-h: 74px;/);
-});
-
-test('the Saved row yields space to volume with both part buttons visible', async () => {
-  const css = await read('src/styles/base.css');
-  assert.match(css, /\.player-actions \{[^}]*min-width: 0;/);
-  assert.match(css, /\.player-bar:not\(\.is-capture-only\) \.player-actions:has\(> \.player-action\[data-state="completed"\]\) \{\s*width: auto;\s*\}/);
-  assert.match(css, /@media \(max-width: 1000px\) \{[\s\S]*?"actions actions"\s*"progress progress"\s*"volume volume"/);
-  const template = css.match(/\n\.player-bar \{[^}]*grid-template-columns: ([^;]+);/)[1];
-  const controls = 2 * 38 + 2 * 32 + 3 * 8;
-  const volume = 70;
-  const { meta, progress } = columns(template, 1001, 330);
-  const fixed = PADDING + GAPS + controls + volume + meta + progress;
-  const savedIntrinsicWidth = 490;
-  for (let width = 1001; width <= 1300; width++) {
-    const actions = Math.min(savedIntrinsicWidth, width - fixed);
-    assert.ok(actions > 0 && fixed + actions <= width, `${width} px fits`);
-  }
-  assert.ok(1090 - fixed < savedIntrinsicWidth, 'the Saved text needs to shrink at 1090 px');
 });
 
 test('resume choices occupy the title slot in either player grid', async () => {
@@ -106,12 +84,24 @@ test('resume choices occupy the title slot in either player grid', async () => {
   assert.doesNotMatch(css, /\.player-resume-actions\s*\{[^}]*grid-column:/);
 });
 
-test('ordinary items leave no empty part slots and crowded controls can stack', async () => {
+test('the same footer groups fill the one-row and stacked layouts', async () => {
   const html = await read('src/index.html');
-  const css = await read('src/styles/base.css');
   assert.equal((html.match(/class="player-part-slot" hidden>/g) || []).length, 2);
-  assert.match(css, /#app\.has-player:has\([^{}]*\.player-part-slot:not\(\[hidden\]\)[^{}]*\)\s*\{[^}]*--player-h:/);
-  assert.match(css, /grid-template-areas:\s*"meta controls controls"\s*"actions progress volume"/);
+  const footer = html.slice(html.indexOf('<footer'), html.indexOf('</footer>'));
+  const bar = new FakeElement('player-bar');
+  const stack = [bar];
+  for (const [tag] of footer.matchAll(/<\/?div\b[^>]*>/g)) {
+    if (tag.startsWith('</')) stack.pop();
+    else {
+      const node = new FakeElement();
+      node.className = tag.match(/class="([^"]+)"/)?.[1];
+      stack.at(-1).appendChild(node);
+      stack.push(node);
+    }
+  }
+  assert.deepEqual(stack, [bar]);
+  assert.deepEqual(bar.children.map(n => n.className), ['player-primary', 'player-actions', 'player-progress', 'player-volume']);
+  assert.deepEqual(bar.children[0].children.map(n => n.className), ['player-meta', 'player-controls']);
 });
 
 test('Clear cache keeps its full label in Settings', async () => {

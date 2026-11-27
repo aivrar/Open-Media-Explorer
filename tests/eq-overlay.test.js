@@ -16,7 +16,8 @@ import {
 } from '../src/lib/eq-store.js';
 import { cancelScheduledProfileHandoff } from '../src/lib/profile-transfer.js';
 import { getAudioFrequencyResponse } from '../src/lib/player.js';
-import { emit, getState, setCurrentItem } from '../src/lib/state.js';
+import { emit, getState, setCurrentItem, setPlaying, subscribe } from '../src/lib/state.js';
+import { TUNER_TONES, turnTunerTone } from '../src/lib/tuner-tone.js';
 import { FakeElement, createFakeDocument } from './helpers/fake-dom.js';
 
 test('built-in EQ presets are immutable, complete, and headroom-safe', () => {
@@ -125,7 +126,7 @@ function withOverlay(run) {
   const previousDocument = globalThis.document;
   const previousStorage = globalThis.localStorage;
   const previousWindow = globalThis.window;
-  const previousItem = getState().currentItem;
+  const { currentItem: previousItem, isPlaying: wasPlaying } = getState();
   const previousFavorites = getState().favorites;
   const elements = new Map();
   const op = (selector) => {
@@ -151,7 +152,7 @@ function withOverlay(run) {
     removeItem: (key) => stored.delete(key),
   };
   globalThis.window = { setTimeout, clearTimeout };
-  const current = { id: 'radio:one', type: 'radio' };
+  const current = { id: 'radio:one', type: 'radio', title: 'One FM' };
   const change = (value) => {
     slider.value = String(value);
     const input = new Event('input');
@@ -161,12 +162,14 @@ function withOverlay(run) {
   };
   try {
     setCurrentItem(current);
+    setPlaying(true);
     run({ action, op, slider, document, current, change });
   } finally {
     root._close?.();
     cancelScheduledProfileHandoff();
     getState().favorites = previousFavorites;
     setCurrentItem(previousItem);
+    setPlaying(wasPlaying);
     globalThis.document = previousDocument;
     globalThis.localStorage = previousStorage;
     globalThis.window = previousWindow;
@@ -197,6 +200,49 @@ test('assigned controls stay locked until Edit preset is selected', () => {
     assert.equal(slider.disabled, false);
     assert.equal(slider.value, '0');
     assert.deepEqual(loadEqState().assignments, { [other]: id });
+  });
+});
+
+test('the EQ panel opens on the favorite curve saved by a tone knob', (t) => {
+  const previews = [];
+  t.after(subscribe('eq-preview', (preview) => previews.push(preview)));
+  withOverlay(({ current, op, slider, change }) => {
+    getState().favorites = [current];
+    assert.equal(turnTunerTone(TUNER_TONES.bass, 2), true);
+    openEqOverlay();
+    const scope = op('[data-eq-scope]');
+    assert.equal(scope.dataset.scope, 'favorite');
+    assert.equal(scope.textContent, 'One FM');
+    assert.equal(slider.value, '2');
+    change(3);
+    assert.equal(previews.at(-1).itemId, current.id);
+    assert.equal(previews.at(-1).mainEq, false);
+    assert.equal(previews.at(-1).curve.bands[0], 3);
+    assert.equal(loadEqState().favorites[current.id].bands[0], 3);
+    assert.equal(loadEqState().global.bands[0], 0);
+  });
+});
+
+test('a tone turn flushes pending slider edits and refreshes the open overlay', () => {
+  withOverlay(({ current, op, slider }) => {
+    getState().favorites = [current];
+    const rock = getBuiltInEqPreset('rock');
+    saveEqState(setScopedEq(loadEqState(), current.id, false, { ...rock, bypassed: true }));
+    const root = openEqOverlay();
+    slider.value = '7';
+    const input = new Event('input');
+    Object.defineProperty(input, 'target', { value: slider });
+    root.dispatchEvent(input);
+    assert.equal(loadEqState().global.bands[0], 4, 'the overlay has a pending edit');
+    assert.equal(turnTunerTone(TUNER_TONES.bass, 6), true);
+    assert.equal(slider.value, '8');
+    assert.equal(op('[data-eq-bypass]').checked, false);
+    assert.equal(op('[data-eq-preset]').value, 'manual');
+    assert.equal(op('[data-eq-scope]').dataset.scope, 'favorite');
+    const eq = loadEqState();
+    assert.equal(getEffectiveEq(eq, current.id, true).bands[1], 4);
+    assert.equal(eq.global.bands[0], 7);
+    assert.equal(eq.global.bypassed, true);
   });
 });
 

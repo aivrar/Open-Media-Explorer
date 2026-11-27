@@ -7,8 +7,8 @@
  * server checks the bytes exactly as the folder scan does, makes the file
  * name from the station's name by the same naming rule, and writes the file
  * into the station-images folder (worldmedia_station_images.py). The page
- * never names a file or a path. A station that has a picture of its own
- * already is only given a new one after the user said yes. The list is then
+ * never names a file or a path. The chooser asks before replacing a picture.
+ * Dropping on a labeled target assigns it directly. The list is then
  * read again, so every card, the Tuner and the player bar show it at once
  * (the station pictures change event).
  */
@@ -20,7 +20,11 @@ export const STATION_IMAGE_SAVE_ROUTE = '/api/v1/station-images/save';
 export const STATION_IMAGE_REMOVE_ROUTE = '/api/v1/station-images/remove';
 // The file chooser offers these; anything else is still checked by the server.
 export const PICTURE_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif';
-export const PICTURE_DROP_HINT = 'To give a station a picture, drop it on the station\'s card in Favorites or My Playlists.';
+export const PICTURE_BAD_NAME_TEXT = "This station's name cannot be used as a file name, so it cannot have a picture of its own.";
+const PICTURE_EMPTY_TEXT = 'The file is empty.';
+const PICTURE_READ_ERROR = 'The file could not be read.';
+const PICTURE_INVALID_TEXT = 'The file is not a picture the app can use. Use a PNG, JPG, WebP or GIF picture of at most 8192 pixels on each side.';
+const PICTURE_SVG_TEXT = 'SVG drawings are not allowed as station pictures. Use a PNG, JPG, WebP or GIF picture.';
 export const PICTURE_TOO_LARGE_TEXT = 'The picture is too large. The limit is 2 MB.';
 const SHOWN_NAME_LENGTH = 60;
 // A question names every file it is about; more than this (the server's
@@ -69,6 +73,56 @@ function failureText(error, fallback) {
   return fallback;
 }
 
+function pictureMime(bytes) {
+  const header = String.fromCharCode(...bytes.subarray(0, 12));
+  if (header.startsWith('\x89PNG\r\n\x1a\n')) return 'image/png';
+  if (header.startsWith('\xff\xd8')) return 'image/jpeg';
+  if (header.startsWith('GIF87a') || header.startsWith('GIF89a')) return 'image/gif';
+  if (header.startsWith('RIFF') && header.endsWith('WEBP')) return 'image/webp';
+  // The server also accepts ordinary ICOs and saves them as PNG.
+  if (header.startsWith('\0\0\x01\0')) return 'image/x-icon';
+  return '';
+}
+
+/** Decode a dropped raster before displaying it. The save endpoint still
+ *  checks the original bytes with the folder scanner's full validation. */
+export async function validateDroppedPicture(file, {
+  createUrl = (blob) => URL.createObjectURL(blob),
+  revokeUrl = (url) => URL.revokeObjectURL(url),
+  decode = async (url) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return [image.naturalWidth, image.naturalHeight];
+  },
+} = {}) {
+  if (!file || !(file.size > 0)) return { text: PICTURE_EMPTY_TEXT };
+  if (file.size > STATION_IMAGE_MAX_BYTES) return { text: PICTURE_TOO_LARGE_TEXT };
+  let bytes;
+  try {
+    bytes = new Uint8Array(await file.arrayBuffer());
+  } catch (_) {
+    return { text: PICTURE_READ_ERROR };
+  }
+  const mime = pictureMime(bytes);
+  if (!mime) {
+    const start = new TextDecoder().decode(bytes.subarray(0, 4096));
+    return { text: /<svg[\s/>]/i.test(start) ? PICTURE_SVG_TEXT : PICTURE_INVALID_TEXT };
+  }
+  let url;
+  try {
+    url = createUrl(new Blob([bytes], { type: mime }));
+    const [width, height] = await decode(url);
+    if (width > 0 && height > 0 && width <= 8192 && height <= 8192 && width * height <= 40_000_000) {
+      return { url, release: () => revokeUrl(url) };
+    }
+  } catch (_) {
+    // The decoder could not open the raster.
+  }
+  if (url) revokeUrl(url);
+  return { text: PICTURE_INVALID_TEXT };
+}
+
 /** A file name as shown in a question: in full (only control characters,
  *  which cannot be shown, are left out). */
 function fileName(name) {
@@ -99,10 +153,11 @@ export async function saveStationPicture(item, file, {
   request = controlRequest,
   reload = () => loadStationImages(),
   currentSource = stationImageSourceFor,
+  retryChanged = true,
 } = {}) {
   const name = stationOwnName(item);
   if (!name.trim()) return { ok: false, text: 'This station has no name to keep its picture under.' };
-  if (!file || !(Number(file.size) > 0)) return { ok: false, text: 'The file is empty.' };
+  if (!file || !(Number(file.size) > 0)) return { ok: false, text: PICTURE_EMPTY_TEXT };
   if (Number(file.size) > STATION_IMAGE_MAX_BYTES) return { ok: false, text: PICTURE_TOO_LARGE_TEXT };
   const shown = shownName(name);
   // The picture shown for it now, by id: the server only acts on it for a
@@ -112,7 +167,7 @@ export async function saveStationPicture(item, file, {
   try {
     data = await fileToBase64(file);
   } catch (_) {
-    return { ok: false, text: 'The file could not be read.' };
+    return { ok: false, text: PICTURE_READ_ERROR };
   }
   const lost = 'The picture could not be saved: the app did not answer.';
   const ask = () => request(STATION_IMAGE_SAVE_ROUTE, {
@@ -141,7 +196,7 @@ export async function saveStationPicture(item, file, {
       result = await send(files);
     } catch (error) {
       const changed = error?.code === 'STATION_IMAGE_EXISTS' || error?.code === 'STATION_IMAGE_CHANGED';
-      if (!changed || round > 0) return { ok: false, text: failureText(error, lost) };
+      if (!changed || !retryChanged || round > 0) return { ok: false, text: failureText(error, lost) };
     }
   }
   try { await reload(); } catch (_) { /* shown after the next Refresh */ }

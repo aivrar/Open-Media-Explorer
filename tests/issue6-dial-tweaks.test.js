@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import { tunerStageLayout } from '../src/modes/tuner-layout.js';
 import { alreadyPlaying, dialCanTurn, restingRotation } from '../src/modes/tuner.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -48,15 +49,19 @@ test('playlist wording names both accepted file types', async () => {
 
 test('the dial fits a short window and its station name stays inside the knob', async () => {
   const css = await read('src/styles/tuner.css');
-  // Sized from the stage's height as well as its width, so it is never cut off.
-  assert.match(css, /\.tuner-stage \{[^}]*container-type: size;/);
-  assert.match(css, /\.tuner-dial \{\s+width: min\(540px, 78cqw, 100cqh\);/);
-  assert.match(css, /width: min\(420px, 92vw, 100cqh\);/);
-  // The knob is half the dial wide; the name is held just inside that.
+  const fit = (width, height) => tunerStageLayout({ width, height, stations: false });
+  const short = fit(988, 184);
+  assert.equal(short.dial.width, 184 - 2 * short.margin);
+  const narrow = fit(200, 300);
+  const tv = tunerStageLayout({ width: 200, height: 300, stations: false, band: 'tv', reserved: true });
+  assert.equal(narrow.dial.x, narrow.margin);
+  assert.equal(narrow.dial.width, 200 - 2 * narrow.margin);
+  assert.equal(tv.dial.width, tv.picture.width);
+  assert.equal(tv.picture.x + tv.picture.width, 200 - tv.margin);
   assert.match(css, /\.tuner-dial \{[^}]*container-type: inline-size;/);
-  // Its width limit grows with its size (17em: 221 px at 13 px).
-  assert.match(css, /max-width: min\(17em, 46cqw\);/);
-  assert.match(css, /max-width: min\(170px, 46cqw\);/);
+  assert.match(css, /\.tuner-frequency \{[^}]*width: var\(--dial-name-width, 32cqw\);/);
+  const tuner = await read('src/modes/tuner.js');
+  assert.match(tuner, /placeTunerPart\(parts\.dialWrap, dial\);\s+parts\.fitReadout\?\.\(\);/);
 });
 
 test('the knob rests at the same angle for the same station', async () => {

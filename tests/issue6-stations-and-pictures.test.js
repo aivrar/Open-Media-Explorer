@@ -18,7 +18,7 @@ import {
   STORAGE_KEYS, getState, moveFavorite, normalizeSettings, removeAllFavorites, subscribe,
 } from '../src/lib/state.js';
 import { clearPersistenceFailure } from '../src/lib/persistence-notice.js';
-import { favoriteStations, otherBandFavoritesText } from '../src/modes/tuner.js';
+import { favoriteStations, favoriteStationCaption } from '../src/modes/tuner.js';
 import {
   ADD_AS_CHOICES, ensurePlaylistsLoaded, followTypeChanges, importResultMessage, playlistSnapshot, removeAllFavoritesAsked,
 } from '../src/modes/library/personal-controls.js';
@@ -98,13 +98,19 @@ test('A: a starred station saved as TV is named in the status line, not silently
   ];
   const settings = normalizeSettings({});
   assert.equal(favoriteStations(favorites, { band: 'radio', settings }).length, 2);
-  assert.equal(otherBandFavoritesText(favorites, { band: 'radio', settings }),
-    ' \u00B7 2 more saved as TV (switch to TV to see them)');
-  assert.equal(otherBandFavoritesText(favorites, { band: 'tv', settings }),
-    ' \u00B7 2 more saved as radio (switch to Radio to see them)');
-  assert.equal(otherBandFavoritesText([station(1)], { band: 'radio', settings }), '');
-  assert.equal(otherBandFavoritesText([station(1, { type: 'tv' })], { band: 'radio', settings }),
-    ' \u00B7 1 more saved as TV (switch to TV to see it)');
+  assert.deepEqual(favoriteStationCaption(2, favorites, { band: 'radio', settings }), {
+    text: '2 favorite stations · 2 more in TV',
+    title: '2 favorite stations · 2 more saved as TV (switch to TV to see them)',
+  });
+  assert.deepEqual(favoriteStationCaption(2, favorites, { band: 'tv', settings }), {
+    text: '2 favorite channels · 2 more in Radio',
+    title: '2 favorite channels · 2 more saved as radio (switch to Radio to see them)',
+  });
+  assert.deepEqual(favoriteStationCaption(1, [station(1)], { band: 'radio', settings }), {
+    text: '1 favorite station', title: '1 favorite station',
+  });
+  assert.equal(favoriteStationCaption(0, [station(1, { type: 'tv' })], { band: 'radio', settings }).title,
+    '0 favorite stations · 1 more saved as TV (switch to TV to see it)');
 });
 
 test('A: the import result says how many channels took the "Add as" type', () => {

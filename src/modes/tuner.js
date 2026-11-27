@@ -2,7 +2,7 @@
  * Tuner Mode — skeuomorphic dial for live radio + live TV.
  *
  * v1 simplification: dial rotation maps linearly to a 1D index into the current
- * station array. Mouse-drag or the mouse wheel (over the dial or the strip of cards) rotates the dial. Arrow keys also work. Each station
+ * station array. Mouse-drag or the mouse wheel over the dial rotates it. Arrow keys also work. Each station
  * shows its honest position in the current list ("12 of 80"), not a made-up
  * frequency that would change whenever the list reloads.
  *
@@ -19,6 +19,8 @@ import { catalogScheduler, CATALOG_PRIORITY } from '../lib/catalog-scheduler.js'
 import { SOURCES, getSourceLabel } from '../lib/sources.js';
 import { contentBadgeText, filterContentItems, isContentAllowed } from '../lib/content-rating.js';
 import { normalizeTunerCardSize, tunerCardsShowPictures } from '../lib/tuner-card-size.js';
+import { artworkInitials } from '../lib/initials.js';
+import { hasPicture } from '../lib/video-picture.js';
 import { createTunerCardArt } from '../lib/tuner-card-art.js';
 import { onStationImagesChange } from '../lib/station-images.js';
 import {
@@ -29,6 +31,10 @@ import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorite
 import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
 import { attachTunerBackground } from './tuner-background.js';
+import { buildDialSvg, dialTurn, fitDialReadout, wheelSteps } from './tuner-dial.js';
+import { mountToneKnobs } from './tuner-tone-knobs.js';
+import { placeTunerPart, tunerStageLayout } from './tuner-layout.js';
+import { mountTunerStationList } from './tuner-station-list.js';
 import {
   TUNER_BACKGROUND_RELEASED, tunerBackgroundLevelPatch, tunerBackgroundShownLevel,
 } from '../lib/tuner-background.js';
@@ -40,6 +46,8 @@ import {
 } from '../lib/played-streams.js';
 import { formatStreamQuality } from '../lib/stream-quality.js';
 import { lastOutsideAnswerAt, onOutsideAnswer } from '../lib/connection-evidence.js';
+
+export { dialTurn, wheelSteps } from './tuner-dial.js';
 
 const COUNTRIES = [
   { code: '', label: 'All countries' },
@@ -94,13 +102,12 @@ const sourceRetries = createSourceRetries({
   lastAnswerAt: lastOutsideAnswerAt,
 });
 
-/** True when a card's picture box is inside the visible part of the strip. */
+/** Only load artwork for options in the visible part of the list. */
 function artInView(box) {
-  const strip = ui.strip;
-  if (!strip?.isConnected || !box?.isConnected) return false;
-  const stripBox = strip.getBoundingClientRect();
-  const boxRect = box.getBoundingClientRect();
-  return boxRect.width > 0 && boxRect.right > stripBox.left && boxRect.left < stripBox.right;
+  if (!ui.list?.isConnected || !box?.isConnected) return false;
+  const view = ui.list.getBoundingClientRect();
+  const rect = box.getBoundingClientRect();
+  return rect.height > 0 && rect.bottom > view.top && rect.top < view.bottom;
 }
 
 // Pictures on medium and large cards; see lib/tuner-card-art.js for how they
@@ -154,7 +161,7 @@ function buildShell() {
   }
   controls.appendChild(band);
   const filter = el('div', { className: 'tuner-filter' });
-  filter.appendChild(el('label', { text: 'Country:', style: { color: 'var(--text-dim)', fontSize: '12px' } }));
+  filter.appendChild(el('label', { text: 'Country:' }));
   ui.countrySel = el('select');
   for (const c of COUNTRIES) {
     const opt = el('option', { attrs: { value: c.code }, text: c.label });
@@ -174,14 +181,82 @@ function buildShell() {
       loadStations();
     } },
   });
-  filter.appendChild(el('label', { text: 'Source:', style: { color: 'var(--text-dim)', fontSize: '12px' } }));
+  filter.appendChild(el('label', { text: 'Source:' }));
   filter.appendChild(ui.sourceSel);
-  if (TUNER_BACKGROUND_RELEASED) filter.appendChild(buildVizLevel());
   controls.appendChild(filter);
+  const tools = el('div', { className: 'tuner-tools' });
+  if (TUNER_BACKGROUND_RELEASED) tools.appendChild(buildVizLevel());
+  ui.stationsToggle = el('button', {
+    className: 'icon-btn tuner-toggle',
+    attrs: {
+      type: 'button', 'aria-pressed': 'true', 'aria-label': 'Stations',
+      title: 'Show or hide the station list', 'aria-controls': 'tuner-stations',
+    },
+    html: `<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+      <path d="M7 5h10M7 10h10M7 15h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="3" cy="5" r="1" fill="currentColor"/>
+      <circle cx="3" cy="10" r="1" fill="currentColor"/>
+      <circle cx="3" cy="15" r="1" fill="currentColor"/>
+    </svg>`,
+    on: {
+      click: () => saveSettings({ tunerStations: getState().settings.tunerStations === false }),
+      keydown: (event) => event.stopPropagation(),
+    },
+  });
+  tools.appendChild(ui.stationsToggle);
+  ui.toneToggle = el('button', {
+    className: 'icon-btn tuner-toggle tuner-tone-toggle',
+    attrs: {
+      type: 'button', 'aria-pressed': 'false', 'aria-label': 'Tone knobs',
+      title: 'Show Bass, Treble and Loudness knobs',
+    },
+    html: `<svg viewBox="0 0 20 20" width="20" height="20" fill="currentColor" aria-hidden="true">
+      <path d="M13.34 5.63l-1.27 1.27 1.03 1.03 1.27-1.27A5.5 5.5 0 1 1 13.34 5.63Z"/>
+      <circle cx="3" cy="15" r="0.9"/><circle cx="1.6" cy="9" r="0.9"/>
+      <circle cx="4.3" cy="3.7" r="0.9"/><circle cx="10" cy="1.5" r="0.9"/>
+      <circle cx="15.7" cy="3.7" r="0.9"/><circle cx="18.4" cy="9" r="0.9"/>
+      <circle cx="17" cy="15" r="0.9"/>
+    </svg>`,
+    on: {
+      click: () => saveSettings({ tunerToneKnobs: !getState().settings.tunerToneKnobs }),
+      keydown: (event) => event.stopPropagation(),
+    },
+  });
+  tools.appendChild(ui.toneToggle);
+  controls.appendChild(tools);
   root.appendChild(controls);
 
-  // Stage with dial
   const stage = el('div', { className: 'tuner-stage' });
+  ui.stage = stage;
+  ui.placeholderArt = el('canvas', { attrs: { width: 112, height: 112, 'aria-hidden': 'true' } });
+  ui.placeholderName = el('strong');
+  ui.placeholderStatus = el('small');
+  ui.placeholder = el('div', { className: 'tuner-picture-placeholder' },
+    ui.placeholderArt, ui.placeholderName, ui.placeholderStatus);
+  ui.placeholder.hidden = true;
+  stage.appendChild(ui.placeholder);
+  const content = el('div', { className: 'tuner-list-content', attrs: { role: 'presentation' } });
+  ui.list = el('div', {
+    className: 'tuner-station-list',
+    attrs: { id: 'tuner-stations', tabindex: '-1', role: 'listbox', 'aria-label': 'Stations' },
+  }, content);
+  ui.empty = el('div', { className: 'tuner-empty', attrs: { role: 'status' } });
+  ui.status = el('div', { className: 'tuner-list-caption', attrs: { role: 'status', 'aria-live': 'polite' } });
+  ui.listColumn = el('div', { className: 'tuner-station-column' }, ui.list, ui.empty, ui.status);
+  ui.listColumn.hidden = true;
+  ui.listHeight = 0;
+  ui.stationList = mountTunerStationList(ui.list, content, {
+    makeOption: makeStationOption,
+    tune(index) {
+      state.rotationDeg = restingRotation(index);
+      applyRotation();
+      tuneCurrent();
+    },
+    onRender: () => { if (cardPictures()) cardArt.commit(); },
+    onScroll: () => { if (cardPictures()) cardArt.poke(); },
+  });
+  ui.listContent = content;
+  stage.appendChild(ui.listColumn);
   const dialWrap = el('div', { className: 'tuner-dial' });
   ui.dialWrap = dialWrap;
   dialWrap.innerHTML = buildDialSvg();
@@ -198,21 +273,11 @@ function buildShell() {
   freq.appendChild(ui.freqUnit);
   freq.appendChild(ui.stationName);
   dialWrap.appendChild(freq);
+  const needle = dialWrap.querySelector('.tuner-dial-needle');
+  ui.fitReadout = () => fitDialReadout(dialWrap, freq, needle);
 
   stage.appendChild(dialWrap);
   root.appendChild(stage);
-
-  // Bottom strip of nearby stations
-  ui.strip = el('div', { className: 'tuner-strip' });
-  // Scrolling the strip by hand waits again before pictures load.
-  ui.strip.addEventListener('scroll', () => { if (cardPictures()) cardArt.poke(); }, { passive: true });
-  // The wheel over the strip is the wheel over the dial: the same handler,
-  // so the same station per notch and the same tune once it rests, and the
-  // page and the strip do not scroll for it (the strip follows the station).
-  ui.strip.addEventListener('wheel', ui.dialWheel, { passive: false });
-  root.appendChild(ui.strip);
-  ui.status = el('div', { className: 'tuner-source-status', attrs: { role: 'status', 'aria-live': 'polite' } });
-  root.appendChild(ui.status);
 
   // Keyboard
   root.addEventListener('keydown', (e) => {
@@ -280,61 +345,13 @@ function syncVizLevel(settings = getState().settings) {
   ui.vizLevelReadout.setAttribute('aria-label', level ? `Visualizer behind the Tuner ${level}` : 'Visualizer behind the Tuner off');
   ui.vizLevel.classList.toggle('is-off', level === 0);
   const when = settings.visualizerNoticeSeen === true
-    ? 'shown while sound plays'
-    : 'shown while sound plays, once its notice about flashing has been accepted in the Visualizer tab';
+    ? 'shown during music, TV, or video playback'
+    : 'shown during music, TV, or video playback after accepting the flashing notice in the Visualizer tab';
   ui.vizLevelGroup.title = level
     ? `Visualizer behind the Tuner: ${level} of 100 (0 turns it off), ${when}`
     : `Visualizer behind the Tuner: off. Up turns it on, ${when}`;
 }
 
-function buildDialSvg() {
-  // Outer bezel + radial ticks + rotating inner disc with pointer.
-  const ticks = [];
-  for (let i = 0; i <= 100; i++) {
-    const major = i % 10 === 0;
-    const angle = (i / 100) * 360 - 90;
-    const r1 = 158;
-    const r2 = major ? 138 : 146;
-    const x1 = 200 + r1 * Math.cos(angle * Math.PI / 180);
-    const y1 = 200 + r1 * Math.sin(angle * Math.PI / 180);
-    const x2 = 200 + r2 * Math.cos(angle * Math.PI / 180);
-    const y2 = 200 + r2 * Math.sin(angle * Math.PI / 180);
-    ticks.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${major ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.35)'}" stroke-width="${major ? 2 : 1}" />`);
-  }
-  return `
-    <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <radialGradient id="bezelGrad" cx="0.35" cy="0.35" r="0.8">
-          <stop offset="0%" stop-color="#3a3f4d"/>
-          <stop offset="55%" stop-color="#1a1c22"/>
-          <stop offset="100%" stop-color="#0a0b0e"/>
-        </radialGradient>
-        <radialGradient id="bodyGrad" cx="0.4" cy="0.35" r="0.7">
-          <stop offset="0%" stop-color="#262a33"/>
-          <stop offset="80%" stop-color="#101216"/>
-        </radialGradient>
-        <radialGradient id="knobGrad" cx="0.35" cy="0.3" r="0.7">
-          <stop offset="0%" stop-color="#24464b"/>
-          <stop offset="62%" stop-color="#14232a"/>
-          <stop offset="100%" stop-color="#080d12"/>
-        </radialGradient>
-      </defs>
-      <circle cx="200" cy="200" r="190" class="tuner-bezel"/>
-      <circle cx="200" cy="200" r="172" fill="url(#bodyGrad)" stroke="rgba(255,255,255,0.05)"/>
-      ${ticks.join('')}
-      <g class="dial-body" transform="rotate(0 200 200)">
-        <circle cx="200" cy="200" r="100" fill="url(#knobGrad)" stroke="rgba(255,255,255,0.05)"/>
-        <circle cx="200" cy="200" r="100" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="2"/>
-        <line x1="200" y1="110" x2="200" y2="150" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
-      </g>
-      <polygon class="tuner-pointer" points="200,16 196,32 204,32" />
-    </svg>
-  `;
-}
-
-/** Shortest signed turn in degrees between two pointer angles. atan2 jumps
- *  from +180 to -180 at 9 o'clock; without this a drag across that point
- *  reads as a full reverse turn and skips 30 stations. */
 /** Angle the knob rests at for a place in the list: 12 degrees per station,
  *  so the first station is always back at the top. Without this, going
  *  round a list whose length is not a multiple of 30, or letting go of a
@@ -348,30 +365,7 @@ export function dialCanTurn(count) {
   return count > 1;
 }
 
-export function dialTurn(fromDeg, toDeg) {
-  let delta = (toDeg - fromDeg) % 360;
-  if (delta > 180) delta -= 360;
-  else if (delta < -180) delta += 360;
-  return delta;
-}
-
-const WHEEL_NOTCH_PX = 100;
 const WHEEL_TUNE_DELAY_MS = 250;
-
-/** Whole station steps for one wheel event. Mouse wheels send about 100 px
- *  per notch and touchpads send many small values, so movement is pooled in
- *  `pool.px` and one step is taken per notch-sized amount. A sideways
- *  gesture (tilt wheel, touchpad swipe) counts too: whichever of deltaX and
- *  deltaY is larger, right or down being the next station. */
-export function wheelSteps(pool, event) {
-  const unit = event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 100 : 1;
-  const across = Number(event.deltaX) || 0;
-  const down = Number(event.deltaY) || 0;
-  pool.px += (Math.abs(across) > Math.abs(down) ? across : down) * unit;
-  const steps = Math.trunc(pool.px / WHEEL_NOTCH_PX);
-  pool.px -= steps * WHEEL_NOTCH_PX;
-  return steps;
-}
 
 function bindDialEvents(wrap) {
   let dragging = false;
@@ -434,8 +428,6 @@ function bindDialEvents(wrap) {
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
   wrap.addEventListener('wheel', onWheel, { passive: false });
-  // The strip of cards under the dial turns it the same way (buildUi).
-  ui.dialWheel = onWheel;
   wrap.addEventListener('touchstart', onDown, { passive: false });
   window.addEventListener('touchmove', onMove, { passive: false });
   window.addEventListener('touchend', onUp);
@@ -460,7 +452,7 @@ function applyRotation() {
   if (idx < 0) idx += state.stations.length;
   state.index = idx;
   updateFrequencyDisplay();
-  renderStrip();
+  renderStationList();
 }
 
 /** Bring the knob to its resting angle for the current station. */
@@ -477,16 +469,18 @@ function updateFrequencyDisplay() {
     ui.freqUnit.textContent = '';
     ui.stationName.textContent = state.loading ? 'Loading…' : 'No station';
     ui.stationName.removeAttribute('title');
+    ui.fitReadout();
     return;
   }
   ui.freqNum.textContent = String(state.index + 1);
   ui.freqUnit.textContent = `of ${state.stations.length}`;
   // Only the name: the knob has little room. The source stays on the
-  // station's card in the strip below: its second line (so also the card's
+  // station's option in the list: its second line (so also the option's
   // accessible name) and its tooltip.
-  ui.stationName.textContent = `${isFavorite(s.id) ? '\u2605 ' : ''}${s.title}`;
+  ui.stationName.textContent = `${isFavorite(s.id) ? '\u2605\u00a0' : ''}${s.title}`;
   // A long name ends in an ellipsis on the dial; the whole name on hover.
   ui.stationName.setAttribute('title', s.title || '');
+  ui.fitReadout();
 }
 
 function liveSources() {
@@ -561,25 +555,35 @@ function rebuildSourceSelect() {
   ui.sourceSel.value = state.sourceFilter;
 }
 
-function renderSourceStatus() {
+function renderStationCaption() {
   if (!ui.status) return;
   const count = state.stations.length;
   if (isFavoritesSource(state.sourceFilter)) {
     const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
-    ui.status.textContent = `${count} favorite ${state.band === 'radio' ? 'stations' : 'channels'}`
-      + (groupName ? ` in ${groupName}` : '')
-      + otherBandFavoritesText(getState().favorites, {
-        band: state.band, country: state.country, settings: getState().settings, groupId: favoriteGroupSource(),
-      });
+    const { text, title } = favoriteStationCaption(count, getState().favorites, {
+      band: state.band, country: state.country, settings: getState().settings, groupId: favoriteGroupSource(), groupName,
+    });
+    setStationCaption(text, title);
     return;
   }
-  ui.status.textContent = liveStatusText({
+  const status = {
     count,
     noun: state.band === 'radio' ? 'stations' : 'channels',
     sourceStates: state.sourceStates,
     loading: state.loading,
     sourceCount: chosenLiveSourceCount(),
-  });
+  };
+  setStationCaption(liveStatusText({ ...status, compact: true }), liveStatusText(status));
+}
+
+function setStationCaption(text, title) {
+  ui.status.title = title;
+  if (ui.status.textContent === text) return;
+  ui.status.textContent = text;
+  ui.captionMeasure ||= document.createElement('canvas').getContext('2d');
+  const font = getComputedStyle(ui.status);
+  ui.captionMeasure.font = `${font.fontWeight} ${font.fontSize} ${font.fontFamily}`;
+  ui.layout?.captionWidth(Math.ceil(ui.captionMeasure.measureText(text).width));
 }
 
 /** How many live sources the chosen source filter asks. */
@@ -604,7 +608,7 @@ function publishStations(sourceId, items, fallbackId = '') {
   // map to a different station.
   state.rotationDeg = state.index * 12;
   applyRotation();
-  renderSourceStatus();
+  renderStationCaption();
 }
 
 /** True when `station` is the item the player is playing right now. */
@@ -629,6 +633,7 @@ function step(dir) {
 function tuneCurrent({ restart = true } = {}) {
   const s = state.stations[state.index];
   if (!s) return;
+  renderStationList(true);
   if (!restart && alreadyPlaying(s, getState())) return;
   playItem(s).catch((err) => console.warn('play failed:', err));
 }
@@ -651,7 +656,7 @@ export function favoriteStations(favorites, { band, country = '', settings = {},
   return filterContentItems(matches, settings).map((item) => withFavoriteName(item, names));
 }
 
-/** What the empty strip says for the live sources: a source that did not
+/** What the empty list says for the live sources: a source that did not
  *  answer is not "no stations". `retry` tells whether an automatic try is
  *  waiting (`waiting`) and how many were made (`tries`). */
 export function emptyLiveText(loading, sourceStates, retry = {}) {
@@ -680,16 +685,18 @@ function currentListKey() {
   });
 }
 
-/** The favorites the dial leaves out because they are saved as the other
- *  band, as a note for the status line ('' when there are none). A playlist
- *  channel whose address does not say radio or TV is saved as the playlist's
- *  "Add as" type, so a radio station imported "as TV" is only on the TV dial;
- *  this says where it went. */
-export function otherBandFavoritesText(favorites, { band, ...filters } = {}) {
+/** The tooltip also explains where to find favorites saved in the other band. */
+export function favoriteStationCaption(count, favorites, { band, groupName, ...filters }) {
   const other = band === 'radio' ? 'tv' : 'radio';
-  const count = favoriteStations(favorites, { ...filters, band: other }).length;
-  if (count === 0) return '';
-  return ` \u00b7 ${count} more saved as ${other === 'tv' ? 'TV' : 'radio'} (switch to ${other === 'tv' ? 'TV' : 'Radio'} to see ${count === 1 ? 'it' : 'them'})`;
+  const otherName = other === 'tv' ? 'TV' : 'Radio';
+  const otherCount = favoriteStations(favorites, { ...filters, band: other }).length;
+  const noun = band === 'radio' ? 'station' : 'channel';
+  const base = `${count} favorite ${noun}${count === 1 ? '' : 's'}${groupName ? ` in ${groupName}` : ''}`;
+  if (!otherCount) return { text: base, title: base };
+  return {
+    text: `${base} · ${otherCount} more in ${otherName}`,
+    title: `${base} · ${otherCount} more saved as ${other === 'tv' ? 'TV' : 'radio'} (switch to ${otherName} to see ${otherCount === 1 ? 'it' : 'them'})`,
+  };
 }
 
 /** Where the dial lands after its list is rebuilt: on the selected station
@@ -721,8 +728,8 @@ function loadFavoriteStations() {
   rebuildSourceSelect();
   applyRotation();
   updateFrequencyDisplay();
-  renderStrip();
-  renderSourceStatus();
+  renderStationList();
+  renderStationCaption();
 }
 
 async function loadStations({ onlySourceIds = null, preserve = false, automatic = false } = {}) {
@@ -755,8 +762,9 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
   } else {
     ui.stationName.textContent = 'Loading…';
     ui.stationName.removeAttribute('title');
+    ui.fitReadout();
   }
-  renderStrip();
+  renderStationList();
   // The sources this load asks, each marked as loading before the status
   // line is drawn: it counts only those, and a kept list is never shown as
   // coming "from 0 sources".
@@ -773,7 +781,7 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
       ? { state: 'loading', count: state.stations.filter((item) => item.source === source.id).length, refreshing: true }
       : { state: 'loading', count: 0 });
   }
-  renderSourceStatus();
+  renderStationCaption();
   try {
     const opts = { limit: 80, type: state.band };
     if (state.country) opts.country = state.country;
@@ -781,8 +789,8 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
       if (!preserve) setStations([]);
       state.loading = false;
       updateFrequencyDisplay();
-      renderStrip();
-      renderSourceStatus();
+      renderStationList();
+      renderStationCaption();
       return;
     }
     const controller = new AbortController();
@@ -805,7 +813,7 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
       // Its stations from the previous load stay on the dial, and it is
       // asked again by itself while the Tuner stays open.
       state.sourceStates.set(source.id, failedSourceState(state.stations, source.id, message));
-      renderSourceStatus();
+      renderStationCaption();
       sourceRetries.fail(source, retrySource, {
         error, declaredMs: catalogScheduler.declaredCooldownRemainingMs(source.id),
       });
@@ -819,7 +827,7 @@ async function loadStations({ onlySourceIds = null, preserve = false, automatic 
       onItems: (one, items) => {
         onItems(one, items);
         // An empty dial's line no longer blames this source.
-        if (state.stations.length === 0) renderStrip();
+        if (state.stations.length === 0) renderStationList();
       },
       onFailed,
       onDone() {},
@@ -853,8 +861,8 @@ function finishLoad() {
   if (autoRetry.settle(state.stations.length === 0
     && [...state.sourceStates.values()].some((status) => status.state === 'error'))) sourceRetries.stop();
   updateFrequencyDisplay();
-  renderStrip();
-  renderSourceStatus();
+  renderStationList();
+  renderStationCaption();
 }
 
 function applyContentPreference(showExplicit) {
@@ -894,13 +902,14 @@ function applyContentPreference(showExplicit) {
   }
   applyRotation();
   updateFrequencyDisplay();
-  renderStrip();
-  renderSourceStatus();
+  renderStationList();
+  renderStationCaption();
 }
 
 function setBand(b) {
   state.band = b;
   setTunerVideoBand(b);
+  ui.layout?.sync();
   // "My favorites" (and its categories) applies to both bands; a specific source may not.
   if (!isFavoritesSource(state.sourceFilter)) state.sourceFilter = 'all';
   for (const btn of document.querySelectorAll('.tuner-band-switch button')) {
@@ -911,62 +920,85 @@ function setBand(b) {
   loadStations();
 }
 
-function renderStrip() {
-  if (!ui.strip) return;
-  const pictures = cardPictures();
-  ui.strip.innerHTML = '';
-  if (state.stations.length === 0) {
-    if (pictures) cardArt.commit();
-    let text = emptyLiveText(state.loading, state.sourceStates,
-      { waiting: autoRetry.waiting(), tries: autoRetry.tries() });
-    const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
-    if (groupName) {
-      const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
-      text = state.country
-        ? `No favorite ${what} in ${groupName} for this country.`
-        : `No favorite ${what} in ${groupName}.`;
-    } else if (state.sourceFilter === FAVORITES) {
-      const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
-      text = state.country
-        ? `No favorite ${what} for this country.`
-        : `No favorite ${what} yet. Choose All live sources, tune around, and star (☆) the ones you like.`;
-    }
-    ui.strip.appendChild(el('div', { className: 'tuner-empty', text }));
-    return;
+// Copy decoded pixels only. Drawing an existing image never resolves a URL.
+export function paintTunerPlaceholder(parts, station, currentItem, playerArt) {
+  parts.placeholderName.textContent = station?.title || '';
+  parts.placeholderStatus.textContent = currentItem ? 'Loading…' : 'Stopped';
+  const cardImage = parts.list.querySelector('.is-active .pill-art-img');
+  const img = station?.id && playerArt?.dataset.stationId === station.id && playerArt.complete && playerArt.naturalWidth
+    ? playerArt : cardImage;
+  const canvas = parts.placeholderArt;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (img?.complete && img.naturalWidth && img.naturalHeight) {
+    const scale = Math.min(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
+    const w = img.naturalWidth * scale;
+    const h = img.naturalHeight * scale;
+    ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+  } else {
+    ctx.fillStyle = getComputedStyle(canvas).color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.fillText(artworkInitials(station?.title || ''), canvas.width / 2, canvas.height / 2, canvas.width);
   }
-  // Window of ~30 stations centered on current
-  const span = 15;
-  const start = Math.max(0, state.index - span);
-  const end = Math.min(state.stations.length, state.index + span + 1);
-  for (let i = start; i < end; i++) {
-    const s = state.stations[i];
-    const rating = contentBadgeText(s);
-    const saved = isFavorite(s.id);
-    const sourceLine = el('small', { text: getSourceLabel(s.source) });
-    const pill = el('button', {
-      className: 'station-pill' + (i === state.index ? ' is-active' : '') + (saved ? ' is-favorite' : '')
-        + (pictures ? ' has-art' : ''),
-      attrs: { 'aria-pressed': i === state.index ? 'true' : 'false' },
-      on: { click: () => { state.index = i; state.rotationDeg = i * 12; applyRotation(); tuneCurrent(); } },
-    },
-    // Medium and large cards: the station's picture box (reused across steps).
-    pictures ? cardArt.box(s) : null,
-    el('span', { text: saved ? `★ ${s.title}` : s.title }),
-    sourceLine,
-    rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
-    pill.__sourceLine = sourceLine;
-    pill.__station = s;
-    pill.__saved = saved;
-    setPillTrouble(pill);
-    ui.strip.appendChild(pill);
+}
+
+function syncPlaceholder() {
+  if (ui.placeholder.hidden) return;
+  paintTunerPlaceholder(ui, state.stations[state.index], getState().currentItem, document.getElementById('player-art'));
+}
+
+function renderStationList(force = false) {
+  if (!ui.stationList) return;
+  const empty = state.stations.length === 0;
+  ui.list.hidden = empty;
+  ui.empty.hidden = !empty;
+  if (ui.layout?.count(state.stations.length)) return;
+  ui.stationList.update(state.stations, state.index, ui.listHeight, state.cardSize, force, ui.columns);
+  syncPlaceholder();
+  if (!empty || !ui.emptyHeight) return;
+  let text = emptyLiveText(state.loading, state.sourceStates,
+    { waiting: autoRetry.waiting(), tries: autoRetry.tries() });
+  const groupName = favoriteGroupsSnapshot().nameOf(favoriteGroupSource());
+  if (groupName) {
+    const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
+    text = state.country
+      ? `No favorite ${what} in ${groupName} for this country.`
+      : `No favorite ${what} in ${groupName}.`;
+  } else if (state.sourceFilter === FAVORITES) {
+    const what = state.band === 'radio' ? 'radio stations' : 'TV channels';
+    text = state.country
+      ? `No favorite ${what} for this country.`
+      : `No favorite ${what} yet. Choose All live sources, tune around, and star (☆) the ones you like.`;
   }
-  centerActivePill();
-  if (pictures) cardArt.commit();
+  if (ui.empty.textContent !== text) ui.empty.textContent = text;
+}
+
+export function makeStationOption(station, selected) {
+  const saved = isFavorite(station.id);
+  const rating = contentBadgeText(station);
+  const sourceLine = el('small', { className: 'tuner-station-details' });
+  const picture = cardPictures() ? cardArt.box(station) : null;
+  const title = station.title || '';
+  const pill = el('div', {
+    className: 'station-pill' + (selected ? ' is-active' : '') + (saved ? ' is-favorite' : '')
+      + (picture ? ' has-art' : ''),
+  },
+  picture,
+  el('div', { className: 'tuner-station-text' },
+    el('span', { className: 'tuner-station-name', attrs: { title }, text: saved ? `★ ${title}` : title }),
+    sourceLine),
+  rating ? el('span', { className: 'content-rating-badge', text: rating }) : null);
+  pill.__sourceLine = sourceLine;
+  pill.__station = station;
+  pill.__saved = saved;
+  setPillTrouble(pill);
+  return pill;
 }
 
 /** A card's "Did not play last time" mark (the user's own stations only),
- *  its tooltip and its accessible text, changed in place: the strip, its
- *  scroll position and the focused card stay as they are. */
+ *  its tooltip and its accessible text, updated in place. */
 function setPillTrouble(pill) {
   const s = pill.__station;
   if (!s) return;
@@ -991,39 +1023,27 @@ function setPillTrouble(pill) {
   if (mark.getAttribute('aria-label') !== trouble) mark.setAttribute('aria-label', trouble);
 }
 
-/** With "Show technical source details" on, a card's second line reads
- *  "AAC 128k · Radio Browser" once the format or bitrate is known (a short
- *  form, so it fits in the width a source name gives; tuner.css); otherwise
- *  it is the plain source name. Changed in place. Returns the full label for
- *  the tooltip ("AAC · 128 kbps", '' when nothing is known). */
+/** Update the second line and return the full stream label for the tooltip. */
 function setPillStream(pill) {
-  const facts = stationStreamFacts(pill.__station);
-  const label = formatStreamQuality(facts);
-  let node = pill.__quality || null;
-  if (!label || !pill.__sourceLine) {
-    node?.remove();
-    pill.__sourceLine?.classList?.remove('pill-with-quality');
-    pill.__quality = null;
-    return label;
-  }
-  if (!node) {
-    // With technical details on it stands in for the plain source text,
-    // which stays (unseen) only to size the card: never wider than before,
-    // and cut short at its end, so the source goes first (tuner.css).
-    node = el('span', { className: 'pill-quality' });
-    pill.__sourceLine.classList?.add('pill-with-quality');
-    pill.__sourceLine.appendChild(node);
-    pill.__quality = node;
-  }
-  const text = `${compactStreamLabel(facts)} · ${getSourceLabel(pill.__station.source)}`;
-  if (node.textContent !== text) node.textContent = text;
-  return label;
+  const station = pill.__station;
+  const facts = stationStreamFacts(station);
+  const source = getSourceLabel(station.source);
+  const country = String(station.country || '').toUpperCase();
+  const radio = station.type === 'radio';
+  // Directory facts are already on the item, even before its first play.
+  const radioFacts = radio ? {
+    codec: facts.codec || station._extra?.codec,
+    bitrate: facts.bitrate || station._extra?.bitrate,
+  } : null;
+  const quality = radio ? compactStreamLabel(radioFacts) : '';
+  const text = [source, country, quality].filter(Boolean).join(' · ');
+  if (pill.__sourceLine && pill.__sourceLine.textContent !== text) pill.__sourceLine.textContent = text;
+  return formatStreamQuality(radio ? { ...facts, ...radioFacts } : facts);
 }
 
-/** The marks or stream labels changed: update the cards in the strip,
- *  nothing else. */
-export function syncTunerMarks(strip = ui.strip) {
-  for (const pill of Array.from(strip?.children || [])) setPillTrouble(pill);
+/** A mark or a stream label changes in place without moving the list. */
+export function syncTunerMarks(content = ui.listContent) {
+  for (const pill of Array.from(content?.children || [])) setPillTrouble(pill);
 }
 
 /** Show the card size chosen in Settings, at once. */
@@ -1033,94 +1053,111 @@ function applyCardSize(size) {
   state.cardSize = next;
   ui.root?.setAttribute('data-card-size', next);
   if (!cardPictures()) cardArt.clear();
-  renderStrip();
-}
-
-/** Scroll position that puts a pill in the middle of the strip. */
-export function centeredScrollLeft({ stripLeft, stripWidth, scrollLeft, pillLeft, pillWidth }) {
-  return Math.max(0, Math.round(pillLeft - stripLeft + scrollLeft - (stripWidth - pillWidth) / 2));
-}
-
-// The strip is rebuilt on every station change, and it holds up to 31 pills,
-// which is wider than most windows. Without this the highlighted station was
-// often scrolled out of sight.
-function centerActivePill() {
-  const strip = ui.strip;
-  const active = strip?.querySelector?.('.station-pill.is-active');
-  if (!active?.getBoundingClientRect || !strip.getBoundingClientRect) return;
-  const stripBox = strip.getBoundingClientRect();
-  const pillBox = active.getBoundingClientRect();
-  if (!stripBox.width) return;
-  strip.scrollLeft = centeredScrollLeft({
-    stripLeft: stripBox.left, stripWidth: strip.clientWidth || stripBox.width,
-    scrollLeft: strip.scrollLeft, pillLeft: pillBox.left, pillWidth: pillBox.width,
-  });
 }
 
 /** The band the Tuner is on ('radio' or 'tv'); used for dropped playlists. */
 export function tunerBand() { return state.band; }
 
-const TUNER_VIDEO_MIN_HEIGHT = 200 * 9 / 16;
+export function bindTunerLayout(host, stage, onLayout, band = () => state.band) {
+  const app = host.parentElement;
+  let settings = getState().settings;
+  let lastInputs;
+  let count = state.stations.length;
+  let captionWidth = 0;
+  const video = document.getElementById('video-el');
+  const events = new AbortController();
+  for (const name of ['loadeddata', 'resize', 'emptied', 'playing']) {
+    video.addEventListener(name, sync, { signal: events.signal });
+  }
+  const dockProperties = ['left', 'bottom', 'width', 'height'].map(key => '--tuner-picture-' + key);
 
-export function tunerVideoLayout(stageHeight, viewportWidth, videoGap) {
-  // In narrow windows the dial's width is capped at 92vw (see tuner.css).
-  const dialMin = Math.min(220, viewportWidth * 0.92);
-  const floating = Math.min(dialMin, stageHeight - TUNER_VIDEO_MIN_HEIGHT - videoGap) < 150;
-  const heightLimit = floating
-    ? TUNER_VIDEO_MIN_HEIGHT
-    : Math.max(TUNER_VIDEO_MIN_HEIGHT, stageHeight - dialMin - videoGap);
-  return { floating, heightLimit };
+  function sync() {
+    const { width, height } = stage.getBoundingClientRect();
+    const inputs = {
+      width, height, count, captionWidth, band: band(), cardSize: settings.tunerCardSize, stations: settings.tunerStations !== false,
+      tone: settings.tunerToneKnobs === true, large: app.classList.contains('video-large'),
+      reserved: app.classList.contains('tuner-video-reserved') || app.classList.contains('has-video'),
+      hasVideo: app.classList.contains('has-video') && hasPicture(video) && video.readyState >= 2,
+    };
+    if (lastInputs && Object.keys(inputs).every(key => inputs[key] === lastInputs[key])) return;
+    lastInputs = inputs;
+    const result = tunerStageLayout(inputs);
+    const p = result.picture;
+    if (p) {
+      const values = [p.x, height - p.y - p.height, p.width, p.height];
+      dockProperties.forEach((property, i) => app.style.setProperty(property, values[i] + 'px'));
+    } else {
+      for (const property of dockProperties) app.style.removeProperty(property);
+    }
+    onLayout(result);
+  }
+
+  const observer = new ResizeObserver(sync);
+  observer.observe(stage, { box: 'border-box' });
+  const changes = new MutationObserver(sync);
+  changes.observe(app, { attributes: true, attributeFilter: ['class'] });
+  sync();
+  return {
+    sync,
+    captionWidth(next) {
+      captionWidth = next;
+      sync();
+    },
+    count(next) {
+      if (count === next) return false;
+      count = next;
+      sync();
+      return true;
+    },
+    settings(next) {
+      const changed = next.tunerStations !== settings.tunerStations || next.tunerToneKnobs !== settings.tunerToneKnobs
+        || next.tunerCardSize !== settings.tunerCardSize;
+      settings = next;
+      if (changed) sync();
+    },
+    destroy() {
+      events.abort();
+      changes.disconnect();
+      observer.disconnect();
+      for (const property of dockProperties) app.style.removeProperty(property);
+    },
+  };
 }
 
-export function bindTunerVideoHeight(host, root) {
-  const app = host.parentElement;
-  const [controls, stage, strip, status] = root.children;
-  const fixedRows = [controls, strip, status];
-  let heightLimit;
-  let observer;
+export function applyTunerLayout(parts, { band, dial, list, empty, columns, placeholder, rowHeight, caption, knobs, labelFont }) {
+  parts.stage.style.setProperty('--station-row-height', rowHeight + 'px');
+  parts.columns = columns;
+  parts.stage.dataset.band = band;
+  parts.placeholder.hidden = !placeholder;
+  if (placeholder) placeTunerPart(parts.placeholder, placeholder);
+  placeTunerPart(parts.dialWrap, dial);
+  parts.fitReadout?.();
+  if (!list && parts.listColumn.contains(document.activeElement)) parts.stationsToggle.focus();
+  parts.listColumn.hidden = !list;
+  if (list) {
+    placeTunerPart(parts.list, list);
+    placeTunerPart(parts.empty, empty || list);
+    placeTunerPart(parts.status, caption);
+  }
+  parts.listHeight = list?.height || 0;
+  parts.emptyHeight = empty?.height || 0;
+  if (knobs.length) {
+    parts.stage.style.setProperty('--tone-label-font', labelFont + 'px');
+    parts.stage.style.setProperty('--tone-glow-scale', knobs[0].knob.width / dial.width);
+  } else if (parts.tone?.column.contains(document.activeElement)) parts.toneToggle.focus();
+  parts.tone?.setLayout(knobs);
+}
 
-  const sync = () => {
-    const rootStyle = window.getComputedStyle(root);
-    const stageStyle = window.getComputedStyle(stage);
-    const idlePlayer = app.classList.contains('has-player')
-      ? 0
-      : parseFloat(rootStyle.getPropertyValue('--player-h'));
-    const fixedHeight = fixedRows.reduce((height, row) => height + row.getBoundingClientRect().height, 0);
-    const view = host.getBoundingClientRect();
-    const stageHeight = view.height - fixedHeight - idlePlayer
-      - parseFloat(stageStyle.paddingTop) - parseFloat(stageStyle.paddingBottom);
-    const { floating, heightLimit: nextLimit } = tunerVideoLayout(
-      stageHeight, view.width, parseFloat(rootStyle.getPropertyValue('--video-gap')),
-    );
-    app.classList.toggle('tuner-video-floating', floating);
-    if (nextLimit === heightLimit) return;
-    heightLimit = nextLimit;
-    app.style.setProperty('--tuner-video-height-limit', `${heightLimit}px`);
-  };
-
-  const syncObserver = () => {
-    const needsHeight = app.classList.contains('has-video') || app.classList.contains('tuner-video-reserved');
-    if (needsHeight === Boolean(observer)) return;
-    if (!needsHeight) {
-      observer.disconnect();
-      observer = null;
-      // Keep the last height while the band's padding animates out.
-      return;
-    }
-    sync();
-    // Observe rows the band's animation cannot resize.
-    observer = new ResizeObserver(sync);
-    for (const element of [host, ...fixedRows]) observer.observe(element, { box: 'border-box' });
-  };
-  const changes = new MutationObserver(syncObserver);
-  changes.observe(app, { attributes: true, attributeFilter: ['class'] });
-  syncObserver();
-  return () => {
-    changes.disconnect();
-    observer?.disconnect();
-    app.classList.remove('tuner-video-floating');
-    app.style.removeProperty('--tuner-video-height-limit');
-  };
+function syncTunerToggles(settings) {
+  ui.stationsToggle.setAttribute('aria-pressed', String(settings.tunerStations !== false));
+  const shown = settings.tunerToneKnobs === true;
+  ui.toneToggle.setAttribute('aria-pressed', String(shown));
+  if (shown) ui.tone ||= mountToneKnobs(ui.stage);
+  else if (ui.tone) {
+    if (ui.tone.column.contains(document.activeElement)) ui.toneToggle.focus();
+    ui.tone.destroy();
+    ui.tone = null;
+  }
 }
 
 const subs = [];
@@ -1132,6 +1169,11 @@ function tearDown() {
   autoRetry.stop();
   sourceRetries.stop();
   cardArt.clear();
+  ui.tone?.destroy();
+  ui.tone = null;
+  ui.stationList?.destroy();
+  ui.stationList = null;
+  ui.layout = null;
   while (subs.length) { try { subs.pop()(); } catch (_) {} }
   if (ui.unbindDial) { try { ui.unbindDial(); } catch (_) {} ui.unbindDial = null; }
 }
@@ -1151,12 +1193,26 @@ export function renderTuner(host) {
   state.enabledSignature = enabledSignature();
   state.contentPreference = getState().settings.showExplicitContent === true;
   state.favoritesSort = normalizeFavoritesSort(getState().settings.favoritesSort);
+  syncTunerToggles(getState().settings);
+  const layout = bindTunerLayout(host, ui.stage, (result) => {
+    applyTunerLayout(ui, result);
+    renderStationList(true);
+  });
+  ui.layout = layout;
+  subs.push(layout.destroy);
+  const artEvents = new AbortController();
+  for (const target of [ui.list, document.getElementById('player-art')]) {
+    target.addEventListener('load', syncPlaceholder, { capture: true, signal: artEvents.signal });
+  }
+  subs.push(() => artEvents.abort(), subscribe('current-item', syncPlaceholder));
   loadStations();
-  subs.push(bindTunerVideoHeight(host, root));
   root.focus();
   subs.push(subscribe('settings-change', (settings) => {
     if (getState().mode !== 'tuner') return;
     syncVizLevel(settings);
+    syncTunerToggles(settings);
+    applyCardSize(settings.tunerCardSize);
+    layout.settings(settings);
     const nextSignature = enabledSignature(settings);
     const nextPreference = settings.showExplicitContent === true;
     const sourcesChanged = nextSignature !== state.enabledSignature;
@@ -1166,7 +1222,6 @@ export function renderTuner(host) {
     state.enabledSignature = nextSignature;
     state.contentPreference = nextPreference;
     state.favoritesSort = nextSort;
-    applyCardSize(settings.tunerCardSize);
     if (isFavoritesSource(state.sourceFilter)) {
       if (sourcesChanged || contentChanged || sortChanged) loadFavoriteStations();
     } else if (sourcesChanged) loadStations();
@@ -1175,7 +1230,7 @@ export function renderTuner(host) {
   subs.push(subscribe('favorites-change', () => {
     if (getState().mode !== 'tuner') return;
     if (isFavoritesSource(state.sourceFilter)) loadFavoriteStations();
-    else { rebuildSourceSelect(); updateFrequencyDisplay(); renderStrip(); }
+    else { rebuildSourceSelect(); updateFrequencyDisplay(); renderStationList(true); }
   }));
   subs.push(subscribe(FAVORITE_GROUPS_EVENT, () => {
     if (getState().mode !== 'tuner') return;
@@ -1184,7 +1239,7 @@ export function renderTuner(host) {
   }));
   // A new or removed picture in the station-images folder (Refresh).
   subs.push(onStationImagesChange(() => {
-    if (getState().mode === 'tuner' && cardPictures() && cardArt.stationImagesChanged()) renderStrip();
+    if (getState().mode === 'tuner' && cardPictures() && cardArt.stationImagesChanged()) renderStationList(true);
   }));
   // A station's "Did not play last time" mark came or went.
   subs.push(onDidNotPlayChange(() => {
@@ -1194,10 +1249,6 @@ export function renderTuner(host) {
   subs.push(onPlayedStreamChange(() => {
     if (getState().mode === 'tuner') syncTunerMarks();
   }));
-  // A wider window shows more cards: wait, then load the ones now in view.
-  const onResize = () => { if (cardPictures()) cardArt.poke(); };
-  window.addEventListener('resize', onResize);
-  subs.push(() => window.removeEventListener('resize', onResize));
   subs.push(subscribe('player-broken-next', () => {
     if (getState().mode === 'tuner') step(1);
   }));

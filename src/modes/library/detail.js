@@ -28,6 +28,7 @@ import {
 } from '../../lib/favorite-names.js';
 import { renameFavorite, resetFavoriteName } from '../../lib/favorite-rename.js';
 import { didNotPlayNote, isSavedItem } from '../../lib/did-not-play-view.js';
+import { mountPictureDropPreview } from './picture-drop.js';
 import {
   PICTURE_ACCEPT, removeStationPicture, saveStationPicture,
 } from '../../lib/station-image-files.js';
@@ -126,7 +127,15 @@ function detailArtwork(item) {
       }).catch(() => {});
     }
   };
-  return { thumb: detailThumb, start };
+  let picture = detailThumb;
+  if (isSavedItem(item.id) && item.__contentHidden !== true && isContentAllowed(item, getState().settings)) {
+    // Keep a drop surface even when the station has no artwork yet.
+    picture = el('div', { className: 'detail-picture-drop' });
+    picture.__item = item;
+    picture.appendChild(detailThumb);
+    mountPictureDropPreview(picture, item);
+  }
+  return { picture, start };
 }
 
 /** The station pictures changed: if the open panel's picture is a different
@@ -136,11 +145,10 @@ export function refreshDetailArtwork() {
   const shown = detailArtworkShown;
   const panel = ui.detailPanel;
   if (!panel || !shown || stationImageSourceFor(shown.item) === shown.source) return false;
-  // By class, not the whole class name: a station picture adds is-station-image.
-  const old = [...panel.children].find((node) => String(node.className || '').split(/\s+/).includes('detail-thumb'));
+  const old = [...panel.children].find((node) => /(?:^|\s)(?:detail-picture-drop|detail-thumb)(?:\s|$)/.test(node.className));
   if (!old) return false;
   const artwork = detailArtwork(shown.item);
-  panel.insertBefore(artwork.thumb, old);
+  panel.insertBefore(artwork.picture, old);
   old.remove();
   artwork.start();
   return true;
@@ -184,7 +192,7 @@ export function openDetail(item, options = {}) {
   ui.detailPanel.appendChild(closeBtn);
 
   const artwork = detailArtwork(item);
-  ui.detailPanel.appendChild(artwork.thumb);
+  ui.detailPanel.appendChild(artwork.picture);
   artwork.start();
 
   ui.detailPanel.appendChild(el('h2', {

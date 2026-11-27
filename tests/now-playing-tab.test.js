@@ -1164,7 +1164,7 @@ function cssRules(text) {
   return rules;
 }
 
-test('the top bar: a tab name never wraps, and from 980 px the seven tabs fit or scroll, with the sleep timer counting down', async () => {
+test('the top bar: a tab name never wraps, and from 967 px the seven tabs fit or scroll, with the sleep timer counting down', async () => {
   const sheets = await Promise.all(['base', 'now-playing', 'library', 'tuner', 'grid', 'discovery', 'visualizer']
     .map((name) => read(`src/styles/${name}.css`).catch(() => '')));
   const rules = sheets.flatMap(cssRules);
@@ -1184,7 +1184,7 @@ test('the top bar: a tab name never wraps, and from 980 px the seven tabs fit or
   // and scroll there, so they never run under the tools.
   const ONE_ROW = '@media (min-width: 1001px) and (max-width: 1240px)';
   const inOneRow = (selector) => rules.find((rule) => rule.media === ONE_ROW && rule.selectors.includes(selector));
-  const modes = inOneRow('.modes');
+  const modes = rules.find((rule) => !rule.media && rule.selectors.includes('.modes'));
   assert.equal(modes.decls.get('min-width'), '0');
   assert.equal(modes.decls.get('max-width'), '100%');
   assert.equal(modes.decls.get('overflow-x'), 'auto');
@@ -1200,31 +1200,36 @@ test('the top bar: a tab name never wraps, and from 980 px the seven tabs fit or
   // countdown gets). Text widths are Segoe UI at the bar's sizes, rounded up.
   const px = (value) => value.split(/\s+/).map((part) => Number.parseFloat(part));
   const LABEL = { Library: 39, Tuner: 33, Grid: 24.5, Discovery: 55.5, 'Now Playing': 72, Visualizer: 54.5, About: 35.5 };
-  const BRAND = 22 + 10 + 83; // the glyph, the gap and "World Media"
-  const TOOLS = 365; // the sleep timer with "Sleep 720:00", Song log, Settings and Shutdown
-  const bar = inOneRow('.topbar');
-  const barPad = px(bar.decls.get('padding'))[1];
-  const barGap = px(bar.decls.get('gap'))[0];
-  const tabPad = px(inOneRow('.mode-btn').decls.get('padding'))[1];
-  const plainModes = rules.find((rule) => !rule.media && rule.selectors.includes('.modes'));
-  const modesGap = px(plainModes.decls.get('gap'))[0];
-  const modesPad = px(plainModes.decls.get('padding'))[0];
+  const plainBar = rules.find((rule) => !rule.media && rule.selectors.includes('.topbar'));
+  const gap = px(plainBar.decls.get('--topbar-gap'))[0];
+  const iconButton = px(plainBar.decls.get('--topbar-control-height'))[0];
+  const BRAND = 22 + gap + 83;
+  // Sleep (reserved label and fixed select), the two icon buttons, and Shutdown.
+  const basePixels = (selector, property) => px(rules.find((rule) => !rule.media && rule.selectors.includes(selector)).decls.get(property));
+  const sleepLabel = basePixels('.sleep-timer label', 'min-width')[0];
+  assert.ok(sleepLabel >= 20 + gap + 76, 'the moon and full countdown fit in the label reserve');
+  const sleep = sleepLabel + basePixels('.sleep-timer select', 'width')[0] + gap;
+  const shutdown = 20 + gap + 60 + 2 * basePixels('.shutdown-btn', 'padding')[1] + 2;
+  const TOOLS = sleep + 2 * iconButton + shutdown + 3 * gap;
+  const barPad = px(inOneRow('.topbar').decls.get('padding'))[1];
+  const tabPad = px(inOneRow('.mode-btn').decls.get('padding'))[1] + 1;
+  const modesPad = px(modes.decls.get('padding'))[0];
   const labels = buttons.map(([, , name]) => {
     assert.ok(LABEL[name], `a width for "${name}"`);
     return LABEL[name];
   });
-  const tabsWidth = labels.reduce((sum, w) => sum + w + 2 * tabPad, 0) + modesGap * (labels.length - 1) + 2 * modesPad + 2;
-  const need = 2 * barPad + 2 * barGap + BRAND + tabsWidth + TOOLS;
+  const tabsWidth = labels.reduce((sum, w) => sum + w + 2 * tabPad, 0) + gap * (labels.length - 1) + 2 * modesPad + 2;
+  const need = 2 * barPad + 2 * gap + BRAND + tabsWidth + TOOLS;
   assert.ok(need <= 1001 - 8, `one row needs ${need} px at 1001 px`);
-  // Up to 1000 px (the window is at least 980 px wide): two rows, the tabs alone on theirs.
+  // Up to 1000 px the tabs have their own row, including at the minimum width.
   const twoRow = rules.filter((rule) => rule.media === '@media (max-width: 1000px)');
   const twoRowTab = twoRow.find((rule) => rule.selectors.includes('.mode-btn'));
   const minWidth = Number.parseFloat(twoRowTab.decls.get('min-width'));
-  const twoPad = px(twoRowTab.decls.get('padding'))[1];
-  const rowWidth = labels.reduce((sum, w) => sum + Math.max(minWidth, w + 2 * twoPad), 0) + modesGap * 6 + 2 * modesPad + 2;
+  const twoPad = px(twoRowTab.decls.get('padding'))[1] + 1;
+  const rowWidth = labels.reduce((sum, w) => sum + Math.max(minWidth, w + 2 * twoPad), 0) + gap * 6 + 2 * modesPad + 2;
   const sidePad = px(twoRow.find((rule) => rule.selectors.includes('.topbar')).decls.get('padding'))[1];
-  assert.ok(rowWidth <= 980 - 2 * sidePad, `the tab row needs ${rowWidth} px at 980 px`);
-  assert.equal(twoRow.find((rule) => rule.selectors.includes('.modes')).decls.get('overflow-x'), 'auto');
+  assert.ok(rowWidth <= 967 - 2 * sidePad, `the tab row needs ${rowWidth} px at 967 px`);
+  assert.equal(twoRow.find((rule) => rule.selectors.includes('.modes')).decls.get('grid-area'), 'modes');
 });
 
 /* Contrast as WCAG works it out; layers are blended in sRGB, as browsers do. */

@@ -1,7 +1,7 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.17` behavior in this repository: how to
+It describes the shipped `0.1.18` behavior in this repository: how to
 install and run it, browse all ten public sources, play media, use the
 equalizer, watch the Visualizer, download finite files, record live streams,
 preserve portable data, and diagnose provider or runtime problems.
@@ -15,11 +15,33 @@ providers at run time and can change without an app update.
 
 | Tune live radio and TV | Discover something unexpected |
 |---|---|
-| ![World Media Tuner](<../../screenshots/v0.1.14/tuner.png>) | ![World Media Discovery](<../../screenshots/v0.1.14/discovery.png>) |
+| ![World Media Tuner with the radio dial, tone knobs and station list](<../../screenshots/v0.1.14/tuner.png>) | ![World Media Discovery](<../../screenshots/v0.1.14/discovery.png>) |
 
 ![Ten-band equalizer with presets](<../../screenshots/v0.1.14/equalizer.png>)
 
 ![Visualizer - Black Hole with Lasers and Tron Hex Grid](<../../screenshots/v0.1.14/visualizer-black-hole.jpg>)
+
+## New in 0.1.18
+
+- The Tuner has a station list beside the dial and the optional **Bass**,
+  **Treble** and **Loudness** knobs. The TV picture sits above the list.
+  **Stations** and **Tone knobs** remember what you show. The Visualizer
+  background also works during TV and video playback.
+  [Tuner](02-using-the-application.md#tuner)
+- The **Picture** panel has **Quality** for streams with at least two
+  levels. Choose **Auto**, **Best available** or a fixed level.
+  [Picture quality](04-playback-eq-downloads-recording.md#picture-quality)
+- The player bar gives up room in a fixed order before using a second
+  row. The main header and Tuner bar have even control spacing.
+  [Window layout](02-using-the-application.md#window-layout)
+- A picture drag highlights the card under it, and dragging a Favorite
+  near an edge scrolls the list. Video controls have lighter shading,
+  and switching video channels keeps your scroll position. **Pick the best
+  stream** explains each choice in a short list.
+  [Using the application](02-using-the-application.md)
+
+Thanks to TaxicabMessiah for the reports in
+[issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6).
 
 ## New in 0.1.17
 
@@ -54,9 +76,9 @@ Thanks to TaxicabMessiah for the ideas and reports.
   downloads, and
   recording](04-playback-eq-downloads-recording.md#stream-format-and-other-streams).
 - The volume slider is a compact control (up, a number, down) and the player
-  bar is one row, with no line of text under the buttons. See [Using the
+  bar gained a one-row layout. See [Using the
   application](02-using-the-application.md#window-layout).
-- The mouse wheel over the Tuner's station strip moves one station, and a
+- The Tuner gained one-station wheel steps and a
   **Visualizer:** control in the Tuner's top bar sets how strongly the
   Visualizer shows behind it. See [Using the
   application](02-using-the-application.md#tuner) and
@@ -120,7 +142,7 @@ Thanks to TaxicabMessiah for the ideas and reports.
   place. See [Using the
   application](02-using-the-application.md#favorites-order).
 - **Settings > Appearance > Show the Visualizer behind the Tuner** (off by
-  default) draws light scenes faintly behind the Tuner while sound plays. See
+  default) was added to draw the Visualizer behind the Tuner. See
   [Visualizer](09-visualizer.md#the-visualizer-behind-the-tuner).
 - The Visualizer has four more scenes (103 in all), the overlays **Ripples**,
   **Fireflies** and **Orbits**, the **Lighten** and **Color** blends, an
@@ -169,8 +191,8 @@ Thanks to TaxicabMessiah for the ideas and reports.
 - Importing a playlist now starts on **Add as: Auto**, which works out radio or
   TV by itself, and the import result says what it chose when some channels
   needed a type from **Add as**. Importing the same playlist again as Radio
-  moves its TV favorites over (and the other way round). The Tuner's status
-  line says when some of your favorites are saved as the other type. See [Using
+  moves its TV favorites over (and the other way round). The Tuner tells you
+  when some of your favorites are saved as the other type. See [Using
   the
   application](02-using-the-application.md) and
   [Troubleshooting](06-troubleshooting.md).
@@ -188,8 +210,8 @@ Thanks to TaxicabMessiah for the ideas and reports.
   really playing. Switch it in **Settings > Appearance > Sound meter in the
   player bar**. See [Playback, EQ, downloads, and
   recording](04-playback-eq-downloads-recording.md).
-- **Settings > Appearance > Tuner card size** makes the station cards under the
-  Tuner dial Medium or Large, with each station's picture. The knob shows only
+- **Settings > Appearance > Tuner card size** adds Medium and Large
+  station entries with pictures. The knob shows only
   the station's name. See [Using the
   application](02-using-the-application.md).
 - Fixes: your own station pictures are shown whole instead of cut off, and the
@@ -257,20 +279,18 @@ Thanks to TaxicabMessiah for the ideas and reports.
 - **Library** is the accumulating, searchable catalog. It keeps collected item
   identities in memory for the session; only the number of mounted DOM cards is
   limited for performance.
-- **Tuner** is a live station/channel selector with a rotary presentation.
-  The dial shows the station's place in the list, not a broadcast frequency,
-  and can be limited to your starred stations or one of your categories. Its
-  station cards come in three sizes; Medium and Large show station pictures.
-  The mouse wheel over the dial or the station cards moves one station, and the
-  **Visualizer:** control sets how strongly the Visualizer shows behind it.
+- **Tuner** puts the live radio or TV dial beside a station list. Turn the
+  dial with the wheel or scroll the list to browse it. **Stations** and
+  **Tone knobs** show or hide the list and knobs. The TV picture sits above
+  the list, and **Visualizer:** sets the background strength.
 - **Grid** is a guide-style view for live TV and radio. It uses the same live
   adapters as Tuner but presents tiles, category/country/source filters, and a
   text filter.
 - **Discovery** asks enabled sources for bounded random candidates and returns
   one result at a time. It does not try to download every catalog first.
 - **Visualizer** shows pictures that move with the sound of whatever is
-  playing. It loads only when you open it and costs nothing while its tab is
-  closed.
+  playing. It loads when you open the tab or turn on the Tuner background
+  during playback.
 - **About** explains the public sources, privacy model, licenses, and bundled
   runtime notices, and credits the code the Visualizer borrows.
 
@@ -283,7 +303,9 @@ copied so the wiki stays alongside the source screenshots:
 - [Favorites with categories and a station's details](<../../screenshots/v0.1.14/favorites.png>)
 - [My Playlists and Add link](<../../screenshots/v0.1.14/my-playlists.png>)
 - [Video in the larger player](<../../screenshots/v0.1.14/video.png>)
-- [Tuner with the Visualizer behind it](<../../screenshots/v0.1.14/tuner.png>)
+- [Tuner with the radio dial, tone knobs and station list](<../../screenshots/v0.1.14/tuner.png>)
+- [Tuner with a TV channel playing above the station list](<../../screenshots/v0.1.14/tuner-tv.png>)
+- [Picture panel with Fit and Quality](<../../screenshots/v0.1.14/picture-panel.png>)
 - [Grid](<../../screenshots/v0.1.14/grid.png>)
 - [Discovery](<../../screenshots/v0.1.14/discovery.png>)
 - [Now Playing](<../../screenshots/v0.1.14/now-playing.png>)
@@ -308,7 +330,7 @@ copied so the wiki stays alongside the source screenshots:
 Short GIF demos:
 
 - [A short tour of the tabs](../../screenshots/v0.1.14/demo-tour.gif)
-- [The Tuner dial](../../screenshots/v0.1.14/demo-tuner.gif)
+- [The Tuner dial moving beside the station list, with tone knobs below](<../../screenshots/v0.1.14/demo-tuner.gif>)
 - [Now Playing with the sound meter](../../screenshots/v0.1.14/demo-now-playing.gif)
 - [The Visualizer](../../screenshots/v0.1.14/demo-visualizer.gif)
 

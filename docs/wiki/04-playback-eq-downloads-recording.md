@@ -46,18 +46,43 @@ API. Local relay IDs are short-lived and are removed from persisted favorites.
   A click changes the volume by 1; holding a button repeats after a 0.4 second
   pause (about 14 steps in the first second); the mouse wheel over the control
   changes it by 2 per notch; with the control focused, the arrow keys change it by 1, Page Up and
-  Page Down by 10, and Home and End set 0 and 100. In a window 1000 px wide or
-  narrower the control has its own row and reads down, number, up. Changing the
+  Page Down by 10, and Home and End set 0 and 100. When the bar uses two rows,
+  the control reads down, number, up. Changing the
   volume or mute with a video's own controls moves the number and the speaker
   icon too, and that volume is the one that is saved.
 - The player star changes the same favorite record as a card star.
 - The floating video keeps its play and pause, volume, fullscreen and menu
   controls for live TV. It hides the video timeline and time numbers, which
   showed only the station's short live window. On-demand video keeps the
-  timeline, and a stream that turns out to be finite gets it back.
+  timeline, and a stream that turns out to be finite gets it back. The controls
+  use a shade that fades from 45% black to clear over 48 px in the player and
+  64 px in fullscreen. The icons have shadows for bright pictures.
 - **Picture** next to **EQ** adjusts the displayed video. **Fit** can show the
   whole picture, fill the box or zoom in to crop black bars. Fit applies in
   fullscreen. See [Window layout](02-using-the-application.md#window-layout).
+
+### Picture quality
+
+When a video or TV stream offers at least two levels, **Quality** appears
+under **Fit** in the **Picture** panel.
+
+- **Auto** is the default. It chooses a level for the size of the picture
+  and the connection. It checks again when you enlarge the picture or go
+  fullscreen. When it steps up, it replaces buffered lower-quality video
+  so the change shows sooner.
+- **Best available** lets the player choose without a limit based on picture
+  size. It can use more data and processor time.
+- A fixed level shows the resolution and bitrate, for example
+  **1080p · 5.86 Mbps**. When the stream gives no resolution, the option
+  shows the bitrate. If a fixed level fails, the panel says "Fixed quality
+  failed. Using Auto for this session."
+
+The note beside the menu shows the resolution playing now, for example
+**Now 720p**. Save the choice under **For this channel** or **For all video**.
+See [Window layout](02-using-the-application.md#window-layout) for how the
+picture settings are saved.
+
+![Picture panel - Fit and Quality controls for a video](<../../screenshots/v0.1.14/picture-panel.png>)
 
 ### Tracks and chapters
 
@@ -261,6 +286,14 @@ The curve contains preamp plus ten bands: 31, 62, 125, 250, 500, 1k, 2k, 4k,
 +6 dB. **Bypass** leaves the curve stored but removes it from audible output.
 
 ### Presets
+
+The Tuner's **Tone knobs** adjust the same EQ. **Bass** and **Treble**
+adjust the low and high bands and **Loudness** adjusts preamp. With a
+favorite playing, turning a knob saves a curve for that favorite. If
+it was using an assigned preset, the first change starts from that curve.
+Otherwise, the knobs adjust the main EQ. Point at a knob to see where
+the change saves and its value in dB.
+[Using the Tuner](02-using-the-application.md#tuner)
 
 Built-in presets are Flat, Bass Boost, Treble Boost, Vocal, Spoken Word, Rock,
 Classical, Jazz, Electronic, and Night. **New preset** creates a named custom

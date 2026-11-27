@@ -107,6 +107,14 @@ event (the station closed the connection) is taken as a lost connection and
 reconnected by `src/lib/live-resume.js`, even though the element reports the
 time played as its duration just before the end.
 
+`src/lib/video-quality.js` reads the levels exposed by HLS and DASH, applies
+a picture-size limit in **Auto**, and matches saved fixed choices to the
+stream. It checks the size on resize and fullscreen changes. The Picture
+panel writes the choice with the other picture settings. Playback falls
+back to **Auto** for the session if a fixed level fails. During a video
+change, the player holds the scroll space below the current view until the
+next picture arrives or the space is released.
+
 The volume is set through `src/lib/volume-stepper.js`, which wires the up and
 down buttons (a click, a hold with one timer at a time, the wheel, the keys) and
 works out what a media element's own controls changed (`elementVolumeChange`).
@@ -174,22 +182,21 @@ share the same reading:
 through the relay (`activePlaybackRelayed`) with no playback problem, and
 refreshes it on `playing-change` and on `volumechange`. Playback that falls
 back to direct, cross-origin media (no relay, EQ unavailable) has no tap, and
-the meter stays flat. `src/index.html` holds two meter blocks, one for the wide
-player bar (in the progress row, shown only when that row is at least 330 px
-wide) and one for the stacked bar at 1000 px and under (at the end of the
-button row, giving way before any button); CSS lays out at most one, and only a
-laid-out one listens.
+the meter stays flat. `src/index.html` places the meter in the progress
+row. `src/lib/player-bar-fit.js` measures the bar and tries the layouts
+in order. The title narrows first, then the meter, time, action labels and
+second EQ line give way before the bar stacks.
 
 ## Visualizer
 
-`src/modes/visualizer.js` is a thin shell in the main bundle. The first time the
-tab opens it imports `src/visualizer/visualizer.js`, a separate chunk that holds
-`src/visualizer/index.js` (the panel and the wiring) and its styles. Each scene
-is a further chunk, fetched when it is chosen or prepared ahead. The effects
-library and the overlays are loaded the first time they are switched on.
-`mountVisualizer()` returns `destroy()`, which stops every timer and frame,
-drops the sound subscription, removes every listener and gives the WebGL context
-back. Leaving the tab calls it, so a closed tab costs nothing.
+`src/modes/visualizer.js` loads the Visualizer when its tab opens or the
+Tuner background starts. `src/lib/visualizer-slot.js` moves the same mount
+or pending import between the two views. The Tuner uses the saved
+Visualizer settings and limits drawing to 30 frames a second.
+`src/visualizer/visualizer.js` loads the panel, wiring and styles. Scenes,
+effects and overlays load as needed. When neither view needs it,
+`destroy()` stops timers and frames, drops the sound subscription, removes
+listeners and releases the WebGL context.
 
 - **Sound.** The loop subscribes to the shared signal
   (`src/lib/audio-signal.js`) at the chosen frame rate and asks for the float
@@ -281,34 +288,38 @@ back. Leaving the tab calls it, so a closed tab costs nothing.
 
 ## Tuner layout and card pictures
 
-The dial is sized from the height the Tuner's other rows leave, so those rows
-have fixed heights: every strip card has a fixed height and line height (a
-name in another script no longer makes its card taller), the strip keeps its
-minimum height while it shows a message instead of cards, the status line
-stays on one line, and before the first play `#app:not(.has-player)
-.tuner-root` keeps the player bar's height free as bottom padding.
+`src/modes/tuner.js` connects the band, filters, selected station and
+player. `src/modes/tuner-layout.js` measures the available stage and places
+the dial, optional knobs, list and caption. Radio and TV share the dial
+and knob positions with the list shown. TV uses the top of the right
+column for the picture or a loading or stopped placeholder. The list uses
+the space below it. With the list hidden, Radio centers the dial and TV
+keeps the dial beside the picture.
 
-`src/lib/tuner-card-size.js` holds the card size (`small`, `medium`, `large`;
-anything else means `small`). Medium and Large set per-size CSS variables on
-`.tuner-root[data-card-size]` and raise the strip's fixed minimum by exactly the
-card's extra height. `src/lib/tuner-card-art.js` gives each Medium or Large
-card a fixed picture box with initials, waits until the strip has not been
-rebuilt or scrolled for 350 ms, then loads pictures only for the cards in view,
-each once, through `artwork.js` (the user's own station picture first, then the
-station's relay artwork). A card that leaves the strip stops its load; the last
-120 finished boxes are kept so the dial can come back to them without a new
-request.
+`src/modes/tuner-station-list.js` renders the visible station rows, keeps
+the tuned station in view and tracks keyboard focus separately. It uses
+two columns when they fit and snaps to whole rows after manual scrolling.
+The station count and source status are announced through the caption's
+live region. `src/modes/tuner-dial.js` fits the station name to the dial
+face and reads wheel steps. The dial wraps at either end and tunes when
+the wheel rests. The wheel over the list scrolls the list.
 
-The wheel over the strip is the dial's own wheel handler (`ui.dialWheel` in
-`src/modes/tuner.js`), so a notch is the same station step and the same tune
-once the wheel rests; a mainly sideways gesture counts too, and Ctrl with the
-wheel is left to the window's zoom. The **Visualizer:** control (`buildVizLevel`)
-is the volume stepper laid in a row. Its number is `tunerVisualizerLevel` (1 to
-100, inside the existing settings value; 8 by default), which
-`src/modes/tuner-background.js` turns into the layer's opacity in percent
-without starting the Visualizer again; 0 is `tunerVisualizerBackground` off
-(`tunerBackgroundLevelPatch` in `src/lib/tuner-background.js`), and the Settings
-switch follows the control through `settings-change`.
+`src/lib/tuner-card-size.js` defines **Small**, **Medium** and **Large**.
+`src/lib/tuner-card-art.js` starts Medium and Large entries with initials,
+then loads pictures for visible entries once the list rests. The user's
+station picture takes priority over the station's artwork. Entries
+leaving the list window stop loading.
+
+`src/modes/tuner-tone-knobs.js` binds drag, wheel and keyboard controls to
+three EQ adjustments in `src/lib/tuner-tone.js`. **Bass** and **Treble**
+change weighted EQ bands. **Loudness** changes preamp. The tooltip shows
+the knob name, where the change saves and the dB value. The **Stations**
+and **Tone knobs** choices use the extra profile settings.
+
+The **Visualizer:** control changes the layer opacity through
+`tunerVisualizerLevel`. 0 turns off `tunerVisualizerBackground`.
+`src/lib/tuner-background.js` checks playback eligibility, including TV
+and video, before `src/modes/tuner-background.js` draws the background.
 
 A user's own station picture carries the `is-station-image` class (set by
 `artwork.js` and the player bar only once it has loaded) and is shown with
@@ -462,7 +473,7 @@ the data that version 0.1.9 added is kept apart:
 | File | Holds | Code |
 |---|---|---|
 | `state/profile-preferences.json` | The five keys every version knows: favorites, settings, volume, job history, EQ | `worldmedia_runtime.py` |
-| `state/profile-preferences-extra.json` | Favorites categories, custom station names, stations kept on their own stream, picture settings, edited stream addresses and audio bookmarks | `worldmedia_runtime.py` |
+| `state/profile-preferences-extra.json` | Favorites categories, custom station names, stations kept on their own stream, picture settings, edited stream addresses, audio bookmarks and Tuner visibility settings | `worldmedia_runtime.py` |
 | `state/song-log.json` | The song log, at most 500 songs | `worldmedia_songlog.py` |
 | `state/starred-songs.json` | The starred songs, at most 2,000 (since 0.1.12) | `worldmedia_starred.py` |
 | `station-images/` | The user's own station pictures | `worldmedia_station_images.py` |

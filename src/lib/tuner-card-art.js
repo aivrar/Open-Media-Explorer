@@ -1,19 +1,18 @@
 /**
  * Pictures on the Tuner's medium and large station cards.
  *
- * The strip under the dial is rebuilt on every station step and holds up to
- * 31 cards, and station logos come from third-party servers. So a picture is
- * never requested while the dial is turning:
+ * The list renders only rows near its viewport. Station logos may come from
+ * third-party servers, so pictures wait until the dial and list come to rest:
  *
  *  - Each card gets a fixed-size picture box with the station's initials on
  *    its colour (as in the Library and the player bar). A picture that is
  *    slow, fails, or does not exist never changes any size.
- *  - Nothing loads until the strip has been still for TUNER_ART_SETTLE_MS.
- *    Every rebuild (a step) or strip scroll starts that wait again, so a fast
+ *  - Nothing loads until the list window has been still for TUNER_ART_SETTLE_MS.
+ *    Every rebuild (a step) or list scroll starts that wait again, so a fast
  *    turn through 100 stations asks for nothing until it stops.
  *  - Then only the cards actually in view start, each at most once. A load in
- *    flight for a card still in the strip is left alone; a card that leaves
- *    the strip stops its load (and starts again only once it is back in view).
+ *    flight for a card still in the list window is left alone; a card that leaves
+ *    the list window stops its load (and starts again only once it is back in view).
  *  - Boxes are kept per station and moved into the rebuilt card, so a loaded
  *    picture stays on screen on each step without flicker or a new request.
  *    The last TUNER_ART_KEEP finished boxes are kept for when the dial comes
@@ -35,9 +34,9 @@ export const TUNER_ART_KEEP = 120;
 export const TUNER_ART_PRIORITY = 15;
 
 /**
- * One controller per Tuner. Build a strip by asking `box(item)` for each
+ * One controller per Tuner. Build a list window by asking `box(item)` for each
  * card, then call `commit()`. `isInView(box)` says whether a card's box is in
- * the visible part of the strip; it is asked only once the strip has settled.
+ * the visible part of the list window; it is asked only once the list window has settled.
  * The other options exist for tests.
  */
 export function createTunerCardArt({
@@ -92,11 +91,11 @@ export function createTunerCardArt({
     stats.stopped += 1;
   }
 
-  /** The picture box for a card of the strip being built now. */
+  /** The picture box for a card of the list window being built now. */
   function box(item) {
     const key = String(item?.id ?? '');
     let entry = entries.get(key);
-    // The same station twice in one strip: the second card gets a plain box.
+    // The same station twice in one list window: the second card gets a plain box.
     if (entry && building.includes(entry)) return makeBox(item);
     if (entry) {
       entries.delete(key);
@@ -122,14 +121,14 @@ export function createTunerCardArt({
     timer = setTimer(() => { timer = null; settle(); }, settleMs);
   }
 
-  /** The strip now holds the boxes asked for since the last commit. */
+  /** The list window now holds the boxes asked for since the last commit. */
   function commit() {
     shown = building;
     building = [];
     const current = new Set(shown);
     for (const entry of [...entries.values()]) {
       if (current.has(entry)) continue;
-      // Off the strip: stop its load, and forget a box that never started.
+      // Off the list window: stop its load, and forget a box that never started.
       stop(entry);
       if (entry.state === 'idle') entries.delete(entry.key);
     }
@@ -218,7 +217,7 @@ export function createTunerCardArt({
     }
   }
 
-  /** The strip is still: start the cards in view that have not started. */
+  /** The list window is still: start the cards in view that have not started. */
   function settle() {
     for (const entry of shown) {
       if (entry.state !== 'idle' || entries.get(entry.key) !== entry) continue;
@@ -228,7 +227,7 @@ export function createTunerCardArt({
   }
 
   /** The station pictures changed (startup list, Refresh). Forget finished
-   *  boxes whose picture is a different one now; true when the strip should
+   *  boxes whose picture is a different one now; true when the list window should
    *  be rebuilt to start them again. A card still loading is marked and
    *  checked again when its load settles (start). */
   function stationImagesChanged() {

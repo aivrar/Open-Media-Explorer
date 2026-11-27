@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.1.18 - 2026-11-26
+
+The Tuner puts the dial and tone knobs beside a station list and keeps TV
+video above that list. The Picture panel can choose a video quality level.
+The player bar fits narrow windows better, and the Library handles picture
+drops, long Favorites lists and video channel changes more smoothly.
+
+- **Tuner layout** — The dial and optional **Bass**, **Treble** and
+  **Loudness** knobs sit on the left. The list on the right shows station
+  names and details in whole rows, with two columns when there is room.
+  The tuned station stays in view. Use the arrow keys and Enter in the list,
+  or turn the dial one station per wheel notch, wrapping at the ends.
+  Station names can use two lines on the dial. A count under the list
+  replaces the status line under the dial and is announced by screen
+  readers. **Stations** and **Tone knobs** remember what you show. The knobs
+  have bold labels and show dB on hover.
+- **TV in the Tuner** — The TV picture sits above the list. A panel with
+  channel art or initials, the channel name and **Loading…** or **Stopped**
+  holds its place. Hide **Stations** for a larger picture beside the dial,
+  or a larger, centered dial on Radio.
+- **Player and top bars** — In a narrow window, the player bar narrows the
+  title, hides the meter and time, reduces **Record** to its icon, and
+  hides the second **EQ** line before using two rows. The main header and
+  Tuner bar each use a common control height and even gaps. **Tone knobs**
+  has a larger icon.
+- **Visualizer behind the Tuner** — It now shows during TV and video as well
+  as music playback. The background skips audio identified as speech. Set
+  **Visualizer:** to 0 to turn it off.
+- **Video quality** — When a stream offers at least two levels, **Quality**
+  under **Fit** offers **Auto**, **Best available** or a fixed level. The
+  **Now 720p** readout shows the current resolution when known. **Auto**
+  follows the picture size and connection, including in fullscreen, and
+  replaces buffered lower-quality video when stepping up. Save your choice
+  for a channel or for all video. A failed fixed level falls back to **Auto**
+  for the session. The **Picture** panel now opens on the side where it
+  covers the least of the video picture.
+- **Picture drops and video controls (issue #6)** — Both were reported by
+  TaxicabMessiah. Dragging a picture highlights the target card. The new
+  picture appears with **Saving…** and the previous picture returns if the
+  save fails. A refusal clears after 6 seconds, or 8 for longer messages.
+  Escape, a click or a new drag clears it right away. The video's own
+  controls use a shorter, lighter shade and shadows on the icons.
+- **Favorites drag scrolling (issue #6)** — The missing auto-scroll was
+  reported by TaxicabMessiah. A drag near the top or bottom edge now scrolls
+  the list so you can reach cards farther away.
+- **Best-stream settings (issue #6)** — The unclear wording was reported by
+  TaxicabMessiah. **Pick the best stream** now explains **Off**, **Listed
+  streams** and **Auto (verified)** in a short list.
+- **Scroll position on video changes (issue #6)** — The jump was reported by
+  TaxicabMessiah. Library, Grid, About and Now Playing keep the space for the
+  picture while another video starts. The space is released on Stop, on a
+  failed start or when the next item has no picture.
+
 ## 0.1.17 - 2026-11-25
 
 The player bar has a **Picture** panel for video and TV. You can export saved

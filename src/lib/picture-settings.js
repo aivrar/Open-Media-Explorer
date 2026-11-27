@@ -1,3 +1,4 @@
+import { normalizeVideoQuality } from './video-quality.js';
 import { isEqStation } from './eq-store.js';
 import { checkProfileStorageBudget, PICTURE_STORAGE_KEY } from './profile-storage.js';
 
@@ -15,7 +16,7 @@ const FIT_CLASSES = {
   'zoom-133': 'video-fit-zoom-133',
 };
 
-export function normalizePicture(value) {
+export function normalizePicture(value, defaultQuality = 'auto') {
   const picture = {};
   for (const [name, { min, max, neutral }] of Object.entries(PICTURE_SLIDERS)) {
     const setting = value?.[name];
@@ -23,6 +24,7 @@ export function normalizePicture(value) {
   }
   const fit = value?.fit;
   picture.fit = typeof fit === 'string' && Object.hasOwn(FIT_CLASSES, fit) ? fit : 'whole';
+  picture.quality = value?.quality == null ? defaultQuality : normalizeVideoQuality(value.quality);
   return picture;
 }
 
@@ -56,14 +58,16 @@ function normalizePictureState(value) {
   const entries = source && typeof source === 'object' && !Array.isArray(source) ? Object.entries(source) : [];
   for (const [id, settings] of entries) {
     if (id && id.length <= 512 && settings && typeof settings === 'object' && !Array.isArray(settings)) {
-      channels[id] = normalizePicture(settings);
+      channels[id] = normalizePicture(settings, null);
     }
   }
   return { main: normalizePicture(value?.main), channels };
 }
 
 export function effectivePicture(state, channelId) {
-  return channelId && Object.hasOwn(state.channels, channelId) ? state.channels[channelId] : state.main;
+  if (!channelId || !Object.hasOwn(state.channels, channelId)) return state.main;
+  const channel = state.channels[channelId];
+  return channel.quality == null ? { ...channel, quality: state.main.quality } : channel;
 }
 
 export function loadPictureSettings(storage) {

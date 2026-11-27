@@ -39,7 +39,7 @@ test('an empty Tuner says the stations could not be loaded when a source did not
 
 test('the band buttons reload the dial, also the band already chosen', async () => {
   const tuner = (await read('src/modes/tuner.js')).replace(/\r\n/g, '\n');
-  const setBand = tuner.slice(tuner.indexOf('function setBand(b) {'), tuner.indexOf('function renderStrip() {'));
+  const setBand = tuner.slice(tuner.indexOf('function setBand(b) {'), tuner.indexOf('function renderStationList(force = false) {'));
   assert.match(setBand, /\n {2}loadStations\(\);\n\}/);
   assert.doesNotMatch(setBand, /if \(state\.band === b\) return/);
   assert.match(tuner, /\{ id: 'radio', label: 'Radio' \}, \{ id: 'tv', label: 'TV' \}/);

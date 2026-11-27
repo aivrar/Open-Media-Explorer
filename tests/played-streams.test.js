@@ -537,113 +537,42 @@ test('Library cards: the full stream tooltip and a separate metadata row update 
   assert.equal(license.parentNode, beta.__meta);
 });
 
-test('Tuner cards: the label after the source, and in the tooltip; changed in place', (t) => {
+test('Tuner radio metadata stays on the same line and updates in place', (t) => {
   withStorage(t);
-  withFavorites(t, [{ id: 'fav:a', title: 'Alpha', type: 'radio', source: 'playlist' }]);
-  const oldDocument = globalThis.document;
-  const strip = new Node('', 'div');
-  const pills = [['fav:a', 'Alpha'], ['fav:b', 'Beta']].map(([id, title]) => {
-    const pill = new Node('', 'button');
-    pill.className = 'station-pill';
-    pill.__sourceLine = pill.appendChild(Object.assign(new Node('', 'small'), { textContent: 'My Playlists' }));
-    pill.__station = { id, title, source: 'playlist' };
-    pill.__saved = id === 'fav:a';
-    strip.appendChild(pill);
-    return pill;
-  });
-  globalThis.document = {
-    activeElement: pills[1],
-    createElement: (tag) => new Node('', tag),
-    createTextNode: (text) => Object.assign(new Node('', '#text'), { textContent: text }),
-  };
-  t.after(() => { globalThis.document = oldDocument; });
+  const content = new Node('', 'div');
+  const pill = new Node('', 'div');
+  const sourceLine = pill.appendChild(new Node('', 'small'));
+  pill.__sourceLine = sourceLine;
+  pill.__station = { id: 'fav:a', title: 'Alpha', source: 'playlist', type: 'radio', country: 'us' };
+  pill.__saved = true;
+  content.appendChild(pill);
 
-  rememberPlayedStream('fav:a', { codec: 'MP3', bitrate: 128 });
-  syncTunerMarks(strip);
-  assert.deepEqual(strip.children, pills);
-  const [alpha, beta] = pills;
-  assert.equal(alpha.__quality.className, 'pill-quality');
-  // Stream first (short form), source second, as one text with real spaces
-  // around the dot.
-  assert.equal(alpha.__quality.textContent, `MP3 128k ${DOT} My Playlists`);
-  assert.equal(alpha.__quality.parentNode, alpha.__sourceLine, 'on the source line: no new row');
-  // The plain source text stays: it is what sizes the card, and what shows
-  // with the setting off.
-  assert.equal(alpha.__sourceLine.textContent, 'My Playlists');
-  assert.equal(alpha.__sourceLine.classList.contains('pill-with-quality'), true, 'sized so the card keeps its width');
-  assert.equal(beta.__sourceLine.classList.contains('pill-with-quality'), false);
-  assert.match(alpha.getAttribute('title'), new RegExp(`^★ Favorite ${DOT} Alpha ${DOT} .+\\nStream: MP3 ${DOT} 128 kbps$`));
-  assert.equal(beta.__quality ?? null, null);
-  assert.doesNotMatch(beta.getAttribute('title'), /Stream:/);
-  // Played again with another bitrate: the same span, new text.
-  const span = alpha.__quality;
-  rememberPlayedStream('fav:a', { codec: 'MP3', bitrate: 192 });
-  syncTunerMarks(strip);
-  assert.equal(alpha.__quality, span);
-  assert.equal(span.textContent, `MP3 192k ${DOT} My Playlists`);
-  // The tooltip keeps the full form.
-  assert.match(alpha.getAttribute('title'), new RegExp(`\\nStream: MP3 ${DOT} 192 kbps$`));
-  // Format only, and bitrate only.
-  rememberPlayedStream('fav:a', { codec: 'AAC+', bitrate: 0 });
-  syncTunerMarks(strip);
-  assert.equal(span.textContent, `AAC+ ${DOT} My Playlists`);
-  rememberPlayedStream('fav:a', { codec: '', bitrate: 128 });
-  syncTunerMarks(strip);
-  assert.equal(span.textContent, `128k ${DOT} My Playlists`);
-  assert.match(alpha.getAttribute('title'), /\nStream: 128 kbps$/);
+  for (const [facts, expected] of [
+    [{ codec: 'MP3', bitrate: 128 }, 'MP3 128k'],
+    [{ codec: 'MP3', bitrate: 192 }, 'MP3 192k'],
+    [{ codec: 'AAC+', bitrate: 0 }, 'AAC+'],
+    [{ codec: '', bitrate: 128 }, '128k'],
+  ]) {
+    rememberPlayedStream('fav:a', facts);
+    syncTunerMarks(content);
+    assert.deepEqual(content.children, [pill]);
+    assert.deepEqual(pill.children, [sourceLine]);
+    assert.equal(sourceLine.textContent, `My Playlists ${DOT} US ${DOT} ${expected}`);
+    assert.match(pill.getAttribute('title'), /\nStream: /);
+  }
+  assert.match(pill.getAttribute('title'), /\nStream: 128 kbps$/);
   clearPlayedStreams();
-  syncTunerMarks(strip);
-  assert.equal(alpha.__quality, null);
-  assert.equal(span.parentNode, null);
-  assert.equal(alpha.__sourceLine.classList.contains('pill-with-quality'), false);
-});
-
-test('Tuner cards keep their width at every size when the format and bitrate come', async () => {
-  const css = (await read('src/styles/tuner.css')).replace(/\/\*[\s\S]*?\*\//g, '');
-  const rule = (selector) => {
-    const at = css.indexOf(`\n${selector} {`);
-    assert.ok(at >= 0, selector);
-    return css.slice(at, css.indexOf('}', at));
-  };
-  // The stream line counts for nothing when the card is sized, sits in the
-  // first row over the room the name and the plain source give, and is cut
-  // short at its end there.
-  const quality = rule('.pill-with-quality > .pill-quality');
-  for (const part of ['grid-area: 1 / 1;', 'min-width: 0;', 'contain: inline-size;', 'overflow: hidden;',
-    'white-space: nowrap;', 'text-overflow: ellipsis;']) assert.ok(quality.includes(part), part);
-  // Only with the setting on: the plain source text goes to a second row of
-  // no height (clipped by the line's overflow: hidden), where it still sizes
-  // the column; off, the line is exactly as before.
-  const on = rule(':root[data-tech-details="on"] .pill-with-quality');
-  assert.match(on, /display: grid;/);
-  assert.match(on, /grid-template-columns: minmax\(0, auto\);/);
-  assert.match(on, /grid-template-rows: auto 0;/);
-  assert.match(rule('.station-pill > small'), /overflow: hidden;/);
-  assert.match(css, /:root:not\(\[data-tech-details="on"\]\) \.pill-quality \{ display: none; \}/);
-  // No card size gives the source line or the stream line a width of its own,
-  // or undoes the above.
-  const blocks = css.match(/[^{}]+\{[^{}]*\}/g);
-  const mine = new Set(['.pill-with-quality > .pill-quality', ':root[data-tech-details="on"] .pill-with-quality']);
-  for (const block of blocks) {
-    const selector = block.slice(0, block.indexOf('{')).trim();
-    if (/small|pill-quality|pill-with-quality/.test(selector) && !mine.has(selector)) {
-      assert.doesNotMatch(block,
-        /(?:^|[\s;{])(?:(?:width|max-width|flex-basis|flex|contain):|min-width: (?!0;)|display: (?!none;))/, selector);
-    }
-  }
-  for (const size of ['medium', 'large']) {
-    assert.doesNotMatch(css, new RegExp(`data-card-size='${size}'[^{]*(small|pill-quality|pill-with-quality)`));
-  }
-  assert.doesNotMatch(css, /data-card-size='small'/);
+  syncTunerMarks(content);
+  assert.equal(sourceLine.textContent, `My Playlists ${DOT} US`);
+  assert.doesNotMatch(pill.getAttribute('title'), /Stream:/);
 });
 
 test('technical stream details use a full-width row with up to two lines', async () => {
-  const [libraryCss, tunerCss, settings, tuner, index] = await Promise.all([
-    read('src/styles/library.css'), read('src/styles/tuner.css'), read('src/lib/settings.js'),
+  const [libraryCss, settings, tuner, index] = await Promise.all([
+    read('src/styles/library.css'), read('src/lib/settings.js'),
     read('src/modes/tuner.js'), read('src/modes/library/index.js'),
   ]);
   assert.match(libraryCss, /:root:not\(\[data-tech-details="on"\]\) :is\(\.card-license, \.card-quality\) \{ display: none; \}/);
-  assert.match(tunerCss, /:root:not\(\[data-tech-details="on"\]\) \.pill-quality \{ display: none; \}/);
   assert.match(libraryCss, /\.card-body \{[^}]*grid-template-rows: 18px auto;/);
   assert.match(libraryCss, /\.card-meta \{[^}]*column-gap: 6px;/);
   assert.match(libraryCss,
@@ -660,7 +589,7 @@ test('technical stream details use a full-width row with up to two lines', async
     /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-quality \{ flex: 0 0 100%; \}/);
   assert.match(settings, /stream format and bitrate \(such as MP3 · 128 kbps\) once a station has played/);
   assert.doesNotMatch(settings, /full source badges/);
-  // A change shows at once, without rebuilding the strip or the cards.
+  // A change shows at once, without rebuilding the station list.
   assert.match(tuner, /subs\.push\(onPlayedStreamChange\(\(\) => \{\s*if \(getState\(\)\.mode === 'tuner'\) syncTunerMarks\(\);/);
   assert.match(index, /subs\.push\(onPlayedStreamChange\(\(\) => \{ syncStreamLabels\(\); refreshDetailQuality\(\); \}\)\);/);
 });

@@ -1,10 +1,12 @@
 export const EQ_STORAGE_KEY = 'worldmedia.eq.v1';
 export const EQ_EXTRA_STORAGE_KEY = 'worldmedia.eq-extra.v1';
+export const EXTRA_SETTINGS_STORAGE_KEY = 'worldmedia.settings-extra.v1';
 export const PICTURE_STORAGE_KEY = 'worldmedia.picture.v1';
 
 export const PROFILE_STORAGE_KEYS = Object.freeze([
   'worldmedia.favorites.v1',
   'worldmedia.settings.v1',
+  EXTRA_SETTINGS_STORAGE_KEY,
   'worldmedia.volume.v1',
   'worldmedia.jobs.v1',
   EQ_STORAGE_KEY,

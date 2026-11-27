@@ -10,18 +10,21 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 |---|---|
 | Source registry/adapters | `src/lib/sources.js`, `src/adapters/*.js` |
 | Library collection | `src/modes/library/`, `src/lib/search.js`, `src/lib/catalog-scheduler.js` |
-| Grid/Tuner/Discovery | `src/modes/grid.js`, `src/modes/tuner.js`, `src/modes/discovery.js` |
+| Grid/Discovery | `src/modes/grid.js`, `src/modes/discovery.js` |
 | Player and failover | `src/lib/player.js`, `src/lib/media-failover.js`, `src/lib/start-failover.js`, `src/lib/hls-recovery.js`, `src/lib/dash-player.js` |
 | Pick the best stream | `src/lib/best-stream.js` (ranking and the setting), `src/lib/best-stream-auto.js` and `src/lib/stream-verify.js` (Auto (verified) checks), `src/lib/stream-lookups.js`, `worldmedia_stream_probe.py` |
 | Processor use | `src/lib/processor-budget.js`, `worldmedia_processor.py`, the Processor use section in `src/modes/about.js` |
 | Artwork | `src/lib/artwork.js`, `src/modes/library/thumbnails.js` |
 | EQ | `src/lib/audio-engine.js`, `src/lib/eq-store.js`, `src/lib/eq-overlay.js` |
+| Player bar layout | `src/lib/player-bar-fit.js`, `src/styles/base.css` |
+| Video quality | `src/lib/picture-panel.js`, `src/lib/picture-settings.js`, `src/lib/video-quality.js` |
 | Sound meter | `src/lib/audio-signal.js`, `src/lib/player-meter.js`, the visual side tap in `src/lib/audio-engine.js` |
 | Visualizer | `src/modes/visualizer.js` (tab shell), `src/lib/visualizer-settings.js`, `src/visualizer/` (the tab, its scenes, effects and overlays), `src/visualizer/vendor/psychedelia/` (copied code, do not edit), `scripts/import_psychedelia.mjs` |
 | Visualizer credits | `src/modes/about-credits.js`, `src/modes/about-credits-load.js`, `CREDITS.md`, `public/THIRD_PARTY_NOTICES.txt` |
+| Tuner | `src/modes/tuner.js` (band, source and player wiring), `src/modes/tuner-layout.js` (layout), `src/modes/tuner-dial.js` (readout and rotation), `src/modes/tuner-station-list.js` (station rows and keyboard focus), `src/modes/tuner-tone-knobs.js` and `src/lib/tuner-tone.js` (tone controls and EQ) |
 | Tuner card size and pictures | `src/lib/tuner-card-size.js`, `src/lib/tuner-card-art.js`, `src/modes/tuner.js`, `src/styles/tuner.css` |
 | Personal playlists | `src/lib/playlists.js`, `src/modes/library/personal-controls.js`, `src/lib/favorite-migration.js`, `worldmedia_playlists.py`, `worldmedia_playlist_tables.py` (JSON and CSV lists, turned into M3U) |
-| Favorites order, categories and names | `src/lib/favorites-order.js`, `src/lib/favorite-groups.js`, `src/modes/library/favorite-categories.js`, `src/modes/library/card-category.js`, `src/modes/library/render.js` (dragging in My order), `src/lib/favorite-names.js`, `src/lib/favorite-rename.js`, `src/modes/library/detail.js` (Rename) |
+| Favorites order, categories and names | `src/lib/favorites-order.js`, `src/lib/favorite-groups.js`, `src/modes/library/favorite-categories.js`, `src/modes/library/card-category.js`, `src/modes/library/render.js` (dragging in My order), `src/modes/library/reorder-scroll.js` (edge scrolling), `src/lib/favorite-names.js`, `src/lib/favorite-rename.js`, `src/modes/library/detail.js` (Rename) |
 | Song title, song log and starred songs | `src/lib/now-playing.js`, `src/lib/song-log.js`, `src/lib/song-log-panel.js`, `src/lib/starred-songs.js`, `src/lib/song-star.js`, `worldmedia_icy.py`, `worldmedia_songlog.py`, `worldmedia_starred.py` |
 | Live stream reconnect | `src/lib/live-resume.js`, `src/lib/relay-memory.js`, `src/lib/player.js` |
 | Station images and stream quality | `src/lib/station-images.js`, `worldmedia_station_images.py`, `src/lib/stream-quality.js`, `src/lib/other-streams.js`, `src/modes/library/other-streams.js` |
@@ -85,7 +88,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.17-portable.zip
+dist\WorldMediaWindows-0.1.18-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -120,8 +123,8 @@ EXE is tried; a test copy with its own data folder runs beside it.
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For the v0.1.17 checks and artifact hashes, see the
-[release record](../RELEASE_RECORD_0.1.17.md). The optional
+For the v0.1.18 checks and artifact hashes, see the
+[release record](../RELEASE_RECORD_0.1.18.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review

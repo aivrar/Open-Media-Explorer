@@ -18,8 +18,8 @@
         "columns": 5
       },
       "compact": {
-        "maxWidthPx": 1000,
-        "areas": ["meta controls", "actions actions", "progress progress", "volume volume"]
+        "fit": "stack",
+        "areas": ["primary primary primary", "actions progress volume"]
       },
       "narrow": {
         "maxWidthPx": 560

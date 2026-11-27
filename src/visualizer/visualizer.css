@@ -226,6 +226,7 @@
 .viz-select,
 .viz-btn,
 .viz-seg {
+  appearance: none;
   font: inherit;
   color: inherit;
   background: rgba(255, 255, 255, 0.08);
@@ -233,6 +234,23 @@
   border-radius: var(--radius-sm);
 }
 .viz-select { padding: 3px 6px; }
+select.viz-select {
+  padding-inline-end: 22px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 10px) 50%, calc(100% - 6px) 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+@media (forced-colors: active) {
+  select.viz-select { appearance: auto; }
+}
+.viz-select:enabled:hover,
+.viz-btn:enabled:hover,
+.viz-seg:enabled:hover:not([aria-pressed="true"]),
+.viz-scene-search:enabled:hover,
+.viz-notice-btn:hover:not(.viz-notice-continue) {
+  background-color: rgba(255, 255, 255, 0.13);
+}
 .viz-field .viz-select { min-width: 0; max-width: 62%; }
 .viz-select option { color: #15161a; background: #f6f8fb; }
 
@@ -438,6 +456,7 @@
 
 /* The panel's line that shows the photosensitivity notice again. */
 .viz-link {
+  appearance: none;
   align-self: flex-start;
   padding: 0;
   border: 0;
@@ -506,6 +525,7 @@
   margin-top: 12px;
 }
 .viz-notice-btn {
+  appearance: none;
   padding: 6px 14px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: var(--radius-sm);
@@ -519,6 +539,7 @@
   color: #15161a;
   font-weight: 600;
 }
+.viz-notice-continue:hover { background-color: #c9d1db; }
 /* "Not now": the still picture's start button. */
 .viz-start {
   position: absolute;

@@ -49,7 +49,7 @@
             </svg>
           </button>
           <button id="shutdown-btn" class="shutdown-btn" title="Shut down World Media" aria-label="Shut down">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
               <line x1="12" y1="2" x2="12" y2="12"/>
             </svg>
@@ -66,51 +66,53 @@
       </main>
 
       <footer id="player-bar" class="player-bar" hidden>
-        <div class="player-meta">
-          <div class="player-art-box">
-            <span id="player-art-initials" class="player-art-initials" aria-hidden="true" hidden></span>
-            <img id="player-art" alt="" />
-          </div>
-          <div class="player-text">
-            <div id="player-title" class="player-title"></div>
-            <div id="player-resume-actions" class="player-resume-actions" role="group" aria-label="Resume playback" hidden>
-              <button id="player-resume-part" class="btn btn-primary" type="button">Resume</button>
-              <button id="player-start-over" class="btn" type="button">Start over</button>
+        <div class="player-primary">
+          <div class="player-meta">
+            <div class="player-art-box">
+              <span id="player-art-initials" class="player-art-initials" aria-hidden="true" hidden></span>
+              <img id="player-art" alt="" />
             </div>
-            <div class="player-source-row">
-              <div id="player-source" class="player-source"></div>
-              <button id="player-song-star" class="player-song-star" type="button" title="Star this song" aria-label="Star this song" aria-pressed="false" hidden>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                </svg>
+            <div class="player-text">
+              <div id="player-title" class="player-title"></div>
+              <div id="player-resume-actions" class="player-resume-actions" role="group" aria-label="Resume playback" hidden>
+                <button id="player-resume-part" class="btn btn-primary" type="button">Resume</button>
+                <button id="player-start-over" class="btn" type="button">Start over</button>
+              </div>
+              <div class="player-source-row">
+                <div id="player-source" class="player-source"></div>
+                <button id="player-song-star" class="player-song-star" type="button" title="Star this song" aria-label="Star this song" aria-pressed="false" hidden>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <button id="player-fav" class="player-fav" type="button" title="Add to favorites" aria-label="Add to favorites" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+              </svg>
+            </button>
+          </div>
+          <div class="player-controls">
+            <button id="player-play" class="player-btn" aria-label="Play" aria-pressed="false" title="Play">
+              <svg id="icon-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              <svg id="icon-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" hidden><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+            </button>
+            <button id="player-stop" class="player-btn" aria-label="Stop" title="Stop">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+            </button>
+            <button id="player-next-broken" class="player-btn" hidden title="Try next source">Try next</button>
+            <span id="player-previous-part-slot" class="player-part-slot" hidden>
+              <button id="player-previous-part" class="player-btn player-part-button" type="button" aria-label="Previous part" title="Previous part" hidden disabled>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M6 6h2v12H6zm3 6 9-6v12z"/></svg>
               </button>
-            </div>
+            </span>
+            <span id="player-next-part-slot" class="player-part-slot" hidden>
+              <button id="player-next-part" class="player-btn player-part-button" type="button" aria-label="Next part" title="Next part" hidden disabled>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg>
+              </button>
+            </span>
           </div>
-          <button id="player-fav" class="player-fav" type="button" title="Add to favorites" aria-label="Add to favorites" aria-pressed="false">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-          </button>
-        </div>
-        <div class="player-controls">
-          <button id="player-play" class="player-btn" aria-label="Play" aria-pressed="false" title="Play">
-            <svg id="icon-play" viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            <svg id="icon-pause" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" hidden><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
-          </button>
-          <button id="player-stop" class="player-btn" aria-label="Stop" title="Stop">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-          </button>
-          <button id="player-next-broken" class="player-btn" hidden title="Try next source">Try next</button>
-          <span id="player-previous-part-slot" class="player-part-slot" hidden>
-            <button id="player-previous-part" class="player-btn player-part-button" type="button" aria-label="Previous part" title="Previous part" hidden disabled>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M6 6h2v12H6zm3 6 9-6v12z"/></svg>
-            </button>
-          </span>
-          <span id="player-next-part-slot" class="player-part-slot" hidden>
-            <button id="player-next-part" class="player-btn player-part-button" type="button" aria-label="Next part" title="Next part" hidden disabled>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M16 6h2v12h-2zM6 6l9 6-9 6z"/></svg>
-            </button>
-          </span>
         </div>
         <div class="player-actions" aria-label="Media actions">
           <button id="player-capture" class="player-action" type="button" data-state="unavailable" disabled aria-disabled="true" aria-describedby="player-capture-hint">
@@ -139,11 +141,6 @@
           <span id="player-picture-slot" class="player-picture-slot" inert>
             <button id="player-picture" class="player-picture" type="button" popovertarget="picture-panel">Picture</button>
           </span>
-          <div id="player-meter-compact" class="player-meter" data-player-meter aria-hidden="true">
-            <div class="player-meter-well">
-              <canvas class="player-meter-canvas" width="90" height="36"></canvas>
-            </div>
-          </div>
         </div>
         <span id="player-capture-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         <div class="player-progress">
@@ -205,6 +202,12 @@
           <option value="zoom-125">Zoom 125%</option>
           <option value="zoom-133">Zoom 133%</option>
         </select>
+        <label for="picture-quality" id="picture-quality-label" hidden>Quality</label>
+        <div id="picture-quality-row" class="picture-quality-row" hidden>
+          <select id="picture-quality" aria-describedby="picture-quality-now picture-quality-hint"></select>
+          <span id="picture-quality-now" hidden></span>
+        </div>
+        <p id="picture-quality-hint" hidden>Uses more data and processor time in the small picture.</p>
         <button id="picture-reset" class="btn" type="button">Reset</button>
         <p id="picture-session-note" hidden>For this session only. Channel settings save only for Favorites and My Playlists.</p>
         <p>Recordings and downloads are unaffected.</p>

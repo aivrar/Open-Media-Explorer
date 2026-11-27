@@ -17,6 +17,7 @@ import { selectSource } from '../src/modes/library/sidebar.js';
 import { view, renderedIds } from '../src/modes/library/state.js';
 import { ui } from '../src/modes/library/shell-refs.js';
 import { libraryPool } from '../src/modes/library/personal.js';
+import { reorderScrollSpeed } from '../src/modes/library/reorder-scroll.js';
 import {
   FAVORITE_DRAG_TYPE, favoriteDropPlace, favoritesManualOrder, onDropFavorite, onMoveFavorite, renderResults,
 } from '../src/modes/library/render.js';
@@ -777,6 +778,213 @@ function dragHarness(host) {
 }
 
 const cardNode = (host, id) => host.children.find((node) => node.dataset.id === id);
+
+test('reorder zones ramp from 4 to 22 pixels per frame and stay at full speed beyond each edge', () => {
+  for (const [y, speed] of [
+    [20, -22], [100, -22], [132, -13], [164, -4], [165, 0],
+    [250, 0], [335, 0], [336, 4], [368, 13], [400, 22], [480, 22],
+  ]) assert.equal(reorderScrollSpeed(y, 100, 400), speed, `y=${y}`);
+  assert.equal(reorderScrollSpeed(120, 100, 140), 0);
+  assert.equal(reorderScrollSpeed(120, 140, 100), 0);
+});
+
+function reorderScrollHarness(host, scroller) {
+  const drag = dragHarness(host);
+  const doc = globalThis.document;
+  const events = new Map();
+  const frames = new Map();
+  let nextFrame = 0;
+  let scrollTop = 0;
+  let scrollListener;
+  let player = null;
+  let video = null;
+  const createElement = doc.createElement;
+  const rect = (left, top, right, bottom) => ({ left, top, right, bottom, height: bottom - top });
+  doc.createElement = (tag) => {
+    const node = createElement(tag);
+    if (tag === 'article') {
+      node.getBoundingClientRect = () => {
+        const top = 100 + host.children.indexOf(node) * 32 - scrollTop;
+        return rect(20, top, 300, top + 32);
+      };
+      node.closest = () => node;
+    }
+    return node;
+  };
+  Object.assign(doc, {
+    documentElement: {},
+    addEventListener: (type, listener) => events.set(type, listener),
+    removeEventListener: (type) => events.delete(type),
+    getElementById: (id) => {
+      const bounds = id === 'player-bar' ? player : video;
+      return bounds && { getBoundingClientRect: () => bounds };
+    },
+    elementFromPoint: (x, y) => {
+      if ([player, video].some((r) => r && x >= r.left && x < r.right && y >= r.top && y < r.bottom)) return null;
+      if (x < 20 || x >= 300 || y < 100 || y >= 300) return null;
+      return host.children[Math.floor((y - 100 + scrollTop) / 32)] || host;
+    },
+    defaultView: {
+      innerWidth: 350,
+      innerHeight: 350,
+      requestAnimationFrame: (callback) => { frames.set(++nextFrame, callback); return nextFrame; },
+      cancelAnimationFrame: (id) => frames.delete(id),
+      addEventListener: (type, listener) => events.set(type, listener),
+      removeEventListener: (type) => events.delete(type),
+    },
+  });
+  scroller.ownerDocument = doc;
+  scroller.getBoundingClientRect = () => rect(20, 100, 300, 300);
+  scroller.addEventListener = (type, listener) => { if (type === 'scroll') scrollListener = listener; };
+  scroller.removeEventListener = () => { scrollListener = null; };
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 200 },
+    scrollHeight: { get: () => host.children.length * 32 },
+    scrollTop: {
+      get: () => scrollTop,
+      set: (value) => { scrollTop = Math.max(0, Math.min(value, scroller.scrollHeight - scroller.clientHeight)); },
+    },
+  });
+  return {
+    ...drag, doc, events, frames,
+    fireDocument: (type, event) => events.get(type)?.(event),
+    step() {
+      assert.equal(frames.size, 1);
+      const [id, callback] = frames.entries().next().value;
+      frames.delete(id);
+      callback();
+    },
+    wheel(delta) { scroller.scrollTop += delta; scrollListener?.(); },
+    get listeningForScroll() { return Boolean(scrollListener); },
+    showPlayer() { player = rect(0, 265, 350, 350); },
+    showVideo() { video = rect(180, 210, 300, 260); },
+  };
+}
+
+test('only an active reorder tracks dragover, refreshes the target during scroll and cleans up on every exit', () => {
+  const favorites = Array.from({ length: 16 }, (_, index) => card(`r${index}`));
+  withLibrary(favorites, ({ host, scroller, state }) => {
+    const drag = reorderScrollHarness(host, scroller);
+    renderResults();
+    const source = cardNode(host, 'r12');
+    const topPoint = { clientX: 40, clientY: 108 };
+    const first = cardNode(host, 'r2');
+    const second = cardNode(host, 'r1');
+    scroller.scrollTop = 65;
+
+    drag.fireDocument('dragover', topPoint);
+    drag.fire('dragover', first, { files: true });
+    assert.equal(drag.frames.size, 0);
+    assert.equal(drag.events.size, 0);
+
+    drag.fire('dragstart', source);
+    assert.equal(drag.frames.size, 0);
+    drag.fireDocument('dragover', { clientX: 40, clientY: 200 });
+    assert.equal(drag.frames.size, 0);
+    drag.fireDocument('dragover', topPoint);
+    drag.fire('dragover', first, { x: 40, y: 108 });
+    assert.equal(first.classList.contains('drop-before'), true);
+    drag.step();
+    assert.equal(scroller.scrollTop, 45);
+    assert.equal(first.classList.contains('drop-before'), false);
+    assert.equal(second.classList.contains('drop-before'), true);
+    drag.wheel(-32);
+    assert.equal(second.classList.contains('drop-before'), false);
+    assert.equal(cardNode(host, 'r0').classList.contains('drop-before'), true);
+    drag.fireDocument('dragover', { clientX: 40, clientY: 200 });
+    assert.equal(drag.frames.size, 0);
+
+    const outside = {};
+    const endings = [
+      () => drag.fire('drop', first, { x: 40, y: 108 }),
+      () => drag.fireDocument('dragend', {}),
+      () => drag.fireDocument('keydown', { key: 'Escape' }),
+      () => drag.fireDocument('dragleave', { target: first, relatedTarget: null, clientX: -1, clientY: 108 }),
+      () => drag.fireDocument('drop', { target: outside }),
+    ];
+    for (const [index, end] of endings.entries()) {
+      if (index > 0) drag.fire('dragstart', source);
+      scroller.scrollTop = 13;
+      drag.fireDocument('dragover', topPoint);
+      assert.equal(drag.frames.size, 1);
+      end();
+      assert.equal(drag.frames.size, 0);
+      assert.equal(drag.events.size, 0);
+      assert.equal(drag.listeningForScroll, false);
+      assert.equal(source.classList.contains('is-dragging'), false);
+    }
+    assert.equal(state.favorites[0].id, 'r12', 'drop uses the current hit test despite a stale event target');
+  });
+});
+
+test('the bottom zone uses the player bar and the part of the pane covered by the video', () => {
+  withLibrary(Array.from({ length: 16 }, (_, index) => card(`r${index}`)), ({ host, scroller }) => {
+    const drag = reorderScrollHarness(host, scroller);
+    renderResults();
+    drag.showPlayer();
+    drag.showVideo();
+    drag.fire('dragstart', cardNode(host, 'r0'));
+    drag.fireDocument('dragover', { clientX: 40, clientY: 200 });
+    assert.equal(drag.frames.size, 0);
+    drag.fireDocument('dragover', { clientX: 40, clientY: 265 });
+    drag.step();
+    assert.equal(scroller.scrollTop, 22);
+    drag.fireDocument('dragover', { clientX: 190, clientY: 240 });
+    drag.step();
+    assert.equal(scroller.scrollTop, 44);
+    drag.fireDocument('dragover', { clientX: 190, clientY: 320 });
+    drag.step();
+    assert.equal(scroller.scrollTop, 66);
+    drag.fireDocument('keydown', { key: 'Escape' });
+  });
+});
+
+test('an upward reorder can cross into earlier batches without detaching its source', () => {
+  withLibrary(Array.from({ length: 620 }, (_, index) => card(`r${index}`)), ({ host, scroller, state }) => {
+    const drag = reorderScrollHarness(host, scroller);
+    renderResults();
+    view.renderStart = 320;
+    renderResults();
+    const source = cardNode(host, 'r619');
+    drag.fire('dragstart', source);
+    drag.fireDocument('dragover', { clientX: 40, clientY: 100 });
+    drag.step();
+    assert.equal(view.renderStart, 120);
+    assert.equal(scroller.scrollTop, 200 * 32 - 22);
+    assert.equal(cardNode(host, 'r619'), source);
+    scroller.scrollTop = 0;
+    drag.step();
+    assert.equal(view.renderStart, 0);
+    assert.equal(cardNode(host, 'r619'), source);
+    scroller.scrollTop = 0;
+    drag.fire('drop', cardNode(host, 'r0'), { x: 40, y: 100 });
+    assert.equal(state.favorites[0].id, 'r619');
+    assert.equal(host.children.length, view.renderLimit);
+    assert.equal(drag.frames.size, 0);
+  });
+});
+
+test('a downward reorder can reach a later batch at the bottom of the scroller', () => {
+  withLibrary(Array.from({ length: 325 }, (_, index) => card(`r${index}`)), ({ host, scroller, state }) => {
+    const drag = reorderScrollHarness(host, scroller);
+    renderResults();
+    const source = cardNode(host, 'r0');
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
+    drag.fire('dragstart', source);
+    drag.fireDocument('dragover', { clientX: 40, clientY: 299 });
+    drag.step();
+    assert.equal(host.children.length, 325);
+    assert.equal(cardNode(host, 'r0'), source);
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
+    drag.step();
+    assert.equal(drag.frames.size, 0, 'no frame is needed at the real end');
+    const last = cardNode(host, 'r324');
+    assert.equal(last.classList.contains('drop-after'), true);
+    drag.fire('drop', last, { x: 40, y: 299 });
+    assert.equal(state.favorites.at(-1).id, 'r0');
+    assert.equal(host.children.length, view.renderLimit);
+  });
+});
 
 test('dragging a card onto another moves it there and saves "My order"', () => {
   withLibrary([card('a', 'Alpha'), card('b', 'Beta'), card('c', 'Gamma'), card('d', 'Delta')], ({ state, host, values, events }) => {

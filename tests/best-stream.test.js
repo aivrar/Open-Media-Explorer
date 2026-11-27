@@ -79,7 +79,14 @@ test('one setting with three choices: Off, Listed streams (the default) and Auto
   const content = settings.slice(settings.indexOf('<section data-content-settings>'), settings.indexOf('<section data-server-settings>'));
   assert.match(content, /<label for="settings-best-stream">Pick the best stream<\/label>/);
   assert.match(content, /<select id="settings-best-stream" data-field="bestStreamMode" aria-describedby="settings-best-stream-hint">/);
-  assert.doesNotMatch(content, /bestStreamRadio/);
+  const hint = content.match(/<div class="description" id="settings-best-stream-hint">([\s\S]*?)<\/div>/)?.[1];
+  assert.match(hint, /When a station or channel lists several streams:\s+<ul>/);
+  assert.match(hint, /\$\{BEST_STREAM_MODES\.map\(\(id\) => `<li><strong>\$\{BEST_STREAM_MODE_LABELS\[id\]\}<\/strong>: \$\{BEST_STREAM_DESCRIPTIONS\[id\]\}<\/li>`\)/);
+  assert.match(content, /\$\{BEST_STREAM_MODES\.map\(\(id\) => `<option value="\$\{id\}">\$\{BEST_STREAM_MODE_LABELS\[id\]\}<\/option>`\)/);
+  assert.doesNotMatch(content, /bestStreamRadio|as in earlier versions/);
+  const css = await read('src/styles/base.css');
+  assert.match(css, /#settings-best-stream-hint ul \{ margin: 3px 0 0; padding-inline-start: 16px; \}/);
+  assert.match(css, /#settings-best-stream-hint li \+ li \{ margin-top: 3px; \}/);
   assert.deepEqual(Object.values(BEST_STREAM_MODE_LABELS), ['Off', 'Listed streams', 'Auto (verified)']);
   // The mode is a field of the saved settings, not a profile key of its own.
   const transfer = await read('src/lib/profile-transfer.js');

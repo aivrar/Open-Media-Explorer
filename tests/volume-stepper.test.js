@@ -399,8 +399,7 @@ test('the player bar has the speaker, then up, the level and down, and no visibl
   assert.doesNotMatch(css.match(/\n\.volume-step \{([^}]*)\}/)[1], /width:/);
   assert.doesNotMatch(css, /#player-volume \{ width:/);
   // The stacked bar's 24 px volume row: down - level - up in a row.
-  const narrow = (css.match(/@media \(max-width: 1000px\) \{[\s\S]*?\n\}/g) || []).join('\n');
-  assert.match(narrow, /\.volume-stepper \{ flex-direction: row-reverse; height: 24px; box-sizing: border-box; \}/);
+  assert.match(css, /\.player-bar\[data-fit="stack"\] \.volume-stepper \{[^}]*flex-direction: row-reverse; height: 24px;/);
 
   // The player keeps the hidden input as the one level and shows it.
   const player = await read('src/lib/player.js');

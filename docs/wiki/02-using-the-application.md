@@ -15,11 +15,12 @@ use** require v0.1.12 or newer. The **Now Playing** tab, the "!" mark on a
 station that did not play, **Choose picture…** and dropping a picture on a
 station's card require v0.1.13 or newer. The stream format and bitrate of
 a station that has played, the volume control, the one-row player bar, the
-mouse wheel over the Tuner's station strip, the Tuner's **Visualizer:** control
+mouse wheel steps in the Tuner, the Tuner's **Visualizer:** control
 and one running copy per data folder require v0.1.16 or newer. **Picture**,
 **Export...**, **Stream address...**, **Show what's playing**, audio parts,
 batch EQ assignments, Q controls, Now Playing blur and **Tabs shown** require
-v0.1.17 or newer.
+v0.1.17 or newer. The new Tuner layout and the Picture panel's **Quality**
+row require v0.1.18 or newer.
 
 ## Window layout
 
@@ -36,39 +37,46 @@ The top bar is shared by every mode:
 
 The bottom player bar is global. It survives mode switches, so you can start a
 station in Library, inspect Grid, and return without losing the current player.
-Video appears in an overlay above the bar, at the bottom right. It grows with
-the window, and the button in its top-right corner switches between the normal
+Outside the Tuner's TV layout, video appears above the bar at the bottom
+right. It grows with the window, and the button in its top-right corner
+switches between the normal
 and a larger size; the choice is remembered. Audio keeps the bar visible
 without showing a video element, including radio stations that stream in a
 video format (HLS or DASH) but carry no picture. While the picture is open,
 Library, Grid, Now Playing, About and the Visualizer panel leave scroll room
-so you can reach their bottom controls.
+so you can reach their bottom controls. Library, Grid, About and Now Playing
+keep that room during a video channel change, then release it on Stop, on a
+failed start or when the next item has no picture.
 
 With video playing, open **Picture** beside **EQ** to adjust **Brightness**,
 **Contrast**, **Saturation** or **Hue**. **Reset** restores the defaults and
 removes the picture filter. **Fit** offers **Whole picture**, **Fill**,
 **Zoom 110%**, **Zoom 125%** and **Zoom 133%**. Pick a zoom level to crop
-black bars. Fit also applies in fullscreen. Under **Apply to**, choose **For
-this channel** or **For all video**. Channel settings are saved while the
+black bars. Fit also applies in fullscreen. **Quality** below **Fit** appears
+when the stream offers at least two levels. Choose **Auto** (the default),
+**Best available** or a fixed level. See [Picture quality](04-playback-eq-downloads-recording.md#picture-quality)
+for how **Auto** and fixed levels work.
+
+Under **Apply to**, choose **For this channel** or **For all video**. Channel settings are saved while the
 channel is in Favorites or My Playlists. A channel outside those lists keeps
 its settings for the session. Use **For all video** for on-demand video.
 Backups include picture settings. **Clear local cache** removes them.
 Recordings and downloads use the original stream.
 
-In a window wider than 1000 px the bar is one row, 74 px high, with every
-control on one centre line; in a window 1000 px wide or narrower its rows are
-stacked (168 px). Nothing is written under the buttons: why the **Record**
-button is unavailable is its hover text (with **Recorder** off it says where to
-turn it on: Settings, Capture & storage), and a capture's progress, result or
-error shows beside the button. **Record audio**, **Record video** and **Stop
-recording** take up the same space, with a reserved area for recording status.
-Point at the status to read the full text. Settings, EQ and the Song log stay
-above the player bar and scroll inside in a small window.
+The player bar keeps its controls in one row as long as they fit. As space
+runs out, the title narrows first, followed by the meter, the time, the
+**Record** label and the second **EQ** line. The bar uses two rows if it still
+needs room. Point at **Record** to see why it is unavailable. If **Recorder**
+is off, the hint points to **Settings > Capture & storage**. **Record audio**,
+**Record video** and **Stop recording** share the same button. The recording
+status has space beside it. Point at it to read the full text.
+Settings, EQ and the Song log stay above the player bar and scroll inside
+in a small window.
 
 The speaker button shows a crossed-out speaker when the sound is muted or the
 volume is at zero. The volume control beside it is an up button, the volume as
-a number from 0 to 100, and a down button (in a window 1000 px wide or narrower
-it has a row of its own: down, number, up). Point at it to see the volume as a
+a number from 0 to 100, and a down button. When the bar uses two rows,
+the volume control reads down, number, up. Point at it to see the volume as a
 percentage: it starts at 80%, and 100% is full volume (there is no boost). A
 click on a button changes the volume by 1, a held button repeats after 0.4
 seconds, the mouse wheel over the control changes it by 2 per notch, and with
@@ -90,9 +98,8 @@ from the lows on the left (about 40 Hz) to the highs on the right (about
 16 kHz), and each bar keeps a falling peak segment. It only reads the sound and
 never changes what you hear. It rests, with flat bars, while playback is
 paused or stopped and while the sound is muted or the volume is at zero, and it
-slows to about one update a second while the window is minimized. In a wide window it sits at the start of the
-progress row and is left out when that row is too short; in a window up to
-1000 px wide it sits at the end of the button row. Turn it off with **Settings >
+slows to about one update a second while the window is minimized. It sits beside the progress controls and gives way as
+the bar runs out of room. Turn it off with **Settings >
 Appearance > Sound meter in the player bar**. It also stays off when Windows is
 set to show fewer animations. See
 [Playback](04-playback-eq-downloads-recording.md) for when it has no sound to
@@ -385,7 +392,8 @@ In **Favorites**, the **Sort** buttons choose how the list is shown.
   before or after all the others.
 - In **My order** you can also drag a card with the mouse and drop it
   anywhere on another card: it takes that card's place, and the cards in
-  between move up or down by one. A colored edge shows where it will go: on
+  between move up or down by one. Hold the pointer near the top or bottom
+  of the list to scroll while you drag. A colored edge shows where it will go: on
   the top and left of that card when you move a card up the list, on the
   bottom and right when you move it down. Letting go in a gap between cards,
   or on the card you are dragging, changes nothing. With a type button, a
@@ -414,7 +422,7 @@ panel shows once a favorite has a name of your own. The panel also shows
 "Original name:" with the station's own name.
 
 The new name is shown everywhere that favorite is: the Library cards, the
-Tuner's dial and cards, the player bar, the song log and starred songs (for
+Tuner's dial and station list, the player bar, the song log and starred songs (for
 songs heard from then on), and the favorites `.m3u8` files in a backup.
 **A-Z** sorts by it, and the Favorites search finds a renamed favorite by
 either name. A station picture named after the station's own name still
@@ -445,7 +453,7 @@ version of World Media still reads your favorites (without their categories).
 
 When the last try to play a favorite or a My Playlists station failed (none of
 its streams worked, or the last of them did not begin within 30 seconds), its
-Library card and its card in the Tuner strip show a small red **!**. Point at
+Library card and its entry in the Tuner station list show a small red **!**. Point at
 it, or open the detail panel, to read "Did not play last time (date). It is
 tried again when you play it." The mark never stops you: press Play as usual,
 and it goes as soon as the station plays. Stopping a station, choosing another
@@ -495,78 +503,77 @@ items they report at refresh time.
 
 ## Tuner
 
-Tuner provides a radio-style way to step through live media:
+The dial is on the left and the station list is on the right.
 
-1. Choose **Radio** or **TV**.
-2. Filter by country and source. Source **★ My favorites** puts only your
-   starred stations for that band on the dial; the choice is remembered. Each
-   of your favorites categories that has stations appears on the list after it,
-   named like **★ Rock**. These dials follow the order chosen in Favorites
-   (**My order** or **A-Z**).
-3. Drag the dial, scroll the mouse wheel over it or over the strip of station
-   cards under it (one station per notch), use Left/Up or Right/Down, or focus
-   the dial and use arrow keys.
-4. Press Enter or Space to play the selected item.
+1. Choose **Radio** or **TV** and filter by **Country** and **Source**.
+   **★ My favorites** or a category such as **★ Rock** puts those saved
+   stations on the dial in the order chosen in Favorites (**My order** or
+   **A-Z**). The favorites choice is remembered.
+2. Drag the dial or scroll over it. Each wheel notch moves one station,
+   wrapping at the ends, and the station plays when the wheel rests.
+   The wheel over the station list scrolls it. A dial with one station stays put. With the dial focused,
+   use Left or Up to move back, Right or Down to move forward, and Enter
+   or Space to play.
+3. Click a list entry to play it. With the list focused, use the arrow keys
+   to move through the rows, Home or End to jump to the first or last
+   entry, and Page Up or Page Down to move a page. Press Enter or Space to
+   play the focused entry.
 
-With **My favorites** (or one of your categories) as the source, the status
-line says how many favorite stations are on the dial. The dial shows the
-favorites saved as the type you are on: radio stations on the Radio dial and
-TV channels on the TV dial. When some of your favorites are saved as the other
-type, the status line adds a note, for example "3 more saved as TV (switch to
-TV to see them)". A playlist channel whose address does not
-say radio or TV is saved as the type of its playlist's **Add as** choice, so a
-radio station imported as TV is only on the TV dial. Import the playlist again
-with the right **Add as** to move it.
+The dial shows the station's place in the list ("12 of 80"). Its name
+uses one line if it fits and two if needed. Point at the name to read it
+in full. The dial glows when it can turn and the pointer is over it. The
+first station is at the top.
 
-The dial shows the selected station's place in the current list ("12 of 80"),
-not a broadcast frequency. Starred stations are marked with ★ in the station
-strip and on the dial, and the strip keeps the current station in view. The
-strip can always scroll so that any station, including the first and the last,
-sits in the center. When the mouse is over a dial that the wheel can turn, the
-dial glows softly; a dial with one station does not.
-The knob's marker rests at the same angle for the same station, with the first
-station at the top. With a single station on the dial, the dial does not turn.
-The knob shows only the station's name; its source (for example "My Playlist")
-is on the station's card in the strip below. A name too long for the knob is
-cut short with an ellipsis and shows in full when the pointer rests on it.
+The list highlights the tuned station and keeps it in view as you turn
+the dial. Each entry shows its name and a second line with its source,
+country when known, and format and bitrate when known for radio. Stars
+mark favorites on the dial and in the list. The list fits whole rows and
+uses two columns when there is room. Its caption shows how many stations
+or channels are listed. In **★ My favorites**, it can also show how many
+are on the other band, for example "19 favorite stations · 17 more in TV".
+Point at the caption for details. A playlist station imported as TV
+appears on the TV band. Import the playlist again with the right **Add as**
+choice to move it.
 
-**Settings > Appearance > Tuner card size** sets the size of the station cards
-in the strip: **Small** (the default, text only, as in earlier versions),
-**Medium** or **Large**. Medium and Large cards have bigger names and show the
-station's picture: your own station picture if you have one, otherwise the
-station's logo, otherwise its initials on a colored square. Pictures load only
-for the cards you can see, and only after the strip has stopped moving, so
-turning the dial quickly through many stations asks for nothing until it
-rests. Bigger cards leave less room for the dial in a short window; when the
-dial gets too small, the station name and then the count are left off the knob.
+**Settings > Appearance > Tuner card size** sets list entries to **Small**
+(the default), **Medium** or **Large**. Medium and Large show your own
+picture for the station, its logo or its initials. Artwork loads for
+visible entries once the list rests.
 
-At the right of the Tuner's top bar, after **Country** and **Source**, the
-**Visualizer:** control (a down button, a number and an up button, the same kind
-of control as the volume) sets how strongly the Visualizer shows behind the
-Tuner, from 0 to 100. The default, 8, is a faint picture; 100 shows it at full
-strength, and above the default the picture can make text on the Tuner harder
-to read. A click changes the level by 1, a held button repeats, the mouse wheel over the control
-changes it by 2 per notch, and with the control focused the arrow keys change it
-by 1. 0 turns **Show the Visualizer behind the Tuner** off, and pressing up from
-0 turns it on; the switch in Settings and the control follow each other, and
-turning the switch off in Settings keeps the level for when it is turned on
-again. Nothing is drawn until the notice about flashing pictures has been
-accepted in the Visualizer tab, at any level.
+Use **Stations** and **Tone knobs** in the Tuner bar to show or hide the
+list and the three knobs. Both choices are remembered. **Stations** starts
+on and **Tone knobs** starts off. The knobs sit below the dial, labeled
+**Bass**, **Treble** and **Loudness**. Point at one for its value and where
+it saves, for example "Bass · main EQ · +2 dB". Drag or use the wheel to
+adjust it. With the knob focused, use the arrow keys for small changes,
+Page Up or Page Down for larger changes, and Home or End for the limits.
+Double-click or press Backspace or Delete to set the knob to 0 dB.
+Bass and Treble adjust the low and high EQ bands. Loudness adjusts EQ
+preamp. Changes save to the playing favorite's EQ or to the main EQ.
 
-The Tuner keeps room for the player bar from the start. When you tune TV,
-the dial makes room for the picture in one 200 ms movement, or at once with
-reduced motion. The picture is centered under the station strip. The room
-stays when you switch TV channels or press **Stop**. Playing radio or choosing
-the **Radio** band brings the dial back to full size. In a short window the
-picture can shrink to 200 × 112 so there is room for the dial. In the smallest
-windows, a small picture floats at the bottom right.
-Stations appear as each live source answers; a source
-that does not answer within 20 seconds is marked unavailable instead of holding
-the dial on "Loading". If the dial stays empty because a source did not answer,
-it says "The stations could not be loaded. Press Radio or TV above to try
-again." (since v0.1.12; before, it said "No stations found for this
-country."). Tuner reuses the live adapter/snapshot lane and
-content-rating preference.
+![Tuner - the dial, tone knobs and station list](<../../screenshots/v0.1.14/tuner.png>)
+
+![Tuner - the dial turning beside the station list, with tone knobs below](<../../screenshots/v0.1.14/demo-tuner.gif>)
+
+On TV, the picture sits at the top of the right column with the list
+below. While a channel loads or after **Stop**, the picture area shows its
+art or initials, name and **Loading…** or **Stopped**. With the list shown,
+the dial, knobs and right column keep their positions across bands. Hiding
+the list gives Radio a larger, centered dial and puts a larger TV picture
+beside the dial.
+
+![Tuner - a TV channel playing above the station list, beside the dial and tone knobs](<../../screenshots/v0.1.14/tuner-tv.png>)
+
+The **Visualizer:** control in the Tuner bar sets the background strength
+from 0 to 100 during music, TV and video playback. The default strength is
+8. A click or arrow key moves it by 1, and a wheel notch by 2. Set it to
+0 to turn the background off. Press up from 0 to turn it on. The Settings
+switch also turns it off and keeps the level for next time. Accept the
+flashing notice in the Visualizer tab first.
+
+Stations appear as each live source answers. A source that does not
+answer within 20 seconds is marked unavailable. If no stations load,
+read the message in the list and press **Radio** or **TV** to try again.
 
 ## Discovery
 
@@ -639,13 +646,13 @@ restart; the local server port is explicitly marked **for next launch**.
 - **Now Playing background blur** offers **Off**, **Light**, **Medium**
   (the default) and **Strong**.
 - **Tuner card size:** Small (default), Medium or Large. Medium and Large show
-  each station's picture on its card under the Tuner dial. Updates immediately.
+  each station's picture in the Tuner's station list. Updates immediately.
 - **Sound meter in the player bar:** on by default. Shows the small bars beside
   EQ that move with the sound. Updates immediately.
-- **Show the Visualizer behind the Tuner:** off by default. While sound plays,
-  the Visualizer is drawn faintly behind the Tuner (how strongly is set with
-  the **Visualizer:** control on the Tuner tab), without overlays or effects,
-  once its notice about flashing has been accepted in the Visualizer tab. See
+- **Show the Visualizer behind the Tuner:** off by default. After you accept
+  the flashing notice, it draws the Visualizer behind the Tuner during music,
+  TV and video playback. Use **Visualizer:** in the Tuner bar to set its
+  strength. See
   [Visualizer](09-visualizer.md).
 - **Show technical source details:** off by default. Turn it on to see the
   per-source status words (Pull, Wait, Done, Live, Stale), boxed source badges
@@ -667,11 +674,21 @@ malformed-schema rejection, or Owncast verification. Turning it off hides
 marked items everywhere while keeping saved favorites as non-revealing
 placeholders.
 
-**Pick the best stream** has three choices: **Off**, **Listed streams** (the
-default) and **Auto (verified)**. With **Listed streams**, when a station or channel lists
-several streams, the best listed one is tried first: for TV the largest picture
-size (1080p before 720p); for radio the highest bitrate up to 320 kbps, and at
-equal bitrate Opus or AAC before MP3. Lossless streams are tried last. If the
+**Pick the best stream** in Settings explains each choice under "When a station
+or channel lists several streams:".
+
+- **Off** tries the first two listed streams together and plays whichever
+  answers first.
+- **Listed streams** (the default) starts with the best listed stream and
+  tries the next if it fails or is slow to start.
+- **Auto (verified)** does the same and looks for a better stream in other
+  radio directory entries. It can use one on a later start if both streams
+  match on two different songs.
+
+**Listed streams** ranks the streams by what the directory reports. For TV
+it puts the largest picture first (1080p before 720p). For radio it puts
+the highest bitrate up to 320 kbps first, with Opus or AAC before MP3 at
+the same bitrate. Lossless streams are tried last. If the
 best stream does not connect, the next one is tried, and the station's own
 stream always keeps a place in the list. The best stream gets six seconds on
 its own; if it has not started by then (or fails sooner), the next one is tried
@@ -684,9 +701,8 @@ it gets 10 seconds from when it started to play one full second, and only if
 it does not is the next stream tried. Once it has played a full second, a later
 interruption is handled by the player's usual reconnecting, not by trying other
 streams.
-**Off** works as in earlier versions: the first two listed streams are tried
-together and the first to answer plays; the others are tried only if both fail.
-Playing never changes the address a favorite is saved with.
+With **Off**, the remaining streams are tried if both first choices fail.
+Playing preserves the address a favorite is saved with.
 
 **Auto (verified)** does the same and, for a Radio Browser station, may also
 use another directory entry of the same station, but only when there is
@@ -903,22 +919,26 @@ You can also give a favorite or a My Playlists station a picture without
 opening the folder. In the station's detail panel (where **Rename** is), press
 **Choose picture…** and pick a PNG, JPG, WebP or GIF file of up to 2 MB, or
 drop one picture file on the station's card in **Favorites** or **My
-Playlists**. World Media checks the picture exactly as it checks the folder
-(an SVG or a file that is not really a picture is refused, with the reason),
+Playlists**. Only the card under the pointer is highlighted during a drag.
+It reads "Drop to set this station's picture". The new picture appears on
+the card with **Saving…** while it is stored. If saving fails, the card
+returns to its previous picture. World Media checks the picture as it checks
+the folder (an SVG or a file that is not really a picture is refused),
 then saves a copy in the `station-images` folder, named after the station by
 the rules above. For example, `Nu-Metal/Alternative` gets
 `Nu-Metal-Alternative.png`. A renamed favorite's picture is named after the
 station's own name. If a file is already there for the station, you are asked
 before it is replaced, and the question names it, for example "The file
-AC-DC.png is already there. Replace it?". The new picture shows at once on the
-cards, the Tuner and the player bar. **Remove picture**, shown while the
+AC-DC.png is already there. Replace it?". **Remove picture**, shown while the
 station has a picture of its own, asks first, naming the file or files it will
 delete, and then deletes only those files from the folder. For a renamed
 favorite whose picture is named after your name for it, that one file is the
 one named and deleted. File names are always shown in full. If more than 20
 files in the folder belong to one station, nothing is replaced or deleted and
-a message asks you to tidy the folder by hand first. A picture dropped anywhere else changes nothing; a message says where to
-drop it. A playlist file dropped on the window is still imported as before.
+a message asks you to tidy the folder by hand first. If you drop a picture
+outside an eligible card, a message says where to drop it. Refusal messages
+clear after 6 seconds, or 8 for longer text. Escape, a click or a new drag
+clears them right away. Playlist files dropped on the window are imported.
 
 Under the status line, **Pictures to check** lists the files in the folder that
 need a look, each as the file name and the reason. It shows up to ten lines and

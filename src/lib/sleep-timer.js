@@ -41,8 +41,8 @@ function render() {
   if (!host) return;
   if (host.firstChild) return;
   host.innerHTML = `
-    <label for="sleep-select" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    <label for="sleep-select">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <span data-role="display">Sleep</span>
     </label>
     <select id="sleep-select" data-role="select">

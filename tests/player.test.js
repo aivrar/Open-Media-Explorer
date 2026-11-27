@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createPlayerDom, FakeElement } from './helpers/fake-dom.js';
 import { emit, getState, setMode, subscribe } from '../src/lib/state.js';
+import { START_FAILOVER_MS } from '../src/lib/start-failover.js';
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
@@ -348,6 +349,7 @@ test('the Tuner keeps the video band between TV stations and releases it for rad
   await player.playItem(television('first-tv'));
   assert.equal(video.hidden, false);
   assert.equal(reserved(), false);
+  assert.equal(document.getElementById('player-art').dataset.stationId, player.getCurrentItem().id);
   const originalSrc = video.src;
   const load = t.mock.method(video, 'load');
   setMode('tuner');
@@ -423,6 +425,162 @@ test('the Tuner keeps the video band between TV stations and releases it for rad
   assert.equal(reserved(), false);
   setMode('tuner');
   assert.equal(reserved(), false);
+});
+
+test('floating video clearance survives hand-over and ends when no picture arrives', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.method(console, 'warn', () => {});
+  const { elements, document } = createPlayerDom();
+  const { app } = elements;
+  const video = elements['video-el'];
+  const { mode } = getState();
+  const properties = new Map();
+  const observer = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  let reportSize;
+  let boxHeight = 0;
+  let nextRelay = 0;
+  app.style.setProperty = (name, value) => properties.set(name, value);
+  video.getBoundingClientRect = () => ({ height: video.hidden ? 0 : boxHeight });
+  video.hidden = true;
+  t.mock.method(video, 'load', function () {
+    this.readyState = this.videoWidth = this.videoHeight = 0;
+  });
+  globalThis.document = document;
+  globalThis.window = {};
+  globalThis.ResizeObserver = class {
+    constructor(callback) {
+      reportSize = (height) => {
+        boxHeight = height;
+        callback([{ borderBoxSize: [{ blockSize: height }] }]);
+      };
+    }
+    observe() {}
+  };
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    if (path === '/api/v1/session') return apiResponse(200, {
+      ok: true, data: { token: 'clearance-test' }, error: null,
+    });
+    if (path === '/api/v1/media/register') {
+      const id = `clearance_test_media_1234567890_${++nextRelay}`;
+      return apiResponse(201, { ok: true, data: { media_id: id, relay_url: `/api/v1/media/${id}` }, error: null });
+    }
+    if (options?.headers?.Range) return new Response(null, { status: 206 });
+    if (path.endsWith('/expire')) return apiResponse(202, { ok: true, data: { state: 'expired' }, error: null });
+    throw new Error(`Unexpected player request: ${path}`);
+  });
+
+  const player = await import('../src/lib/player.js?floating-video-clearance');
+  player.initPlayer();
+  t.after(() => {
+    player.stop();
+    setMode(mode);
+    if (observer) Object.defineProperty(globalThis, 'ResizeObserver', observer);
+    else delete globalThis.ResizeObserver;
+  });
+  setMode('library');
+
+  const television = (name) => item(name, 'tv', 'video');
+  const state = () => app.dataset.videoClearance;
+  const clearance = () => {
+    const visible = app.classList.contains('has-video');
+    if (state() === 'released' || (!visible && state() !== 'reserved')) return 0;
+    return (parseFloat(properties.get('--video-height')) || 0) + 8;
+  };
+  const picture = (width, height, measuredHeight) => {
+    video.videoWidth = width;
+    video.videoHeight = height;
+    video.readyState = 1;
+    boxHeight = measuredHeight;
+    video.emit('loadedmetadata');
+    video.readyState = 2;
+    video.emit('loadeddata');
+  };
+  const startPicture = async (name) => {
+    await player.playItem(television(name));
+    picture(1280, 720, 180);
+    reportSize(180);
+    assert.equal(state(), undefined);
+    assert.equal(clearance(), 188);
+  };
+
+  const firstStart = player.playItem(television('first-picture'));
+  assert.equal(state(), undefined);
+  assert.equal(clearance(), 0);
+  await firstStart;
+  picture(640, 480, 240);
+  reportSize(240);
+  assert.equal(clearance(), 248);
+
+  const changing = player.playItem(television('smaller-picture'));
+  assert.equal(video.hidden, true);
+  assert.equal(app.classList.contains('has-video'), false);
+  assert.equal(state(), 'reserved');
+  assert.equal(clearance(), 248);
+  reportSize(0);
+  assert.equal(clearance(), 248);
+  await changing;
+  assert.equal(video.hidden, false);
+  assert.equal(app.classList.contains('has-video'), true);
+  assert.equal(state(), 'reserved');
+  reportSize(100);
+  assert.equal(clearance(), 248, 'the provisional box does not shrink the scroll area');
+  picture(1280, 720, 180);
+  assert.equal(state(), undefined);
+  assert.equal(clearance(), 188, 'only the 60px difference between pictures is lost');
+  t.mock.timers.tick(START_FAILOVER_MS);
+  assert.equal(clearance(), 188, 'the completed hand-over cancels its timeout');
+
+  const radio = player.playItem(item('radio', 'radio', 'audio'));
+  assert.equal(clearance(), 0);
+  await radio;
+  assert.equal(state(), undefined);
+  assert.equal(video.hidden, true);
+
+  await startPicture('before-stop');
+  const stopped = player.playItem(television('stopped'));
+  assert.equal(state(), 'reserved');
+  player.stop();
+  assert.equal(state(), undefined);
+  assert.equal(clearance(), 0);
+  await stopped;
+
+  await startPicture('before-failure');
+  video.playError = new Error('blocked');
+  const failed = player.playItem(television('failed'));
+  assert.equal(clearance(), 188);
+  await failed;
+  assert.equal(state(), 'released');
+  assert.equal(clearance(), 0);
+  video.playError = null;
+
+  await startPicture('before-unavailable');
+  const unavailable = player.playItem({ ...television('unavailable'), stream_url: '' });
+  assert.equal(clearance(), 188);
+  await unavailable;
+  assert.equal(video.hidden, true);
+  assert.equal(clearance(), 0);
+
+  await startPicture('before-audio-only');
+  await player.playItem(television('audio-only'));
+  assert.equal(state(), 'reserved');
+  video.readyState = 2;
+  video.emit('loadeddata');
+  assert.equal(state(), 'released');
+  assert.equal(clearance(), 0);
+
+  await startPicture('before-timeout');
+  await player.playItem(television('slow-picture'));
+  reportSize(100);
+  t.mock.timers.tick(START_FAILOVER_MS - 1);
+  assert.equal(state(), 'reserved');
+  assert.equal(clearance(), 188);
+  t.mock.timers.tick(1);
+  assert.equal(state(), 'released');
+  assert.equal(clearance(), 0);
+  assert.equal(video.hidden, false);
+  picture(1280, 720, 180);
+  assert.equal(state(), undefined);
+  assert.equal(clearance(), 188);
 });
 
 test.after(() => {

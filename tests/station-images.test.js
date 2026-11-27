@@ -380,3 +380,22 @@ test('no profile data is stored for station pictures', async () => {
   const module = await read('src/lib/station-images.js');
   assert.doesNotMatch(module, /localStorage|saveSettings|worldmedia\.[a-z]+\.v1/);
 });
+
+test('a refresh after a write waits for a fresh picture list if a scan is already running', async () => {
+  let finishScan;
+  let calls = 0;
+  const request = async () => {
+    calls += 1;
+    if (calls === 1) return new Promise((resolve) => { finishScan = resolve; });
+    return list(entry('updated', 'a'));
+  };
+  const first = loadStationImages({ request });
+  const afterWrite = loadStationImages({ request, afterCurrent: true });
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  finishScan(list());
+  assert.deepEqual((await first).images, []);
+  assert.deepEqual((await afterWrite).images, [entry('updated', 'a')]);
+  assert.equal(calls, 2);
+  applyStationImageList(list());
+});

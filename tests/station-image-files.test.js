@@ -4,13 +4,13 @@ import { readFile } from 'node:fs/promises';
 
 import { FakeElement } from './helpers/fake-dom.js';
 import {
-  MAX_FILES_SHOWN, PICTURE_ACCEPT, PICTURE_DROP_HINT, PICTURE_TOO_LARGE_TEXT, STATION_IMAGE_REMOVE_ROUTE,
+  MAX_FILES_SHOWN, PICTURE_ACCEPT, PICTURE_TOO_LARGE_TEXT, STATION_IMAGE_REMOVE_ROUTE,
   STATION_IMAGE_SAVE_ROUTE, TOO_MANY_FILES_TEXT, fileToBase64, pictureIdOf, removeQuestion, removeStationPicture,
-  saveStationPicture, stationOwnName,
+  saveStationPicture, stationOwnName, validateDroppedPicture,
 } from '../src/lib/station-image-files.js';
 import {
   STATION_IMAGE_MAX_BYTES, applyStationImageList, normalizeStationName, setStationImageTitleSource,
-  stationImageSourceFor,
+  stationImageSourceFor, stationPictureFileKey,
 } from '../src/lib/station-images.js';
 import { ControlApiError } from '../src/lib/capture-client.js';
 import {
@@ -18,7 +18,7 @@ import {
 } from '../src/lib/playlist-drop.js';
 import { getState } from '../src/lib/state.js';
 import { ui } from '../src/modes/library/shell-refs.js';
-import { dropStationPicture, pictureDropItem, pictureDropText } from '../src/modes/library/picture-drop.js';
+import { dropStationPicture, mountPictureDropPreview, pictureDropTarget } from '../src/modes/library/picture-drop.js';
 import {
   closeDetail, detailPictureControls, openDetail, refreshDetailPictureControls, refreshDetailTrouble,
 } from '../src/modes/library/detail.js';
@@ -69,6 +69,9 @@ function requests(...replies) {
 
 test('every file name the server makes for a station is matched back to that station', async (t) => {
   const fixture = JSON.parse(await read('tests/fixtures/station-image-file-names.json'));
+  for (const [station, stem] of fixture.cases) {
+    assert.equal(stationPictureFileKey(station), normalizeStationName(stem), station);
+  }
   const named = fixture.cases.filter(([, stem]) => stem);
   assert.ok(named.length > 15);
   for (const [station, stem] of named) {
@@ -288,127 +291,300 @@ function dropHarness(options) {
     addEventListener: (type, fn) => listeners.set(type, fn),
     removeEventListener: (type) => listeners.delete(type),
   };
-  const classes = new Set();
-  const hint = {
-    hidden: false, textContent: '',
-    classList: {
-      toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
-      contains: (name) => classes.has(name),
-    },
-    setAttribute() {}, remove() {},
-  };
-  const documentImpl = { body: { appendChild() {} }, createElement: () => hint };
+  const body = new FakeElement();
+  const documentImpl = { body, createElement: (tag) => new FakeElement('', tag) };
   const dispose = initPlaylistDrop({ ...options, target, documentImpl });
   const fire = (type, dataTransfer, extra = {}) => {
     const event = { dataTransfer, prevented: false, preventDefault() { event.prevented = true; }, ...extra };
     listeners.get(type)(event);
     return event;
   };
-  return { fire, hint, dispose };
+  const [hint, announcement] = body.children;
+  return { fire, hint, announcement, dispose };
 }
 
-const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve)); };
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const pictureDrag = { types: ['Files'], items: [{ kind: 'file', type: 'image/png' }], files: [] };
+const pictureDrop = { types: ['Files'], files: [{ name: 'logo.png', type: 'image/png' }] };
+const highlight = 'is-picture-drop-target';
 
-test('a dropped picture goes to the element it was dropped on; a playlist file still imports', async (t) => {
+test('picture drags highlight only the target and refusals use a timed notice', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const first = new FakeElement();
+  const second = new FakeElement();
   const imported = [];
   const pictures = [];
-  const { fire, hint, dispose } = dropHarness({
+  const { fire, hint, announcement, dispose } = dropHarness({
     onPlaylist: (file) => imported.push(file),
-    onPicture: async (file, where) => { pictures.push([file.name, where]); return { text: 'Picture saved for Jazz.' }; },
-    describePictureDrop: (where) => (where === 'card' ? 'Drop to use this picture for Jazz' : PICTURE_DROP_HINT),
+    onPicture: async (file, where) => {
+      pictures.push([file.name, where]);
+      if (where === first) return { text: 'Picture saved for Jazz.' };
+      if (where === second) return { text: 'The file could not be read.', rejected: true };
+      return null;
+    },
+    getPictureTarget: (where) => (where === first || where === second ? where : null),
   });
   t.after(dispose);
-  const pictureDrag = { types: ['Files'], items: [{ kind: 'file', type: 'image/png' }], files: [] };
-  fire('dragover', pictureDrag, { target: 'card' });
-  assert.equal(hint.textContent, 'Drop to use this picture for Jazz');
-  fire('dragover', pictureDrag, { target: 'sidebar' });
-  assert.equal(hint.textContent, PICTURE_DROP_HINT);
-  // A playlist drag still says how playlists are imported.
-  fire('dragover', { types: ['Files'], items: [{ kind: 'file', type: 'audio/x-mpegurl' }], files: [] }, { target: 'card' });
-  assert.match(hint.textContent, /^Drop a playlist file/);
+  assert.equal(fire('dragover', pictureDrag, { target: first }).prevented, true);
+  assert.equal(first.classList.contains(highlight), true);
+  assert.equal(first.getAttribute('data-picture-drop-label'), "Drop to set this station's picture");
+  assert.equal(hint.hidden, true);
 
-  const drop = fire('drop', { types: ['Files'], files: [{ name: 'logo.png', type: 'image/png' }] }, { target: 'card' });
-  assert.equal(drop.prevented, true);
+  fire('dragover', pictureDrag, { target: second });
+  assert.equal(first.classList.contains(highlight), false);
+  assert.equal(first.hasAttribute('data-picture-drop-label'), false);
+  assert.equal(second.classList.contains(highlight), true);
+  fire('dragleave', pictureDrag, { relatedTarget: null });
+  assert.equal(second.classList.contains(highlight), false);
+
+  fire('dragover', pictureDrag, { target: first });
+  assert.equal(fire('drop', pictureDrop, { target: first }).prevented, true);
+  assert.equal(first.classList.contains(highlight), false);
   await settle();
-  assert.deepEqual(pictures, [['logo.png', 'card']]);
-  assert.equal(hint.textContent, 'Picture saved for Jazz.');
-  assert.equal(hint.hidden, false);
-  assert.equal(hint.classList.contains('is-rejected'), false);
+  assert.deepEqual(pictures, [['logo.png', first]]);
+  assert.equal(hint.hidden, true);
+  assert.equal(announcement.className, 'sr-only');
+  assert.equal(announcement.getAttribute('aria-live'), 'polite');
+  assert.equal(announcement.textContent, 'Picture saved for Jazz.');
 
-  // A playlist and a picture dropped together: the playlist wins.
-  fire('drop', { types: ['Files'], files: [{ name: 'logo.png' }, { name: 'list.m3u' }] }, { target: 'card' });
+  fire('dragover', pictureDrag, { target: 'sidebar' });
+  assert.equal(hint.hidden, true);
+  assert.equal(fire('drop', pictureDrop, { target: 'sidebar' }).prevented, true);
+  await settle();
+  assert.equal(hint.hidden, true);
+  assert.equal(announcement.textContent, '');
+
+  fire('drop', pictureDrop, { target: second });
+  await settle();
+  assert.equal(hint.textContent, 'The file could not be read.');
+  assert.equal(hint.classList.contains('is-rejected'), true);
+  assert.equal(announcement.textContent, 'The file could not be read.');
+  assert.equal(hint.getAttribute('aria-hidden'), 'true');
+  t.mock.timers.tick(5999);
+  assert.equal(hint.hidden, false);
+  t.mock.timers.tick(1);
+  assert.equal(hint.hidden, true);
+  assert.equal(announcement.textContent, '');
+
+  fire('dragover', { types: ['Files'], items: [{ kind: 'file', type: 'audio/x-mpegurl' }] });
+  assert.match(hint.textContent, /^Drop a playlist file/);
+  fire('drop', { types: ['Files'], files: [{ name: 'logo.png' }, { name: 'list.m3u' }] }, { target: first });
   await settle();
   assert.deepEqual(imported.map((file) => file.name), ['list.m3u']);
-  assert.equal(pictures.length, 1);
-  // Neither: the playlist message, unchanged.
-  fire('drop', { types: ['Files'], files: [{ name: 'notes.txt' }] }, { target: 'card' });
+  assert.equal(pictures.length, 3);
+  fire('drop', { types: ['Files'], files: [{ name: 'notes.txt' }] });
   assert.match(hint.textContent, /^Only \.m3u/);
+  fire('keydown', null, { key: 'Escape' });
+  t.mock.timers.tick(3499);
+  assert.equal(hint.hidden, false);
+  t.mock.timers.tick(1);
+  assert.equal(hint.hidden, true);
 });
 
-test('a refused or cancelled picture drop says so, or nothing', async (t) => {
-  const replies = [{ text: PICTURE_DROP_HINT, rejected: true }, null];
-  const { fire, hint, dispose } = dropHarness({
-    onPlaylist: () => {}, onPicture: async () => replies.shift(), describePictureDrop: () => PICTURE_DROP_HINT,
+test('a long picture refusal lasts eight seconds and dismisses on Escape or the next drag', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const message = 'SVG drawings are not allowed as station pictures. Use a PNG, JPG, WebP or GIF picture.';
+  const { fire, hint, announcement, dispose } = dropHarness({
+    onPicture: async () => ({ text: message, rejected: true }),
   });
   t.after(dispose);
-  fire('drop', { types: ['Files'], files: [{ name: 'a.png' }] }, { target: 'x' });
+  for (const dismiss of [
+    () => { t.mock.timers.tick(7999); assert.equal(hint.hidden, false); t.mock.timers.tick(1); },
+    () => fire('keydown', null, { key: 'Escape' }),
+    () => fire('dragover', pictureDrag),
+    () => fire('pointerdown'),
+  ]) {
+    fire('drop', pictureDrop);
+    await settle();
+    assert.equal(hint.hidden, false);
+    assert.equal(announcement.textContent, message);
+    dismiss();
+    assert.equal(hint.hidden, true);
+    assert.equal(announcement.textContent, '');
+  }
+  fire('drop', pictureDrop);
+  fire('keydown', null, { key: 'Escape' });
   await settle();
-  assert.equal(hint.textContent, PICTURE_DROP_HINT);
-  assert.equal(hint.classList.contains('is-rejected'), true);
-  hint.hidden = true;
-  fire('drop', { types: ['Files'], files: [{ name: 'a.png' }] }, { target: 'x' });
-  await settle();
-  assert.equal(hint.hidden, true, 'the user said no: nothing more to say');
+  assert.equal(hint.hidden, true, 'a refusal that arrives after Escape stays dismissed');
 });
 
-test('only a card of a favorite or a My Playlists station in the Library takes a dropped picture', async (t) => {
-  const state = withFavorites(t, [fav('fav:jazz', 'Jazz FM')]);
+function pictureTargets(t) {
+  const state = withFavorites(t, [fav('fav:jazz', 'Jazz FM'), fav('fav:news', 'News FM'), fav('fav:invalid', '._')]);
+  state.mode = 'library';
   const oldHost = ui.resultsHost;
   t.after(() => { ui.resultsHost = oldHost; });
   const cards = new Set();
   ui.resultsHost = { contains: (node) => cards.has(node) };
   const cardFor = (item, { inHost = true } = {}) => {
-    const card = { __item: item };
+    const card = new FakeElement();
+    const properties = new Map();
+    card.__thumb = new FakeElement();
+    card.__thumb.style = {
+      setProperty: (key, value) => properties.set(key, value),
+      removeProperty: (key) => properties.delete(key),
+    };
+    card.__item = item;
+    card.closest = () => card;
     if (inHost) cards.add(card);
-    return { closest: (selector) => (selector === '.card[data-id]' ? card : null) };
+    return { card, thumb: card.__thumb, preview: () => properties.get('--picture-drop-preview') };
   };
-  const saved = cardFor(fav('fav:jazz', 'Jazz FM'));
-  state.mode = 'library';
-  assert.equal(pictureDropItem(saved).id, 'fav:jazz');
-  assert.equal(pictureDropText(saved), 'Drop to use this picture for Jazz FM');
+  return { state, cardFor };
+}
+
+test('only named, visible saved stations in the Library take a dropped picture', async (t) => {
+  const { state, cardFor } = pictureTargets(t);
+  const saved = cardFor(state.favorites[0]);
+  assert.equal(pictureDropTarget(saved.card), saved.card);
   for (const target of [
-    cardFor(fav('catalog:1', 'Not saved')),
-    cardFor(fav('fav:jazz', 'Jazz FM'), { inHost: false }),
-    cardFor(fav('fav:jazz', 'Hidden', { __contentHidden: true })),
-    { closest: () => null },
+    cardFor(fav('catalog:1', 'Not saved')).card,
+    cardFor(state.favorites[0], { inHost: false }).card,
+    cardFor({ ...state.favorites[0], __contentHidden: true }).card,
+    cardFor(state.favorites[2]).card,
     null,
-  ]) {
-    assert.equal(pictureDropItem(target), null);
-    assert.equal(pictureDropText(target), PICTURE_DROP_HINT);
-  }
-  const calls = [];
-  const save = async (item, file) => { calls.push([item.id, file.name]); return { ok: true, text: 'Picture saved for Jazz FM.' }; };
-  assert.deepEqual(await dropStationPicture({ name: 'a.png' }, saved, { save }),
-    { text: 'Picture saved for Jazz FM.', rejected: false });
-  assert.deepEqual(await dropStationPicture({ name: 'a.png' }, cardFor(fav('catalog:1', 'X')), { save }),
-    { text: PICTURE_DROP_HINT, rejected: true });
-  assert.equal(await dropStationPicture({ name: 'a.png' }, saved, { save: async () => ({ cancelled: true }) }), null);
-  assert.deepEqual(await dropStationPicture({ name: 'a.png' }, saved, { save: async () => ({ ok: false, text: 'No.' }) }),
-    { text: 'No.', rejected: true });
-  assert.deepEqual(calls, [['fav:jazz', 'a.png']]);
-  // Outside the Library a card under the pointer does not count.
+  ]) assert.equal(pictureDropTarget(target), null);
+  assert.equal(await dropStationPicture({}, null, { validate: () => assert.fail('outside drop validated') }), null);
   state.mode = 'tuner';
-  assert.equal(pictureDropItem(saved), null);
+  assert.equal(pictureDropTarget(saved.card), null);
 });
 
-test('the Library gives the window\'s drop handler its picture handlers', async () => {
-  const [main, library, render] = await Promise.all([
+test('drop validation rejects empty, oversized, SVG, bad dimensions and decode failures', async () => {
+  const revoked = [];
+  const options = {
+    createUrl: (blob) => {
+      assert.equal(blob.type, 'image/png');
+      return 'blob:png';
+    },
+    decode: async () => [100, 50],
+    revokeUrl: (url) => revoked.push(url),
+  };
+  assert.match((await validateDroppedPicture(fileOf(undefined, { size: 0 }), options)).text, /empty/);
+  assert.equal((await validateDroppedPicture(fileOf(undefined, { size: STATION_IMAGE_MAX_BYTES + 1 }), options)).text,
+    PICTURE_TOO_LARGE_TEXT);
+  const svg = fileOf(new TextEncoder().encode('<?xml version="1.0"?><svg/>'), { name: 'fake.png' });
+  assert.match((await validateDroppedPicture(svg, options)).text, /SVG drawings are not allowed/);
+  const valid = await validateDroppedPicture(fileOf(undefined, { type: 'text/plain' }), options);
+  assert.equal(valid.url, 'blob:png');
+  valid.release();
+  for (const dimensions of [[8193, 100], [8000, 8000], [0, 50]]) {
+    assert.match((await validateDroppedPicture(fileOf(), { ...options, decode: async () => dimensions })).text,
+      /not a picture the app can use/);
+  }
+  const decode = async () => { throw new Error('corrupt image'); };
+  assert.match((await validateDroppedPicture(fileOf(), { ...options, decode })).text, /not a picture the app can use/);
+  assert.equal(revoked.length, 5);
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('validated previews show while saving, persist on a remount, and roll back on failure', async (t) => {
+  const { state, cardFor } = pictureTargets(t);
+  const item = state.favorites[0];
+  const { card, thumb, preview } = cardFor(item);
+  const validation = deferred();
+  const saving = deferred();
+  const released = [];
+  let saves = 0;
+  const result = dropStationPicture({}, card, {
+    validate: () => validation.promise,
+    save: async (_item, _file, options) => {
+      saves += 1;
+      assert.equal(options.confirmImpl(), true, 'the labeled drop replaces without a modal');
+      return saving.promise;
+    },
+  });
+  assert.equal(preview(), undefined);
+  assert.equal(saves, 0);
+  validation.resolve({ url: 'blob:optimistic', release: () => released.push('optimistic') });
+  await settle();
+  assert.equal(saves, 1);
+  assert.equal(preview(), 'url("blob:optimistic")');
+  assert.equal(thumb.classList.contains('is-picture-saving'), true);
+  const remount = cardFor(item);
+  mountPictureDropPreview(remount.thumb, item);
+  assert.equal(remount.preview(), preview());
+
+  saving.resolve({ ok: false, text: 'The picture could not be saved in the station-images folder.' });
+  assert.deepEqual(await result, { text: 'The picture could not be saved in the station-images folder.', rejected: true });
+  assert.equal(preview(), undefined, 'the underlying picture was never changed');
+  assert.equal(remount.preview(), undefined);
+  assert.equal(thumb.classList.contains('is-picture-saving'), false);
+  assert.deepEqual(released, ['optimistic']);
+});
+
+test('different stations save independently and the latest drop wins on one station', async (t) => {
+  const { state, cardFor } = pictureTargets(t);
+  const jazz = cardFor(state.favorites[0]);
+  const news = cardFor(state.favorites[1]);
+  const first = deferred();
+  const second = deferred();
+  const calls = [];
+  const released = [];
+  const save = async (item, file) => {
+    calls.push([item.id, file.name]);
+    if (file.name === 'first') return first.promise;
+    if (file.name === 'second') return second.promise;
+    return { ok: true, text: 'News saved.' };
+  };
+  const drop = (name, card) => dropStationPicture({ name }, card, {
+    validate: async () => ({ url: 'blob:' + name, release: () => released.push(name) }),
+    save,
+  });
+
+  const old = drop('first', jazz.card);
+  await settle();
+  const latest = drop('second', jazz.card);
+  assert.equal(jazz.preview(), 'url("blob:first")', 'the existing preview stays until the new image validates');
+  const other = drop('news', news.card);
+  assert.deepEqual(await other, { text: 'News saved.', rejected: false });
+  assert.deepEqual(calls, [['fav:jazz', 'first'], ['fav:news', 'news']]);
+  assert.equal(jazz.preview(), 'url("blob:second")');
+  first.resolve({ ok: true, text: 'Old save.' });
+  assert.equal(await old, null, 'an older result is silent');
+  await settle();
+  assert.deepEqual(calls.at(-1), ['fav:jazz', 'second']);
+  assert.equal(jazz.preview(), 'url("blob:second")');
+  second.resolve({ ok: true, text: 'Jazz saved.' });
+  assert.deepEqual(await latest, { text: 'Jazz saved.', rejected: false });
+  assert.equal(jazz.preview(), undefined);
+  assert.deepEqual(released, ['first', 'news', 'second']);
+});
+
+test('a newer drop can save before a superseded file finishes validating', async (t) => {
+  const { state, cardFor } = pictureTargets(t);
+  const { card } = cardFor(state.favorites[0]);
+  const validation = deferred();
+  const old = dropStationPicture({}, card, {
+    validate: () => validation.promise,
+    save: () => assert.fail('superseded file saved'),
+  });
+  const latest = await dropStationPicture({}, card, {
+    validate: async () => ({ url: 'blob:new', release() {} }),
+    save: async () => ({ ok: true, text: 'Jazz saved.' }),
+  });
+  assert.deepEqual(latest, { text: 'Jazz saved.', rejected: false });
+  let released = false;
+  validation.resolve({ url: 'blob:old', release: () => { released = true; } });
+  assert.equal(await old, null);
+  assert.equal(released, true);
+});
+
+test('the Library wires picture targets and previews without a page scrim', async () => {
+  const [main, library, render, css, libraryCss] = await Promise.all([
     read('src/main.js'), read('src/modes/library.js'), read('src/modes/library/render.js'),
+    read('src/styles/base.css'), read('src/styles/library.css'),
   ]);
-  assert.match(main, /onPicture: dropStationPicture,\s*describePictureDrop: pictureDropText,/);
-  assert.match(library, /export \{ dropStationPicture, pictureDropText \} from '\.\/library\/picture-drop\.js';/);
-  // A favorite dragged to a new place carries no files and stays a reorder.
+  assert.match(main, /onPicture: dropStationPicture,\s*getPictureTarget: pictureDropTarget,/);
+  assert.match(library, /export \{ dropStationPicture, pictureDropTarget \} from '\.\/library\/picture-drop\.js';/);
   assert.match(render, /carriesFiles/);
+  const rule = css.match(/\.drop-hint \{[^}]*\}/)[0];
+  assert.match(rule, /width: max-content;[\s\S]*pointer-events: none;/);
+  assert.doesNotMatch(rule, /inset:|height:/);
+  assert.match(libraryCss, /\.is-picture-drop-target \{[^}]*outline: 2px solid var\(--accent\)/);
+  assert.match(libraryCss, /\.is-picture-saving::before \{[^}]*var\(--picture-drop-preview\)/);
 });
 
 /* ============ The details panel ============ */
@@ -491,10 +667,17 @@ function withPanel(t) {
 }
 
 test('details: a saved station has Choose picture, and Remove picture only while it has its own', (t) => {
-  withFavorites(t, [fav('fav:a', 'Radio One')]);
+  const state = withFavorites(t, [fav('fav:a', 'Radio One')]);
+  state.mode = 'library';
   withPictures(t, ['Radio One'], []);
   const { find, act } = withPanel(t);
   openDetail(getState().favorites[0]);
+  const surface = find('detail-picture-drop');
+  const thumb = find('detail-thumb');
+  thumb.closest = () => surface;
+  assert.equal(thumb.hidden, false);
+  assert.equal(thumb.style.display, 'none', 'the drop surface remains available without artwork');
+  assert.equal(pictureDropTarget(thumb), surface);
   const choose = act('choose-station-picture');
   const remove = act('remove-station-picture');
   assert.equal(choose.textContent, 'Choose picture\u2026');

@@ -17,14 +17,14 @@ discover something unexpected, watch the Visualizer move with the sound, shape
 playback with a ten-band EQ, download finite media, and optionally record live
 streams. No account, subscription, API key, or telemetry.
 
-**New in v0.1.17:** adjust the picture and fit for video and TV, export the
-current Favorites or My Playlists view, edit stream addresses with backups,
-and see what your radio Favorites are playing. Internet Archive tracks and
-LibriVox chapters play in order and resume where you stopped. Assign an EQ
-curve to several stations, change the Now Playing blur and hide tabs you
-rarely use. The Visualizer dissolves between scenes in time with the music,
-and low-bitrate live streams start sooner. Thanks to TaxicabMessiah for
-the ideas and reports.
+**New in v0.1.18:** tune radio and TV with a station list beside the dial and
+optional **Bass**, **Treble** and **Loudness** knobs. TV keeps its picture above
+the list, and the **Picture** panel can choose a video quality level. The
+Visualizer can show behind the Tuner during TV and video. The player bar fits
+narrow windows better, picture drops highlight the target card, and Favorites
+scroll as you drag near an edge. Video controls have lighter shading, channel
+changes keep your place in the list, and **Pick the best stream** explains
+each choice. Thanks to TaxicabMessiah for the reports.
 [Discussion #8](https://github.com/aivrar/Open-Media-Explorer/discussions/8) ·
 [Issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6)
 
@@ -35,10 +35,9 @@ station's tooltip ("Stream: AAC+ · 320 kbps"), in its details and, with **Show
 technical source details** on, on its card. Some live AAC stations on Shoutcast
 servers failed to start about one time in five or six; such a stream now starts
 at its first whole sound frame. The volume slider is replaced by a compact
-control (up, a number, down), and the player bar is one row, 74 px high where it
-was 96. The mouse wheel over the Tuner's station cards moves one station, and a
-**Visualizer:** control at the right of the Tuner's top bar sets how strongly the
-Visualizer shows behind the Tuner. Starting the app again while it runs brings
+control (up, a number, down), and the player bar gained a one-row layout.
+The Tuner gained one-station wheel steps and a **Visualizer:** control to
+set the background strength. Starting the app again while it runs brings
 its open window to the front instead of opening a second one. The missing
 stream details were reported in
 [issue #6](https://github.com/aivrar/Open-Media-Explorer/issues/6).
@@ -104,7 +103,7 @@ the player bar.
 
 **New in v0.1.7:** drop an `.m3u` playlist file anywhere on the window to
 import it, radio stations that stream without a picture no longer open an empty
-video square, and the Tuner keeps the current station in view under the dial.
+video square, and the Tuner gained a way to keep the current station in view.
 
 **New in v0.1.6:** sources you switch off in Settings disappear from the
 Library sidebar, the mouse wheel turns the Tuner dial, and the floating video
@@ -131,7 +130,7 @@ technical details back).
 
 | Tune live radio and TV | Discover something unexpected |
 |---|---|
-| ![World Media Tuner](screenshots/v0.1.14/tuner.png) | ![World Media Discovery](screenshots/v0.1.14/discovery.png) |
+| ![World Media Tuner with the radio dial, tone knobs and station list](screenshots/v0.1.14/tuner.png) | ![World Media Discovery](screenshots/v0.1.14/discovery.png) |
 
 ![Ten-band equalizer with presets](screenshots/v0.1.14/equalizer.png)
 
@@ -148,7 +147,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.17-portable.zip
+WorldMediaWindows-0.1.18-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -191,21 +190,37 @@ LibriVox, media.ccc.de/C3VOC, gPodder Podcasts, PeerTube, and Owncast.
 
 ![Library - Favorites in categories, with a station's details open](screenshots/v0.1.14/favorites.png)
 
-**Tuner** - a radio-style dial for live radio and live TV. Drag the dial,
-scroll the mouse wheel over it or over the station cards under it (one station
-per notch), or use arrow keys; the dial shows each station's place
-in the list ("12 of 80"). Pick **★ My favorites**, or one of your own
-categories, as the source to spin through only those stations, in the order of
-your Favorites. **Settings > Appearance > Tuner card size** makes the station
-cards under the dial Small, Medium or Large; Medium and Large show each
-station's picture. The **Visualizer:** control at the right of the top bar (down,
-a number, up) sets how strongly the Visualizer shows behind the Tuner when
-**Settings > Appearance > Show the Visualizer behind the Tuner** is on: 0 turns
-it off, and the default, 8, is a faint picture. The Tuner makes room under
-the station strip for TV video and keeps the picture in place between channels.
-Switch to Radio to bring the dial back to full size.
+**Tuner** - a radio-style dial on the left and a station list on the right.
+Drag the dial or turn the mouse wheel over it. Each notch moves one station
+and wraps at the ends. The wheel over the list scrolls it. With the dial focused, use the arrow keys
+to move and Enter or Space to play. The dial shows the station's place
+("12 of 80") and fits the name on one or two lines. Click a list entry to
+play it, or use the arrow keys to move and Enter to play. The list keeps the
+selected station highlighted and in view. Entries show the source and, where
+known, the country and radio stream format and bitrate. Wide lists use two
+columns, and a count sits below the list.
 
-![Tuner - the dial moving from station to station](screenshots/v0.1.14/demo-tuner.gif)
+Pick **★ My favorites** or a category in **Source** to use your Favorites
+order. **Settings > Appearance > Tuner card size** sets the row size. Medium
+and Large also show pictures. Use **Stations** and **Tone knobs** in the top
+bar to show or hide the list and the knobs. Both choices are remembered. The
+**Bass**, **Treble** and **Loudness** knobs sit below the dial and show their
+dB value on hover, for example "Bass · main EQ · +2 dB".
+
+The TV picture sits above the list. While a channel loads or after **Stop**,
+its art or initials, name and **Loading…** or **Stopped** hold the picture's
+place. The dial and knobs stay in the same place when you switch bands with
+the list shown. Hide the list for a larger, centered Radio dial or a larger
+TV picture beside the dial.
+
+The **Visualizer:** control sets the strength of the background during
+music, TV or video playback after you accept the flashing notice. The
+default strength is 8. Set it to 0 to turn **Show the Visualizer behind the
+Tuner** off.
+
+![Tuner - the dial moving from station to station beside the list, with tone knobs below](screenshots/v0.1.14/demo-tuner.gif)
+
+![Tuner - a TV channel playing above the station list, beside the dial and tone knobs](screenshots/v0.1.14/tuner-tv.png)
 
 **Library detail panel** - click any item to see metadata, license, source, and
 play it.
@@ -292,7 +307,8 @@ tokens, so keep your data folder private.
 
 Favorites can be sorted **My order** (drag a card before or after another, or
 move it up, down, to the top or to the bottom with the buttons on it) or
-**A-Z**. Use the tag button on a favorite card to put it in a category of your
+**A-Z**. In **My order**, drag near the top or bottom edge to scroll the list.
+Use the tag button on a favorite card to put it in a category of your
 own, such as "Rock" or "Talk", and the category buttons above the list to show
 one category. **Rename** in a favorite's details gives it a name of your own;
 **Use original name** brings the station's name back. **Remove all
@@ -321,7 +337,14 @@ in the `station-images` folder (**Settings → Station images → Open folder**)
 press **Refresh**, and it replaces that station's artwork, shown whole and
 never cut off. A name Windows cannot use in a file, such as the "/" in
 "AC/DC Radio", is written with `-`, `_`, a space or nothing in its place.
-Settings lists the pictures that were not used and why. A station's format and
+Settings lists the pictures that were not used and why. You can also drop a
+picture on a card in **Favorites** or **My Playlists**. The card under the
+pointer shows "Drop to set this station's picture". The picture appears with
+**Saving…** and the previous picture returns if saving fails. A refusal
+clears after 6 seconds, or 8 for longer messages. Press Escape, click or
+start another drag to clear it sooner.
+
+A station's format and
 bitrate (for example "AAC+ · 320 kbps") show in its detail panel, in the tooltip
 of its card in the Library and the Tuner, and on its card with **Show technical
 source details** on. Radio Browser lists them for its stations; any other
@@ -329,10 +352,12 @@ station shows them once it has played, including HLS. Video can also show
 resolution, frame rate and codec, for example "Stream: HLS · 1080p · 50 fps
 · H.264 · 6.22 Mbps". **Clear local cache** removes remembered stream details. **Other streams** lists other listings of the same Radio Browser
 station to pick from by hand.
-**Settings > Content > Pick the best stream** tries a station's or channel's
-best listed stream first. Its **Auto (verified)** choice also checks other
-listings of a radio station in the background and switches to a better one
-from the next start, only after two checks found it playing the same songs.
+**Settings > Content > Pick the best stream** explains the three choices.
+**Off** tries the first two listed streams together and plays whichever
+answers first. **Listed streams** starts with the best listed stream and
+tries the next if it fails or is slow to start. **Auto (verified)** also checks
+other radio directory entries and can use a better stream on a later start
+if both streams match on two different songs.
 
 **Settings → Storage → Back up my data** writes one ZIP into the `downloads`
 folder with your favorites and the names you gave them, settings, categories,
@@ -378,18 +403,34 @@ exact palette color; Windows 10 uses the matching dark or light caption style.
 
 ## Playback
 
-Video plays in a movable overlay with fullscreen support. While the picture is
-open, lists give you room to scroll to the last buttons. Open **Picture**
-beside **EQ** to adjust **Brightness**, **Contrast**, **Saturation** and
-**Hue**, or use **Reset**. **Fit** offers **Whole picture**, **Fill** and
-**Zoom 110%**, **Zoom 125%** or **Zoom 133%** for black bars. It applies in
-fullscreen too. Choose **For this channel** or **For all video**. Channel
-settings stay saved while the channel is in Favorites or My Playlists. They
-are included in backups and removed by **Clear local cache**. The picture
-controls affect what you see. Recordings and downloads use the source stream.
+Video plays in a movable overlay with fullscreen support. In the Tuner's TV
+band, it sits beside the dial. Library, Grid, About and Now Playing leave
+room to scroll past the picture. They keep that space while another video
+starts. They release it on Stop, a failed start or a switch to an item
+without a picture.
+
+Open **Picture** beside **EQ** to adjust **Brightness**, **Contrast**,
+**Saturation** and **Hue**, or use **Reset**. **Fit** offers **Whole picture**,
+**Fill**, **Zoom 110%**, **Zoom 125%** and **Zoom 133%** for black bars.
+It applies in fullscreen too.
+When the stream offers at least two levels, **Quality** under **Fit** offers
+**Auto** (the default), **Best available** or a fixed level such as
+**1080p · 5.86 Mbps**. For a level with no stated resolution, the menu shows
+the bitrate. **Now 720p** shows the playing resolution when known. **Auto**
+adjusts to the picture size and the connection, including in fullscreen.
+It replaces buffered lower-quality video when stepping up. If a fixed level
+fails, the player returns to **Auto** for the session.
+
+Choose **For this channel** or **For all video**. Channel settings stay
+saved while the channel is in Favorites or My Playlists. Backups include
+these settings and **Clear local cache** removes them. Recordings and
+downloads use the source stream.
+
+![Picture panel - Fit and Quality controls for a video](screenshots/v0.1.14/picture-panel.png)
 
 Live TV hides the video's own timeline and time numbers. On-demand video
 keeps them, and a live stream that turns out to be finite gets them back.
+The controls use a short, light shade with shadows behind the icons.
 Live radio and TV that lose their connection reconnect by themselves for up
 to ten minutes. The player bar says "Connection lost. Retrying..." meanwhile.
 
@@ -399,8 +440,9 @@ part** and **Next part**. Choose a part in the item's details and use
 **Download** for that part. When you reopen an item with a saved position,
 the player bar offers to resume at that position or **Start over**.
 
-The player bar is one row in a window wider than 1000 px. The volume has its
-own control beside the speaker (mute) button: an up button, the volume as a
+As the window narrows, the player bar shortens the title first. It then hides
+the meter and time, reduces **Record** to its icon, and hides the second
+**EQ** line before using two rows. The volume has its own control beside the speaker (mute) button: an up button, the volume as a
 number from 0 to 100, and a down button. A click changes the volume by 1, a held
 button repeats, the mouse wheel over the control changes it by 2 per notch, and
 with the control focused the arrow keys change it by 1 (Page Up and Page Down by
@@ -513,7 +555,7 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 - If a station starts slowly, give it a few seconds to connect. HLS can take
   longer. Try a backup address for a saved station if you have one.
 - A favorite missing from the Tuner dial may be saved as the other type: the
-  Tuner's status line says so. The same guide tells how to fix it.
+  count under the station list says so. The same guide tells how to fix it.
 - If the Visualizer is slow, set **Quality** to Low, **Frame rate** to 15 or 30,
   and choose Light scenes; effects and overlays are off by default, and
   **Settings > Processor use** starts at Low.
@@ -546,7 +588,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.17-portable.zip
+dist\WorldMediaWindows-0.1.18-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke

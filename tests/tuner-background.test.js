@@ -6,17 +6,17 @@ import { dirname, join } from 'node:path';
 import { createAudioSignal } from '../src/lib/audio-signal.js';
 import { normalizeSettings } from '../src/lib/state.js';
 import {
-  TUNER_BACKGROUND_COST, TUNER_BACKGROUND_FPS_MAX, TUNER_BACKGROUND_OPACITY, TUNER_BACKGROUND_QUALITY, TUNER_BACKGROUND_RELEASED,
-  TUNER_BACKGROUND_SCENE, TUNER_BACKGROUND_STOP_GRACE_MS, TUNER_BACKGROUND_TEXT, tunerBackgroundSettings, tunerBackgroundWanted,
+  TUNER_BACKGROUND_FPS_MAX, TUNER_BACKGROUND_OPACITY, TUNER_BACKGROUND_RELEASED,
+  TUNER_BACKGROUND_STOP_GRACE_MS, TUNER_BACKGROUND_TEXT, tunerBackgroundWanted,
 } from '../src/lib/tuner-background.js';
-import { claimVisualizer, visualizerHolder } from '../src/lib/visualizer-slot.js';
+import { visualizerHolder } from '../src/lib/visualizer-slot.js';
 import { attachTunerBackground } from '../src/modes/tuner-background.js';
+import { renderVisualizer } from '../src/modes/visualizer.js';
 import { createDensityRenderer, liveDensityWorkers } from '../src/visualizer/density-host.js';
 import { createFlashLedger } from '../src/visualizer/flash-limiter.js';
 import { mountVisualizer } from '../src/visualizer/index.js';
 import { COMPILE_POLL_MS } from '../src/visualizer/scene-renderer.js';
-import { SCENES, sceneCost } from '../src/visualizer/scenes.js';
-import { DEFAULT_VISUALIZER_SCENE } from '../src/lib/visualizer-settings.js';
+import { sceneById } from '../src/visualizer/scenes.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
 import {
   FakeGL, FakeNodeEl, fakeDocWithElements, fakeMotion, fakeResizeObserverWin, settle as settleUntil,
@@ -42,7 +42,7 @@ class FakeEl {
     };
   }
   setAttribute(k, v) { this.attrs[k] = String(v); }
-  append(...nodes) { for (const n of nodes) { n.parent = this; this.children.push(n); } }
+  append(...nodes) { for (const n of nodes) { n.remove(); n.parent = this; this.children.push(n); } }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((n) => n !== this); this.parent = null; }
 }
 
@@ -68,6 +68,7 @@ function fakeApp({ settings = {}, isPlaying = true, mode = 'tuner' } = {}) {
     released: true,
     state: () => app.state,
     on: app.on,
+    save: app.settings,
     signal: () => 'the signal',
     doc: { createElement: (tag) => new FakeEl(tag) },
     load: async () => {
@@ -78,7 +79,6 @@ function fakeApp({ settings = {}, isPlaying = true, mode = 'tuner' } = {}) {
           app.mounts.push(mount);
           return mount;
         },
-        sceneCost,
       };
     },
     setTimer: (fn, ms) => { const timer = { fn, ms, cleared: false }; app.timers.push(timer); return timer; },
@@ -125,7 +125,7 @@ test('the Tuner loads nothing of the Visualizer until it is wanted: no static im
   assert.ok(seen.has('src/lib/tuner-background.js'));
   assert.deepEqual([...seen].filter((file) => file.startsWith('src/visualizer/')), []);
   // The one way in: the dynamic import, made only when the background starts.
-  const controller = read('src/modes/tuner-background.js');
+  const controller = read('src/modes/visualizer.js');
   assert.equal(controller.match(/import\('\.\.\/visualizer\/visualizer\.js'\)/g).length, 1);
 });
 
@@ -144,51 +144,7 @@ test('wanted only with the setting on, the notice accepted and sound playing', (
   assert.equal(tunerBackgroundWanted(null), false);
 });
 
-test('the narrowed settings: light scenes only, Low, 30 fps at most, no overlays, no effects, nothing extra shown; the rest as chosen', () => {
-  const user = {
-    visualizerQuality: 'high', visualizerQualityPicked: true, visualizerFps: 60, visualizerOverlays: true, visualizerFx: true,
-    visualizerPanelOpen: true, visualizerShowFps: true, visualizerDebug: true, visualizerScene: 'voronoi', visualizerBrightness: 70,
-    visualizerShuffle: true, visualizerShuffleCost: 'all', processorUse: 'balanced',
-  };
-  const narrowed = tunerBackgroundSettings(user, sceneCost);
-  assert.equal(TUNER_BACKGROUND_QUALITY, 'low');
-  assert.equal(TUNER_BACKGROUND_FPS_MAX, 30);
-  assert.deepEqual(narrowed, {
-    ...user, visualizerShuffleCost: 'light', visualizerShuffleCostPicked: true,
-    visualizerQuality: 'low', visualizerQualityPicked: false, visualizerFps: 30, visualizerOverlays: false, visualizerFx: false,
-    visualizerPanelOpen: false, visualizerShowFps: false, visualizerDebug: false,
-  });
-  assert.equal(tunerBackgroundSettings({ visualizerFps: 15 }).visualizerFps, 15);
-  assert.equal(tunerBackgroundSettings({}).visualizerFps, 30);
-  assert.equal(user.visualizerFx, true, 'the user\'s own settings are not changed');
-});
-
-test('light scenes only: the shuffle\'s cost filter is light, and a scene of another class is drawn as the default light scene', () => {
-  assert.equal(TUNER_BACKGROUND_COST, 'light');
-  assert.equal(TUNER_BACKGROUND_SCENE, DEFAULT_VISUALIZER_SCENE);
-  assert.equal(sceneCost(TUNER_BACKGROUND_SCENE), 'light', 'the stand-in is itself light');
-  for (const cost of ['light', 'medium', 'all']) {
-    const narrowed = tunerBackgroundSettings({ visualizerShuffleCost: cost }, sceneCost);
-    assert.equal(narrowed.visualizerShuffleCost, 'light', cost);
-    assert.equal(narrowed.visualizerShuffleCostPicked, true, 'used as it is at every Processor use level');
-  }
-  const byClass = (cost) => SCENES.filter((entry) => entry.cost === cost).map((entry) => entry.id);
-  assert.ok(byClass('light').length > 5 && byClass('medium').length && byClass('heavy').length);
-  for (const id of byClass('light')) assert.equal(tunerBackgroundSettings({ visualizerScene: id }, sceneCost).visualizerScene, id, id);
-  for (const id of [...byClass('medium'), ...byClass('heavy')]) {
-    const user = { visualizerScene: id };
-    assert.equal(tunerBackgroundSettings(user, sceneCost).visualizerScene, TUNER_BACKGROUND_SCENE, id);
-    assert.equal(user.visualizerScene, id, 'the user\'s choice is not changed');
-  }
-  // A scene this build does not have, or no cost known: the stand-in.
-  assert.equal(tunerBackgroundSettings({ visualizerScene: 'not_a_scene' }, sceneCost).visualizerScene, TUNER_BACKGROUND_SCENE);
-  assert.equal(tunerBackgroundSettings({ visualizerScene: 'voronoi' }).visualizerScene, TUNER_BACKGROUND_SCENE);
-  // The controller gives the mount the Visualizer's own cost lookup.
-  assert.match(read('src/modes/tuner-background.js'), /load\(\)\.then\(\(\{ mountVisualizer, sceneCost \}\)/);
-  assert.match(read('src/visualizer/visualizer.js'), /export \{ sceneCost \} from '\.\/scenes\.js';/);
-});
-
-test('on: one layer behind the Tuner, the tab\'s Visualizer mounted in it with the narrowed settings and nothing saved', async () => {
+test('on: one layer behind the Tuner, the tab\'s Visualizer mounted in it with the shared settings', async () => {
   const app = fakeApp();
   const detach = attachTunerBackground(app.root, app.options);
   const layer = layerOf(app.root);
@@ -202,16 +158,14 @@ test('on: one layer behind the Tuner, the tab\'s Visualizer mounted in it with t
   const [mount] = app.mounts;
   assert.equal(mount.options.background, true);
   assert.equal(mount.options.signal, 'the signal');
-  assert.equal(mount.options.getSettings().visualizerFps, 30);
-  assert.equal(mount.options.getSettings().visualizerOverlays, false);
-  assert.doesNotThrow(() => mount.options.saveSettings({ visualizerScene: 'x' }));
-  assert.equal(app.state.settings.visualizerScene, undefined, 'nothing saved back');
-  // Settings reach it narrowed.
+  assert.equal(mount.options.getSettings(), app.state.settings);
+  mount.options.saveSettings({ visualizerScene: 'voronoi' });
+  assert.equal(app.state.settings.visualizerScene, 'voronoi');
   let seen = null;
   const unsubscribe = mount.options.subscribeSettings((s) => { seen = s; });
   app.settings({ visualizerFx: true, tabsShown: { visualizer: false } });
   assert.equal(mount.destroyed, 0, 'hiding the Visualizer tab leaves the background running');
-  assert.equal(seen.visualizerFx, false);
+  assert.equal(seen.visualizerFx, true);
   unsubscribe(); // the mount's own destroy does this
   assert.equal(visualizerHolder(), 'tuner');
   detach();
@@ -251,9 +205,9 @@ test('off, or the notice not accepted, or no sound: no layer and nothing loaded'
     assert.equal(made, 0, 'no element made');
     assert.equal(app.timers.length, 0, 'no timer');
     assert.equal(app.root.classList.contains('has-viz-bg'), false);
-    // Only its own three state listeners (settings, playing, mode), which
+    // Only its own state listeners (settings, playing, item, mode), which
     // start nothing while it is not wanted.
-    assert.equal(app.count(), 3);
+    assert.equal(app.count(), 4);
     app.emit('mode-change', 'grid');
     app.emit('playing-change', true);
     await settle();
@@ -301,8 +255,8 @@ test('the setting turned off, or another tab: taken away at once', async () => {
   app.settings({ tunerVisualizerBackground: true });
   await settle();
   assert.equal(app.mounts.length, 2);
-  app.set({ mode: 'visualizer' });
-  app.emit('mode-change', 'visualizer');
+  app.set({ mode: 'library' });
+  app.emit('mode-change', 'library');
   assert.equal(app.mounts[1].destroyed, 1);
   assert.equal(app.count(), 0, 'another tab: the controller detached itself');
   detach();
@@ -314,7 +268,7 @@ test('a visit, leaving, another visit: one import per visit that wants it, no li
   const detachA = attachTunerBackground(rootA, app.options);
   await settle();
   assert.equal(app.loads, 1);
-  assert.equal(app.count(), 3);
+  assert.equal(app.count(), 4);
   // Left (main.js: the mode first, then the next tab is drawn).
   app.set({ mode: 'grid' });
   app.emit('mode-change', 'grid');
@@ -338,7 +292,7 @@ test('a visit, leaving, another visit: one import per visit that wants it, no li
   assert.equal(app.loads, 2, 'one import for this visit');
   assert.equal(app.mounts.length, 2);
   assert.ok(layerOf(rootB));
-  assert.equal(app.count(), 3);
+  assert.equal(app.count(), 4);
   // A visit that does not want it (no sound): no import.
   app.set({ mode: 'grid' });
   app.emit('mode-change', 'grid');
@@ -349,7 +303,7 @@ test('a visit, leaving, another visit: one import per visit that wants it, no li
   const detachC = attachTunerBackground(new FakeEl('div'), app.options);
   await settle();
   assert.equal(app.loads, 2);
-  assert.equal(app.count(), 3);
+  assert.equal(app.count(), 4);
   detachC();
   assert.equal(app.count(), 0);
 });
@@ -363,42 +317,86 @@ test('left before the Visualizer finished loading: nothing is mounted', async ()
   assert.equal(visualizerHolder(), null);
 });
 
-test('one Visualizer in the app: the tab claiming the slot takes the background away first', async () => {
-  const app = fakeApp();
+test('for TV, a pending tab import follows the picture to the Tuner without a second load', async () => {
+  const app = fakeApp({ mode: 'visualizer' });
+  app.set({ currentItem: { type: 'tv' } });
+  renderVisualizer(new FakeEl('main'), app.options);
+  app.set({ mode: 'tuner' });
+  app.emit('mode-change', 'tuner');
   const detach = attachTunerBackground(app.root, app.options);
   await settle();
-  const order = [];
-  const tabRelease = claimVisualizer('tab', () => order.push('tab released'));
-  assert.equal(app.mounts[0].destroyed, 1, 'destroyed before the tab mounts');
-  assert.equal(visualizerHolder(), 'tab');
-  tabRelease();
+  assert.equal(app.loads, 1);
+  assert.equal(app.mounts.length, 1);
+  assert.equal(app.mounts[0].options.background, true);
+  assert.equal(layerOf(app.root).children[0], app.mounts[0].host);
+  detach();
+  assert.equal(app.count(), 0);
+});
+
+test('an unclaimed handoff releases the mount at the end of the turn', async () => {
+  const app = fakeApp();
+  attachTunerBackground(app.root, app.options);
+  await settle();
+  app.set({ mode: 'visualizer' });
+  app.emit('mode-change', 'visualizer');
+  assert.equal(layerOf(app.root), null);
+  await settle();
+  assert.equal(app.mounts[0].destroyed, 1);
+  assert.equal(app.count(), 0);
   assert.equal(visualizerHolder(), null);
-  assert.deepEqual(order, []);
+});
+
+test('the Tuner attaches one backdrop controller, and Visualizer keys are scoped to the tab', () => {
+  const tuner = read('src/modes/tuner.js');
+  assert.equal(tuner.match(/attachTunerBackground\(/g).length, 1);
+  const index = read('src/visualizer/index.js');
+  assert.match(index, /if \(background \|\| !isDebugKey\(event\)\) return;/);
+});
+
+test('known speech still removes the backdrop immediately during playback', async () => {
+  const app = fakeApp();
+  const detach = attachTunerBackground(app.root, app.options);
+  for (const item of [
+    { type: 'radio', tags: ['talk radio'] },
+    { type: 'radio', tags: ['speech'] },
+    { type: 'audio', tags: ['podcast'] },
+    { type: 'audio', source: 'librivox' },
+  ]) {
+    await settle();
+    const mount = app.mounts.at(-1);
+    assert.ok(layerOf(app.root));
+    app.set({ currentItem: item });
+    app.emit('current-item', item);
+    assert.equal(layerOf(app.root), null);
+    assert.equal(mount.destroyed, 1);
+    assert.equal(app.timers.length, 0);
+    app.set({ currentItem: { type: 'radio', tags: ['jazz'] } });
+    app.emit('current-item', app.state.currentItem);
+  }
   detach();
 });
 
-test('the slot: another owner releases the one before; the same owner does not; letting go clears only its own claim', () => {
-  const released = [];
-  const a = claimVisualizer('a', () => released.push('a'));
-  const a2 = claimVisualizer('a', () => released.push('a2'));
-  assert.deepEqual(released, []);
-  const b = claimVisualizer('b', () => released.push('b'));
-  assert.deepEqual(released, ['a2']);
-  a();
-  assert.equal(visualizerHolder(), 'b', 'an old claim letting go changes nothing');
-  a2();
-  b();
-  assert.equal(visualizerHolder(), null);
-});
-
-test('the Tuner gets only the layer; the tab claims the slot; the mount takes no keys behind the Tuner', () => {
-  const tuner = read('src/modes/tuner.js');
-  assert.equal(tuner.match(/attachTunerBackground\(/g).length, 1);
-  assert.match(tuner, /host\.appendChild\(root\);\r?\n[^\n]*\r?\n  subs\.push\(attachTunerBackground\(root\)\);/);
-  const tab = read('src/modes/visualizer.js');
-  assert.match(tab, /unclaim = claimVisualizer\('tab', tearDown\);\r?\n    session = mountVisualizer\(/);
-  const index = read('src/visualizer/index.js');
-  assert.match(index, /if \(!background\) listen\(doc, 'keydown'/);
+test('TV and video qualify even with speech tags and keep the same backdrop as radio', async () => {
+  const app = fakeApp();
+  app.set({ currentItem: { type: 'tv', tags: ['talk radio'] } });
+  assert.equal(tunerBackgroundWanted(app.state), true);
+  const detach = attachTunerBackground(app.root, app.options);
+  await settle();
+  const layer = layerOf(app.root);
+  assert.ok(layer);
+  assert.equal(app.mounts.length, 1);
+  for (const currentItem of [
+    { type: 'video', tags: ['speech'], source: 'librivox' },
+    { type: 'radio', tags: ['jazz'] },
+  ]) {
+    app.set({ currentItem });
+    app.emit('current-item', currentItem);
+    assert.equal(tunerBackgroundWanted(app.state), true);
+    assert.equal(layerOf(app.root), layer);
+    assert.equal(app.mounts[0].destroyed, 0);
+  }
+  assert.equal(app.loads, 1);
+  detach();
 });
 
 test('the dim: the stylesheet uses the designed opacity, and every theme\'s text keeps 4.5:1 over the worst picture', () => {
@@ -406,9 +404,17 @@ test('the dim: the stylesheet uses the designed opacity, and every theme\'s text
   const tunerCss = read('src/styles/tuner.css');
   const rule = tunerCss.match(/\.tuner-viz-bg \{([^}]*)\}/)[1];
   assert.match(rule, new RegExp(`opacity: ${TUNER_BACKGROUND_OPACITY};`));
+  assert.match(rule, /position: absolute;\s*inset: 0;/);
   assert.match(rule, /z-index: -1;/);
   assert.match(rule, /pointer-events: none;/);
   assert.match(tunerCss, /\.tuner-root\.has-viz-bg \{\s*position: relative;\s*isolation: isolate;\s*\}/);
+  assert.match(tunerCss, /\.tuner-root\.has-viz-bg > \.tuner-controls \{ background: var\(--bg-elev-1\);/);
+  assert.match(tunerCss, /\.tuner-tone-label,\s*\.tuner-empty \{[^}]*-webkit-text-stroke: 2px var\(--bg\);[^}]*paint-order: stroke fill;/);
+  assert.doesNotMatch(tunerCss, /\.tuner-(?:stage|station-list|tone-label|tone-letter|empty)[^{]*\{[^}]*background:/);
+  const videoDock = read('src/styles/base.css').match(/\.video-dock \{([^}]*)\}/)[1];
+  assert.match(videoDock, /position: absolute;/);
+  assert.match(videoDock, /z-index: 20;/);
+  assert.match(read('src/index.html'), /id="view-host"[\s\S]*?<\/main>[\s\S]*?id="video-dock"/);
   const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
   const lin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
   const lum = (rgb) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
@@ -442,8 +448,14 @@ class BgEl extends FakeNodeEl {
   }
 
   append(...nodes) {
-    for (const node of nodes) node.parent = this;
+    for (const node of nodes) { node.remove?.(); node.parent = this; }
     super.append(...nodes);
+  }
+
+  replaceChildren(...nodes) {
+    for (const child of this.children) child.parent = null;
+    this.children = [];
+    this.append(...nodes);
   }
 
   remove() {
@@ -485,7 +497,8 @@ function liveDensityWorker() {
  *  on a fake clock, document, window and WebGL context. */
 function realRig() {
   const h = createClockHarness();
-  const vis = fakeDocWithElements({ width: 1280, height: 720 });
+  const vis = fakeDocWithElements();
+  vis.doc.createElement = (tag) => Object.assign(new BgEl(tag), { rect: { width: 1280, height: 720 } });
   const motion = fakeMotion(false);
   const win = fakeResizeObserverWin(motion);
   const node = fakeAnalyser({ level: 230 });
@@ -504,7 +517,7 @@ function realRig() {
   app.options.signal = () => signal;
   app.options.load = async () => {
     app.loads += 1;
-    return { mountVisualizer: (host, options) => { const session = mountVisualizer(host, options); sessions.push(session); return session; }, sceneCost };
+    return { mountVisualizer: (host, options) => { const session = mountVisualizer(host, options); sessions.push(session); return session; } };
   };
   app.options.mountOptions = {
     win, doc: vis.doc, createContext: () => { const gl = new FakeGL(); contexts.push(gl); return { gl, mode: 'webgl2' }; },
@@ -532,7 +545,7 @@ async function shownScene(r, before = 0) {
 
 /** Nothing of `session` is left: its layer, canvas, observers, listeners,
  *  sound subscription, timers, frames and density worker. */
-function assertAllGone(r, session, label, appListeners = 3) {
+function assertAllGone(r, session, label, appListeners = 4) {
   assert.equal(layerOf(r.app.root), null, `${label}: the layer`);
   assert.equal(r.app.root.classList.contains('has-viz-bg'), false, label);
   assert.equal(session.canvas.listenerCount, 0, `${label}: no canvas listeners`);
@@ -554,20 +567,21 @@ function assertAllGone(r, session, label, appListeners = 3) {
   assert.equal(r.h.pending(), 0, `${label}: not a single timer or animation frame left`);
 }
 
-test('the real Visualizer behind the Tuner: Low, 30 fps, no overlays or effects, every frame through the flash limiter, no AudioContext', async (t) => {
+test('the real Visualizer behind the Tuner for TV: chosen quality at 30 fps, every frame through the flash limiter, no AudioContext', async (t) => {
   t.mock.method(console, 'error', () => {});
   const made = [];
   const saved = globalThis.AudioContext;
   globalThis.AudioContext = class { constructor() { made.push('made'); } resume() { made.push('resume'); } };
   try {
     const r = realRig();
+    r.app.set({ currentItem: { type: 'tv' } });
+    r.app.settings({ visualizerQuality: 'high', visualizerQualityPicked: true });
     const detach = attachTunerBackground(r.app.root, r.app.options);
     const session = await shownScene(r);
     r.win.observers[0].fire(1600, 900);
-    assert.deepEqual([session.canvas.width, session.canvas.height], [800, 450], 'Low: half the window\'s pixels each way');
-    assert.equal(session.loop.targetFps, 30);
-    assert.equal(session.overlays.on, false);
-    assert.equal(session.fx.on, false);
+    assert.deepEqual([session.canvas.width, session.canvas.height], [1600, 900], 'the chosen drawing quality');
+    assert.equal(session.loop.targetFps, TUNER_BACKGROUND_FPS_MAX);
+    assert.equal(session.stepDown.fps, 60, 'the saved frame rate remains 60');
     // Every frame's sound passes the flash limiter (the tab's own, on the
     // page's one ledger), as in the tab.
     const limiter = session.bridge.limiter;
@@ -587,6 +601,23 @@ test('the real Visualizer behind the Tuner: Low, 30 fps, no overlays or effects,
     assert.deepEqual(made, []);
   } finally {
     if (saved === undefined) delete globalThis.AudioContext; else globalThis.AudioContext = saved;
+  }
+});
+
+test('TV without a readable signal draws in the existing idle mode', async () => {
+  const r = realRig();
+  r.app.set({ currentItem: { type: 'tv' } });
+  r.source.getAnalyser = () => null;
+  const detach = attachTunerBackground(r.app.root, r.app.options);
+  try {
+    const session = await shownScene(r);
+    assert.equal(session.loop.mode, 'idle');
+    const draws = session.loop.stats.idleDraws;
+    r.h.run(1000);
+    assert.ok(session.loop.stats.idleDraws > draws);
+    assert.equal(session.loop.stats.liveDraws, 0);
+  } finally {
+    detach();
   }
 });
 
@@ -625,34 +656,156 @@ test('the real Visualizer behind the Tuner: switching the setting off, or leavin
   lab2.instance.cleanup(lab2.gl);
 });
 
-test('the real Visualizer behind the Tuner draws a light scene: a heavy one chosen is stood in for, the shuffle keeps to light ones', async (t) => {
-  t.mock.method(console, 'error', () => {});
-  const heavy = SCENES.find((entry) => entry.cost === 'heavy' && !entry.needs).id;
+test('20 Tuner, Visualizer and Library cycles keep the same number of nodes', async () => {
+  const { app, sessions, signal, vis } = realRig();
+  const tab = new BgEl('main');
+  const counts = [];
+  const countNodes = () => app.root.descendants().length + tab.descendants().length;
+  const enter = (mode) => {
+    app.set({ mode });
+    app.emit('mode-change', mode);
+  };
+
+  for (let cycle = 1; cycle <= 20; cycle += 1) {
+    enter('tuner');
+    attachTunerBackground(app.root, app.options);
+    await settle();
+    const session = sessions.at(-1);
+    const stage = session.canvas.parent;
+    const picture = [session.canvas, session.fade, session.overlayCanvas];
+    const holder = session.panel.parent;
+    assert.ok(holder);
+    assert.equal(holder.parent, null);
+    assert.deepEqual(stage.children, picture);
+    const inTuner = countNodes() + holder.descendants().length + 1;
+
+    enter('visualizer');
+    renderVisualizer(tab, app.options);
+    assert.equal(sessions.length, cycle);
+    assert.ok(tab.contains(session.panel));
+    assert.equal(holder.children.length, 0);
+    const inTab = countNodes();
+
+    enter('tuner');
+    attachTunerBackground(app.root, app.options);
+    assert.deepEqual(stage.children, picture);
+    assert.equal(session.panel.parent, holder);
+    assert.equal(tab.children.length, 0);
+
+    enter('visualizer');
+    renderVisualizer(tab, app.options);
+    enter('library');
+    await settle();
+    assert.equal(sessions.length, cycle);
+    assert.equal(countNodes(), 0);
+    assert.equal(holder.children.length, 0);
+    assert.equal(app.count(), 0);
+    assert.equal(vis.count(), 0);
+    assert.equal(signal.subscriberCount, 0);
+    assert.equal(visualizerHolder(), null);
+    counts.push([inTuner, inTab]);
+  }
+
+  assert.deepEqual(counts[19], counts[1]);
+});
+
+test('the tab and Tuner share a scene pick, look, settings, shuffle clock, and in-progress dissolve', async () => {
   const r = realRig();
-  r.app.state.settings = normalizeSettings({
-    tunerVisualizerBackground: true, visualizerNoticeSeen: true, visualizerScene: heavy,
-    visualizerShuffle: true, visualizerShuffleCost: 'all', processorUse: 'high',
+  const { app, h } = r;
+  app.options.mountOptions.scenes = ['plasma', 'living_sun', 'waves'].map(sceneById);
+  app.settings({
+    visualizerScene: 'plasma', visualizerQuality: 'high', visualizerQualityPicked: true,
+    visualizerBrightness: 70, visualizerColorTravel: true, visualizerFx: true, visualizerOverlays: true,
+    visualizerShuffleCost: 'all', visualizerShuffleBars: 32, visualizerShufflePool: 'favourites',
+    visualizerFavourites: ['living_sun', 'waves'], visualizerDrift: true,
   });
-  const detach = attachTunerBackground(r.app.root, r.app.options);
-  const session = await shownScene(r);
-  assert.equal(session.switcher.current, TUNER_BACKGROUND_SCENE);
-  assert.equal(session.shuffleCostMax, 'light');
-  assert.equal(r.app.state.settings.visualizerScene, heavy, 'the user\'s scene is kept');
-  assert.equal(r.app.state.settings.visualizerShuffleCost, 'all');
-  detach();
-  // A light scene of the user's is drawn as chosen.
-  const r2 = realRig();
-  r2.app.state.settings = normalizeSettings({ tunerVisualizerBackground: true, visualizerNoticeSeen: true, visualizerScene: 'voronoi' });
-  const detach2 = attachTunerBackground(r2.app.root, r2.app.options);
-  const session2 = await shownScene(r2);
-  assert.equal(session2.switcher.current, 'voronoi');
-  detach2();
+  function enter(mode) {
+    app.set({ mode });
+    app.emit('mode-change', mode);
+  }
+  async function until(done) {
+    for (let attempt = 0; attempt < 40 && !done(); attempt += 1) {
+      h.run(40);
+      await settleUntil(done, 10);
+    }
+    assert.ok(done(), 'the pending scene operation finished');
+  }
+
+  try {
+    enter('visualizer');
+    const tab = new BgEl('main');
+    renderVisualizer(tab, app.options);
+    const session = await shownScene(r);
+    const root = tab.children[0];
+    r.gl.copyTexImage2D = () => {};
+    session.controls.sceneButton.dispatchEvent(new Event('click'));
+    const choice = root.descendants().find((node) => node.getAttribute('data-scene') === 'living_sun');
+    const click = new Event('click');
+    Object.defineProperty(click, 'target', { value: choice });
+    session.controls.sceneOptions.dispatchEvent(click);
+    await until(() => session.switcher.current === 'living_sun' && !session.transition.busy);
+    assert.equal(app.state.settings.visualizerScene, 'living_sun');
+    session.controls.shuffleButton.dispatchEvent(new Event('click'));
+    const timer = session.shuffleTimer;
+    await until(() => session.nextPick && session.switcher.staged(session.nextPick));
+    const next = session.nextPick;
+    const dwell = timer.dwell;
+    const clock = session.drift.clock.bars;
+    assert.ok(clock > 0);
+    assert.equal(timer.bars, 32);
+    const settings = app.state.settings;
+
+    enter('tuner');
+    attachTunerBackground(app.root, app.options);
+    assert.equal(layerOf(app.root).children[0], root);
+    assert.equal(tab.children.length, 0, 'the same root moves out of the tab');
+    assert.equal(visualizerHolder(), 'tuner');
+    assert.equal(session.switcher.current, 'living_sun');
+    assert.equal(session.drift.clock.bars, clock);
+    assert.equal(timer.dwell, dwell);
+    assert.equal(session.nextPick, next);
+    assert.equal(session.shuffleCostMax, 'heavy');
+    assert.equal(session.fx.on, true);
+    assert.equal(session.overlays.on, true);
+    assert.equal(session.controls.colorTravel.checked, true);
+    assert.equal(session.canvas.style.opacity, '0.7');
+    assert.equal(session.hud.active, false);
+    assert.equal(session.loop.targetFps, 30);
+    assert.equal(app.state.settings, settings);
+    app.settings({ tunerVisualizerLevel: 40 });
+    assert.deepEqual(app.state.settings, { ...settings, tunerVisualizerLevel: 40 });
+    assert.equal(layerOf(app.root).style.opacity, '0.4');
+    assert.equal(session.canvas.style.opacity, '0.7', 'strength applies outside the picture');
+
+    timer.step = () => true;
+    await until(() => session.switcher.current === next);
+    timer.step = () => false;
+    assert.equal(session.shuffleStats.changes, 1);
+    assert.equal(app.state.settings.visualizerScene, next);
+    assert.equal(session.transition.phase, 'warping');
+
+    enter('visualizer');
+    renderVisualizer(tab, app.options);
+    assert.equal(tab.children[0], root);
+    assert.equal(session.switcher.current, next);
+    assert.equal(session.transition.phase, 'warping');
+    assert.equal(session.loop.targetFps, 60);
+    assert.equal(session.hud.active, true);
+    h.run(600);
+    assert.equal(session.shuffleStats.changes, 1);
+    assert.equal(app.loads, 1);
+    assert.equal(r.sessions.length, 1);
+    assert.equal(r.lost(), 0);
+  } finally {
+    enter('library');
+  }
+  assertAllGone(r, r.sessions[0], 'both closed', 0);
 });
 
 test('the controller makes no AudioContext and reaches the sound only through the shared signal', () => {
-  for (const file of ['src/modes/tuner-background.js', 'src/lib/tuner-background.js']) {
+  for (const file of ['src/modes/tuner-background.js', 'src/lib/tuner-background.js', 'src/modes/visualizer.js']) {
     const text = read(file);
     assert.doesNotMatch(text, /AudioContext|\.resume\(|createMediaElementSource|createAnalyser/, file);
   }
-  assert.match(read('src/modes/tuner-background.js'), /signal = \(\) => getAudioSignal\(\)/);
+  assert.match(read('src/modes/visualizer.js'), /signal = getAudioSignal/);
 });

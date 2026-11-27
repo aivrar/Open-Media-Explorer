@@ -661,7 +661,7 @@ test('Library cards of saved stations carry a small mark with the sentence; othe
   assert.equal(beta.__open.getAttribute('aria-describedby'), 'favorite-song-1');
 });
 
-test('a Tuner card\'s mark changes in place: the strip, its scroll position and the focused card stay', (t) => {
+test('a Tuner card\'s mark changes in place: the list, its scroll position and the focused card stay', (t) => {
   withStorage(t);
   withFavorites(t, [
     { id: 'fav:a', title: 'Alpha', type: 'radio', source: 'radio-browser' },
@@ -669,7 +669,7 @@ test('a Tuner card\'s mark changes in place: the strip, its scroll position and 
   ]);
   const oldDocument = globalThis.document;
   const strip = new Node('', 'div');
-  strip.scrollLeft = 412;
+  strip.scrollTop = 412;
   const pills = [['fav:a', 'Alpha'], ['fav:b', 'Beta']].map(([id, title]) => {
     const pill = new Node('', 'button');
     pill.className = 'station-pill';
@@ -688,7 +688,7 @@ test('a Tuner card\'s mark changes in place: the strip, its scroll position and 
   markDidNotPlay('fav:b', DAY);
   syncTunerMarks(strip);
   assert.deepEqual(strip.children, pills, 'the same cards, in place');
-  assert.equal(strip.scrollLeft, 412);
+  assert.equal(strip.scrollTop, 412);
   assert.equal(globalThis.document.activeElement, pills[1], 'focus stays on its card');
   const mark = pills[1].__trouble;
   assert.equal(pills[1].classList.contains('has-trouble'), true);
@@ -711,7 +711,7 @@ test('a Tuner card\'s mark changes in place: the strip, its scroll position and 
   assert.equal(mark.parentNode, null);
   assert.equal(pills[1].classList.contains('has-trouble'), false);
   assert.deepEqual(strip.children, pills);
-  assert.equal(strip.scrollLeft, 412);
+  assert.equal(strip.scrollTop, 412);
 });
 
 test('the Tuner, the details panel and the Library follow the marks; the styles keep it small', async () => {
@@ -720,7 +720,7 @@ test('the Tuner, the details panel and the Library follow the marks; the styles 
     read('src/styles/library.css'), read('src/styles/tuner.css'),
   ]);
   assert.match(tuner, /const trouble = didNotPlayNote\(s\);/);
-  assert.match(tuner, /pill\.__station = s;\s*pill\.__saved = saved;\s*setPillTrouble\(pill\);/);
+  assert.match(tuner, /pill\.__station = station;\s*pill\.__saved = saved;\s*setPillTrouble\(pill\);/);
   // A mark that comes or goes changes its cards only; the strip is not rebuilt.
   assert.match(tuner, /subs\.push\(onDidNotPlayChange\(\(\) => \{\s*if \(getState\(\)\.mode === 'tuner'\) syncTunerMarks\(\);/);
   assert.match(detail, /detailTrouble = el\('p', \{ className: 'detail-trouble', attrs: \{ role: 'note' \} \}\);/);
@@ -732,7 +732,7 @@ test('the Tuner, the details panel and the Library follow the marks; the styles 
   const pillMark = tunerCss.match(/\.station-pill > \.pill-trouble \{[^}]*\}/)[0];
   assert.match(pillMark, /position: absolute;/);
   assert.match(pillMark, /width: 12px;/);
-  assert.match(tunerCss, /\.station-pill\.has-trouble \{ position: relative; \}/);
+  assert.match(tunerCss, /\.station-pill \{\s*position: absolute;/);
 });
 
 /* ============ The player ============ */

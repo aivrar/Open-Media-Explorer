@@ -1,9 +1,10 @@
 /** Accessible, automatically persisted equalizer overlay. */
 
 import {
-  cloneEqCurve, EQ_MAX_Q, EQ_MIN_Q, getEffectiveEq, getEqPreset, hasFavoriteEq,
+  cloneEqCurve, EQ_GAIN_STEP_DB, EQ_MAX_DB, EQ_MAX_Q, EQ_MIN_DB, EQ_MIN_Q,
+  EQ_PREAMP_MAX_DB, EQ_PREAMP_MIN_DB, getEffectiveEq, getEqPreset, hasFavoriteEq,
   loadEqState, normalizeEqCurve, removeCustomEqPreset, saveEqState, setCustomEqPreset,
-  setScopedEq, setStationEqPreset,
+  roundEqDb, setEqBypassed, setScopedEq, setStationEqPreset,
 } from './eq-store.js';
 import {
   BUILT_IN_EQ_PRESETS, createCustomEqPresetKey, customEqPresetId,
@@ -29,15 +30,14 @@ function sliderMarkup(kind, index, label, minimum, maximum) {
   const name = kind === 'preamp' ? 'Preamp' : `${label}Hz band`;
   return `<label class="eq-band${kind === 'preamp' ? ' is-preamp' : ''}">
     <output data-eq-value="${kind}${index ?? ''}">0 dB</output>
-    <input class="eq-band-slider" type="range" min="${minimum}" max="${maximum}" step="0.5" value="0"
+    <input class="eq-band-slider" type="range" min="${minimum}" max="${maximum}" step="${EQ_GAIN_STEP_DB}" value="0"
       data-kind="${kind}"${dataIndex} aria-orientation="vertical" aria-label="${name} gain" aria-valuetext="0 decibels" />
     <span>${label}</span>
   </label>`;
 }
 
 function displayDb(value) {
-  const number = Number(value) || 0;
-  const rounded = Math.round(number * 2) / 2;
+  const rounded = roundEqDb(value);
   return `${rounded > 0 ? '+' : ''}${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} dB`;
 }
 
@@ -68,8 +68,8 @@ function buildOverlay() {
   root.className = 'modal-backdrop eq-backdrop';
   root.dataset.eqModal = 'true';
   const bands = [
-    sliderMarkup('preamp', null, 'Preamp', -12, 6),
-    ...BAND_LABELS.map((label, index) => sliderMarkup('band', index, label, -12, 12)),
+    sliderMarkup('preamp', null, 'Preamp', EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB),
+    ...BAND_LABELS.map((label, index) => sliderMarkup('band', index, label, EQ_MIN_DB, EQ_MAX_DB)),
   ].join('');
   const widths = BAND_LABELS.map((label, index) => `<label class="eq-width">
     <span>${label} Hz Q</span>
@@ -365,9 +365,11 @@ function buildOverlay() {
     return getEffectiveEq(eq, current?.id, isFavorite(current?.id));
   }
 
-  function applyPreview(value) {
+  function applyPreview(value, eq) {
+    const itemId = item()?.id || '';
+    const mainEq = !assignedPreset(eq) && !hasFavoriteEq(eq, itemId, isFavorite(itemId));
     previewEqCurve(value);
-    emit('eq-preview', { itemId: item()?.id || '', curve: cloneEqCurve(value) });
+    emit('eq-preview', { itemId, curve: cloneEqCurve(value), mainEq });
   }
 
   function refreshFromStorage() {
@@ -378,7 +380,7 @@ function buildOverlay() {
       if (preset) curve = { ...preset.curve, bypassed: curve.bypassed };
       else editKey = '';
     }
-    applyPreview(curve);
+    applyPreview(curve, eq);
     renderPresetControls(eq);
     renderCurve(eq);
     renderStations(eq);
@@ -400,7 +402,7 @@ function buildOverlay() {
 
   function preview(nextCurve, eq = loadEqState()) {
     curve = normalizeEqCurve(nextCurve);
-    applyPreview(curve);
+    applyPreview(curve, eq);
     renderCurve(eq);
     if (select.value !== curveSelection(curve, eq)) renderPresetControls(eq);
     queuePersistence(curve, eq);
@@ -421,11 +423,8 @@ function buildOverlay() {
   bypass.addEventListener('change', () => {
     const bypassed = bypass.checked;
     persistNow();
-    const eq = loadEqState();
     const id = item()?.id;
-    const favorited = !assignedPreset(eq) && hasFavoriteEq(eq, id, isFavorite(id));
-    const base = favorited ? eq.favorites[id] : eq.global;
-    save(setScopedEq(eq, id, favorited, { ...base, bypassed }));
+    save(setEqBypassed(loadEqState(), id, isFavorite(id), bypassed));
     refreshFromStorage();
   });
 
@@ -584,7 +583,10 @@ function buildOverlay() {
   function close(force = false) {
     if (disposed) return;
     if (!persistNow() && !force) return;
-    if (item()) applyPreview(savedCurve(loadEqState()));
+    if (item()) {
+      const eq = loadEqState();
+      applyPreview(savedCurve(eq), eq);
+    }
     disposed = true;
     for (const unsubscribe of unsubscribers) unsubscribe();
     document.removeEventListener('keydown', onKeyDown);
@@ -606,6 +608,11 @@ function buildOverlay() {
     else renderStations(eq);
   }));
   unsubscribers.push(subscribe('eq-scope-change', loadCurrent));
+  unsubscribers.push(subscribe('eq-change', (change) => {
+    if (change?.source !== 'tuner-tone') return;
+    editKey = '';
+    loadCurrent();
+  }));
   unsubscribers.push(subscribe('eq-before-scope-change', ({ itemId } = {}) => {
     if (pending && (!pending.favorited || pending.itemId === itemId)) persistNow();
   }));

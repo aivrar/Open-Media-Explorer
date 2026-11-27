@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
-  createHlsRecoveryController, hlsPlaybackConfig, stableHlsLevelOrder,
+  createHlsRecoveryController, hlsPlaybackConfig,
   selectHlsPlaybackEngine, waitForHlsStartupBuffer,
 } from '../src/lib/hls-recovery.js';
 
-function harness({ selectLowerRendition = () => false, getCurrentTime = () => Number.NaN } = {}) {
+function harness({
+  selectLowerRendition = () => false, fallBackToAuto = () => false, getCurrentTime = () => Number.NaN,
+} = {}) {
   const timers = [];
   const events = [];
   let owned = true;
@@ -24,6 +26,7 @@ function harness({ selectLowerRendition = () => false, getCurrentTime = () => Nu
     onRecovered: () => events.push(['recovered']),
     onTerminal: (message) => events.push(['terminal', message]),
     selectLowerRendition,
+    fallBackToAuto,
     getCurrentTime,
     setTimer(fn, delay) { const timer = { fn, delay, cleared: false }; timers.push(timer); return timer; },
     clearTimer(timer) { timer.cleared = true; },
@@ -37,20 +40,6 @@ function harness({ selectLowerRendition = () => false, getCurrentTime = () => Nu
   };
   return { controller, events, timers, runNext, setOwned(value) { owned = value; } };
 }
-
-test('HLS stable rendition order mirrors recording selection and provides lower fallbacks', () => {
-  const levels = [
-    { height: 1080, bitrate: 5_000_000 },
-    { height: 360, bitrate: 700_000 },
-    { height: 720, bitrate: 2_500_000 },
-    { height: 480, bitrate: 1_200_000 },
-    { bitrate: 900_000 },
-  ];
-  assert.deepEqual(stableHlsLevelOrder(levels, 720), [2, 3, 1]);
-  assert.deepEqual(stableHlsLevelOrder([{ height: 1080 }, { height: 1440 }], 720), [0]);
-  assert.deepEqual(stableHlsLevelOrder([{ bitrate: 900 }, { bitrate: 400 }], 720), [0, 1]);
-  assert.deepEqual(stableHlsLevelOrder(null), []);
-});
 
 test('hls.js wins over WebView2 native HLS claims', () => {
   assert.equal(selectHlsPlaybackEngine({ hlsSupported: true, nativeSupport: 'maybe' }), 'hlsjs');
@@ -157,7 +146,7 @@ test('HLS fatal network and media recovery is delayed, bounded, and reports term
   const h = harness();
   assert.deepEqual(hlsPlaybackConfig(), {
     enableWorker: true,
-    capLevelToPlayerSize: true,
+    capLevelToPlayerSize: false,
     autoStartLoad: false,
     startLevel: -1,
     lowLatencyMode: false,
@@ -317,15 +306,22 @@ test('HLS progress heartbeat restarts a silent freeze and is disabled while paus
     'actual clock progress must suppress a false reconnect');
 });
 
-test('player keeps automatic ABR below a downward-only quality ceiling', () => {
+test('the player delegates the HLS size cap and step-down before it starts loading', () => {
   const source = readFileSync(new URL('../src/lib/player.js', import.meta.url), 'utf8');
-  assert.match(source, /instance\.autoLevelCapping = stableLevels\[stableLevelPosition\]/);
-  assert.match(source, /instance\.nextAutoLevel = lowerLevel/);
-  assert.match(source, /currentLevel > lowerLevel/);
-  assert.match(source, /instance\.startLoad\(-1\)/);
-  assert.doesNotMatch(
-    source,
-    /instance\.(?:currentLevel|nextLevel|loadLevel)\s*=/,
-    'manual level setters would disable measured automatic selection',
-  );
+  assert.match(source, /selectLowerRendition: qualitySource\.lower/);
+  assert.match(source, /fallBackToAuto: \(\) => videoQuality\?\.fallBack\(qualitySource\)/);
+  assert.match(source, /refreshLevels\(\);\s*instance\.startLoad\(-1\)/);
+});
+
+test('a fatal fixed-rendition error releases the lock before using existing recovery', () => {
+  const events = [];
+  const h = harness({
+    fallBackToAuto: () => { events.push('auto'); return true; },
+    selectLowerRendition: () => { events.push('step down'); return true; },
+  });
+  assert.equal(h.controller.handleFatal({ fatal: true, type: 'muxError' }), true);
+  assert.deepEqual(events, ['auto']);
+  h.runNext();
+  assert.deepEqual(events, ['auto', 'step down']);
+  assert.deepEqual(h.events.slice(1), [['stop'], ['network', -1], ['recovered']]);
 });

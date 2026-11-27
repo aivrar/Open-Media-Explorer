@@ -1,9 +1,11 @@
+import { mountTunerStationList } from '../src/modes/tuner-station-list.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { normalizeSettings } from '../src/lib/state.js';
-import { bindTunerVideoHeight, dialTurn, tunerVideoLayout, wheelSteps } from '../src/modes/tuner.js';
+import { applyTunerLayout, bindTunerLayout, paintTunerPlaceholder, dialTurn, wheelSteps } from '../src/modes/tuner.js';
+import { tunerStageLayout } from '../src/modes/tuner-layout.js';
 import { FakeElement } from './helpers/fake-dom.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -87,7 +89,8 @@ test('a visible video leaves room in the other tabs even in fullscreen', async (
   ].map(read));
 
   assert.match(base, /--video-clearance: 0px;/);
-  assert.match(base, /^#app\.has-video \{\s*--video-clearance: calc\(var\(--video-height, 0px\) \+ var\(--video-gap\)\);/m);
+  assert.match(base, /^#app\[data-video-clearance="reserved"\],\s*#app\.has-video \{\s*--video-clearance: calc\(var\(--video-height, 0px\) \+ var\(--video-gap\)\);/m);
+  assert.match(base, /^#app\[data-video-clearance="released"\] \{\s*--video-clearance: 0px;/m);
   assert.doesNotMatch(base, /:fullscreen[^{]*\{[^}]*--video-clearance:/);
   for (const [css, selector, inset] of [
     [library, 'results', 18], [library, 'results', 12],
@@ -104,85 +107,31 @@ test('a visible video leaves room in the other tabs even in fullscreen', async (
   assert.ok(modalZ > dockZ, 'Settings and Song log are above the dock');
 });
 
-for (const { windowSize, size, width, stageHeight, normalWidth, dial, box } of [
-  { windowSize: '1024x640', size: 'normal', width: 1024, stageHeight: 310, normalWidth: 320, dial: 189.5, box: [200, 112.5] },
-  { windowSize: '1280x801', size: 'large', width: 1280, stageHeight: 471, normalWidth: 512, dial: 220, box: [432, 243] },
-  { windowSize: '1280x801', size: 'normal', width: 1280, stageHeight: 471, normalWidth: 320, dial: 283, box: [320, 180] },
-  { windowSize: '1921x1080', size: 'normal', width: 1921, stageHeight: 751, normalWidth: 320, dial: 540, box: [320, 180] },
-]) {
-  test(`the Tuner video fits a ${windowSize} window at ${size} size`, () => {
-    const gap = 8;
-    const { floating, heightLimit } = tunerVideoLayout(stageHeight, width, gap);
-    assert.equal(floating, false);
-    const height = Math.min(normalWidth * 9 / 16, heightLimit);
-    assert.deepEqual([height * 16 / 9, height], box);
-    assert.equal(Math.min(540, stageHeight - height - gap), dial);
-  });
-}
-
-test('at 967x624 with a 168 px player bar the Tuner floats the floor-size box', () => {
-  const windowHeight = 624;
-  const playerBarHeight = 168;
-  const fixedRowsHeight = 266.5;
-  const stagePadding = 36;
-  const stageHeight = windowHeight - playerBarHeight - fixedRowsHeight - stagePadding;
-  const gap = 8;
-  const { floating, heightLimit } = tunerVideoLayout(stageHeight, 967, gap);
-
-  assert.equal(floating, true);
-  assert.deepEqual([heightLimit * 16 / 9, heightLimit], [200, 112.5]);
-  const reservedHeight = floating ? 0 : heightLimit + gap;
-  assert.equal(reservedHeight, 0);
-  assert.equal(Math.min(540, (967 - stagePadding) * 0.78, stageHeight - reservedHeight), 153.5);
-});
-
-test('the Tuner can reserve the band at exactly 150 px of dial space', () => {
-  assert.equal(tunerVideoLayout(270.49, 967, 8).floating, true);
-  assert.deepEqual(tunerVideoLayout(270.5, 967, 8), { floating: false, heightLimit: 112.5 });
-});
-
-test('the Tuner fit uses the existing dial width when it is less than 220 px', () => {
-  assert.deepEqual(tunerVideoLayout(350, 225, 8), { floating: false, heightLimit: 135 });
-});
-
-test('the Tuner dock and reservation share one windowed height at both sizes', async () => {
+test('only the Tuner positions the original dock from the predicted picture', async () => {
   const css = await read('src/styles/tuner.css');
-  assert.match(css, /--tuner-video-height: min\(calc\(var\(--video-w\) \* 9 \/ 16\),\s*var\(--tuner-video-height-limit,/);
-  assert.match(css, /#view-host\[data-mode='tuner'\] ~ \.video-dock \{\s*display: grid;\s*width: calc\(var\(--tuner-video-height\) \* 16 \/ 9\);/);
-  assert.match(css, /#app\.tuner-video-reserved:not\(\.tuner-video-floating\) > #view-host\[data-mode='tuner'\] ~ \.video-dock \{\s*inset-inline: 0;\s*margin-inline: auto;/);
-  const base = await read('src/styles/base.css');
-  assert.match(base, /\.video-dock \{[^}]*bottom: calc\(var\(--player-h\) \+ var\(--video-gap\)\);\s*right: 16px;/);
-  assert.match(css, /#app\.tuner-video-floating:has\(> #view-host\[data-mode='tuner'\]\) \{\s*--tuner-video-height: var\(--tuner-video-height-limit\);/);
-  assert.match(css, /\.video-dock video:where\(:not\(:fullscreen\)\) \{\s*height: var\(--tuner-video-height\);\s*object-fit: contain;\s*max-height: none;/);
+  const dock = css.match(/#view-host\[data-mode='tuner'\] ~ \.video-dock \{([^}]*)\}/)[1];
+  for (const edge of ['left', 'bottom', 'width']) assert.ok(dock.includes('--tuner-picture-' + edge));
+  assert.match(dock, /var\(--player-h\)/);
+  assert.match(css, /video:where\(:not\(:fullscreen\)\) \{\s*height: var\(--tuner-picture-height\);/);
   assert.doesNotMatch(css, /var\(--video-(?:height|clearance)\b/);
-  assert.match(css, /--tuner-video-padding: calc\(\(var\(--tuner-video-height, 0px\) \+ var\(--video-gap\)\) \* var\(--tuner-video-space\)\);/);
-  assert.match(css, /@property --tuner-video-space \{[^}]*syntax: "<number>";[^}]*initial-value: 0;/);
-  assert.match(css, /#app\.tuner-video-reserved \.tuner-root \{\s*--tuner-video-space: 1;/);
-  assert.match(css, /#app\.tuner-video-floating \.tuner-root \{\s*--tuner-video-padding: 0px;\s*transition: none;/);
-  assert.match(css, /transition: --tuner-video-space 200ms ease;/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tuner-root \{ transition: none; \}/);
 });
 
-test('the Tuner measures video only with a dock or reservation, and disconnects on exit', (t) => {
+test('the Tuner measures stable rows and cleans up its observers on exit', (t) => {
   const app = new FakeElement('app');
   const host = new FakeElement('view-host');
   const root = new FakeElement();
   host.parentElement = app;
-  const rows = Array.from({ length: 4 }, () => root.appendChild(new FakeElement()));
-  const bounds = t.mock.fn(() => ({ height: 60 }));
-  for (const row of rows) row.getBoundingClientRect = bounds;
-  host.getBoundingClientRect = t.mock.fn(() => ({ width: 1280, height: 690 }));
+  const stage = root.appendChild(new FakeElement());
+  stage.getBoundingClientRect = () => ({ width: 1024, height: 447 });
   const properties = new Map([['--player-h', '74px'], ['--video-gap', '8px']]);
   app.style.setProperty = (key, value) => properties.set(key, value);
   app.style.removeProperty = (key) => properties.delete(key);
-  const getComputedStyle = t.mock.fn(() => ({
-    getPropertyValue: (key) => properties.get(key), paddingTop: '0px', paddingBottom: '0px',
-  }));
   const observers = [];
   let appChanged;
   const disconnectChanges = t.mock.fn();
+  const video = new FakeElement();
   const globals = {
-    window: { getComputedStyle },
+    document: { activeElement: null, getElementById: () => video },
     MutationObserver: class {
       constructor(callback) { appChanged = callback; }
       observe(target, options) {
@@ -192,16 +141,9 @@ test('the Tuner measures video only with a dock or reservation, and disconnects 
       disconnect() { disconnectChanges(); }
     },
     ResizeObserver: class {
-      constructor(callback) {
-        this.resize = callback;
-        this.elements = new Set();
-        observers.push(this);
-      }
-      observe(element, options) {
-        assert.equal(options.box, 'border-box');
-        this.elements.add(element);
-      }
-      disconnect() { this.elements.clear(); }
+      constructor(callback) { this.resize = callback; this.elements = []; observers.push(this); }
+      observe(element, options) { assert.equal(options.box, 'border-box'); this.elements.push(element); }
+      disconnect() { this.elements = []; }
     },
   };
   for (const [key, value] of Object.entries(globals)) {
@@ -213,39 +155,126 @@ test('the Tuner measures video only with a dock or reservation, and disconnects 
     });
   }
 
-  const close = bindTunerVideoHeight(host, root);
-  const setClass = (name, enabled) => {
-    app.classList.toggle(name, enabled);
-    appChanged();
-  };
-  setClass('has-player', true);
-  setClass('has-player', false);
-  assert.equal(observers.length, 0);
-  assert.equal(getComputedStyle.mock.callCount(), 0);
-  assert.equal(bounds.mock.callCount(), 0);
-  assert.equal(host.getBoundingClientRect.mock.callCount(), 0);
-
-  setClass('has-video', true);
-  assert.deepEqual([...observers[0].elements], [host, rows[0], rows[2], rows[3]]);
-  assert.equal(properties.get('--tuner-video-height-limit'), '208px');
+  const layouts = [];
+  const parts = { stage };
+  for (const key of ['placeholder', 'dialWrap', 'list', 'empty', 'status', 'listColumn', 'stationsToggle']) parts[key] = new FakeElement();
+  parts.listColumn.contains = () => false;
+  stage.style.setProperty = (key, value) => { stage.style[key] = value; };
+  parts.tone = { setLayout(knobs) { this.knobs = knobs; }, column: { contains: () => false } };
+  const stations = Array.from({ length: 17 }, (_, id) => ({ id }));
+  const content = new FakeElement();
+  content.replaceChildren = (...nodes) => { content.children = nodes; };
+  parts.list.scrollTop = 0;
+  const directory = mountTunerStationList(parts.list, content, {
+    makeOption: () => new FakeElement(), tune() {}, onScroll() {}, onRender() {},
+  });
+  t.after(directory.destroy);
+  const layout = bindTunerLayout(host, stage, result => {
+    layouts.push(result);
+    applyTunerLayout(parts, result);
+    directory.update(stations, 15, parts.listHeight, 'small', true, result.columns);
+  }, () => 'tv');
+  layout.count(stations.length);
+  layout.settings({ tunerStations: true, tunerToneKnobs: true });
+  assert.deepEqual(observers[0].elements, [stage]);
+  const radio = layouts.at(-1);
+  parts.list.scrollTop = 0;
+  parts.list.dispatchEvent(new Event('scroll'));
+  app.classList.add('tuner-video-reserved');
+  appChanged();
+  const active = layouts.at(-1);
+  assert.deepEqual(active, tunerStageLayout({ width: 1024, height: 447, tone: true, reserved: true, band: 'tv', count: 17 }));
+  const { picture, list, caption, dial, knobs } = active;
+  const y = parseFloat(content.children.find(node => node.id === 'tuner-station-15').style.top) - parts.list.scrollTop;
+  assert.ok(y >= 0 && y + 56 <= list.height);
+  assert.equal(parts.placeholder.hidden, false);
+  const slot = { ...parts.placeholder.style };
+  assert.deepEqual(slot, { left: picture.x + 'px', top: picture.y + 'px',
+    width: picture.width + 'px', height: picture.height + 'px' });
+  const loadingList = { ...parts.list.style };
+  app.classList.add('has-video');
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  video.readyState = 2;
+  video.dispatchEvent(new Event('loadeddata'));
+  assert.equal(parts.placeholder.hidden, true);
+  assert.deepEqual(layouts.at(-1).picture, picture);
+  assert.deepEqual(parts.placeholder.style, slot);
+  assert.deepEqual(parts.list.style, loadingList);
+  app.classList.remove('has-video');
+  appChanged();
+  assert.equal(parts.placeholder.hidden, false);
+  assert.deepEqual(parts.list.style, loadingList);
+  assert.equal(properties.get('--tuner-picture-left'), picture.x + 'px');
+  assert.equal(properties.get('--tuner-picture-width'), picture.width + 'px');
+  assert.equal(properties.get('--tuner-picture-height'), picture.height + 'px');
+  assert.equal(properties.get('--tuner-picture-bottom'), (447 - picture.y - picture.height) + 'px');
+  for (const [node, rect] of [[parts.dialWrap, dial], [parts.list, list], [parts.empty, list], [parts.status, caption]]) {
+    assert.equal(node.dataset.size, rect.sizeClass);
+    assert.deepEqual(node.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.width + 'px', height: rect.height + 'px' });
+  }
+  assert.equal(stage.style['--station-row-height'], '56px');
+  layout.settings({ tunerStations: true, tunerToneKnobs: true, tunerCardSize: 'large' });
+  assert.equal(stage.style['--station-row-height'], '84px');
+  layout.settings({ tunerStations: true, tunerToneKnobs: true });
+  assert.equal(parts.listHeight, list.height);
+  layout.captionWidth(list.width + 1);
+  assert.equal(parts.status.style.height, '32px');
+  assert.equal(parts.listHeight, list.height);
+  layout.captionWidth(0);
+  assert.deepEqual(parts.list.style, loadingList);
+  assert.deepEqual(parts.tone.knobs, knobs);
+  const before = layouts.length;
   observers[0].resize();
-  assert.equal(getComputedStyle.mock.callCount(), 4);
-
-  setClass('tuner-video-reserved', true);
-  setClass('has-video', false);
-  assert.equal(observers.length, 1);
-  assert.equal(observers[0].elements.size, 4);
-  setClass('tuner-video-reserved', false);
-  assert.equal(observers[0].elements.size, 0);
-  assert.equal(properties.get('--tuner-video-height-limit'), '208px', 'release keeps its height while animating');
-  setClass('has-player', true);
-  assert.equal(getComputedStyle.mock.callCount(), 4);
-
-  setClass('tuner-video-reserved', true);
-  assert.equal(observers.length, 2);
-  assert.equal(observers[1].elements.size, 4);
-  close();
-  assert.equal(observers[1].elements.size, 0);
+  appChanged();
+  assert.equal(layouts.length, before);
+  app.classList.remove('tuner-video-reserved');
+  appChanged();
+  assert.deepEqual(layouts.at(-1), radio);
+  layout.settings({ tunerStations: false, tunerToneKnobs: false });
+  assert.equal(parts.listColumn.hidden, true);
+  assert.equal(parts.listHeight, 0);
+  assert.deepEqual(parts.tone.knobs, []);
+  layout.destroy();
+  assert.deepEqual(observers[0].elements, []);
   assert.equal(disconnectChanges.mock.callCount(), 1);
-  assert.equal(properties.has('--tuner-video-height-limit'), false);
+  assert.ok([...properties.keys()].every(key => !key.startsWith('--tuner-picture-')));
+});
+
+test('the TV placeholder paints decoded artwork for the tuned station and follows Stop', t => {
+  const canvas = new FakeElement();
+  canvas.width = canvas.height = 112;
+  const ctx = { drawImage: t.mock.fn(), clearRect: t.mock.fn(), fillText: t.mock.fn() };
+  canvas.getContext = () => ctx;
+  const parts = { placeholderName: new FakeElement(), placeholderStatus: new FakeElement(),
+    placeholderArt: canvas, list: new FakeElement() };
+  const item = { id: 'fr24', title: 'France 24' };
+  const image = new FakeElement();
+  Object.assign(image, { complete: true, naturalWidth: 200, naturalHeight: 100 });
+  image.dataset.stationId = item.id;
+  paintTunerPlaceholder(parts, item, item, image);
+  assert.equal(parts.placeholderName.textContent, 'France 24');
+  assert.equal(parts.placeholderStatus.textContent, 'Loading…');
+  const [drawn, ...coords] = ctx.drawImage.mock.calls[0].arguments;
+  assert.equal(drawn, image);
+  coords.forEach((value, i) => assert.ok(Math.abs(value - [0, 28, 112, 56][i]) < 1e-7));
+  paintTunerPlaceholder(parts, item, null, image);
+  assert.equal(parts.placeholderStatus.textContent, 'Stopped');
+  assert.equal(ctx.drawImage.mock.callCount(), 2);
+
+  const next = { id: 'bbc', title: 'BBC News' };
+  const card = { complete: true, naturalWidth: 60, naturalHeight: 60 };
+  parts.list.querySelector = () => card;
+  paintTunerPlaceholder(parts, next, next, image);
+  assert.deepEqual(ctx.drawImage.mock.calls[2].arguments, [card, 0, 0, 112, 112]);
+  parts.list.querySelector = () => null;
+  const oldStyle = Object.getOwnPropertyDescriptor(globalThis, 'getComputedStyle');
+  globalThis.getComputedStyle = () => ({ color: '#ccc' });
+  t.after(() => {
+    if (oldStyle) Object.defineProperty(globalThis, 'getComputedStyle', oldStyle);
+    else delete globalThis.getComputedStyle;
+  });
+  paintTunerPlaceholder(parts, next, next, image);
+  assert.equal(ctx.fillText.mock.calls[0].arguments[0], 'BBC');
+  assert.equal(ctx.drawImage.mock.callCount(), 3);
 });

@@ -16,6 +16,8 @@
  *     enabledSources: Record<adapterId, bool>,
  *     showExplicitContent: bool,
  *     tunerFavoritesOnly: bool,
+ *     tunerToneKnobs: bool,
+ *     tunerStations: bool,
  *     showTechnicalDetails: bool,
  *     videoSize: 'normal' | 'large',
  *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
@@ -50,7 +52,7 @@ import { DEFAULT_BEST_STREAM_MODE, bestStreamMode } from './best-stream.js';
 import { DEFAULT_PROCESSOR_USE, normalizeProcessorLimit, normalizeProcessorUse } from './processor-budget.js';
 import { clearStreamVerifications } from './stream-verify.js';
 import { clearDidNotPlayCache } from './did-not-play.js';
-import { PICTURE_STORAGE_KEY } from './profile-storage.js';
+import { EXTRA_SETTINGS_STORAGE_KEY, PICTURE_STORAGE_KEY } from './profile-storage.js';
 import { clearPlayedStreams } from './played-streams.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
@@ -132,6 +134,8 @@ const DEFAULT_SETTINGS = {
   recordingQuality: DEFAULT_RECORDING_QUALITY,
   showExplicitContent: false,
   tunerFavoritesOnly: false,
+  tunerToneKnobs: false,
+  tunerStations: true,
   showTechnicalDetails: false,
   videoSize: 'normal',
   favoritesSort: FAVORITES_SORT_MANUAL,
@@ -193,6 +197,8 @@ export function normalizeSettings(value) {
     recordingQuality: normalizeRecordingQuality(source.recordingQuality),
     showExplicitContent: source.showExplicitContent === true,
     tunerFavoritesOnly: source.tunerFavoritesOnly === true,
+    tunerToneKnobs: source.tunerToneKnobs === true,
+    tunerStations: source.tunerStations !== false,
     showTechnicalDetails: source.showTechnicalDetails === true,
     videoSize: source.videoSize === 'large' ? 'large' : 'normal',
     favoritesSort: normalizeFavoritesSort(source.favoritesSort),
@@ -618,6 +624,20 @@ function loadFavorites() {
 // The last settings JSON seen by this window. Another window can update or
 // clear it before this one saves a different preference.
 let savedSettingsRaw;
+let savedExtraSettingsRaw;
+
+function readExtraSettings(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  } catch (_) {}
+  return {};
+}
+
+function extraTunerSettings(raw) {
+  const { tunerToneKnobs, tunerStations } = readExtraSettings(raw);
+  return { tunerToneKnobs: tunerToneKnobs === true, tunerStations: tunerStations !== false };
+}
 
 export function saveSettings(partial, authorization = null) {
   const requested = partial && typeof partial === 'object' && !Array.isArray(partial)
@@ -632,14 +652,33 @@ export function saveSettings(partial, authorization = null) {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.settings);
     if (savedSettingsRaw !== undefined && raw !== savedSettingsRaw) {
-      currentSettings = normalizeSettings(raw ? JSON.parse(raw) : null);
+      currentSettings = normalizeSettings({
+        ...(raw ? JSON.parse(raw) : null),
+        tunerToneKnobs: currentSettings.tunerToneKnobs,
+        tunerStations: currentSettings.tunerStations,
+      });
+    }
+    const extra = localStorage.getItem(EXTRA_SETTINGS_STORAGE_KEY);
+    if (extra !== savedExtraSettingsRaw) {
+      currentSettings = { ...currentSettings, ...extraTunerSettings(extra) };
+      savedExtraSettingsRaw = extra;
     }
   } catch (_) { /* Keep the settings in use when storage cannot be read. */ }
   state.settings = normalizeSettings({ ...currentSettings, ...requested });
   try {
-    const raw = JSON.stringify(state.settings);
+    const { tunerToneKnobs, tunerStations, ...legacySettings } = state.settings;
+    const raw = JSON.stringify(legacySettings);
     localStorage.setItem(STORAGE_KEYS.settings, raw);
     savedSettingsRaw = raw;
+    if (Object.hasOwn(requested, 'tunerToneKnobs') || Object.hasOwn(requested, 'tunerStations')) {
+      const extra = JSON.stringify({
+        ...readExtraSettings(savedExtraSettingsRaw),
+        ...(Object.hasOwn(requested, 'tunerToneKnobs') ? { tunerToneKnobs } : {}),
+        ...(Object.hasOwn(requested, 'tunerStations') ? { tunerStations } : {}),
+      });
+      localStorage.setItem(EXTRA_SETTINGS_STORAGE_KEY, extra);
+      savedExtraSettingsRaw = extra;
+    }
     clearPersistenceFailure('settings');
     scheduleProfileHandoff();
   } catch (e) {
@@ -671,10 +710,16 @@ export function setSourceEnabled(sourceId, enabled) {
 function loadSettings() {
   state.settings = freshDefaultSettings();
   savedSettingsRaw = undefined;
+  savedExtraSettingsRaw = undefined;
   try {
     savedSettingsRaw = localStorage.getItem(STORAGE_KEYS.settings);
     if (savedSettingsRaw) state.settings = normalizeSettings(JSON.parse(savedSettingsRaw));
   } catch (e) { console.warn('Could not load settings:', e); }
+  Object.assign(state.settings, extraTunerSettings(null));
+  try {
+    savedExtraSettingsRaw = localStorage.getItem(EXTRA_SETTINGS_STORAGE_KEY);
+    Object.assign(state.settings, extraTunerSettings(savedExtraSettingsRaw));
+  } catch (e) { console.warn('Could not load extra settings:', e); }
 }
 
 /* ============ Init ============ */
@@ -705,6 +750,8 @@ export function clearCache() {
     localStorage.removeItem(STORAGE_KEYS.favorites);
     localStorage.removeItem(STORAGE_KEYS.settings);
     savedSettingsRaw = null;
+    localStorage.removeItem(EXTRA_SETTINGS_STORAGE_KEY);
+    savedExtraSettingsRaw = null;
     localStorage.removeItem(STORAGE_KEYS.volume);
     localStorage.removeItem(STORAGE_KEYS.jobs);
     localStorage.removeItem(STORAGE_KEYS.favoriteGroups);

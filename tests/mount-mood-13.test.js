@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 
 import { createAudioSignal } from '../src/lib/audio-signal.js';
 import { normalizeSettings } from '../src/lib/state.js';
-import { claimVisualizer, visualizerHolder } from '../src/lib/visualizer-slot.js';
+import { visualizerHolder } from '../src/lib/visualizer-slot.js';
 import { attachTunerBackground } from '../src/modes/tuner-background.js';
 import { createFlashLedger } from '../src/visualizer/flash-limiter.js';
 import { mountVisualizer } from '../src/visualizer/index.js';
@@ -180,9 +180,9 @@ test('a mount that throws at any point of building its panel leaves nothing behi
   }
 });
 
-/* ---- The one-Visualizer slot after a failed mount ---- */
+/* ---- The shared Visualizer after a failed mount ---- */
 
-test('a tab mount that throws frees the slot: the Tuner background can claim it, and the other way round', async (t) => {
+test('failed tab and Tuner mounts release the shared Visualizer', async (t) => {
   t.mock.method(console, 'error', () => {});
   t.mock.method(console, 'warn', () => {});
   const previousDocument = globalThis.document;
@@ -200,14 +200,7 @@ test('a tab mount that throws frees the slot: the Tuner background can claim it,
     assert.equal(shell.visualizerMounted(), false);
     assert.equal(visualizerHolder(), null, 'the failed tab does not keep the slot');
     assert.match(host.children[0].innerHTML, /could not be loaded/);
-    // The Tuner's background claims it, and keeps it.
-    let released = 0;
-    const unclaim = claimVisualizer('tuner', () => { released += 1; });
-    assert.equal(visualizerHolder(), 'tuner');
     state.setMode('tuner');
-    assert.equal(visualizerHolder(), 'tuner', 'leaving the failed tab does not take the Tuner\'s claim');
-    assert.equal(released, 0);
-    unclaim();
     assert.equal(visualizerHolder(), null);
 
     // The other way round: the Tuner background's mount throws; the tab then

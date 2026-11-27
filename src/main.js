@@ -5,6 +5,7 @@ import { catalogScheduler } from './lib/catalog-scheduler.js';
 import { setArtworkPlaybackPriority } from './lib/artwork.js';
 import { SOURCE_IDS } from './lib/sources.js';
 import { initPlayer, getCurrentItem, getAudioSignal, getNowPlaying, isMediaAdvancing } from './lib/player.js';
+import { bindPlayerBarFit } from './lib/player-bar-fit.js';
 import { initPlayerMeter } from './lib/player-meter.js';
 import { startSongLog } from './lib/song-log.js';
 import { openSongLog } from './lib/song-log-panel.js';
@@ -18,7 +19,7 @@ import { initEqOverlay } from './lib/eq-overlay.js';
 import { initSleepTimer } from './lib/sleep-timer.js';
 import { initShutdownButton } from './lib/shutdown.js';
 import {
-  renderLibrary, showMyPlaylists, importLocalPlaylist, dropStationPicture, pictureDropText,
+  renderLibrary, showMyPlaylists, importLocalPlaylist, dropStationPicture, pictureDropTarget,
 } from './modes/library.js';
 import { renderTuner, tunerBand } from './modes/tuner.js';
 import { renderGrid } from './modes/grid.js';
@@ -114,6 +115,7 @@ async function boot() {
   initPersistenceNotice();
   await initState();
   initPlayer();
+  bindPlayerBarFit(document.getElementById('player-bar'));
   // How long the loaded item has played, for the Now Playing tab (two
   // numbers kept on the player's events; nothing runs on its own).
   playClock.start(subscribe, getCurrentItem, isMediaAdvancing);
@@ -142,10 +144,10 @@ async function boot() {
   initEqOverlay();
   initSleepTimer();
   bindTopBar();
-  // A playlist file anywhere is imported; a picture on a station's card in the
-  // Library becomes its picture (modes/library/picture-drop.js).
+  // Import playlist files anywhere and set station pictures on Library
+  // cards and in the details panel.
   initPlaylistDrop({
-    onPlaylist: importDroppedPlaylist, onPicture: dropStationPicture, describePictureDrop: pictureDropText,
+    onPlaylist: importDroppedPlaylist, onPicture: dropStationPicture, getPictureTarget: pictureDropTarget,
   });
   // The user's own station pictures: listed once now, again on Refresh in Settings.
   loadStationImages().catch(() => {});

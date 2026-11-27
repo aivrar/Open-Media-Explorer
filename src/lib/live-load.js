@@ -107,7 +107,7 @@ export function failedSourceState(current, sourceId, message) {
  * used while nothing is known yet. A count of 0 sources is never shown
  * beside stations.
  */
-export function liveStatusText({ count, noun, sourceStates, loading, sourceCount = 0 }) {
+export function liveStatusText({ count, noun, sourceStates, loading, sourceCount = 0, compact = false }) {
   const states = [...(sourceStates?.values?.() || [])];
   if (loading && count === 0) {
     const asked = states.length || sourceCount;
@@ -117,7 +117,13 @@ export function liveStatusText({ count, noun, sourceStates, loading, sourceCount
   const stale = has('stale');
   const failures = has('error');
   const answered = has('ready') + stale + states.filter(({ state, refreshing }) => state === 'loading' && refreshing).length;
-  return `${count} ${noun}${answered ? ` from ${answered} source${answered === 1 ? '' : 's'}` : ''}`
+  const summary = `${count} ${noun}${answered ? ` from ${answered} source${answered === 1 ? '' : 's'}` : ''}`;
+  if (compact) {
+    return summary + (stale ? ` · ${stale} out of date` : '')
+      + (failures ? ` · ${failures} unavailable` : '')
+      + (loading && has('loading') ? ' · updating…' : '');
+  }
+  return summary
     + (stale ? ` · ${stale} source${stale === 1 ? '' : 's'} could not be refreshed (earlier list kept)` : '')
     + (failures ? ` · ${failures} unavailable` : '')
     + (loading ? pendingSourcesText(sourceStates) : '');

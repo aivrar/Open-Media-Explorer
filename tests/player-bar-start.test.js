@@ -201,23 +201,9 @@ test('from the press of Play to playing, live radio and live HLS never show a se
 
 test('a wide bar gives the seek bar\'s room to the name column only for live media', { timeout: TEST_TIMEOUT_MS }, async (t) => {
   const css = (await readFile(new URL('../src/styles/base.css', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  const start = css.indexOf('/* Wide bar, live media');
-  assert.ok(start > 0, 'the live layout rules exist');
-  const block = css.slice(start, css.indexOf('\n}\n', start) + 3);
-  const live = '.player-bar:not(.is-capture-only):has(> .player-progress > #player-seek.is-live)';
-  assert.match(block, /^\/\* Wide bar, live media[\s\S]*?\*\/\n@media \(min-width: 1001px\) \{/);
-  // The progress cell sizes to the meter and the time; the name column (the
-  // only flexible one) takes the rest. Every other column is as before.
-  assert.ok(block.includes(`${live} {\n    grid-template-columns: minmax(clamp(190px, 75vw - 760px, 1400px), 1.1fr) auto auto auto auto;`));
-  assert.match(css, /grid-template-columns: minmax\(clamp\(190px, 75vw - 760px, 1400px\), 1\.1fr\) auto auto minmax\(180px, 1\.5fr\) auto;/);
-  assert.ok(block.includes(`${live} .player-progress {`) && /container-type: normal;/.test(block));
-  // The meter stays (the setting still hides it: .player-meter[hidden] wins).
-  assert.ok(block.includes(`${live} #player-meter {`) && /display: block;\s+flex: none;/.test(block));
+  assert.match(css, /\.player-bar:not\(\.is-capture-only\):has\(:where\(#player-seek\.is-live\)\) \{\s*grid-template-columns: minmax\(160px, 1fr\) auto auto auto auto;/);
+  assert.match(css, /\.player-progress:has\(#player-seek\.is-live\) > :is\(#player-seek, #player-dur\) \{ display: none; \}/);
   assert.match(css, /\.player-meter\[hidden\] \{ display: none !important; \}/);
-  assert.ok(block.includes(`${live} .player-time { flex-shrink: 0; }`));
-  assert.ok(block.includes(`${live} #player-seek,`) && block.includes(`${live} #player-dur { display: none; }`));
-  // The stacked bar of a narrow window is not touched.
-  assert.doesNotMatch(block, /max-width/);
 
   const { player, elements } = await setup(t);
   const isLive = () => elements['player-seek'].classList.contains('is-live');

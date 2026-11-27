@@ -17,6 +17,7 @@ import {
 import { FAVORITES_SORT_MANUAL, normalizeFavoritesSort } from '../../lib/favorites-order.js';
 import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
 import { syncFavoriteTitles } from './favorite-titles.js';
+import { startReorderScroll } from './reorder-scroll.js';
 import { buildCategoryButton, closeDetachedCategoryMenu, updateCategoryButton } from './card-category.js';
 import {
   canonicalArtworkUrl, isArtworkRelayUrl, isStationImageSource, stationImageSourceFor,
@@ -35,6 +36,7 @@ import { filterItems } from './filter.js';
 import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
 import { getPlaylistItems } from '../../lib/playlists.js';
 import { carriesFiles } from '../../lib/playlist-drop.js';
+import { mountPictureDropPreview } from './picture-drop.js';
 import { didNotPlayNote } from '../../lib/did-not-play-view.js';
 import {
   getThumbnailHydrationSignal, insertThumbImage, requestThumbnailHydration,
@@ -132,14 +134,17 @@ export function renderResults() {
     getState().settings.showExplicitContent === true,
   ]);
   const signatureChanged = signature !== view.renderSignature;
+  if (favoriteDrag && (signatureChanged || !favoritesManualOrder()
+      || !filtered.some((item) => item.id === favoriteDrag.id))) endFavoriteDrag(false);
   if (signatureChanged) {
     view.renderSignature = signature;
     view.renderStart = 0;
   }
   view.renderLimit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
-  const maximumStart = Math.max(0, filtered.length - view.renderLimit);
+  const limit = favoriteDrag?.limit ?? view.renderLimit;
+  const maximumStart = Math.max(0, filtered.length - limit);
   view.renderStart = Math.max(0, Math.min(view.renderStart || 0, maximumStart));
-  const visible = filtered.slice(view.renderStart, view.renderStart + view.renderLimit);
+  const visible = filtered.slice(view.renderStart, view.renderStart + limit);
   const windowMoved = view.renderStart !== lastRenderStart;
   lastRenderStart = view.renderStart;
   if (ui.windowBack) {
@@ -180,8 +185,8 @@ export function renderResults() {
   // Favorites reordered by hand or by the sort choice, or one added/removed,
   // under unchanged filters: move the mounted cards instead of rebuilding
   // them, so artwork does not flash, scrolling stays put and focus survives.
-  // A shifted render window (scrolling far) keeps the full rebuild.
-  if (needClear && !signatureChanged && !windowMoved && view.activeSource === 'favorites'
+  // A shifted window normally rebuilds. During a drag the source stays mounted.
+  if (needClear && !signatureChanged && (!windowMoved || favoriteDrag) && view.activeSource === 'favorites'
       && reconcileCardsInPlace(visible)) {
     needClear = false;
   }
@@ -412,7 +417,7 @@ function refreshChangedCards(visible) {
   for (const card of [...host.children]) {
     const entry = items.get(card.dataset?.id);
     if (!entry) continue;
-    if (!canReplace || !cardIsStale(card, entry.item)) {
+    if (card === favoriteDrag?.card || !canReplace || !cardIsStale(card, entry.item)) {
       card.__item = entry.item;
       continue;
     }
@@ -449,7 +454,7 @@ function reconcileCardsInPlace(visible) {
     const id = card.dataset?.id;
     if (!id) return false;
     const item = wanted.get(id);
-    if (item && Number(card.dataset.revision || 0) !== Number(item.__revision || 0)) return false;
+    if (item && !favoriteDrag && Number(card.dataset.revision || 0) !== Number(item.__revision || 0)) return false;
   }
   const scroller = host.parentNode;
   const scrollTop = scroller?.scrollTop;
@@ -567,12 +572,12 @@ function setMoveEnabled(button, enabled) {
 /* Dragging a card in "My order" onto another card puts it in that card's
    place, wherever on the card it is dropped. Only the cards shown take part,
    so it works the same with a type, search or category filter. The move
-   buttons stay the keyboard way to do the same. Listeners sit on the results
-   host (bound once) and do work only while a card is being dragged. */
+   buttons stay the keyboard way to do the same. The results host handles
+   reordering and the active drag tracks scrolling across the document. */
 
 export const FAVORITE_DRAG_TYPE = 'application/x-worldmedia-favorite';
 const boundDragHosts = new WeakSet();
-let favoriteDrag = null; // { id, card, marked, place }
+let favoriteDrag = null;
 let shownFavoritePositions = new Map(); // id -> place in the shown order
 
 /** Where a card dropped on another goes so that it takes the target's place
@@ -606,11 +611,46 @@ function clearDropMark() {
   favoriteDrag.place = '';
 }
 
-function endFavoriteDrag() {
+function endFavoriteDrag(restoreWindow = true) {
   if (!favoriteDrag) return;
   clearDropMark();
-  favoriteDrag.card.classList.remove('is-dragging');
+  const { card, limit, scroller, stopScroll } = favoriteDrag;
+  stopScroll?.();
+  card.classList.remove('is-dragging');
   favoriteDrag = null;
+  if (!restoreWindow || !limit) return;
+
+  // Return to the bounded render window around the part of the list reached.
+  const top = scroller.getBoundingClientRect().top;
+  const anchor = [...ui.resultsHost.children].find((node) => node.getBoundingClientRect().bottom > top);
+  const index = shownFavoritePositions.get(anchor?.dataset.id);
+  const offset = anchor?.getBoundingClientRect().top;
+  if (index !== undefined) view.renderStart = Math.max(0, index - Math.floor(view.renderLimit / 3));
+  renderResults();
+  const mounted = anchor && mountedCard(anchor.dataset.id);
+  if (mounted) scroller.scrollTop += mounted.getBoundingClientRect().top - offset;
+  updateSentinelStatus();
+}
+
+function canExtendFavoriteDrag(speed) {
+  const start = view.renderStart;
+  const limit = favoriteDrag.limit ?? view.renderLimit;
+  return speed < 0 ? start > 0 : start + limit < shownFavoritePositions.size;
+}
+
+function extendFavoriteDrag(speed) {
+  // Grow the mounted slice during the drag so the native source stays in the DOM.
+  const { scroller } = favoriteDrag;
+  const anchor = ui.resultsHost.children[0];
+  const top = anchor.getBoundingClientRect().top;
+  const start = view.renderStart;
+  const limit = favoriteDrag.limit ?? view.renderLimit;
+  if (speed < 0) view.renderStart = Math.max(0, start - RENDER_LIMIT_STEP);
+  const added = speed < 0 ? start - view.renderStart
+    : Math.min(RENDER_LIMIT_STEP, shownFavoritePositions.size - start - limit);
+  favoriteDrag.limit = limit + added;
+  renderResults();
+  if (speed < 0) scroller.scrollTop += anchor.getBoundingClientRect().top - top;
 }
 
 function onFavoriteDragStart(event) {
@@ -618,7 +658,16 @@ function onFavoriteDragStart(event) {
   if (!card || card.getAttribute('draggable') !== 'true' || !favoritesManualOrder()) return;
   const id = (card.__item?.id) || card.dataset.id;
   endFavoriteDrag();
-  favoriteDrag = { id, card, marked: null, place: '' };
+  const host = ui.resultsHost;
+  const scroller = host.parentNode;
+  favoriteDrag = { id, card, marked: null, place: '', scroller, limit: null };
+  favoriteDrag.stopScroll = startReorderScroll(scroller, {
+    refresh: (target) => markFavoriteDrop(dragCardOf(target)),
+    end: () => endFavoriteDrag(),
+    canExtend: canExtendFavoriteDrag,
+    extend: extendFavoriteDrag,
+    contains: (target) => host.contains(target),
+  });
   try {
     event.dataTransfer.setData(FAVORITE_DRAG_TYPE, id);
     event.dataTransfer.effectAllowed = 'move';
@@ -637,7 +686,11 @@ function onFavoriteDragOver(event) {
   if (!favoritesManualOrder()) { clearDropMark(); return; }
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-  const card = dragCardOf(event.target);
+  markFavoriteDrop(dragCardOf(event.target));
+}
+
+function markFavoriteDrop(card) {
+  if (!favoriteDrag) return;
   const targetId = card && card !== favoriteDrag.card ? ((card.__item?.id) || card.dataset.id) : '';
   const place = targetId ? favoriteDropPlace(shownFavoritePositions, favoriteDrag.id, targetId) : '';
   if (!place) { clearDropMark(); return; }
@@ -656,7 +709,9 @@ function onFavoriteDragLeave(event) {
 
 function onFavoriteDrop(event) {
   if (!isFavoriteDrag(event)) return;
-  const card = dragCardOf(event.target);
+  const doc = favoriteDrag.scroller?.ownerDocument;
+  const target = doc?.elementFromPoint ? doc.elementFromPoint(event.clientX, event.clientY) : event.target;
+  const card = dragCardOf(target);
   const { id } = favoriteDrag;
   const dragged = favoriteDrag.card;
   endFavoriteDrag();
@@ -714,7 +769,6 @@ function syncFavoriteOrderControls(filtered) {
   // The shown order the drag marks use (a drop works it out again).
   shownFavoritePositions = positions || new Map();
   if (manual) bindFavoriteDrag(ui.resultsHost);
-  else if (favoriteDrag) endFavoriteDrag();
   for (const card of ui.resultsHost.children) {
     const id = card.dataset?.id;
     if (!id) continue;
@@ -790,6 +844,7 @@ export function onMoveFavorite(itemId, direction, button = null) {
  *  Returns true if there were unrendered items to expose; the sentinel
  *  observer uses that to decide whether to also fetch more from upstream. */
 export function expandRenderWindow() {
+  if (favoriteDrag) return false;
   const pool = libraryPool();
   const filteredCount = filteredItemsForCurrentView(pool).length;
   const limit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
@@ -864,8 +919,9 @@ function renderCard(item, opts = {}) {
     on: { click: (e) => { e.stopPropagation(); toggleFav(card.__item || item, star); } },
     html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
   });
+  const previewPending = mountPictureDropPreview(thumb, item);
   const artworkOptions = {
-    eager: opts.eagerArtwork === true,
+    eager: opts.eagerArtwork === true || previewPending,
     signal: getThumbnailHydrationSignal(),
   };
   insertThumbImage(thumb, item, null, artworkOptions);
