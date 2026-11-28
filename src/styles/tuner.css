@@ -37,7 +37,17 @@
   overflow: hidden;
   transition: left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease;
 }
-.tuner-picture-placeholder canvas { width: 44px; height: 44px; }
+/* A mid-grey tile behind the logo: white logos and dark logos both stay visible on it,
+   whatever the theme. */
+.tuner-picture-placeholder canvas {
+  width: clamp(44px, 12vh, 96px);
+  height: clamp(44px, 12vh, 96px);
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 10px;
+  background: #7a8694;
+  color: #fff;
+}
 .tuner-picture-placeholder strong {
   max-width: 100%;
   overflow: hidden;
@@ -286,6 +296,15 @@
   line-height: 1.1;
   overflow-wrap: anywhere;
   overflow: hidden;
+}
+
+.tuner-frequency .dial-name-word {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The light theme's teal is tuned for white pages; use a brighter teal on the dark dial. */

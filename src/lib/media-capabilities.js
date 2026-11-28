@@ -1,17 +1,18 @@
 /** Data-driven download/record capability resolution. */
 
 import { getText } from './http.js';
+import { isComputerItem } from './item-model.js';
 
 const FINITE_DIRECT_KINDS = new Set(['audio', 'video']);
 const FINITE_FILE_PATTERN = /\.(?:aac|flac|m4a|mp3|oga|ogg|wav|m4v|mov|mp4|ogv|webm)(?:[?#]|$)/i;
 
 /**
- * Repair pre-capability-contract items without consulting their source ID.
+ * Repair older web items that predate the media capability fields.
  * Adapter-declared on-demand direct media is a finite download; older saved
  * audio/video favorites can also be recognized by a finite filename suffix.
  */
 export function repairFiniteMediaFields(item) {
-  if (!item || typeof item !== 'object' || !item.stream_url
+  if (!item || typeof item !== 'object' || isComputerItem(item) || !item.stream_url
       || !FINITE_DIRECT_KINDS.has(item.stream_kind)) return item;
   const declaredFinite = item.delivery === 'on-demand';
   const legacyFinite = item.delivery === 'unknown'
@@ -102,9 +103,9 @@ export async function inspectManifestDelivery(item, opts = {}) {
   return item.delivery;
 }
 
-/** Pure action resolver. No source IDs are consulted. */
+/** Determine which capture action the player can offer. */
 export function resolveMediaAction(item, evidence = {}) {
-  if (!item || typeof item !== 'object') return 'unavailable';
+  if (!item || typeof item !== 'object' || isComputerItem(item)) return 'unavailable';
   const delivery = item.delivery === 'unknown' && evidence.delivery
     ? evidence.delivery
     : item.delivery;

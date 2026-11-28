@@ -31,12 +31,19 @@ test('a long favorite name takes a second line on the saved-items cards, then en
   // Two lines of the title and the meta line fit the card's picture height,
   // so a card with a long name is no taller than one without.
   const base = rule(css, '.card-title');
-  const lineHeight = px(base, 'line-height');
+  assert.match(base, /line-height: var\(--card-title-height\);/);
+  const lineHeight = px(rule(css, '.card'), '--card-title-height');
   const body = rule(css, '.library-root.is-personal-view .card-body');
-  assert.match(body, /padding: 8px 44px 8px 12px/);
+  assert.match(body, /padding: 8px 44px 8px 12px;/);
+  assert.match(body, /grid-template-rows: auto auto;/);
   const thumb = rule(css, '.library-root.is-personal-view .card-thumb');
-  const cardHeight = px(thumb, 'height') + 2 * 8; // 8 px margin above and below the picture
-  assert.ok(8 + 2 * lineHeight + 4 + 16 + 8 <= cardHeight, 'two title lines, the gap, one meta line and the padding');
+  assert.match(thumb, /height: var\(--card-thumb-size\);/);
+  assert.match(thumb, /margin: var\(--card-thumb-margin\) 0 var\(--card-thumb-margin\) var\(--card-thumb-margin\);/);
+  const compact = rule(css, '.library-root.is-personal-view .card');
+  const cardHeight = px(compact, '--card-thumb-size') + 2 * px(compact, '--card-thumb-margin');
+  const metaHeight = px(rule(css, ':root:not([data-tech-details="on"]) .card'), '--card-meta-height');
+  assert.ok(2 * 8 + 2 * lineHeight + px(body, 'gap') + metaHeight <= cardHeight,
+    'two title lines, the gap, one meta line and the padding');
 });
 
 test('every card in a row has the same height and its content stays centred; nothing runs under the buttons', async () => {
@@ -68,7 +75,7 @@ test('every card in a row has the same height and its content stays centred; not
 test('the whole name is the card tooltip', async () => {
   const render = await read('src/modes/library/render.js');
   const card = render.slice(render.indexOf('function renderCard('), render.indexOf("const thumb = el('div', { className: 'card-thumb' });"));
-  assert.match(card, /className: 'card-open',[\s\S]*'aria-label': `Open \$\{item\.title \|\| 'Untitled'\} from \$\{sourceLabel\}`,[\s\S]*title: item\.title \|\| 'Untitled',/);
+  assert.match(card, /className: 'card-open',[\s\S]*'aria-label': `Open \$\{item\.title \|\| 'Untitled'\} from \$\{sourceLabel\}(?:\$\{[^`]*\})?`,[\s\S]*title: item\.title \|\| 'Untitled',/);
   assert.match(render, /className: 'card-title',\n\s+text: item\.title \|\| 'Untitled',\n\s+attrs: \{ title: item\.title \|\| 'Untitled' \},/);
 });
 
@@ -160,5 +167,5 @@ test('an empty star on a Favorites or My Playlists card takes the text color, a 
   // These cards draw the star without the dark square, so a white star would
   // not show on a light theme's card.
   assert.match(css, /\.library-root\.is-personal-view \.card-star:not\(\.is-fav\) \{ color: var\(--text\); \}/);
-  assert.match(css, /\.card-star\.is-fav \{ color: var\(--accent\); \}/);
+  assert.match(css, /\.card-star\.is-fav \{ color: var\(--accent\);[^}]*\}/);
 });

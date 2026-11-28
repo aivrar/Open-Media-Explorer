@@ -396,7 +396,8 @@ Capture & storage.
 
 ## FFmpeg management
 
-World Media does not bundle FFmpeg in the EXE. Settings can:
+World Media does not bundle FFmpeg in the EXE. Use it for recording and for
+Computer files that need conversion. Settings can:
 
 - detect an existing capable pair;
 - install the managed GPL build after an explicit confirmation;

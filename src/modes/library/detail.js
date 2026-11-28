@@ -5,9 +5,11 @@
  * when closed — no persistent DOM cost when nothing is selected.
  */
 
-import { getState, isFavorite, addFavorite, removeFavorite, subscribe } from '../../lib/state.js';
+import { getState, isFavorite, isLocalFileFavorite, addFavorite, removeFavorite, subscribe } from '../../lib/state.js';
 import { getSourceLabel } from '../../lib/sources.js';
-import { safeExternalUrl, shownLicense } from '../../lib/item-model.js';
+import { isComputerItem, safeExternalUrl, shownLicense } from '../../lib/item-model.js';
+import { isTabShown } from '../../lib/top-tabs.js';
+import { computerCardSubtitle, computerItemForView, computerFileState, playLibraryItem } from './computer.js';
 import {
   artworkSourceFor, isArtworkRelayUrl, isStationImageSource, loadArtworkImage, stationImageSourceFor,
 } from '../../lib/artwork.js';
@@ -16,6 +18,7 @@ import { hasPartsSource, loadParts, partKind, partTime } from '../../lib/media-p
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
+import { captureCardAnchor, restoreCardAnchor } from './render.js';
 import { resolveItemArtwork } from './thumbnails.js';
 import { createBestStreamStatus, createOtherStreams } from './other-streams.js';
 import { createStreamAddressEditor } from './stream-addresses.js';
@@ -168,7 +171,11 @@ export function openDetail(item, options = {}) {
   // A saved favorite is shown under the name the user gave it, wherever the
   // panel was opened from (favorite-names.js).
   if (isFavorite(item.id)) item = withFavoriteName(withoutFavoriteName(item));
+  const local = isComputerItem(item);
+  if (local) item = computerItemForView(item);
   item = favoriteForContentView(item, getState().settings);
+  const opening = !ui.detailPanel;
+  const anchor = options.anchorCard && opening ? captureCardAnchor(item.id, { viewport: true }) : null;
   view.detailItemId = item.id;
   if (!ui.detailPanel) {
     ui.detailPanel = el('aside', {
@@ -237,11 +244,12 @@ export function openDetail(item, options = {}) {
     for (const t of item.tags.slice(0, 12)) tagsHost.appendChild(el('span', { className: 'chip', text: t }));
     ui.detailPanel.appendChild(tagsHost);
   }
-  ui.detailPanel.appendChild(el('p', { className: 'detail-description', text: item.description || '' }));
+  const description = local ? computerCardSubtitle(item) : item.description;
+  ui.detailPanel.appendChild(el('p', { className: 'detail-description', text: description || '' }));
 
   const actions = el('div', { className: 'detail-actions' });
   if (item.__contentHidden !== true) {
-    actions.appendChild(el('button', { className: 'btn btn-primary', text: 'Play', on: { click: () => playItem(item) } }));
+    actions.appendChild(el('button', { className: 'btn btn-primary', text: 'Play', on: { click: () => playLibraryItem(item) } }));
   }
   if (item.__contentHidden !== true || isFavorite(item.id)) {
     const favBtn = el('button', {
@@ -262,6 +270,16 @@ export function openDetail(item, options = {}) {
     });
     actions.appendChild(favBtn);
   }
+  if (local && ui.showInComputer && isTabShown('computer', getState().settings) && computerFileState(item).entry) {
+    actions.appendChild(el('button', {
+      className: 'btn',
+      text: 'Show in Computer tab',
+      on: { click: () => {
+        const { entry } = computerFileState(item);
+        if (entry) ui.showInComputer(entry);
+      } },
+    }));
+  }
   const sourceUrl = safeExternalUrl(item.source_url);
   if (sourceUrl && item.__contentHidden !== true) {
     actions.appendChild(el('a', { className: 'btn', attrs: { href: sourceUrl, target: '_blank', rel: 'noopener' }, text: 'Source ↗' }));
@@ -269,13 +287,13 @@ export function openDetail(item, options = {}) {
   const otherStreams = createOtherStreams(item, { onPlay: playOtherStream });
   detailOtherStreams = otherStreams;
   if (otherStreams.button) actions.appendChild(otherStreams.button);
-  const rename = isFavorite(item.id) && item.__contentHidden !== true ? buildRename(item) : null;
+  const rename = isFavorite(item.id) && !isLocalFileFavorite(item) && item.__contentHidden !== true ? buildRename(item) : null;
   if (rename) {
     actions.appendChild(rename.button);
     if (rename.reset) actions.appendChild(rename.reset);
   }
   // A picture of the station's own, for favorites and My Playlists stations.
-  detailPicture = isSavedItem(item.id) && item.__contentHidden !== true ? buildPictureControls(item) : null;
+  detailPicture = !local && isSavedItem(item.id) && item.__contentHidden !== true ? buildPictureControls(item) : null;
   if (detailPicture) {
     actions.appendChild(detailPicture.choose);
     actions.appendChild(detailPicture.remove);
@@ -298,7 +316,10 @@ export function openDetail(item, options = {}) {
   if (rename) ui.detailPanel.appendChild(rename.form);
   if (otherStreams.section) ui.detailPanel.appendChild(otherStreams.section);
   if (otherStreams.note) ui.detailPanel.appendChild(otherStreams.note);
-  if (options.focus === true) queueMicrotask(() => closeBtn.isConnected && closeBtn.focus());
+  if (opening) restoreCardAnchor(anchor);
+  if (options.focus === true) {
+    queueMicrotask(() => closeBtn.isConnected && closeBtn.focus({ preventScroll: true }));
+  }
 }
 
 function showDetailParts(item, panel) {
@@ -522,6 +543,8 @@ export function refreshDetailQuality() {
 export function detailPictureControls() { return detailPicture; }
 
 export function closeDetail({ preserveSelection = false } = {}) {
+  const anchor = !preserveSelection && ui.detailPanel
+    ? captureCardAnchor(view.detailItemId, { viewport: true }) : null;
   if (detailArtworkAbort && !detailArtworkAbort.signal.aborted) detailArtworkAbort.abort();
   detailArtworkAbort = null;
   detailArtworkShown = null;
@@ -540,7 +563,8 @@ export function closeDetail({ preserveSelection = false } = {}) {
     ui.root?.classList.remove('has-detail');
   }
   unbindDetailKeys();
-  if (!preserveSelection && detailReturnFocus?.isConnected) detailReturnFocus.focus?.();
+  restoreCardAnchor(anchor);
+  if (!preserveSelection && detailReturnFocus?.isConnected) detailReturnFocus.focus?.({ preventScroll: true });
   detailReturnFocus = null;
   if (!preserveSelection) view.detailItemId = null;
 }
@@ -551,6 +575,7 @@ export function getRestorableDetailItem(currentItem, itemIndex, favorites = []) 
   if (!view.detailItemId) return null;
   if (currentItem?.id === view.detailItemId) return currentItem;
   return itemIndex?.get?.(view.detailItemId)
+    || view.computerHits.find((item) => item.id === view.detailItemId)
     || favorites.find?.((item) => item?.id === view.detailItemId)
     || null;
 }

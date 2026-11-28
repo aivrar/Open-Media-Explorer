@@ -3,7 +3,7 @@
  *
  * State shape:
  * {
- *   mode: 'library' | 'tuner' | 'grid' | 'discovery' | 'now-playing' | 'visualizer' | 'about',
+ *   mode: 'library' | 'tuner' | 'computer' | 'now-playing' | 'visualizer' | 'about',
  *   currentItem: Item | null,
  *   currentStream: the upstream candidate selected for currentItem, or null,
  *   isPlaying: bool,
@@ -18,6 +18,7 @@
  *     tunerFavoritesOnly: bool,
  *     tunerToneKnobs: bool,
  *     tunerStations: bool,
+ *     nowPlayingSurprise: bool,
  *     showTechnicalDetails: bool,
  *     videoSize: 'normal' | 'large',
  *     favoritesSort: 'manual' | 'name',   // "My order" (stored order) or "A-Z"
@@ -46,13 +47,18 @@
  */
 
 import { isRetiredSource, SOURCE_IDS } from './sources.js';
-import { makeItem } from './item-model.js';
+import { makeItem, rekeyComputerItem } from './item-model.js';
 import { clearStreamLookups } from './stream-lookups.js';
 import { DEFAULT_BEST_STREAM_MODE, bestStreamMode } from './best-stream.js';
+import { levellingMode, levellingPreamp } from './computer-levelling.js';
 import { DEFAULT_PROCESSOR_USE, normalizeProcessorLimit, normalizeProcessorUse } from './processor-budget.js';
 import { clearStreamVerifications } from './stream-verify.js';
 import { clearDidNotPlayCache } from './did-not-play.js';
-import { EXTRA_SETTINGS_STORAGE_KEY, PICTURE_STORAGE_KEY } from './profile-storage.js';
+import {
+  EXTRA_SETTINGS_STORAGE_KEY, PICTURE_STORAGE_KEY, isComputerFavoriteId, portableProfileValue,
+} from './profile-storage.js';
+import { ControlApiError } from './capture-client.js';
+import { listComputerStars, writeComputerStars } from './computer-client.js';
 import { clearPlayedStreams } from './played-streams.js';
 import {
   loadEqState, getEffectiveEq, persistFavoriteEq, deleteFavoriteEq, clearEqState,
@@ -64,7 +70,7 @@ import { applyTheme, normalizeTheme } from './themes.js';
 import { FAVORITES_SORT_MANUAL, favoritesInDisplayOrder, normalizeFavoritesSort } from './favorites-order.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 import { TUNER_CARD_SMALL, normalizeTunerCardSize } from './tuner-card-size.js';
-import { normalizeTabsShown } from './top-tabs.js';
+import { normalizeTabsShown, TOP_TABS } from './top-tabs.js';
 import {
   DEFAULT_VISUALIZER_BRIGHTNESS, DEFAULT_VISUALIZER_DEBUG, DEFAULT_VISUALIZER_FPS, DEFAULT_VISUALIZER_QUALITY,
   DEFAULT_VISUALIZER_SCENE, DEFAULT_VISUALIZER_SHOW_FPS, normalizeVisualizerBrightness, normalizeVisualizerFps,
@@ -83,7 +89,7 @@ import {
   restoreStartupProfileHandoff,
   scheduleProfileHandoff,
 } from './profile-transfer.js';
-import { clearPartResume } from './part-resume.js';
+import { clearPartResume, removeComputerResumePaths } from './part-resume.js';
 
 export const STORAGE_KEYS = {
   favorites: 'worldmedia.favorites.v1',
@@ -136,6 +142,7 @@ const DEFAULT_SETTINGS = {
   tunerFavoritesOnly: false,
   tunerToneKnobs: false,
   tunerStations: true,
+  nowPlayingSurprise: true,
   showTechnicalDetails: false,
   videoSize: 'normal',
   favoritesSort: FAVORITES_SORT_MANUAL,
@@ -143,6 +150,8 @@ const DEFAULT_SETTINGS = {
   tunerCardSize: TUNER_CARD_SMALL,
   nowPlayingBackgroundBlur: DEFAULT_NOW_PLAYING_BACKGROUND_BLUR,
   soundMeter: true,
+  volumeLevelling: 'off',
+  levellingPreamp: 0,
   bestStreamMode: DEFAULT_BEST_STREAM_MODE,
   processorUse: DEFAULT_PROCESSOR_USE,
   processorLimit: null,
@@ -189,7 +198,7 @@ export function normalizeSettings(value) {
     ...source,
     version,
     theme: normalizeTheme(source.theme),
-    defaultMode: ['library', 'tuner', 'grid', 'discovery', 'about'].includes(source.defaultMode)
+    defaultMode: ['library', 'tuner', 'computer', 'about'].includes(source.defaultMode)
       ? source.defaultMode
       : DEFAULT_SETTINGS.defaultMode,
     tabsShown: normalizeTabsShown(source.tabsShown),
@@ -199,6 +208,7 @@ export function normalizeSettings(value) {
     tunerFavoritesOnly: source.tunerFavoritesOnly === true,
     tunerToneKnobs: source.tunerToneKnobs === true,
     tunerStations: source.tunerStations !== false,
+    nowPlayingSurprise: source.nowPlayingSurprise !== false,
     showTechnicalDetails: source.showTechnicalDetails === true,
     videoSize: source.videoSize === 'large' ? 'large' : 'normal',
     favoritesSort: normalizeFavoritesSort(source.favoritesSort),
@@ -207,6 +217,8 @@ export function normalizeSettings(value) {
     nowPlayingBackgroundBlur: normalizeNowPlayingBackgroundBlur(source.nowPlayingBackgroundBlur),
     // Only an explicit false turns it off; older builds keep the field as is.
     soundMeter: source.soundMeter !== false,
+    volumeLevelling: levellingMode(source),
+    levellingPreamp: levellingPreamp(source),
     bestStreamMode: bestStreamMode(source),
     processorUse: normalizeProcessorUse(source.processorUse),
     processorLimit: normalizeProcessorLimit(source.processorLimit),
@@ -228,10 +240,40 @@ export function normalizeSettings(value) {
   };
 }
 
+export const isLocalFileFavorite = (item) => isComputerFavoriteId(item?.id);
+
+function localFavoriteSnapshot(item) {
+  const { artist, album, duration, format, kind, ext } = item._extra.computer;
+  const fields = { title: item.title, artist, album, duration, kind: kind || item.type, ext, format };
+  const snap = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (typeof value === 'string' && value) snap[key] = Array.from(value).slice(0, 300).join('');
+    else if (Number.isFinite(value)) snap[key] = value;
+  }
+  return { id: item._extra.computer.id, snap };
+}
+
+function localFavoriteFromRecord({ id, snap = {}, t, seq }) {
+  const type = ['video', 'Movie', 'Episode'].includes(snap.kind) ? 'video' : 'audio';
+  return normalizeFavoriteItem({
+    id: 'computer:' + id, title: snap.title || 'Untitled', source: 'computer', type,
+    _extra: { computer: { ...snap, kind: snap.kind === type ? '' : snap.kind, starredAt: t, starSequence: seq } },
+  });
+}
+
 export function normalizeFavoriteItem(value, options = {}) {
   // A list's renamed copy (favorite-names.js) is saved with its own title.
   value = withoutFavoriteName(value);
   if (!value || typeof value !== 'object' || !value.id) return null;
+  if (isLocalFileFavorite(value)) {
+    const computer = { ...value._extra?.computer, id: value.id.slice('computer:'.length) };
+    const type = value.type === 'video' ? 'video' : 'audio';
+    value = {
+      ...value, source: 'computer', type, stream_kind: type, delivery: 'on-demand',
+      description: type === 'video' ? '' : [computer.artist, computer.album].filter(Boolean).join(' \u00b7 '),
+      _extra: { ...value._extra, computer },
+    };
+  }
   const normalized = makeItem(value);
   const extra = normalized._extra && typeof normalized._extra === 'object'
     && !Array.isArray(normalized._extra)
@@ -318,8 +360,8 @@ export function getState() { return state; }
 export function favoritesLoaded() { return favoritesKnown; }
 
 export function setMode(mode) {
-  state.mode = mode;
-  emit('mode-change', mode);
+  state.mode = Object.hasOwn(TOP_TABS, mode) ? mode : 'library';
+  emit('mode-change', state.mode);
 }
 
 export function setCurrentItem(item, stream = null) {
@@ -335,14 +377,246 @@ export function setPlaying(playing) {
 
 /* ============ Favorites ============ */
 
+let indexedFavorites;
+let indexedLength;
+let favoriteIds = new Set();
+let localFavoriteCount = 0;
+const LEGACY_LOCAL_STARS = 'worldmedia.computer-stars-migration.v1';
+const STAR_BATCH_SIZE = 2_000;
+const STAR_BATCH_BYTES = 1024 * 1024;
+const starEncoder = new TextEncoder();
+let legacyLocalStars = [];
+let migrationAttempted = false;
+let localStarsStatus = 'idle';
+let localStarsLoad = null;
+let starWork = Promise.resolve();
+let confirmedStars = new Map();
+let localStarsReadMoves;
+const pendingStars = [];
+let changingFavoriteBatch = false;
+let optimisticSequence = 0;
+
+function queueStarWork(work) {
+  const job = starWork.then(work);
+  starWork = job.catch(() => {});
+  return job;
+}
+
+function starChunks(items, field, serialize) {
+  const chunks = [];
+  const emptyBytes = JSON.stringify({ [field]: [] }).length;
+  let bytes = emptyBytes;
+  let chunk = [];
+  for (const item of items) {
+    const value = serialize(item);
+    const size = starEncoder.encode(JSON.stringify(value)).byteLength;
+    if (chunk.length && (chunk.length === STAR_BATCH_SIZE || bytes + 1 + size > STAR_BATCH_BYTES)) {
+      chunks.push(chunk);
+      chunk = [];
+      bytes = emptyBytes;
+    }
+    bytes += size + Number(chunk.length > 0);
+    chunk.push({ item, value });
+  }
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
+}
+
+function confirmStarBatch(data, add, remove) {
+  const added = new Map(data.added.map((record) => [record.id, record]));
+  const removed = new Set(data.removed.map((id) => 'computer:' + id));
+  if (added.size !== add.length || add.some((item) => !added.has(item._extra.computer.id))) return false;
+  if (localStarsStatus === 'loaded') {
+    const newCount = add.filter((item) => !confirmedStars.has(item.id)).length;
+    const expectedRemovals = remove.filter((id) => confirmedStars.has(id));
+    if (removed.size !== expectedRemovals.length || expectedRemovals.some((id) => !removed.has(id))
+        || data.count !== confirmedStars.size + newCount - removed.size) return false;
+  }
+  for (const item of add) {
+    const record = added.get(item._extra.computer.id);
+    Object.assign(item._extra.computer, { starredAt: record.t, starSequence: record.seq });
+    confirmedStars.set(item.id, item);
+  }
+  for (const id of removed) confirmedStars.delete(id);
+  return true;
+}
+
+function setLocalStarsStatus(status) {
+  if (localStarsStatus === status) return;
+  localStarsStatus = status;
+  emit('computer-stars-status', status);
+}
+
+export const getComputerStarsStatus = () => localStarsStatus;
+
+function moveStarRecords(stars, moves) {
+  for (const [from, to] of moves) {
+    const oldId = 'computer:' + from;
+    const item = stars.get(oldId);
+    if (!item) continue;
+    stars.delete(oldId);
+    const newId = 'computer:' + to;
+    if (!stars.has(newId)) stars.set(newId, rekeyComputerItem({ ...item }, to));
+  }
+}
+
+export function moveComputerStars(moves) {
+  // The scan has already migrated the server records. Update the local copy
+  // before any view draws the catalog, and carry over any in-flight read.
+  localStarsReadMoves?.push(...moves);
+  moveStarRecords(confirmedStars, moves);
+  return publishLocalStars({ notify: null });
+}
+
+async function readLocalStars() {
+  localStarsReadMoves = [];
+  try {
+    const data = await listComputerStars({ signal: AbortSignal.timeout(10_000) });
+    confirmedStars = new Map(data.stars.map((record) => {
+      const item = localFavoriteFromRecord(record);
+      return [item.id, item];
+    }));
+    moveStarRecords(confirmedStars, localStarsReadMoves);
+    publishLocalStars();
+    setLocalStarsStatus('loaded');
+    return true;
+  } catch {
+    setLocalStarsStatus('error');
+    return false;
+  } finally {
+    localStarsReadMoves = undefined;
+  }
+}
+
+async function writeStarBatches({ add, remove }, settle, { migrating = false } = {}) {
+  // The first id in a request gets the highest sequence. Save the last
+  // chunk first so the first track also wins across request boundaries.
+  const additions = starChunks(add, 'add', localFavoriteSnapshot).reverse();
+  const removals = starChunks(remove, 'remove', (id) => id.slice('computer:'.length));
+  let failed = false;
+  for (const [field, chunks] of [['add', additions], ['remove', removals]]) {
+    for (const chunk of chunks) {
+      if (!migrating && localStarsStatus !== 'loaded' && !await readLocalStars()) return false;
+      const items = chunk.map(({ item }) => item);
+      const body = { [field]: chunk.map(({ value }) => value) };
+      let confirmed = false;
+      let refused = false;
+      try {
+        const data = await writeComputerStars(body, { signal: AbortSignal.timeout(10_000) });
+        confirmed = confirmStarBatch(data, field === 'add' ? items : [], field === 'remove' ? items : []);
+      } catch (error) {
+        refused = error instanceof ControlApiError && error.status >= 400 && error.status < 500
+          && error.message !== 'Local control request failed.';
+      }
+      settle?.(field, items);
+      if (confirmed) continue;
+      failed = true;
+      if (!refused && !await readLocalStars()) return false;
+      publishLocalStars();
+    }
+  }
+  return !failed;
+}
+
+export function compareLocalFileStars(a, b) {
+  const left = a._extra.computer;
+  const right = b._extra.computer;
+  return (right.pendingStar || 0) - (left.pendingStar || 0)
+    || (right.starSequence || 0) - (left.starSequence || 0)
+    || (right.starredAt || 0) - (left.starredAt || 0) || a.id.localeCompare(b.id);
+}
+
+function publishLocalStars({ notify = true } = {}) {
+  const local = new Map(confirmedStars);
+  for (const { add, remove } of pendingStars) {
+    for (const item of add) local.set(item.id, item);
+    for (const id of remove) local.delete(id);
+  }
+  const ordered = [...local.values()].sort(compareLocalFileStars);
+  const next = [...state.favorites.filter((item) => !isLocalFileFavorite(item)), ...ordered];
+  if (next.length === state.favorites.length && next.every((item, index) => item === state.favorites[index])) return false;
+  state.favorites = next;
+  if (notify !== null) emit(notify ? 'favorites-change' : 'computer-stars-order', next);
+  return true;
+}
+
+/** Get the machine's stars once. A failed read is retried when Computer opens. */
+export function loadComputerStars() {
+  if (localStarsLoad) return localStarsLoad;
+  if (localStarsStatus === 'loaded') return Promise.resolve(true);
+  localStarsLoad = queueStarWork(async () => {
+    await readLocalStars();
+    if (legacyLocalStars.length && !migrationAttempted) {
+      migrationAttempted = true;
+      if (await writeStarBatches({ add: legacyLocalStars, remove: [] }, null, { migrating: true })) {
+        legacyLocalStars = [];
+        persistFavorites();
+        try { localStorage.removeItem(LEGACY_LOCAL_STARS); } catch { /* Storage is unavailable. */ }
+      }
+    }
+    publishLocalStars();
+    return localStarsStatus === 'loaded';
+  }).finally(() => { localStarsLoad = null; });
+  return localStarsLoad;
+}
+
+export function withComputerStars(change) {
+  if (!localStarsLoad && localStarsStatus === 'loaded') return change();
+  return loadComputerStars().then((loaded) => loaded && change());
+}
+
+function changeLocalStars(add, remove) {
+  const job = { add, remove };
+  for (const item of add.toReversed()) item._extra.computer.pendingStar = ++optimisticSequence;
+  pendingStars.push(job);
+  const settle = (field, items) => {
+    const ids = new Set(items);
+    job[field] = job[field].filter((item) => !ids.has(item));
+    if (field === 'add') {
+      for (const item of items) delete item._extra.computer.pendingStar;
+    }
+  };
+  queueStarWork(async () => {
+    const saved = await writeStarBatches(job, settle);
+    pendingStars.shift();
+    settle('add', job.add);
+    publishLocalStars({ notify: !saved });
+    if (saved) clearPersistenceFailure('computer-stars');
+    else reportPersistenceFailure('computer-stars', 'The star could not be saved.');
+  });
+}
+
+function indexFavorites() {
+  if (indexedFavorites === state.favorites && indexedLength === state.favorites.length) return;
+  // Favorite membership changes replace the list. Metadata edits keep the same IDs.
+  indexedFavorites = state.favorites;
+  indexedLength = indexedFavorites.length;
+  favoriteIds = new Set();
+  localFavoriteCount = 0;
+  for (const item of indexedFavorites) {
+    favoriteIds.add(item.id);
+    if (isLocalFileFavorite(item)) localFavoriteCount += 1;
+  }
+}
+
+function portableFavoriteCount() {
+  indexFavorites();
+  return state.favorites.length - localFavoriteCount;
+}
+
 export function addFavorite(item) {
+  if (isLocalFileFavorite(item)) {
+    if (localStarsStatus !== 'loaded') return withComputerStars(() => addFavorite(item));
+    if (isFavorite(item.id)) return;
+    return addFavorites([item], { allOrNothing: true }).added > 0;
+  }
   // Same identity rule as the bulk path (planFavoriteAdds): the stored,
   // normalised id. An item whose id does not normalise to a non-empty string
   // is refused, so it can never be saved as '' and duplicated on every star.
   const normalized = normalizeFavoriteItem(item);
   if (!normalized?.id) return false;
   const itemId = normalized.id;
-  if (state.favorites.some((f) => f.id === itemId)) return;
+  if (isFavorite(itemId)) return;
   emit('eq-before-scope-change', { itemId, scope: 'favorite' });
   const next = [normalized, ...state.favorites];
   if (!persistFavorites(next)) return false;
@@ -365,16 +639,17 @@ export const BULK_FAVORITES_LIMIT = 1000;
 
 function planFavoriteAdds(items) {
   const plan = { fresh: [], already: 0, refused: 0, leftOut: 0 };
-  const known = new Set(state.favorites.map((f) => f.id));
-  const room = Math.max(0, BULK_FAVORITES_LIMIT - state.favorites.length);
+  indexFavorites();
+  const seen = new Set();
+  let room = BULK_FAVORITES_LIMIT - portableFavoriteCount();
   for (const item of items || []) {
     // Identity is the stored (normalised) id; a non-string id normalises to ''.
     const normalized = normalizeFavoriteItem(item);
     if (!normalized?.id) { plan.refused += 1; continue; }
-    if (known.has(normalized.id)) { plan.already += 1; continue; }
-    known.add(normalized.id);
-    if (plan.fresh.length >= room) { plan.leftOut += 1; continue; }
-    plan.fresh.push({ item, normalized });
+    if (favoriteIds.has(normalized.id) || seen.has(normalized.id)) { plan.already += 1; continue; }
+    seen.add(normalized.id);
+    if (!isLocalFileFavorite(normalized) && room-- <= 0) { plan.leftOut += 1; continue; }
+    plan.fresh.push(normalized);
   }
   return plan;
 }
@@ -387,20 +662,38 @@ export function countNewFavorites(items) {
 /** Add many favorites with one save, one favorites-change event and one
  *  profile backup. New items keep their given order at the front of the list
  *  (where addFavorite puts one); items already saved are left where they are. */
-export function addFavorites(items) {
+export function addFavorites(items, options = {}) {
+  if (localStarsStatus !== 'loaded' && items?.some(isLocalFileFavorite)) {
+    void withComputerStars(() => addFavorites(items, options));
+    return { added: 0, already: 0, refused: 0, leftOut: 0, failed: false };
+  }
+  if (changingFavoriteBatch) return { added: 0, already: 0, refused: 0, leftOut: 0, failed: true };
+  changingFavoriteBatch = true;
+  try {
+    return applyFavoriteAdds(items, options);
+  } finally {
+    changingFavoriteBatch = false;
+  }
+}
+
+function applyFavoriteAdds(items, { allOrNothing = false }) {
   const { fresh, already, refused, leftOut } = planFavoriteAdds(items);
   const result = { added: 0, already, refused, leftOut, failed: false };
-  if (fresh.length === 0) return result;
-  const ids = fresh.map(({ normalized }) => normalized.id);
+  if (fresh.length === 0 || (allOrNothing && (refused || leftOut))) return result;
+  const local = fresh.filter(isLocalFileFavorite);
+  const portable = fresh.filter((item) => !isLocalFileFavorite(item));
+  const ids = portable.map((item) => item.id);
   for (const itemId of ids) emit('eq-before-scope-change', { itemId, scope: 'favorite' });
-  const next = [...fresh.map(({ normalized }) => normalized), ...state.favorites];
-  if (!persistFavorites(next)) return { ...result, failed: true };
-  state.favorites = next;
+  const next = [...portable, ...state.favorites];
+  const curveIds = portable.filter((item) => !isEqStation(item)).map((item) => item.id);
+  const eq = curveIds.length ? addFavoritesEq(loadEqState(), curveIds) : null;
+  if (portable.length && !persistFavorites(next)) return { ...result, failed: true };
+  if (local.length) changeLocalStars(local, []);
+  state.favorites = local.length
+    ? [...next.filter((item) => !isLocalFileFavorite(item)), ...local, ...next.filter(isLocalFileFavorite)]
+    : next;
   let eqFailed = false;
-  const curveIds = fresh.filter(({ normalized }) => !isEqStation(normalized)).map(({ normalized }) => normalized.id);
-  if (curveIds.length) {
-    saveEqState(addFavoritesEq(loadEqState(), curveIds), undefined, () => { eqFailed = true; });
-  }
+  if (eq) saveEqState(eq, undefined, () => { eqFailed = true; });
   emit('favorites-change', state.favorites);
   const current = ids.find((itemId) => itemId === state.currentItem?.id);
   if (current) emit('eq-scope-change', { itemId: current, scope: 'favorite' });
@@ -408,19 +701,43 @@ export function addFavorites(items) {
 }
 
 export function removeFavorite(itemId) {
-  const before = state.favorites.length;
-  if (state.favorites.some((f) => f.id === itemId)) {
-    emit('eq-before-scope-change', { itemId, scope: 'global' });
+  return removeFavorites([itemId]);
+}
+
+export function removeFavorites(itemIds) {
+  if (localStarsStatus !== 'loaded' && itemIds.some(isComputerFavoriteId)) {
+    void withComputerStars(() => removeFavorites(itemIds));
+    return false;
   }
-  const next = state.favorites.filter((f) => f.id !== itemId);
-  if (next.length !== before) {
-    if (!persistFavorites(next)) return false;
-    state.favorites = next;
-    deleteFavoriteEq(itemId);
-    removeUnusedStationStreams([itemId]);
-    emit('favorites-change', state.favorites);
-    if (state.currentItem?.id === itemId) emit('eq-scope-change', { itemId, scope: 'global' });
+  if (changingFavoriteBatch) return false;
+  changingFavoriteBatch = true;
+  try {
+    return applyFavoriteRemovals(itemIds);
+  } finally {
+    changingFavoriteBatch = false;
   }
+}
+
+function applyFavoriteRemovals(itemIds) {
+  const ids = new Set(itemIds.filter(isFavorite));
+  if (!ids.size) return true;
+  const local = [...ids].filter(isComputerFavoriteId);
+  const portable = [...ids].filter((id) => !isComputerFavoriteId(id));
+  for (const itemId of portable) emit('eq-before-scope-change', { itemId, scope: 'global' });
+  const next = state.favorites.filter((item) => !ids.has(item.id));
+  if (portable.length && !persistFavorites(next)) return false;
+  if (local.length) changeLocalStars([], local);
+  state.favorites = next;
+  if (portable.length === 1) deleteFavoriteEq(portable[0]);
+  else if (portable.length) {
+    const eq = loadEqState();
+    for (const id of portable) delete eq.favorites[id];
+    saveEqState(eq);
+  }
+  if (portable.length) removeUnusedStationStreams(portable);
+  emit('favorites-change', state.favorites);
+  const itemId = state.currentItem?.id;
+  if (ids.has(itemId) && !isComputerFavoriteId(itemId)) emit('eq-scope-change', { itemId, scope: 'global' });
   return true;
 }
 
@@ -435,10 +752,22 @@ export function removeFavorite(itemId) {
  *  (the list could not be saved and the curves could not be put back: the
  *  favorites stay, without their own equalizer settings). */
 export function removeAllFavorites() {
+  if (changingFavoriteBatch) return { removed: 0, failed: 'nothing' };
   const removed = state.favorites;
   if (removed.length === 0) return { removed: 0, failed: '' };
+  changingFavoriteBatch = true;
+  try {
+    if (portableFavoriteCount() > 0) return applyRemoveAllFavorites(removed);
+    applyFavoriteRemovals(removed.map(({ id }) => id));
+    return { removed: removed.length, failed: '' };
+  } finally {
+    changingFavoriteBatch = false;
+  }
+}
+
+function applyRemoveAllFavorites(removed) {
   const currentId = state.currentItem?.id;
-  const playingFavorite = Boolean(currentId) && removed.some((f) => f.id === currentId);
+  const playingFavorite = !isComputerFavoriteId(currentId) && isFavorite(currentId);
   if (playingFavorite) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
   const eq = loadEqState();
   const curves = { ...eq.favorites };
@@ -468,15 +797,18 @@ export function removeAllFavorites() {
     undoScope();
     return { removed: 0, failed: restoreFailed ? 'curves' : 'nothing' };
   }
+  const local = removed.filter(isLocalFileFavorite);
+  if (local.length) changeLocalStars([], local.map((item) => item.id));
   state.favorites = [];
-  removeUnusedStationStreams(removed.map((item) => item.id));
+  removeUnusedStationStreams(removed.filter((item) => !isLocalFileFavorite(item)).map((item) => item.id));
   emit('favorites-change', state.favorites);
   if (playingFavorite) emit('eq-scope-change', { itemId: currentId, scope: 'global' });
   return { removed: removed.length, failed: '' };
 }
 
 export function isFavorite(itemId) {
-  return state.favorites.some((f) => f.id === itemId);
+  indexFavorites();
+  return favoriteIds.has(itemId);
 }
 
 /** Favorites in the order the user chose to see them ("My order" or A-Z).
@@ -507,14 +839,17 @@ function favoriteMoveTarget(list, from, direction, visibleIds) {
  *  end. One save and one
  *  favorites-change event per move. Returns true when the order changed. */
 export function moveFavorite(itemId, direction, { visibleIds = null } = {}) {
-  const from = state.favorites.findIndex((favorite) => favorite.id === itemId);
+  if (isComputerFavoriteId(itemId)) return false;
+  const portable = state.favorites.filter((item) => !isLocalFileFavorite(item));
+  const from = portable.findIndex((favorite) => favorite.id === itemId);
   if (from < 0) return false;
-  const to = favoriteMoveTarget(state.favorites, from, direction, visibleIds);
+  const to = favoriteMoveTarget(portable, from, direction, visibleIds);
   if (to < 0) return false;
-  const next = [...state.favorites];
+  const next = [...portable];
   if (direction === 'top') next.unshift(...next.splice(from, 1));
   else if (direction === 'bottom') next.push(...next.splice(from, 1));
   else [next[from], next[to]] = [next[to], next[from]];
+  next.push(...state.favorites.filter(isLocalFileFavorite));
   if (!persistFavorites(next)) return false;
   state.favorites = next;
   emit('favorites-change', state.favorites);
@@ -528,12 +863,13 @@ export function moveFavorite(itemId, direction, { visibleIds = null } = {}) {
  *  their exact positions. One save and one favorites-change event. Returns
  *  true when the order changed. */
 export function moveFavoriteTo(itemId, targetId, place = 'before', visibleIds = null) {
-  if (!itemId || itemId === targetId || (place !== 'before' && place !== 'after')) return false;
+  if (!itemId || itemId === targetId || [itemId, targetId].some(isComputerFavoriteId)
+      || (place !== 'before' && place !== 'after')) return false;
   const visible = visibleIds ? new Set(visibleIds) : null;
   if (visible && (!visible.has(itemId) || !visible.has(targetId))) return false;
   const slots = [];
   state.favorites.forEach((favorite, index) => {
-    if (!visible || visible.has(favorite.id)) slots.push(index);
+    if (!isLocalFileFavorite(favorite) && (!visible || visible.has(favorite.id))) slots.push(index);
   });
   const shown = slots.map((index) => state.favorites[index]);
   const from = shown.findIndex((favorite) => favorite.id === itemId);
@@ -569,12 +905,24 @@ function keepStreamQuality(next, saved) {
 
 /** Persist adapter resolution/capability metadata without changing favorite order. */
 export function persistFavoriteMetadata(item) {
-  if (!item?.id) return false;
+  if (!isFavorite(item?.id)) return false;
   const index = state.favorites.findIndex((favorite) => favorite.id === item.id);
   if (index < 0) return false;
   const normalized = normalizeFavoriteItem(item);
   if (!normalized) return false;
-  keepStreamQuality(normalized, state.favorites[index]);
+  const saved = state.favorites[index];
+  if (isLocalFileFavorite(normalized)) {
+    const computer = normalized._extra.computer;
+    const previous = saved._extra.computer;
+    Object.assign(computer, { starredAt: previous.starredAt, starSequence: previous.starSequence });
+    if (previous.pendingStar) computer.pendingStar = previous.pendingStar;
+    if (normalized.title === saved.title && JSON.stringify(computer) === JSON.stringify(previous)) return true;
+    Object.assign(saved, normalized, { __revision: (saved.__revision || 0) + 1 });
+    state.favorites = [...state.favorites];
+    emit('favorites-change', state.favorites);
+    return true;
+  }
+  keepStreamQuality(normalized, saved);
   // Dynamic favorites deliberately persist without short-lived stream/asset
   // URLs. If the player is resolving the favorite object itself, mutating that
   // same object with the restart-safe copy would erase the fresh stream before
@@ -588,9 +936,22 @@ export function persistFavoriteMetadata(item) {
   return true;
 }
 
+export function portableFavoritesText(favorites) {
+  return JSON.stringify(favorites.filter((item) => !isLocalFileFavorite(item)));
+}
+
+export function preserveLegacyLocalStars(storage) {
+  if (storage === globalThis.localStorage && legacyLocalStars.length) {
+    // A portable edit can replace the legacy list while migration is pending.
+    // Keep a retry copy separate from the portable profile in that case.
+    storage.setItem(LEGACY_LOCAL_STARS, JSON.stringify(legacyLocalStars));
+  }
+}
+
 function persistFavorites(favorites = state.favorites) {
   try {
-    localStorage.setItem(STORAGE_KEYS.favorites, JSON.stringify(favorites));
+    preserveLegacyLocalStars(localStorage);
+    localStorage.setItem(STORAGE_KEYS.favorites, portableFavoritesText(favorites));
     clearPersistenceFailure('favorites');
     scheduleProfileHandoff();
     return true;
@@ -606,13 +967,14 @@ function persistFavorites(favorites = state.favorites) {
 function loadFavorites() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.favorites);
-    if (!raw) return true;
-    const parsed = JSON.parse(raw);
+    const parsed = raw ? JSON.parse(raw) : [];
     if (Array.isArray(parsed)) {
-      state.favorites = parsed.map((item) => normalizeFavoriteItem(item, { restart: true })).filter(Boolean);
-      // Persist normalized capability fields so a migrated favorite stays
-      // repaired on later launches instead of depending on runtime inference.
-      persistFavorites();
+      const retry = JSON.parse(localStorage.getItem(LEGACY_LOCAL_STARS) || '[]');
+      const items = parsed.map((item) => normalizeFavoriteItem(item, { restart: true })).filter(Boolean);
+      const legacy = [...(Array.isArray(retry) ? retry : []), ...items].filter(isLocalFileFavorite);
+      legacyLocalStars = [...new Map(legacy.map((item) => [item.id, normalizeFavoriteItem(item)])).values()];
+      state.favorites = items.filter((item) => !isLocalFileFavorite(item));
+      if (raw && !legacyLocalStars.length) persistFavorites();
       return true;
     }
   } catch (e) { console.warn('Could not load favorites:', e); }
@@ -634,9 +996,14 @@ function readExtraSettings(raw) {
   return {};
 }
 
-function extraTunerSettings(raw) {
-  const { tunerToneKnobs, tunerStations } = readExtraSettings(raw);
-  return { tunerToneKnobs: tunerToneKnobs === true, tunerStations: tunerStations !== false };
+function extraSettings(settings) {
+  return {
+    tunerToneKnobs: settings.tunerToneKnobs === true,
+    tunerStations: settings.tunerStations !== false,
+    nowPlayingSurprise: settings.nowPlayingSurprise !== false,
+    volumeLevelling: levellingMode(settings),
+    levellingPreamp: levellingPreamp(settings),
+  };
 }
 
 export function saveSettings(partial, authorization = null) {
@@ -654,28 +1021,27 @@ export function saveSettings(partial, authorization = null) {
     if (savedSettingsRaw !== undefined && raw !== savedSettingsRaw) {
       currentSettings = normalizeSettings({
         ...(raw ? JSON.parse(raw) : null),
-        tunerToneKnobs: currentSettings.tunerToneKnobs,
-        tunerStations: currentSettings.tunerStations,
+        ...extraSettings(currentSettings),
       });
     }
     const extra = localStorage.getItem(EXTRA_SETTINGS_STORAGE_KEY);
     if (extra !== savedExtraSettingsRaw) {
-      currentSettings = { ...currentSettings, ...extraTunerSettings(extra) };
+      currentSettings = { ...currentSettings, ...extraSettings(readExtraSettings(extra)) };
       savedExtraSettingsRaw = extra;
     }
   } catch (_) { /* Keep the settings in use when storage cannot be read. */ }
   state.settings = normalizeSettings({ ...currentSettings, ...requested });
   try {
-    const { tunerToneKnobs, tunerStations, ...legacySettings } = state.settings;
+    const { tunerToneKnobs, tunerStations, nowPlayingSurprise, volumeLevelling, levellingPreamp, ...legacySettings } = state.settings;
     const raw = JSON.stringify(legacySettings);
     localStorage.setItem(STORAGE_KEYS.settings, raw);
     savedSettingsRaw = raw;
-    if (Object.hasOwn(requested, 'tunerToneKnobs') || Object.hasOwn(requested, 'tunerStations')) {
-      const extra = JSON.stringify({
-        ...readExtraSettings(savedExtraSettingsRaw),
-        ...(Object.hasOwn(requested, 'tunerToneKnobs') ? { tunerToneKnobs } : {}),
-        ...(Object.hasOwn(requested, 'tunerStations') ? { tunerStations } : {}),
-      });
+    const updates = Object.fromEntries(
+      Object.entries({ tunerToneKnobs, tunerStations, nowPlayingSurprise, volumeLevelling, levellingPreamp })
+        .filter(([key]) => Object.hasOwn(requested, key)),
+    );
+    if (Object.keys(updates).length) {
+      const extra = JSON.stringify({ ...readExtraSettings(savedExtraSettingsRaw), ...updates });
       localStorage.setItem(EXTRA_SETTINGS_STORAGE_KEY, extra);
       savedExtraSettingsRaw = extra;
     }
@@ -715,10 +1081,10 @@ function loadSettings() {
     savedSettingsRaw = localStorage.getItem(STORAGE_KEYS.settings);
     if (savedSettingsRaw) state.settings = normalizeSettings(JSON.parse(savedSettingsRaw));
   } catch (e) { console.warn('Could not load settings:', e); }
-  Object.assign(state.settings, extraTunerSettings(null));
+  Object.assign(state.settings, extraSettings({}));
   try {
     savedExtraSettingsRaw = localStorage.getItem(EXTRA_SETTINGS_STORAGE_KEY);
-    Object.assign(state.settings, extraTunerSettings(savedExtraSettingsRaw));
+    Object.assign(state.settings, extraSettings(readExtraSettings(savedExtraSettingsRaw)));
   } catch (e) { console.warn('Could not load extra settings:', e); }
 }
 
@@ -728,6 +1094,11 @@ export async function initState() {
   // A localhost port is part of the browser origin. Restore a saved handoff
   // before reading any local keys when Settings deliberately changed that port.
   await restoreStartupProfileHandoff();
+  removeComputerResumePaths();
+  legacyLocalStars = [];
+  migrationAttempted = false;
+  localStarsStatus = 'idle';
+  confirmedStars = new Map();
   favoritesKnown = loadFavorites();
   loadSettings();
   // Tidy only after the restore, when the saved favorites are known.
@@ -736,8 +1107,16 @@ export async function initState() {
       tidyStorageAtStart(localStorage, state.favorites.map((favorite) => favorite?.id));
     } catch (_) { /* storage unavailable */ }
   }
+  try {
+    for (const key of [EQ_STORAGE_KEY, EQ_EXTRA_STORAGE_KEY, STORAGE_KEYS.favoriteGroups, STORAGE_KEYS.favoriteNames]) {
+      const raw = localStorage.getItem(key);
+      const clean = portableProfileValue(key, raw);
+      if (raw !== clean) localStorage.setItem(key, clean);
+    }
+  } catch (_) { /* storage unavailable */ }
   applyTheme(state.settings.theme);
   scheduleProfileHandoff();
+  if (legacyLocalStars.length || /^https?:/.test(globalThis.location?.protocol || '')) void loadComputerStars();
 }
 
 /** Clears this window's saved data at once and returns a promise that settles
@@ -746,7 +1125,11 @@ export async function initState() {
 export function clearCache() {
   const previousExplicit = state.settings.showExplicitContent === true;
   const currentItem = state.currentItem;
+  const local = state.favorites.filter(isLocalFileFavorite);
+  if (local.length) changeLocalStars([], local.map((item) => item.id));
+  legacyLocalStars = [];
   try {
+    localStorage.removeItem(LEGACY_LOCAL_STARS);
     localStorage.removeItem(STORAGE_KEYS.favorites);
     localStorage.removeItem(STORAGE_KEYS.settings);
     savedSettingsRaw = null;

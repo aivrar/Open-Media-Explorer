@@ -56,6 +56,39 @@ test('the live footer refits at each boundary and after content changes', t => {
   assert.equal(bar.dataset.fit, 'full');
 });
 
+test('Computer track buttons compact before other footer controls', async (t) => {
+  const bar = new FakeElement('player-bar', 'footer');
+  let resize;
+  let width = 1120;
+  class Resize {
+    constructor(fn) { resize = fn; }
+    observe() {}
+    disconnect() {}
+  }
+  class Mutation {
+    observe() {}
+    disconnect() {}
+  }
+  const videoWidths = { full: 1060, tracks: 991, meter: 893 };
+  bar.querySelector = (selector) => selector === '.player-track-button:not([hidden])' ? {} : null;
+  bar.getBoundingClientRect = () => ({
+    width: bar.dataset.measuring === undefined ? width : videoWidths[bar.dataset.fit],
+  });
+  t.after(bindPlayerBarFit(bar, { ResizeObserver: Resize, MutationObserver: Mutation }));
+  assert.equal(bar.dataset.fit, 'full');
+  width = 1024;
+  resize();
+  assert.equal(bar.dataset.fit, 'tracks');
+  width = 990;
+  resize();
+  assert.equal(bar.dataset.fit, 'meter');
+
+  const html = await read('src/index.html');
+  const css = await read('src/styles/base.css');
+  assert.match(html, /id="player-picture"[^>]*>[\s\S]*?id="player-subtitles"[^>]*title="Subtitles \(C\)"[\s\S]*?id="player-audio"[^>]*title="Audio"/);
+  assert.match(css, /@media \(max-width: 1024px\) \{\s*\.player-bar \.player-track-button \{ width: 36px; padding: 0; \}\s*\.player-bar \.player-track-button span \{ display: none; \}/);
+});
+
 test('one-row measurement uses the visible buttons, gaps and title floor', async () => {
   const css = await read('src/styles/base.css');
   assert.match(css, /#player-bar\[data-measuring\] \{\s*width: max-content;\s*grid-template-columns: 160px repeat\(4, max-content\)/);

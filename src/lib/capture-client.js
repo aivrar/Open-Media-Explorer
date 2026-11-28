@@ -106,7 +106,7 @@ export function listCaptureJobs(options = {}) {
  */
 export async function controlRequest(path, {
   method = 'GET', body, fetchImpl = fetch, signal, keepalive = false, headers: extraHeaders = null,
-  ownConnection = false, beforeSend,
+  ownConnection = false, beforeSend, responseType,
 } = {}) {
   const session = await getControlSession({ fetchImpl, signal });
   // Extra headers (the profile write order, see profile-transfer.js) never
@@ -125,6 +125,7 @@ export async function controlRequest(path, {
   signal?.throwIfAborted();
   beforeSend?.();
   const response = await fetchImpl(path, options);
+  if (response.ok && responseType === 'text') return response.text();
   let envelope = null;
   try { envelope = await response.json(); } catch (_) { /* normalized below */ }
   if (!response.ok || !envelope?.ok) {

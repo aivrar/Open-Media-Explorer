@@ -5,12 +5,16 @@ import { readFile } from 'node:fs/promises';
 import { FakeElement } from './helpers/fake-dom.js';
 import { getControlSession, listCaptureJobs, resetControlSession } from '../src/lib/capture-client.js';
 import {
-  STATION_IMAGES_HINT, applyStationImageList, bindStationImageControls, isStationImageSource,
-  loadStationImages, markStationImageFailed, normalizeStationName, onStationImagesChange,
+  STATION_IMAGES_HINT, applyStationImageList, bindStationImageControls, initializeStationImages, isStationImageSource,
+  loadStationImages, markStationImageFailed, migrateLegacyStationPictures, normalizeStationName, onStationImagesChange,
+  prepareStationPictureKey,
   openStationImagesFolder, peekStationImageUrl, stationImageSourceFor, stationImageUrl,
   stationImagesSnapshot, stationImagesStatusText,
 } from '../src/lib/station-images.js';
 import { artworkSourceFor, loadArtworkImage } from '../src/lib/artwork.js';
+import { captureProfileStorage, restoreProfileStorageValues } from '../src/lib/profile-transfer.js';
+import { STATION_IMAGE_OWNERS_KEY } from '../src/lib/profile-storage.js';
+import { getState } from '../src/lib/state.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const RELAY = '/api/v1/assets/opaque_token_long_enough';
@@ -62,6 +66,47 @@ test('names are matched the same way as the backend (shared cases)', async () =>
   for (const [value, expected] of cases) assert.equal(normalizeStationName(value), expected, JSON.stringify(value));
   assert.equal(normalizeStationName('x'.repeat(1025)), '');
   assert.equal(normalizeStationName(null), '');
+});
+
+test('ID pictures survive renames and never follow a new same-name station', async () => {
+  const radio = { id: 'radio:news', type: 'radio', title: 'Local News' };
+  const tv = { id: 'tv:news', type: 'tv', title: 'Local News' };
+  const key = await prepareStationPictureKey(radio.id);
+  assert.match(key, /^wm-station-id-[a-f0-9]{64}$/);
+  applyStationImageList(list(entry(key, 'a')));
+  assert.equal(stationImageSourceFor(radio), source('a'));
+  assert.equal(stationImageSourceFor({ ...radio, title: 'Renamed' }), source('a'));
+  assert.equal(stationImageSourceFor(tv), '');
+});
+
+test('legacy picture owners are migrated once and travel with a restored profile', (t) => {
+  const settings = (values = new Map()) => ({
+    getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value),
+  });
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const storage = settings(new Map([['worldmedia.favorites.v1', '[]']]));
+  const use = (value) => Object.defineProperty(globalThis, 'localStorage', { configurable: true, value });
+  use(storage);
+  t.after(() => {
+    if (before) Object.defineProperty(globalThis, 'localStorage', before);
+    else delete globalThis.localStorage;
+  });
+  const radio = { id: 'radio:legacy', type: 'radio', title: 'Local FM' };
+  const laterTv = { id: 'tv:later', type: 'tv', title: 'Local FM' };
+  applyStationImageList(list(entry('local fm', 'a'), entry('unmatched', 'b')));
+  assert.equal(migrateLegacyStationPictures([radio]), true);
+  assert.equal(stationImageSourceFor(radio), source('a'));
+  assert.equal(stationImageSourceFor({ ...radio, title: 'Renamed' }), source('a'));
+  assert.equal(stationImageSourceFor(laterTv), '');
+  assert.equal(stationImageSourceFor({ ...laterTv, title: 'Unmatched' }), source('b'));
+  const first = storage.getItem(STATION_IMAGE_OWNERS_KEY);
+  assert.equal(migrateLegacyStationPictures([radio, laterTv]), false);
+  assert.equal(storage.getItem(STATION_IMAGE_OWNERS_KEY), first);
+  const restored = settings();
+  assert.equal(restoreProfileStorageValues(captureProfileStorage(storage), restored), true);
+  use(restored);
+  assert.equal(stationImageSourceFor(radio), source('a'));
+  assert.equal(stationImageSourceFor(laterTv), '');
 });
 
 test('a picture named like an item takes priority over its relay artwork', () => {
@@ -293,27 +338,16 @@ test('Settings has a Station images block in Storage built from fixed text only'
 });
 
 test('every view takes its picture from artworkSourceFor and follows a change of the list', async () => {
-  for (const path of ['src/modes/library/thumbnails.js', 'src/modes/library/detail.js', 'src/modes/grid.js',
-    'src/modes/discovery.js']) {
+  for (const path of ['src/modes/library/thumbnails.js', 'src/modes/library/detail.js']) {
     assert.match(await read(path), /artworkSourceFor\(/, path);
   }
   const player = await read('src/lib/player.js');
-  assert.match(player, /const custom = stationImageSourceFor\(item\);/);
+  assert.match(player, /playerStationImage = isComputerItem\(item\) \? '' : stationImageSourceFor\(item\);/);
+  assert.match(await read('src/lib/artwork.js'), /return stationImageSourceFor\(item\)\s*\|\|/);
   assert.match(player, /onStationImagesChange\(syncPlayerStationImage\);/);
   assert.match(await read('src/modes/library/index.js'),
     /subs\.push\(onStationImagesChange\(\(\) => \{ renderResults\(\); refreshDetailArtwork\(\); refreshDetailPictureControls\(\); \}\)\);/);
-  // Subscribed while the view is mounted; tearDown() unsubscribes with the rest.
-  assert.match(await read('src/modes/grid.js'), /subs\.push\(onStationImagesChange\(\(\) => \{ syncTileStationImages\(\); \}\)\);/);
-  const discovery = await read('src/modes/discovery.js');
-  assert.match(discovery, /subs\.push\(onStationImagesChange\(\(\) => \{ syncDiscoveryStationImage\(\); \}\)\);/);
-  // Discovery redraws the item on show only when its picture changed, and never replays it.
-  const sync = discovery.slice(discovery.indexOf('export function syncDiscoveryStationImage'));
-  const body = sync.slice(0, sync.indexOf('\n}'));
-  assert.match(body, /if \(stationImageSourceFor\(item\) === \(ui\.now\.__stationImage \|\| ''\)\) return false;/);
-  assert.match(body, /renderNow\(item\);/);
-  assert.doesNotMatch(body, /playItem|focus/);
-  assert.match(discovery, /ui\.now\.__stationImage = stationImageSourceFor\(item\);/);
-  assert.match(await read('src/main.js'), /loadStationImages\(\)\.catch\(\(\) => \{\}\);/);
+  assert.match(await read('src/main.js'), /initializeStationImages\(\)\.catch\(\(\) => \{\}\);/);
 });
 
 test('Refresh tries a picture again after it failed to load, even when the list is unchanged', async () => {
@@ -376,9 +410,41 @@ test('a late picture refusal retries with the current token without clearing it'
   assert.equal(sessions, 2);
 });
 
-test('no profile data is stored for station pictures', async () => {
+test('startup binds images to the favorites and playlists already saved', async (t) => {
+  const values = new Map();
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const state = getState();
+  const favorites = state.favorites;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  } });
+  t.after(() => {
+    state.favorites = favorites;
+    if (before) Object.defineProperty(globalThis, 'localStorage', before);
+    else delete globalThis.localStorage;
+  });
+
+  const radio = { id: 'startup:radio', type: 'radio', title: 'Morning' };
+  const savedPlaylistItem = { id: 'startup:old-playlist', type: 'tv', title: 'Morning', source: 'playlist' };
+  const laterTv = { id: 'startup:new-tv', type: 'tv', title: 'Morning' };
+  state.favorites = [radio];
+  const startup = initializeStationImages({ request: async (route) => {
+    if (route === '/api/v1/playlists') return { playlists: [{ id: 'old', items: [savedPlaylistItem] }] };
+    assert.equal(route, '/api/v1/station-images');
+    return list(entry('morning', 'c'));
+  } });
+  state.favorites = [radio, laterTv];
+  await startup;
+  assert.equal(stationImageSourceFor(radio), source('c'));
+  assert.equal(stationImageSourceFor(savedPlaylistItem), source('c'));
+  assert.equal(stationImageSourceFor(laterTv), '');
+});
+
+test('only legacy picture assignments are written into profile storage', async () => {
   const module = await read('src/lib/station-images.js');
-  assert.doesNotMatch(module, /localStorage|saveSettings|worldmedia\.[a-z]+\.v1/);
+  assert.deepEqual([...module.matchAll(/storage\.setItem\(([^,]+),/g)].map((match) => match[1]),
+    ['STATION_IMAGE_OWNERS_KEY']);
 });
 
 test('a refresh after a write waits for a fresh picture list if a scan is already running', async () => {

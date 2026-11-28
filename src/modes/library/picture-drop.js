@@ -2,6 +2,7 @@
  *  details panel uses the same save path with its existing confirmation. */
 
 import { getState } from '../../lib/state.js';
+import { isComputerItem } from '../../lib/item-model.js';
 import { isContentAllowed } from '../../lib/content-rating.js';
 import { loadArtworkImage } from '../../lib/artwork.js';
 import { isSavedItem } from '../../lib/did-not-play-view.js';
@@ -22,8 +23,9 @@ function dropTarget(target) {
   const surface = node.__thumb || node;
   if (!ui.resultsHost?.contains?.(node) && !ui.detailPanel?.contains?.(node)) return null;
   const item = node.__item;
-  if (!item?.id || !isSavedItem(item.id) || item.__contentHidden === true || !isContentAllowed(item, state.settings)) return null;
-  return { node, surface, item, key: stationPictureFileKey(stationOwnName(item)) };
+  if (!item?.id || isComputerItem(item) || !isSavedItem(item.id)
+      || item.__contentHidden === true || !isContentAllowed(item, state.settings)) return null;
+  return { node, surface, item, key: stationPictureFileKey(stationOwnName(item)) ? item.id : null };
 }
 
 export function pictureDropTarget(target) {
@@ -83,7 +85,7 @@ export async function dropStationPicture(file, target, {
     job.preview = preview;
     for (const mounted of job.surfaces) showPreview(mounted, preview.url);
 
-    // Only one write per filename can be in flight. A superseded drop
+    // Only one write per station can be in flight. A superseded drop
     // that has not started writing can be skipped entirely.
     const write = (writes.get(key) || Promise.resolve()).then(() => {
       if (!isLatest()) return null;

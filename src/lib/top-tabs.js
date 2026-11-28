@@ -1,8 +1,7 @@
 export const TOP_TABS = Object.freeze({
   library: 'Library',
   tuner: 'Tuner',
-  grid: 'Grid',
-  discovery: 'Discovery',
+  computer: 'Computer',
   'now-playing': 'Now Playing',
   visualizer: 'Visualizer',
   about: 'About',

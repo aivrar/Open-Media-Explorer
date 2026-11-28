@@ -2,6 +2,7 @@ import {
   initState, getState, isFavorite, setMode as setStateMode, subscribe,
 } from './lib/state.js';
 import { catalogScheduler } from './lib/catalog-scheduler.js';
+import { computerLibrary } from './lib/computer-library.js';
 import { setArtworkPlaybackPriority } from './lib/artwork.js';
 import { SOURCE_IDS } from './lib/sources.js';
 import { initPlayer, getCurrentItem, getAudioSignal, getNowPlaying, isMediaAdvancing } from './lib/player.js';
@@ -22,22 +23,20 @@ import {
   renderLibrary, showMyPlaylists, importLocalPlaylist, dropStationPicture, pictureDropTarget,
 } from './modes/library.js';
 import { renderTuner, tunerBand } from './modes/tuner.js';
-import { renderGrid } from './modes/grid.js';
-import { renderDiscovery } from './modes/discovery.js';
+import { renderComputer } from './modes/computer.js';
 import { renderAbout } from './modes/about.js';
 import { renderNowPlaying } from './modes/now-playing.js';
 import { renderVisualizer } from './modes/visualizer.js';
 import { playClock } from './lib/play-clock.js';
 import { initPersistenceNotice } from './lib/persistence-notice.js';
 import { initPlaylistDrop } from './lib/playlist-drop.js';
-import { loadStationImages } from './lib/station-images.js';
+import { initializeStationImages } from './lib/station-images.js';
 import { selectTopTab, syncTopTabs } from './lib/top-tabs.js';
 
 const MODES = {
   library: renderLibrary,
   tuner: renderTuner,
-  grid: renderGrid,
-  discovery: renderDiscovery,
+  computer: renderComputer,
   'now-playing': renderNowPlaying,
   // A thin shell; the visualizer itself is a separate chunk loaded on first open.
   visualizer: renderVisualizer,
@@ -66,18 +65,21 @@ function syncMediaPriority(active) {
   setArtworkPlaybackPriority(enabled);
 }
 
-function setMode(mode) {
+function setMode(mode, options) {
+  if (!Object.hasOwn(MODES, mode)) mode = 'library';
   if (!selectTopTab(mode, getState().settings, document.querySelectorAll('.mode-btn'))) return;
   setStateMode(mode);
   const host = document.getElementById('view-host');
   host.innerHTML = '';
   host.dataset.mode = mode;
   try {
-    MODES[mode](host);
+    MODES[mode](host, mode === 'library' ? { showInComputer: (entry) => setMode('computer', { entry }) } : options);
   } catch (err) {
     console.error('Mode render failed:', err);
     host.innerHTML = `<div class="error-pane"><h2>Mode failed to load</h2><pre>${escape(err && err.stack || String(err))}</pre></div>`;
   }
+  // Library search and Favorites share Computer's snapshot even with its tab hidden.
+  if (mode !== 'computer') void computerLibrary.ensureComputerLibrary();
 }
 
 // A playlist file dropped anywhere on the window goes to Library > My
@@ -114,6 +116,7 @@ function bindTopBar() {
 async function boot() {
   initPersistenceNotice();
   await initState();
+  initializeStationImages().catch(() => {});
   initPlayer();
   bindPlayerBarFit(document.getElementById('player-bar'));
   // How long the loaded item has played, for the Now Playing tab (two
@@ -149,8 +152,6 @@ async function boot() {
   initPlaylistDrop({
     onPlaylist: importDroppedPlaylist, onPicture: dropStationPicture, getPictureTarget: pictureDropTarget,
   });
-  // The user's own station pictures: listed once now, again on Refresh in Settings.
-  loadStationImages().catch(() => {});
   const state = getState();
   syncCatalogSourceSettings(state.settings);
   syncTechnicalDetails(state.settings);

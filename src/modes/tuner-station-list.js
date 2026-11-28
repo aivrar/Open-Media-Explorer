@@ -28,6 +28,8 @@ export function mountTunerStationList(list, content, { makeOption, tune, onRende
   let rendered = null;
   let focusedOption = null;
   let keyboardFocus = false;
+  let clicked = null;
+  let clickScrollTop = null;
 
   function draw(force = false) {
     if (!height || !stations.length) {
@@ -78,6 +80,23 @@ export function mountTunerStationList(list, content, { makeOption, tune, onRende
     list.scrollTop = Math.max(0, Math.min(total - height, top));
   }
 
+  function clearPointerSelection() {
+    clicked = null;
+    clickScrollTop = null;
+  }
+
+  function revealClickedRow(index, option) {
+    const { stride, total } = stationListWindow(stations.length, rowHeight, height, 0, columns);
+    const rowTop = Math.floor(index / columns) * stride;
+    const bounds = list.getBoundingClientRect?.();
+    const row = option?.getBoundingClientRect?.();
+    const top = row && bounds ? row.top - bounds.top : rowTop - list.scrollTop;
+    const bottom = row && bounds ? row.bottom - bounds.bottom : top + rowHeight - height;
+    const delta = top < -1 ? top : bottom > 1 ? bottom : 0;
+    if (delta) setScroll(list.scrollTop + delta, total);
+    clickScrollTop = list.scrollTop;
+  }
+
   function keepActiveInView() {
     const stride = rowHeight + STATION_LIST_GAP;
     const first = Math.ceil((list.scrollTop - 0.5) / stride) * columns;
@@ -94,11 +113,15 @@ export function mountTunerStationList(list, content, { makeOption, tune, onRende
 
   const options = { signal: controller.signal };
   list.addEventListener('scroll', () => {
+    if (clickScrollTop !== null && Math.abs(list.scrollTop - clickScrollTop) > 1) clearPointerSelection();
     draw();
     onScroll();
   }, { ...options, passive: true });
   list.addEventListener('scrollend', () => {
     const { stride, total } = stationListWindow(stations.length, rowHeight, height, 0, columns);
+    // A click may leave a fully visible row between the snap points.
+    if (clickScrollTop !== null && Math.abs(list.scrollTop - clickScrollTop) <= 1) return;
+    clearPointerSelection();
     const top = Math.round(list.scrollTop / stride) * stride;
     if (Math.abs(top - list.scrollTop) > 0.5) setScroll(top, total);
     draw();
@@ -117,7 +140,9 @@ export function mountTunerStationList(list, content, { makeOption, tune, onRende
     list.focus({ preventScroll: true });
     keyboardFocus = false;
     active = Number(option.dataset.index);
-    tune(active);
+    clicked = { stations, index: active };
+    revealClickedRow(active, option);
+    tune(active, { pointer: true });
     draw();
   }, options);
   list.addEventListener('keydown', (event) => {
@@ -127,6 +152,7 @@ export function mountTunerStationList(list, content, { makeOption, tune, onRende
     if (!height || !stations.length) return;
     event.preventDefault();
     keyboardFocus = true;
+    clearPointerSelection();
     keepActiveInView();
     const { stride, total } = stationListWindow(stations.length, rowHeight, height, 0, columns);
     const page = Math.max(1, Math.floor((height + STATION_LIST_GAP) / stride) * columns);
@@ -172,10 +198,21 @@ export function mountTunerStationList(list, content, { makeOption, tune, onRende
       content.style.height = `${total}px`;
       if (force) {
         active = selected;
+        // Playback can resize the tuner after the click handler has returned.
+        if (clicked?.stations === stations && clicked.index === selected) {
+          draw(force);
+          const option = content.children[selected - rendered.start];
+          const before = list.scrollTop;
+          revealClickedRow(selected, option);
+          if (list.scrollTop !== before) draw();
+          return;
+        }
+        clearPointerSelection();
         setScroll(tunedScrollTop(selected, columns, stride, height, total), total);
       }
       draw(force);
     },
+    clearPointerSelection,
     destroy() { controller.abort(); },
   };
 }

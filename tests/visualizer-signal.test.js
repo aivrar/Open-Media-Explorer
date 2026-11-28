@@ -281,5 +281,7 @@ test('subscribing again changes the rate in place; the old unsubscribe then does
 
 test('the player gives the signal a source key that follows items and elements', async () => {
   const player = await readFile(new URL('../src/lib/player.js', import.meta.url), 'utf8');
-  assert.match(player, /getSourceKey: \(\) => `\$\{playToken\}:\$\{playback\.generation\}`/);
+  // A gapless handoff keeps the key of the track it came from; every other start gets a new one.
+  assert.match(player, /const signalSourceKey = \(\) => gaplessSignalSource\?\.generation === playback\.generation[\s\S]{0,120}`\$\{playToken\}:\$\{playback\.generation\}`;/);
+  assert.match(player, /getSourceKey: signalSourceKey,/);
 });

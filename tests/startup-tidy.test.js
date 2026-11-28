@@ -63,6 +63,7 @@ function beginWith(t, storage, folderValues = null, failure = '') {
       if (failure === 'unreadable') return reply({ unexpected: true });
       return reply({ values: folderValues || {} });
     }
+    if (path === '/api/v1/computer/stars') return reply({ stars: [], count: 0 });
     if (path === '/api/v1/profile/preferences') writes.push(JSON.parse(options.body).values);
     return reply({ saved: true, keys: [] });
   };
@@ -193,7 +194,7 @@ test('a failed first session lookup never writes an empty startup profile', asyn
   await drain();
   assert.deepEqual(asked, [
     'GET /api/v1/session', 'GET /api/v1/session',
-    'GET /api/v1/profile/preferences', 'POST /api/v1/profile/preferences',
+    'GET /api/v1/profile/preferences', 'GET /api/v1/computer/stars', 'POST /api/v1/profile/preferences',
   ]);
   assert.deepEqual(writes, [captureProfileStorage(storage)]);
   assert.deepEqual(JSON.parse(writes[0][STORAGE_KEYS.favorites]).map(({ id }) => id), [KEPT]);

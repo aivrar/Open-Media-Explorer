@@ -1,7 +1,7 @@
 """User-owned M3U channel lists. Never fetched as catalogs or stored in cache.
 
-Files and direct links are added offline. Online playlists use the existing
-bounded, DNS-pinned public-network fetcher; playback/artwork use safe relays.
+Online playlists and linked lists use the bounded, DNS-pinned public-network
+fetcher. Playback and artwork use safe relays.
 """
 from __future__ import annotations
 
@@ -19,8 +19,12 @@ from defusedxml.ElementTree import DefusedXMLParser
 from worldmedia_catalog import BoundedFetcher
 from worldmedia_media import SafeConnector
 from worldmedia_runtime import _atomic_write_json
+from worldmedia_security import ApiError
 
 MAX_PLAYLIST_BYTES = 8 * 1024 * 1024
+MAX_IMPORT_CHANNELS = 5_000
+MAX_LINKED_PLAYLISTS = 4
+_HLS_TAG = re.compile(r'^\s*#EXT-X-', re.MULTILINE | re.IGNORECASE)
 MAX_STORE_BYTES = 64 * 1024 * 1024
 MAX_BACKUP_STREAMS = 5
 PLAYLIST_TYPES = frozenset({'radio', 'tv', 'audio', 'video'})
@@ -337,11 +341,23 @@ def auto_type(text: str, base_url: str = '') -> str:
     return AUTO_FALLBACK_TYPE
 
 
-def typed_counts(text: str, base_url: str = '') -> tuple[int, int]:
+def _playlist_lines(text: str, base_url: str, linked=None):
+    for index, raw in enumerate(text.lstrip('\ufeff').splitlines()):
+        child = linked.get(str(index)) if linked else None
+        if child is None:
+            yield raw, base_url
+        else:
+            # The linked address consumes any metadata pending in the parent.
+            yield '#EXTINF:', base_url
+            yield from _playlist_lines(child['text'], child['base_url'])
+            yield '#EXTINF:', base_url
+
+
+def typed_counts(text: str, base_url: str = '', *, linked=None) -> tuple[int, int]:
     """How many entries of an M3U text say radio and how many say TV."""
     radio = tv = 0
     marked = ''
-    for raw in text.lstrip('\N{ZERO WIDTH NO-BREAK SPACE}').splitlines():
+    for raw, base_url in _playlist_lines(text, base_url, linked):
         line = raw.strip()
         if not line:
             continue
@@ -360,7 +376,8 @@ def typed_counts(text: str, base_url: str = '') -> tuple[int, int]:
     return radio, tv
 
 
-def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, count_defaulted: bool = False) -> dict:
+def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *,
+                   count_defaulted: bool = False, linked=None, max_channels=None) -> dict:
     """Channels of an M3U text. With ``count_defaulted``, the result also says
     how many channels took ``default_type`` (the "Add as" choice) because
     neither a radio="..." mark nor an audio file ending told their type
@@ -383,7 +400,7 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
         raise ValueError('Playlist file exceeds the 8 MiB import limit; split it into smaller files.')
     auto = ''
     if default_type == 'auto':
-        radio_count, tv_count = typed_counts(text, base_url if base_url and _web_url(base_url) else '')
+        radio_count, tv_count = typed_counts(text, base_url if base_url and _web_url(base_url) else '', linked=linked)
         auto = 'majority' if radio_count != tv_count else 'fallback'
         default_type = ('radio' if radio_count > tv_count else 'tv' if tv_count > radio_count
                         else AUTO_FALLBACK_TYPE)
@@ -391,14 +408,14 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
         raise ValueError('Default channel type must be Auto, TV or Radio.')
     if base_url and not _web_url(base_url):
         raise ValueError('Playlist base URL is invalid.')
-    if re.search(r'^\s*#EXT-X-', text, re.MULTILINE | re.IGNORECASE):
+    if _HLS_TAG.search(text):
         raise ValueError('This is an HLS playback manifest. Use Add link and choose Single channel for its public URL.')
     items, seen, names_at = [], set(), {}
     attrs, title, group, headers = {}, '', '', {}
-    skipped = duplicates = defaulted = private = 0
+    skipped = duplicates = defaulted = private = truncated = 0
     backups = []
     exported_duplicates = {}
-    for raw in text.lstrip('\ufeff').splitlines():
+    for raw, base_url in _playlist_lines(text, base_url, linked):
         line = raw.strip()
         if not line:
             continue
@@ -471,6 +488,10 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
             else:
                 seen.add(identity)
                 names_at.setdefault(address, set()).add(name)
+                if max_channels is not None and len(items) >= max_channels:
+                    truncated += 1
+                    attrs, title, group, headers, backups = {}, '', '', {}, []
+                    continue
                 if radio not in TRUE_MARKS | FALSE_MARKS and not audio:
                     defaulted += 1
                 extra = {'artworkUrl': _playlist_url(attrs.get('tvg-logo', ''), base_url)}
@@ -497,10 +518,101 @@ def parse_playlist(text: str, default_type: str = 'tv', base_url: str = '', *, c
         result['defaulted'] = defaulted
         # Part of ``skipped``: entries pointing at this computer or a private network.
         result['private'] = private
+    if max_channels is not None:
+        result['truncated'] = truncated
     if auto:
         result['default_type'] = default_type
         result['auto'] = auto
     return result
+
+
+def _linked_candidates(text: str, base_url: str) -> dict:
+    m3u, m3u8 = {}, {}
+    entries = 0
+    for index, raw in enumerate(text.lstrip('\ufeff').splitlines()):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        entries += 1
+        if len(m3u) >= MAX_LINKED_PLAYLISTS and entries > MAX_LINKED_PLAYLISTS:
+            break
+        url = _playlist_url(line, base_url)
+        if not url:
+            continue
+        path = urlsplit(url).path.lower()
+        if path.endswith('.m3u') and len(m3u) < MAX_LINKED_PLAYLISTS:
+            m3u[index] = url
+        elif path.endswith('.m3u8') and entries <= MAX_LINKED_PLAYLISTS:
+            m3u8[index] = url
+    candidates = m3u | m3u8 if entries <= MAX_LINKED_PLAYLISTS else m3u
+    return {str(index): candidates[index] for index in sorted(candidates)[:MAX_LINKED_PLAYLISTS]}
+
+
+def _linked_list(text: str, base_url: str) -> bool:
+    if not text.lstrip().upper().startswith('#EXTM3U'):
+        return False
+    marked = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.upper().startswith('#EXTINF:'):
+            marked = True
+        elif line and not line.startswith('#'):
+            if marked and _playlist_url(line, base_url):
+                return True
+            marked = False
+    return False
+
+
+def _fetch_playlist(fetcher, url: str, limit: int):
+    return fetcher.fetch(url, accept='application/vnd.apple.mpegurl, audio/x-mpegurl, audio/x-scpls, application/xspf+xml, '
+                         'application/json, text/csv, text/plain, */*;q=0.5',
+                         allowed_types=('application/vnd.apple.mpegurl', 'application/x-mpegurl', 'application/mpegurl',
+                                        'audio/x-mpegurl', 'audio/mpegurl', 'text/plain', 'text/x-mpegurl',
+                                        'audio/x-scpls', 'audio/scpls', 'application/xspf+xml', 'application/xml', 'text/xml',
+                                        'application/json', 'text/json', 'text/csv', 'text/comma-separated-values',
+                                        'application/octet-stream', 'binary/octet-stream'),
+                         max_compressed=limit, max_decoded=limit)
+
+
+def _decode_playlist(data: bytes) -> str:
+    try:
+        return data.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return data.decode('cp1252', errors='replace')
+
+
+def _expand_linked(fetcher, candidates: dict, remaining: int) -> tuple[dict, dict]:
+    linked = {}
+    failed = byte_limited = 0
+    for index, url in candidates.items():
+        if remaining <= 0:
+            byte_limited += 1
+            continue
+        try:
+            fetched = _fetch_playlist(fetcher, url, remaining)
+        except (ApiError, OSError, ValueError) as error:
+            remaining -= getattr(error, 'body_bytes', 0)
+            if remaining < 0 or getattr(error, 'code', '') in {'CATALOG_BODY_TOO_LARGE', 'CATALOG_DECODED_TOO_LARGE'}:
+                byte_limited += 1
+                remaining = 0
+            else:
+                failed += 1
+            continue
+        text = _decode_playlist(fetched.data)
+        remaining -= max(len(fetched.data), len(text.encode('utf-8')), getattr(fetched, 'body_bytes', 0))
+        if remaining < 0:
+            byte_limited += 1
+        elif not _HLS_TAG.search(text):
+            if _web_url(fetched.url) and _linked_list(text, fetched.url):
+                linked[index] = {'text': text, 'base_url': fetched.url}
+            else:
+                failed += 1
+    return linked, {'linked_playlists': len(linked), 'linked_failed': failed, 'linked_byte_limited': byte_limited}
+
+
+def parse_saved_playlist(entry: dict) -> dict:
+    return parse_playlist(entry.get('text'), entry.get('default_type'), entry.get('base_url', ''),
+                          linked=entry.get('linked'), max_channels=MAX_IMPORT_CHANNELS if 'linked' in entry else None)
 
 
 class PlaylistStore:
@@ -529,16 +641,31 @@ class PlaylistStore:
         for entry in data['playlists']:
             required = {'id', 'name', 'text', 'default_type'}
             if (not isinstance(entry, dict) or not required.issubset(entry)
-                    or set(entry) - required - {'base_url'}):
+                    or set(entry) - required - {'base_url', 'linked'}):
                 raise ValueError('Invalid saved playlist.')
-            if any(not isinstance(value, str) for value in entry.values()):
+            if any(not isinstance(value, str) for key, value in entry.items() if key != 'linked'):
                 raise ValueError('Invalid saved playlist values.')
-            parse_playlist(entry['text'], entry['default_type'], entry.get('base_url', ''))
+            if 'linked' in entry:
+                linked = entry['linked']
+                if not isinstance(linked, dict) or len(linked) > MAX_LINKED_PLAYLISTS:
+                    raise ValueError('Invalid linked playlists.')
+                size = len(entry['text'].encode('utf-8'))
+                for index, child in linked.items():
+                    if (not re.fullmatch(r'[0-9]{1,7}', index)
+                            or not isinstance(child, dict) or set(child) != {'text', 'base_url'}
+                            or not isinstance(child['text'], str) or not isinstance(child['base_url'], str)
+                            or not _web_url(child['base_url'])
+                            or _HLS_TAG.search(child['text'])):
+                        raise ValueError('Invalid linked playlist.')
+                    size += len(child['text'].encode('utf-8'))
+                if size > MAX_PLAYLIST_BYTES:
+                    raise ValueError('Saved linked playlists exceed the import limit.')
+            parse_saved_playlist(entry)
         return data['playlists']
 
     @staticmethod
     def _public(entry: dict) -> dict:
-        return {'id': entry['id'], 'name': entry['name'], **parse_playlist(entry['text'], entry['default_type'], entry.get('base_url', ''))}
+        return {'id': entry['id'], 'name': entry['name'], **parse_saved_playlist(entry)}
 
     def list(self) -> list[dict]:
         with self._lock:
@@ -550,6 +677,35 @@ class PlaylistStore:
             raise ValueError('Saved playlists exceed 64 MiB. Remove an unused playlist before importing another.')
         _atomic_write_json(self.path, data)
 
+    def _acquire_import_slot(self) -> None:
+        if not self._import_slots.acquire(blocking=False):
+            raise ValueError('Another playlist import is running. Please wait and try again.')
+
+    def _playlist_fetcher(self):
+        return self._fetcher or BoundedFetcher(SafeConnector(
+            connect_timeout=8, header_timeout=8, idle_timeout=8,
+        ))
+
+    def _parse_import(self, text: str, default_type: str, base_url: str = '', *, fetcher=None, source_size=0):
+        # Validate the outer file before making requests for any of its entries.
+        parsed = parse_playlist(text, default_type, base_url, count_defaulted=True, max_channels=MAX_IMPORT_CHANNELS)
+        candidates = _linked_candidates(text, base_url)
+        remaining = MAX_PLAYLIST_BYTES - max(source_size, len(text.encode('utf-8')))
+        linked, counts = {}, {'linked_playlists': 0, 'linked_failed': 0, 'linked_byte_limited': 0}
+        if candidates:
+            if fetcher is not None:
+                linked, counts = _expand_linked(fetcher, candidates, remaining)
+            else:
+                self._acquire_import_slot()
+                try:
+                    linked, counts = _expand_linked(self._playlist_fetcher(), candidates, remaining)
+                finally:
+                    self._import_slots.release()
+        if linked:
+            parsed = parse_playlist(text, default_type, base_url, count_defaulted=True,
+                                    linked=linked, max_channels=MAX_IMPORT_CHANNELS)
+        return {**parsed, **counts}, linked
+
     def import_file(self, payload: dict) -> dict:
         if set(payload) != {'name', 'text', 'default_type'} or not isinstance(payload['name'], str):
             raise ValueError('Import requires a playlist name, text, and default channel type.')
@@ -560,13 +716,16 @@ class PlaylistStore:
         from worldmedia_playlist_tables import read_table_playlist
         table = read_table_playlist(payload['text'], name)
         text = table.text if table else as_m3u(payload['text'])
-        parsed = parse_playlist(text, payload['default_type'], count_defaulted=True)
+        source_size = len(payload['text'].encode('utf-8')) if isinstance(payload['text'], str) else 0
+        parsed, linked = self._parse_import(text, payload['default_type'], source_size=source_size)
         if table:
             parsed['skipped'] += table.dropped
         identity = hashlib.sha256(name.lower().encode('utf-8')).hexdigest()
         # "Auto" is saved as the type it chose, so the store keeps 'tv'/'radio'.
         entry = {'id': identity, 'name': name, 'text': text,
                  'default_type': parsed.get('default_type', payload['default_type'])}
+        if linked or parsed['truncated']:
+            entry['linked'] = linked
         return self._store(entry, parsed)
 
     def _store(self, entry: dict, parsed: dict) -> dict:
@@ -593,6 +752,7 @@ class PlaylistStore:
         name = _label(payload['name'], 160) or _label(urlsplit(url).hostname or 'My channel', 160)
         base_url = ''
         table = None
+        linked = {}
         if kind == 'stream':
             # Do not download a live stream just to save its address. A real
             # connection is validated by the media relay when the user plays it.
@@ -604,26 +764,13 @@ class PlaylistStore:
             else:
                 radio = 'true' if default_type == 'radio' else 'false'
                 text = f'#EXTM3U\n#EXTINF:-1 radio="{radio}",{name}\n{url}\n'
+            parsed = parse_playlist(text, default_type, count_defaulted=True)
         else:
-            if not self._import_slots.acquire(blocking=False):
-                raise ValueError('Another playlist import is running. Please wait and try again.')
+            self._acquire_import_slot()
             try:
-                fetcher = self._fetcher or BoundedFetcher(SafeConnector(
-                    connect_timeout=8, header_timeout=8, idle_timeout=8,
-                ))
-                fetched = fetcher.fetch(url, accept='application/vnd.apple.mpegurl, audio/x-mpegurl, audio/x-scpls, application/xspf+xml, '
-                                        'application/json, text/csv, text/plain, */*;q=0.5',
-                    allowed_types=('application/vnd.apple.mpegurl', 'application/x-mpegurl', 'application/mpegurl',
-                                   'audio/x-mpegurl', 'audio/mpegurl', 'text/plain', 'text/x-mpegurl',
-                                   'audio/x-scpls', 'audio/scpls',
-                                   'application/xspf+xml', 'application/xml', 'text/xml',
-                                   'application/json', 'text/json', 'text/csv', 'text/comma-separated-values',
-                                   'application/octet-stream', 'binary/octet-stream'),
-                    max_compressed=MAX_PLAYLIST_BYTES, max_decoded=MAX_PLAYLIST_BYTES)
-                try:
-                    text = fetched.data.decode('utf-8-sig')
-                except UnicodeDecodeError:
-                    text = fetched.data.decode('cp1252', errors='replace')
+                fetcher = self._playlist_fetcher()
+                fetched = _fetch_playlist(fetcher, url, MAX_PLAYLIST_BYTES)
+                text = _decode_playlist(fetched.data)
                 not_a_list = ('That URL did not return an M3U, PLS, XSPF, JSON or CSV channel list. For a stream, choose '
                               'Single channel; website pages and login pages cannot be imported.')
                 from worldmedia_playlist_tables import read_table_playlist
@@ -644,15 +791,18 @@ class PlaylistStore:
                 if not text.lstrip().upper().startswith('#EXTM3U'):
                     raise ValueError(not_a_list)
                 base_url = fetched.url  # Relative entries follow the final redirect location.
+                parsed, linked = self._parse_import(text, default_type, base_url, fetcher=fetcher,
+                                                    source_size=max(len(fetched.data), getattr(fetched, 'body_bytes', 0)))
             finally:
                 self._import_slots.release()
-        parsed = parse_playlist(text, default_type, base_url, count_defaulted=True)
         if kind == 'playlist' and table:
             parsed['skipped'] += table.dropped
         identity = hashlib.sha256(('link\n' + url).encode('utf-8')).hexdigest()
         entry = {'id': identity, 'name': name, 'text': text, 'default_type': parsed.get('default_type', default_type)}
         if base_url:
             entry['base_url'] = base_url
+        if linked or parsed.get('truncated'):
+            entry['linked'] = linked
         return {**self._store(entry, parsed), 'kind': kind}
 
     def backup_snapshot(self, read_file) -> tuple[bytes | None, list[dict] | None]:

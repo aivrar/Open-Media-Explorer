@@ -287,7 +287,7 @@ test('the player wires the start watch for Listed, Auto and saved backups', asyn
   assert.equal((player.match(/startWatch\.moved\(/g) || []).length, 1, 'only forward, credited movement');
   // Played a second, paused, stopped, or another start: the watch ends.
   assert.match(player, /playSession\.played = true;\s*startWatch\.end\(\);/);
-  assert.match(player, /function pauseFromUser\(\) \{\s*startWatch\.end\(\);/);
+  assert.match(player, /function pauseFromUser\(\) \{\s*(?:playbackActions\+\+;\s*)?startWatch\.end\(\);/);
   assert.match(player, /export function stop\(\) \{\s*cancelReconnect\(\);[^}]*startWatch\.end\(\);/);
   assert.match(player, /const myToken = \+\+playToken;\s*startWatch\.end\(\);/);
   assert.match(player, /await startPlayback\(item, \{ skipStreams: tried \}\);/);

@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { FakeElement } from './helpers/fake-dom.js';
 import { SOURCES } from '../src/lib/sources.js';
 import { getState, normalizeSettings } from '../src/lib/state.js';
-import { buildSidebar, syncSidebarSources } from '../src/modes/library/sidebar.js';
+import { buildSidebar, syncComputerSource, syncSidebarSources } from '../src/modes/library/sidebar.js';
 import { effectiveStatusSources, updateSidebarCounts } from '../src/modes/library/render.js';
 import { ui } from '../src/modes/library/shell-refs.js';
 import { view } from '../src/modes/library/state.js';
@@ -112,6 +112,43 @@ test('Library groups sources by their switch, preserves order within groups, and
   assert.equal(firstRow.getAttribute('aria-label'), null);
   assert.equal(document.activeElement.dataset.source, third);
   await Promise.resolve();
+});
+
+test('Computer is a search-only source choice with Audio and Video counts', (t) => {
+  const savedUi = { ...ui };
+  const savedView = { ...view, filters: { ...view.filters } };
+  const savedDocument = globalThis.document;
+  t.after(() => {
+    Object.assign(ui, savedUi);
+    Object.assign(view, savedView);
+    globalThis.document = savedDocument;
+  });
+  globalThis.document = { createElement: (tag) => new Element(tag), activeElement: null };
+  ui.sidebar = new Element('aside');
+  view.activeSource = 'all';
+  view.computerHits = [];
+  buildSidebar();
+  const list = ui.sidebar.querySelector('.source-list');
+  const find = (id) => list.children.find((node) => node.dataset.source === id && !node.removed);
+  syncComputerSource();
+  assert.equal(find('computer'), undefined);
+
+  view.computerHits = [{ type: 'audio' }, { type: 'audio' }, { type: 'video' }];
+  syncComputerSource();
+  updateSidebarCounts();
+  assert.equal(find('computer').querySelector('.source-label').textContent, 'Computer');
+  const count = (id) => find(id).querySelector('[data-role="count"]').textContent;
+  assert.equal(count('computer'), '3');
+  assert.equal(count('type:audio'), '2');
+  assert.equal(count('type:video'), '1');
+  assert.equal(count('type:radio'), '0');
+  assert.equal(find('computer').querySelector('.source-health'), null);
+
+  view.activeSource = 'computer';
+  view.computerHits = [];
+  syncComputerSource();
+  assert.equal(find('computer'), undefined);
+  assert.equal(view.activeSource, 'all');
 });
 
 test('muted source rows remain visible and the wait marker has a reserved slot', async () => {

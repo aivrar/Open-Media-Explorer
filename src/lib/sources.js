@@ -113,6 +113,7 @@ export function getSource(id) {
 
 export function getSourceLabel(id) {
   if (id === 'playlist') return 'My Playlists';
+  if (id === 'computer') return 'Computer';
   return getSource(id)?.displayName || (isRetiredSource(id) ? RETIRED_SOURCES[id].displayName : id);
 }
 

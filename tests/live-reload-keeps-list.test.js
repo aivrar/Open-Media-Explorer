@@ -7,7 +7,6 @@ import {
   pendingSourcesText, refreshKeepsList, runLiveLoad,
 } from '../src/lib/live-load.js';
 import { emptyLiveText, tunerListKey } from '../src/modes/tuner.js';
-import { emptyGridText, gridListKey } from '../src/modes/grid.js';
 
 const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const item = (id, source, type = 'radio') => ({ id, source, type, title: id });
@@ -40,11 +39,6 @@ test('a reload of the same view keeps the list; a new view starts empty', () => 
   assert.equal(tunerListKey({ ...tuner }), same);
   for (const change of [{ band: 'tv' }, { country: 'DE' }, { sourceFilter: 'radio-browser' }, { enabled: '101' }, { showExplicit: true }]) {
     assert.notEqual(tunerListKey({ ...tuner, ...change }), same, JSON.stringify(change));
-  }
-  const grid = { band: 'tv', category: '', country: '', sourceFilter: 'all', enabled: '111', showExplicit: false };
-  const gridKey = gridListKey(grid);
-  for (const change of [{ band: 'radio' }, { category: 'news' }, { country: 'DE' }, { sourceFilter: 'iptv' }, { enabled: '011' }, { showExplicit: true }]) {
-    assert.notEqual(gridListKey({ ...grid, ...change }), gridKey, JSON.stringify(change));
   }
 });
 
@@ -109,24 +103,22 @@ test('the live status line counts sources and names failures, refreshes and pend
   assert.equal(pendingSourcesText(map({ a: { state: 'loading', refreshing: true }, b: { state: 'loading' } })), ' \u00b7 loading 2 more sources\u2026');
 });
 
-test('the Tuner and the Grid mark the requested sources before drawing their counts', async () => {
-  for (const [path, start, end, list, render] of [
-    ['src/modes/tuner.js', 'async function loadStations(', 'function finishLoad()', 'state.stations', 'renderStationCaption'],
-    ['src/modes/grid.js', 'async function load(', 'function finishLoad()', 'state.tiles', 'renderSourceStatus'],
-  ]) {
-    const source = await read(path);
-    const load = source.slice(source.indexOf(start), source.indexOf(end));
-    const asked = load.indexOf('const candidates = liveSources().filter(');
-    const marked = load.indexOf("state.sourceStates.set(source.id, refresh\n");
-    const drawn = load.indexOf(`${render}();`);
-    assert.ok(asked > 0 && marked > asked, `${path}: the sources are chosen, then marked`);
-    assert.ok(drawn > marked, `${path}: the first status line comes after they are marked`);
-    assert.equal(load.split("state.sourceStates.set(source.id, refresh\n").length, 2, `${path}: marked once`);
-    assert.match(load, new RegExp(`count: ${list.replace('.', '\\.')}\\.filter\\(\\(item\\) => item\\.source === source\\.id\\)\\.length, refreshing: true`), path);
-    // Without a known state the count is of the chosen sources only.
-    assert.match(source, /sourceCount: chosenLiveSourceCount\(\),/, path);
-    assert.match(source, /function chosenLiveSourceCount\(\) \{\n\s+return liveSources\(\)\.filter\(\(source\) => state\.sourceFilter === 'all' \|\| source\.id === state\.sourceFilter\)\.length;/, path);
-  }
+test('the Tuner mark the requested sources before drawing their counts', async () => {
+  const path = 'src/modes/tuner.js';
+  const [start, end] = ['async function loadStations(', 'function finishLoad()'];
+  const [list, render] = ['state.stations', 'renderStationCaption'];
+  const source = await read(path);
+  const load = source.slice(source.indexOf(start), source.indexOf(end));
+  const asked = load.indexOf('const candidates = liveSources().filter(');
+  const marked = load.indexOf("state.sourceStates.set(source.id, refresh\n");
+  const drawn = load.indexOf(`${render}();`);
+  assert.ok(asked > 0 && marked > asked, `${path}: the sources are chosen, then marked`);
+  assert.ok(drawn > marked, `${path}: the first status line comes after they are marked`);
+  assert.equal(load.split("state.sourceStates.set(source.id, refresh\n").length, 2, `${path}: marked once`);
+  assert.match(load, new RegExp(`count: ${list.replace('.', '\\.')}\\.filter\\(\\(item\\) => item\\.source === source\\.id\\)\\.length, refreshing: true`), path);
+  // Without a known state the count is of the chosen sources only.
+  assert.match(source, /sourceCount: chosenLiveSourceCount\(\),/, path);
+  assert.match(source, /function chosenLiveSourceCount\(\) \{\n\s+return liveSources\(\)\.filter\(\(source\) => state\.sourceFilter === 'all' \|\| source\.id === state\.sourceFilter\)\.length;/, path);
 });
 
 test('an empty view left by a failed source tries again by itself twice, after 8 s and 20 s', () => {
@@ -179,7 +171,7 @@ test('only one automatic try waits at a time, a user reload cancels it, and none
   assert.equal(runs, 1);
 });
 
-test('the empty Tuner and Grid say truthfully whether they will try again', () => {
+test('the empty Tuner say truthfully whether they will try again', () => {
   const failed = new Map([['a', { state: 'ready' }], ['b', { state: 'error' }]]);
   assert.equal(emptyLiveText(false, failed), 'The stations could not be loaded. Press Radio or TV above to try again.');
   assert.match(emptyLiveText(false, failed, { waiting: true, tries: 0 }), /Trying again by itself in a few seconds, or press Radio or TV above to try now\./);
@@ -188,17 +180,9 @@ test('the empty Tuner and Grid say truthfully whether they will try again', () =
     'The stations could not be loaded, also after trying again. Press Radio or TV above to try again.');
   assert.equal(emptyLiveText(false, new Map([['a', { state: 'ready' }]]), { waiting: true }), 'No stations found for this country.');
   assert.equal(emptyLiveText(true, failed, { waiting: true }), 'Loading stations\u2026');
-
-  assert.deepEqual(emptyGridText(true, failed), { title: 'Loading\u2026', text: 'Fetching from source\u2026' });
-  assert.deepEqual(emptyGridText(false, new Map()), { title: 'No channels', text: 'Try changing filters or country.' });
-  assert.deepEqual(emptyGridText(false, null), { title: 'No channels', text: 'Try changing filters or country.' });
-  assert.equal(emptyGridText(false, failed).title, 'Channels could not be loaded');
-  assert.match(emptyGridText(false, failed).text, /Press Live TV or Radio above to try again\./);
-  assert.match(emptyGridText(false, failed, { waiting: true }).text, /Trying again by itself/);
-  assert.match(emptyGridText(false, failed, { tries: 2 }).text, /also after trying again/);
 });
 
-test('the Tuner and the Grid keep a refreshed list, mark failed sources and wire the automatic tries', async () => {
+test('the Tuner keep a refreshed list, mark failed sources and wire the automatic tries', async () => {
   const tuner = await read('src/modes/tuner.js');
   const loadStations = tuner.slice(tuner.indexOf('async function loadStations('), tuner.indexOf('function applyContentPreference('));
   assert.match(loadStations, /if \(!automatic\) autoRetry\.reset\(\);/);
@@ -213,30 +197,16 @@ test('the Tuner and the Grid keep a refreshed list, mark failed sources and wire
   const favorites = tuner.slice(tuner.indexOf('function loadFavoriteStations() {'), tuner.indexOf('async function loadStations('));
   assert.match(favorites, /autoRetry\.reset\(\);/);
 
-  const grid = await read('src/modes/grid.js');
-  const load = grid.slice(grid.indexOf('async function load('), grid.indexOf('function applyContentPreference('));
-  assert.match(load, /if \(!automatic\) autoRetry\.reset\(\);/);
-  assert.match(load, /const refresh = !preserve && refreshKeepsList\(state\.listKey, key, state\.tiles\);/);
-  assert.match(load, /if \(!refresh\) state\.tiles = \[\];/);
-  assert.match(load, /failedSourceState\(state\.tiles, source\.id, message\)/);
-  assert.match(load, /autoRetry\.settle\(state\.tiles\.length === 0/);
-  assert.match(grid, /run: \(\) => \{ load\(\{ automatic: true \}\); \}/);
-  assert.match(grid, /isShown: \(\) => getState\(\)\.mode === 'grid'/);
-  const gridTearDown = grid.slice(grid.indexOf('function tearDown() {'), grid.indexOf('export function renderGrid('));
-  assert.match(gridTearDown, /autoRetry\.stop\(\);/);
-
-  // Both views go through runLiveLoad with their load number as the "still
-  // current" test, and settle the automatic tries only at the end of a load
-  // that is still current (finishLoad).
-  for (const [source, name] of [[tuner, 'Tuner'], [grid, 'Grid']]) {
-    assert.match(source, /isCurrent: \(\) => gen === state\.loadGen,/, name);
-    assert.match(source, /onDone: finishLoad,/, name);
-    assert.match(source, /if \(gen === state\.loadGen\) finishLoad\(\);/, name);
-    assert.equal(source.split('autoRetry.settle(').length, 2, `${name}: one settle`);
-    const finish = source.slice(source.indexOf('function finishLoad() {'));
-    assert.match(finish.slice(0, finish.indexOf('\n}\n')), /autoRetry\.settle\(/, name);
-    assert.doesNotMatch(source, /Promise\.allSettled/, `${name}: the loop lives in runLiveLoad`);
-  }
+  // Only the current load can settle the automatic retry.
+  const source = tuner;
+  const name = 'Tuner';
+  assert.match(source, /isCurrent: \(\) => gen === state\.loadGen,/, name);
+  assert.match(source, /onDone: finishLoad,/, name);
+  assert.match(source, /if \(gen === state\.loadGen\) finishLoad\(\);/, name);
+  assert.equal(source.split('autoRetry.settle(').length, 2, `${name}: one settle`);
+  const finish = source.slice(source.indexOf('function finishLoad() {'));
+  assert.match(finish.slice(0, finish.indexOf('\n}\n')), /autoRetry\.settle\(/, name);
+  assert.doesNotMatch(source, /Promise\.allSettled/, `${name}: the loop lives in runLiveLoad`);
 });
 
 test('a load overtaken by a newer one never changes the list, the source states or the automatic tries', async () => {

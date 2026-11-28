@@ -12,12 +12,18 @@ brings together internet radio, live television, podcasts, public-domain films,
 space media, cultural archives, audiobooks, conference recordings, PeerTube,
 and independent Owncast streams from ten public sources.
 
-Search everything, save favorites, browse a live-channel Grid, spin the Tuner,
-discover something unexpected, watch the Visualizer move with the sound, shape
-playback with a ten-band EQ, download finite media, and optionally record live
-streams. No account, subscription, API key, or telemetry.
+Search online sources and files on your computer, save favorites, tune live
+radio and TV, and try a random pick in Now Playing. Watch the Visualizer move
+with the sound, shape playback with a ten-band EQ, download finite media, and
+optionally record live streams. No account, subscription, API key, or telemetry.
 
-**New in v0.1.18:** tune radio and TV with a station list beside the dial and
+**New in v0.1.19:** the **Computer** tab plays music, films, shows and
+audiobooks from folders you add. Browse, search and star your files, choose a
+film's subtitles and sound track, or even out the loudness of your music.
+Library search also finds your files. Turn on **Surprise me** in **Now
+Playing** to play a random pick.
+
+**In v0.1.18:** tune radio and TV with a station list beside the dial and
 optional **Bass**, **Treble** and **Loudness** knobs. TV keeps its picture above
 the list, and the **Picture** panel can choose a video quality level. The
 Visualizer can show behind the Tuner during TV and video. The player bar fits
@@ -115,7 +121,7 @@ extracted from a download (it failed to start in v0.1.2 to v0.1.4).
 
 **New in v0.1.4:** your favorites come first. The Library opens on
 **Favorites**, saved items use compact cards, and the Tuner can spin through
-only your starred stations with **★ My favorites**. Tuner and Grid show stations
+only your starred stations with **★ My favorites**. The Tuner shows stations
 as each source answers, more station logos load, items without artwork show
 their initials, and the source labels are simpler (a Settings switch brings the
 technical details back).
@@ -126,11 +132,7 @@ technical details back).
 
 ![Open Media Explorer - Library view](screenshots/v0.1.14/library.png)
 
-![A short tour of the tabs: Library, Tuner, Grid, Now Playing and Visualizer](screenshots/v0.1.14/demo-tour.gif)
-
-| Tune live radio and TV | Discover something unexpected |
-|---|---|
-| ![World Media Tuner with the radio dial, tone knobs and station list](screenshots/v0.1.14/tuner.png) | ![World Media Discovery](screenshots/v0.1.14/discovery.png) |
+![World Media Tuner with the radio dial, tone knobs and station list](screenshots/v0.1.14/tuner.png)
 
 ![Ten-band equalizer with presets](screenshots/v0.1.14/equalizer.png)
 
@@ -147,7 +149,7 @@ the file or its containing folder to be explicitly allowed. The alternative
 signed-runtime portable package is:
 
 ```text
-WorldMediaWindows-0.1.18-portable.zip
+WorldMediaWindows-0.1.19-portable.zip
 ```
 
 For that package, extract the entire archive, keep its files together, and run
@@ -181,12 +183,21 @@ The full end-to-end user and developer wiki is in
 
 ## What You Get
 
-Seven tabs across the top: **Library**, **Tuner**, **Grid**, **Discovery**,
-**Now Playing**, **Visualizer**, and **About**.
+The tabs are **Library**, **Tuner**, **Computer**, **Now Playing**,
+**Visualizer** and **About**. Library opens if a saved start tab has been removed.
+Right-click a text field for **Undo**, **Cut**, **Copy**, **Paste** and
+**Select all**.
 
 **Library** - search and browse everything. Left sidebar groups results by type
 and source: Radio Browser, iptv-org, Internet Archive, NASA, Wikimedia Commons,
 LibriVox, media.ccc.de/C3VOC, gPodder Podcasts, PeerTube, and Owncast.
+Use the live radio and TV filters to browse stations. Search also finds your
+own files and labels them **Computer**. Use **Audio** or **Video** to narrow
+the results. The count beside the filters shows how many results match,
+with "so far" while sources load. Clear what you typed in Search,
+Country or Language to return to where you were. The Language box accepts
+codes and names such as `en`, `eng` and `English`, including for iptv-org TV.
+Clicking a card opens its details and keeps the card in place.
 
 ![Library - Favorites in categories, with a station's details open](screenshots/v0.1.14/favorites.png)
 
@@ -196,8 +207,9 @@ and wraps at the ends. The wheel over the list scrolls it. With the dial focused
 to move and Enter or Space to play. The dial shows the station's place
 ("12 of 80") and fits the name on one or two lines. Click a list entry to
 play it, or use the arrow keys to move and Enter to play. The list keeps the
-selected station highlighted and in view. Entries show the source and, where
-known, the country and radio stream format and bitrate. Wide lists use two
+selected station highlighted and in view. Clicking a station already in view
+leaves the list in place. Entries show the source and, where known, the
+country and radio stream format and bitrate. Wide lists use two
 columns, and a count sits below the list.
 
 Pick **★ My favorites** or a category in **Source** to use your Favorites
@@ -222,22 +234,54 @@ Tuner** off.
 
 ![Tuner - a TV channel playing above the station list, beside the dial and tone knobs](screenshots/v0.1.14/tuner-tv.png)
 
+**Computer** - play music, films, shows and audiobooks from your own folders.
+Use **Add folder...** to add up to 200 folders. The app includes their
+subfolders. You can search, sort, use **Play all** or **Shuffle**, and step
+through the queue with **Previous** and **Next**.
+
+- **Music** opens **Albums**, **Artists**, **Songs**, **Genres** and **Folders**.
+  Covers can come from the music files or the folder. The app prepares the
+  next song of an album so it can start as the current one ends.
+- **Videos** opens **Movies**, **Shows**, **All videos** and **Folders**.
+  Movies have posters and a details panel. Shows group episodes by season.
+- **Audiobooks** lists chapters when available and remembers where you stopped.
+- **Favorites** shows files you starred. Use the star or press **F** on a
+  song, album, artist, film or show. Starred files also appear in
+  **Library > Favorites**.
+
+MP3, AAC / M4A, FLAC, PCM WAV, Ogg Vorbis and Opus play directly when the
+player supports the file. FFmpeg converts other formats for playback with
+seeking. Examples include AIFF, ALAC, APE, WavPack, DSD, WMA, AC-3 and DTS
+for sound, and MPEG-2 / DVD VOB, AVI, WMV, HEVC and other MKV or MP4 variants
+for video. Video conversion uses the graphics card's encoder when available.
+For DVD VOB files with restarting timestamps, the app can rebuild the
+timeline for the true length and exact seeking. Use an existing capable
+FFmpeg pair or confirm the install in Settings.
+
+Open **Subtitles** in the player bar. Press **C** to turn subtitles on or
+off. The app reads .srt, .vtt and .ass files beside the film or in a
+**Subs** folder, and text subtitles inside the film. Picture-based DVD and
+Blu-ray subtitles are unavailable.
+Use **Audio** to switch sound tracks, such as stereo, 5.1, another language or
+commentary. The app remembers track choices per film and by language.
+
+The app handles large collections (tested with 50,000 files). A scan reuses
+what it read from unchanged files. If a drive is disconnected, its folders
+stay in the list. Use **Locate...** to point to a new location, for example
+after a drive letter change. Stars follow moved or renamed files when the
+app can match them. Hide the tab under **Settings > Appearance > Tabs shown**.
+
 **Library detail panel** - click any item to see metadata, license, source, and
 play it.
 
 ![Library - detail panel with a NASA video in the larger player](screenshots/v0.1.14/video.png)
-
-**Grid** - TV-guide-style tiles for live radio and live TV.
-
-![Grid - live radio tiles](screenshots/v0.1.14/grid.png)
-
-**Discovery** - random open media from the enabled sources.
 
 **Now Playing** - whatever plays now, shown large: the station or item picture
 over a blurred copy of it, its name, the song a radio station announces (with
 a star and **Copy**), the stream details, how long it has played, and a large
 sound meter. The meter turns red and reads **Muted** when muted. The **Format**
 row also shows remembered details for playlist stations and HLS streams.
+Turn on **Surprise me** to play a random pick from your enabled sources.
 
 ![Now Playing - station picture, song and the large sound meter](screenshots/v0.1.14/now-playing.png)
 
@@ -281,10 +325,12 @@ collection and artwork; normal background priority returns when playback stops.
 Open **Library → My Playlists → Add link**, paste a stream URL, optionally
 name it, and press **Add**. Choose **Online playlist** for a channel-list
 URL, or use **Import playlist** for a local `.m3u`, `.m3u8`, `.pls`, `.xspf`,
-`.json` or `.csv` file. You can also drop
-a local playlist file anywhere on the window. A direct HLS
-`.m3u8` stream belongs under **Single channel**. These are Library collections,
-not subscriptions: importing the same link again updates the saved list.
+`.json` or `.csv` file. You can also drop a local playlist file anywhere on
+the window. A playlist that points to a web channel list can import its
+channels. The app follows up to four links, one level deep, and imports up
+to 5,000 channels. A link that fails to load stays as one entry and the import
+message says so. A direct HLS `.m3u8` stream belongs under **Single channel**.
+Importing the same link again updates the saved Library collection.
 **Add as** (Auto, TV or Radio) gives a type to channels that do not say whether
 they are radio or TV. Auto, the default, uses what most channels in the same
 file say. When some channels needed a type from **Add as**, the result tells
@@ -292,8 +338,10 @@ you how many, and with Auto what it chose. To change or remove stations,
 edit your own playlist file and import it again under the same file name, or
 press **Remove playlist** to remove the list. Use **Stream address...** in a
 saved station's details to change its HTTP or HTTPS address and add up to
-five backups. World Media tries the backups in order if the main address
-fails to start, and on reconnect.
+five backups. Press **Up** on the first backup to make it the main address.
+Stream format and quality stay saved until the main address changes. World
+Media tries the backups in order if the main address fails to start, and on
+reconnect.
 
 In **Favorites** and **My Playlists**, use the **All / Radio / TV / Audio /
 Video** buttons and local search to find saved channels. **Star all** in My
@@ -338,11 +386,12 @@ press **Refresh**, and it replaces that station's artwork, shown whole and
 never cut off. A name Windows cannot use in a file, such as the "/" in
 "AC/DC Radio", is written with `-`, `_`, a space or nothing in its place.
 Settings lists the pictures that were not used and why. You can also drop a
-picture on a card in **Favorites** or **My Playlists**. The card under the
-pointer shows "Drop to set this station's picture". The picture appears with
-**Saving…** and the previous picture returns if saving fails. A refusal
-clears after 6 seconds, or 8 for longer messages. Press Escape, click or
-start another drag to clear it sooner.
+picture on a card in **Favorites** or **My Playlists**. A picture you set
+belongs to that station, even if another station has the same name. The card
+under the pointer shows "Drop to set this station's picture". The picture
+appears with **Saving…** and the previous picture returns if saving fails.
+A refusal clears after 6 seconds, or 8 for longer messages. Press Escape,
+click or start another drag to clear it sooner.
 
 A station's format and
 bitrate (for example "AAC+ · 320 kbps") show in its detail panel, in the tooltip
@@ -382,19 +431,15 @@ with a fresh test profile. See the [portability guide](docs/wiki/05-data-cache-a
 Settings includes **System**, **Dark · Teal**, **Light**, **Midnight · Blue**,
 **Forest · Green**, **Ember · Orange**, and **Amethyst · Violet**. Changes apply
 immediately and persist across launches. System follows the Windows light/dark
-preference. **Tabs shown** hides tabs you do not use. Library is always
-visible. **Now Playing background blur** offers **Off**, **Light**, **Medium**
-(the default) and **Strong**. Sources switched off in **Settings > Sources**
+preference. **Settings > Appearance > Tabs shown** hides tabs you do not use.
+Library is always visible. **Now Playing background blur** offers **Off**,
+**Light**, **Medium** (the default) and **Strong**. Sources switched off in **Settings > Sources**
 appear dimmed at the bottom of the Library sidebar. Turning a source back on
 runs the current search for it again.
 
-| Midnight · Blue | Forest · Green |
-|---|---|
-| ![Midnight theme - Now Playing](screenshots/v0.1.14/theme-midnight.png) | ![Forest theme - Favorites](screenshots/v0.1.14/theme-forest.png) |
-
-| Ember · Orange | Amethyst · Violet |
-|---|---|
-| ![Ember theme - Tuner](screenshots/v0.1.14/theme-ember.png) | ![Amethyst theme - Grid](screenshots/v0.1.14/theme-amethyst.png) |
+| Midnight · Blue | Forest · Green | Ember · Orange |
+|---|---|---|
+| ![Midnight theme - Now Playing](screenshots/v0.1.14/theme-midnight.png) | ![Forest theme - Favorites](screenshots/v0.1.14/theme-forest.png) | ![Ember theme - Tuner](screenshots/v0.1.14/theme-ember.png) |
 
 ![Settings - Appearance](screenshots/v0.1.14/settings.png)
 
@@ -403,8 +448,14 @@ exact palette color; Windows 10 uses the matching dark or light caption style.
 
 ## Playback
 
+**Settings > Playback > Volume levelling** offers **Off**, **Track** and
+**Album** for music from Computer. Track evens out songs. Album keeps the
+loudness differences between songs on the same album. Set **Pre-amp** to
+adjust the level when levelling is on. The app uses ReplayGain tags or
+measures untagged songs in the background, one song ahead.
+
 Video plays in a movable overlay with fullscreen support. In the Tuner's TV
-band, it sits beside the dial. Library, Grid, About and Now Playing leave
+band, it sits beside the dial. Library, About and Now Playing leave
 room to scroll past the picture. They keep that space while another video
 starts. They release it on Stop, a failed start or a switch to an item
 without a picture.
@@ -502,6 +553,10 @@ directories. The app does not host content and does not require API keys.
 - **No accounts.** Nothing to sign up for.
 - **No telemetry.** The app does not collect usage data.
 - **No API keys.** All ten sources use public anonymous endpoints.
+- **Computer files stay on your computer.** The app reads media from the
+  folders you add, including their subfolders. It keeps the folder list,
+  library index, stars, thumbnails and conversion caches in the data folder.
+  See the [data guide](docs/wiki/05-data-cache-and-portability.md#computer-files).
 - **Localhost only.** The bundled Python server binds to `127.0.0.1`.
 - **Two bounded same-origin relays.** Catalog metadata uses an HTTPS-only,
   DNS-pinned allowlist proxy. Playback and capture use opaque expiring relay
@@ -537,7 +592,7 @@ documented in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Troubleshooting
 
-- If discovery says it is paused, scroll toward the bottom of the current
+- If Library says collecting is paused, scroll toward the bottom of the current
   results; fetching resumes automatically. Use **Load more** for an immediate
   user-priority request.
 - **Retrying**, **rate limited**, or **stale** means the cursor and last verified
@@ -588,7 +643,7 @@ The output is:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.18-portable.zip
+dist\WorldMediaWindows-0.1.19-portable.zip
 ```
 
 See [docs/BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) for the full build and smoke
@@ -621,10 +676,11 @@ author). Some of its shader code is borrowed from others and keeps its own
 license. It is credited under **Visualizer credits** on the About page, in
 [CREDITS.md](CREDITS.md) and in `/THIRD_PARTY_NOTICES.txt`.
 
-### Optional FFmpeg recording tool
+### Optional FFmpeg tool
 
-World Media does not bundle FFmpeg in its EXE. Recording features can use an
-existing capable `ffmpeg`/`ffprobe` pair or, after explicit confirmation, install
+World Media does not bundle FFmpeg in its EXE. Recording and playback of
+Computer formats that need conversion can use an existing capable
+`ffmpeg`/`ffprobe` pair or, after explicit confirmation, install
 the exact `ffmpeg-n8.1-latest-win64-gpl-8.1.zip` asset from
 [FFmpeg-Builds/FFmpeg-Builds](https://github.com/FFmpeg-Builds/FFmpeg-Builds). The managed archive
 is downloaded without administrator access, checked against GitHub's SHA-256

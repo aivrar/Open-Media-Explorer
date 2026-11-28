@@ -86,6 +86,19 @@ export function sanitizeCaptureHeaders(value) {
   return out;
 }
 
+export function rekeyComputerItem(item, id) {
+  const itemId = 'computer:' + id;
+  Object.assign(item, {
+    id: itemId, stream_url: itemId,
+    _extra: { ...item._extra, computer: { ...item._extra?.computer, id } },
+  });
+  return item;
+}
+
+export function isComputerItem(item) {
+  return item?.source === 'computer';
+}
+
 /**
  * Normalize an in-progress item to the strict shape with sensible defaults.
  * Never returns undefined for required fields.
@@ -97,6 +110,10 @@ export function makeItem(p) {
   const out = {};
   for (const f of STR_FIELDS) out[f] = typeof p[f] === 'string' ? p[f] : '';
   out.source_url = safeExternalUrl(out.source_url);
+  if (isComputerItem(out)) {
+    out.stream_url = out.id.startsWith('computer:') ? out.id : 'computer:';
+    out.source_url = out.download_url = out.download_name = '';
+  }
   out.year = typeof p.year === 'number' && Number.isFinite(p.year) ? p.year : null;
   out.tags = Array.isArray(p.tags) ? p.tags.filter((t) => typeof t === 'string') : [];
   if (!['live', 'on-demand', 'unknown'].includes(out.delivery)) out.delivery = 'unknown';

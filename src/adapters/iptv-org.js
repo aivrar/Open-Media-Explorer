@@ -42,6 +42,7 @@ function normalizeStreamCandidate(stream) {
   const detected = detectStreamKind(url, 'video');
   return {
     url,
+    feed: stream.feed,
     kind: detected === 'audio' ? 'video' : detected,
     headers: sanitizeCaptureHeaders({
       referer: stream.http_referrer || stream.referrer || '',
@@ -64,10 +65,13 @@ function selectCandidates(candidates) {
     const key = JSON.stringify([candidate.url, candidate.kind, candidate.headers]);
     if (!unique.has(key)) unique.set(key, { ...candidate, index });
   });
-  return [...unique.values()]
+  const selected = [...unique.values()]
     .sort((a, b) => candidateScore(b) - candidateScore(a) || a.index - b.index)
-    .slice(0, MAX_STREAM_CANDIDATES)
-    .map(({ index: _index, ...candidate }) => candidate);
+    .slice(0, MAX_STREAM_CANDIDATES);
+  return {
+    feed: selected[0]?.feed,
+    candidates: selected.map(({ index: _index, feed: _feed, ...candidate }) => candidate),
+  };
 }
 
 function awaitWithSignal(promise, signal) {
@@ -147,7 +151,20 @@ function loadLogos() {
   return logosRequest;
 }
 
-async function logosWithin(pending, ms) {
+function feedLanguageMap(feeds) {
+  const exact = new Map();
+  const main = new Map();
+  for (const feed of Array.isArray(feeds) ? feeds : []) {
+    if (!feed?.channel || !Array.isArray(feed.languages)) continue;
+    const language = feed.languages.find((value) => typeof value === 'string' && value.trim());
+    if (!language) continue;
+    exact.set(JSON.stringify([feed.channel, feed.id]), language);
+    if (feed.is_main) main.set(feed.channel, language);
+  }
+  return { exact, main };
+}
+
+async function metadataWithin(pending, ms) {
   let timer = null;
   try {
     return await Promise.race([pending, new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); })]);
@@ -172,6 +189,7 @@ function loadList() {
   if (!cachedItemsPromise) {
     const request = (async () => {
     const pendingLogos = loadLogos().catch(() => null);
+    const pendingFeeds = getJson(`${API}/feeds.json`).catch(() => null);
     const [streams, channels] = await Promise.all([
       getJson(`${API}/streams.json`),
       getJson(`${API}/channels.json`),
@@ -183,7 +201,11 @@ function loadList() {
     if (streams.length === 0 || channels.length === 0) {
       throw new TypeError('iptv-org returned no streams or no channels');
     }
-    const logos = logoMap || await logosWithin(pendingLogos, LOGO_WAIT_MS);
+    const [logos, feeds] = await Promise.all([
+      logoMap || metadataWithin(pendingLogos, LOGO_WAIT_MS),
+      metadataWithin(pendingFeeds, LOGO_WAIT_MS),
+    ]);
+    const { exact, main } = feedLanguageMap(feeds);
     const channelMap = new Map();
     for (const c of channels) channelMap.set(c.id, c);
 
@@ -205,11 +227,14 @@ function loadList() {
     const items = [];
     for (const [itemId, group] of groups) {
       const { stream: s, channel: ch } = group;
-      const candidates = selectCandidates(group.candidates);
+      const { feed, candidates } = selectCandidates(group.candidates);
       const primary = candidates[0];
       if (!primary) continue;
       const isNsfw = ch?.is_nsfw === true;
       const logo = s.channel && logos ? (logos.get(s.channel)?.url || '') : '';
+      // Languages moved from channels to feeds. Older data can still supply a channel language.
+      const language = exact.get(JSON.stringify([s.channel, feed])) || main.get(s.channel) || ch?.languages?.[0]
+        || (feeds == null ? cachedItemsById.get(itemId)?.language : '') || '';
       const item = makeItem({
         id: itemId,
         title: ch?.name || s.title || s.channel || 'Channel',
@@ -225,7 +250,7 @@ function loadList() {
         thumbnail: logo,
         year: null,
         country: (ch?.country || '').toUpperCase(),
-        language: (ch?.languages?.[0] || '').toLowerCase(),
+        language: language.trim().toLowerCase(),
         tags: [
           ...(ch?.categories || []).map((c) => String(c).toLowerCase()),
           ...(isNsfw ? ['Explicit'] : []),

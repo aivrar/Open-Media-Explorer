@@ -1,7 +1,7 @@
 // Measure the footer itself so font metrics, extra actions and the Picture
 // button all contribute their actual width. The trials finish before paint.
 export function bindPlayerBarFit(bar, { ResizeObserver, MutationObserver } = globalThis) {
-  const steps = ['full', 'meter', 'time', 'record', 'eq'];
+  const steps = ['meter', 'time', 'record', 'eq'];
   let previousWidth;
   function fit() {
     const width = bar.getBoundingClientRect().width;
@@ -12,7 +12,8 @@ export function bindPlayerBarFit(bar, { ResizeObserver, MutationObserver } = glo
     }
     bar.dataset.measuring = '';
     let result = 'stack';
-    for (const step of steps) {
+    const trackStep = bar.querySelector('.player-track-button:not([hidden])') ? ['tracks'] : [];
+    for (const step of ['full', ...trackStep, ...steps]) {
       bar.dataset.fit = step;
       if (bar.getBoundingClientRect().width <= width) {
         result = step;

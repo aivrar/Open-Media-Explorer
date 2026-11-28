@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getState } from '../src/lib/state.js';
-import { validateItem } from '../src/lib/item-model.js';
+import { displayFavorites, getState } from '../src/lib/state.js';
+import { safeExternalUrl, validateItem } from '../src/lib/item-model.js';
 import { view } from '../src/modes/library/state.js';
 import { filterItems } from '../src/modes/library/filter.js';
 import { libraryPool } from '../src/modes/library/personal.js';
+import { makeComputerItem } from '../src/lib/computer-play.js';
+import { importResultMessage, libraryExportSelection } from '../src/modes/library/personal-controls.js';
 
 test('Add link posts to native service, keeps previous data on failure, and validates schemes locally', async () => {
   const client = await import(`../src/lib/playlists.js?links=${Date.now()}`);
@@ -27,9 +29,32 @@ test('Add link posts to native service, keeps previous data on failure, and vali
   }
 });
 
+test('file imports pass linked playlist outcomes to the existing result message', async () => {
+  const { importPlaylistFile } = await import('../src/lib/playlists.js?linked-results');
+  const answer = { playlist: {
+    id: 'wrapper', name: 'wrapper.m3u', items: [{ id: 'one' }, { id: 'two' }],
+    linked_playlists: 1, linked_failed: 1, linked_byte_limited: 2, truncated: 3,
+  } };
+  const file = new File(['#EXTM3U\nhttps://example.org/list.m3u\n'], 'wrapper.m3u');
+  const request = async (path, options) => {
+    if (!options) return { playlists: [] };
+    assert.equal(path, '/api/v1/playlists/import');
+    assert.match(options.body.text, /list\.m3u/);
+    return answer;
+  };
+  const message = importResultMessage(await importPlaylistFile(file, 'tv', request));
+  assert.equal(message, 'Imported 2 channels from 1 linked playlist. '
+    + '1 linked playlist could not be loaded and was kept as a single entry. '
+    + 'The import reached 8 MiB and kept 2 linked playlists as single entries. '
+    + 'The import stopped at 5,000 channels. 3 channels were left out.');
+});
+
 test('Favorites type and local search filters do not search or change the public catalog', () => {
   const state = getState();
-  const before = { favorites: state.favorites, source: view.activeSource, last: view.lastQuery, type: view.filters.type };
+  const before = {
+    favorites: state.favorites, source: view.activeSource, last: view.lastQuery,
+    type: view.filters.type, filters: view.personalFilters.favorites,
+  };
   try {
     state.favorites = ['radio', 'tv', 'video', 'audio'].map((type) => ({
       id: `saved:${type}`, type, source: 'iptv-org', title: `${type} favorite`, content_rating: 'unrated',
@@ -38,11 +63,19 @@ test('Favorites type and local search filters do not search or change the public
     view.lastQuery = 'unrelated public search';
     view.filters.type = 'video';
     view.personalFilters.favorites = { type: 'radio', query: 'FAVORITE' };
-    assert.deepEqual(filterItems(libraryPool()).map((item) => item.type), ['radio']);
-    view.personalFilters.favorites.type = 'tv';
-    assert.deepEqual(filterItems(libraryPool()).map((item) => item.type), ['tv']);
-    view.personalFilters.favorites.type = '';
-    assert.equal(filterItems(libraryPool()).length, 4);
+    const shownTypes = () => filterItems(libraryPool()).map((item) => item.type);
+    assert.deepEqual(shownTypes(), ['radio']);
+    view.personalFilters.favorites.type = ['tv'];
+    assert.deepEqual(shownTypes(), ['tv']);
+    view.personalFilters.favorites.type = ['radio', 'audio'];
+    assert.deepEqual(shownTypes(), ['radio', 'audio']);
+    view.personalFilters.favorites.query = 'audio favorite';
+    assert.deepEqual(shownTypes(), ['audio']);
+    view.personalFilters.favorites.query = 'FAVORITE';
+    view.personalFilters.favorites.type = ['radio', 'tv', 'audio', 'video'];
+    assert.equal(shownTypes().length, 4);
+    view.personalFilters.favorites.type = [];
+    assert.equal(shownTypes().length, 4);
     view.personalFilters.favorites.query = 'does not exist';
     assert.equal(filterItems(libraryPool()).length, 0);
     assert.equal(view.lastQuery, 'unrelated public search');
@@ -50,8 +83,46 @@ test('Favorites type and local search filters do not search or change the public
   } finally {
     state.favorites = before.favorites;
     view.activeSource = before.source; view.lastQuery = before.last; view.filters.type = before.type;
-    view.personalFilters.favorites = { query: '', type: '' };
+    view.personalFilters.favorites = before.filters;
   }
+});
+
+test('Computer favorites appear in Audio and Video and are left out of exports', (t) => {
+  const state = getState();
+  const { favorites } = state;
+  const { activeSource, personalFilters } = view;
+  t.after(() => {
+    state.favorites = favorites;
+    Object.assign(view, { activeSource, personalFilters });
+  });
+  const audio = makeComputerItem({ id: 'song', kind: 'audio', title: 'Song' });
+  const video = makeComputerItem({ id: 'film', kind: 'video', title: 'Film' });
+  state.favorites = [audio, video];
+  view.activeSource = 'favorites';
+  view.personalFilters = { ...personalFilters, favorites: { type: ['audio'], query: '' } };
+  assert.deepEqual(filterItems(libraryPool()).map(({ id }) => id), [audio.id]);
+  view.personalFilters.favorites.type = ['video'];
+  assert.deepEqual(filterItems(libraryPool()).map(({ id }) => id), [video.id]);
+  view.personalFilters.favorites.type = [];
+  for (const format of ['m3u8', 'json']) {
+    const { stations } = libraryExportSelection(format);
+    assert.equal(stations.length, 0);
+  }
+});
+
+test('Favorites A-Z interleaves Computer files with stations and My order keeps the saved order', (t) => {
+  const state = getState();
+  const { favorites, settings } = state;
+  t.after(() => Object.assign(state, { favorites, settings }));
+  const last = { id: 'station:last', source: 'iptv-org', title: 'Zulu' };
+  const middle = { id: 'station:middle', source: 'iptv-org', title: 'Middle' };
+  const audio = makeComputerItem({ id: 'audio', kind: 'audio', title: 'After' });
+  const video = makeComputerItem({ id: 'video', kind: 'video', title: 'Video' });
+  state.favorites = [last, middle, video, audio];
+  state.settings = { ...settings, favoritesSort: 'name' };
+  assert.deepEqual(displayFavorites(), [audio, middle, video, last]);
+  state.settings.favoritesSort = 'manual';
+  assert.equal(displayFavorites(), state.favorites);
 });
 
 test('playlist native writes succeed before local changes; replacement and removal keep favorites', async () => {

@@ -48,6 +48,113 @@ MAX_NATIVE_LOG_BYTES = 8 * 1024 * 1024
 _LOG_HANDLE = None
 
 
+_EDIT_MENU_COMMANDS = {
+    "cut", "copy", "paste", "pasteAndMatchStyle", "pasteAsPlainText", "selectAll", "undo", "redo",
+}
+
+
+def _hidden_context_menu_items(items):
+    """Indices to remove from a WebView2 menu of (name, is_separator) pairs."""
+    kept = set()
+    separator = None
+    for index, (name, is_separator) in enumerate(items):
+        if is_separator and kept and separator is None:
+            separator = index
+        if name in _EDIT_MENU_COMMANDS:
+            if separator is not None:
+                kept.add(separator)
+                separator = None
+            kept.add(index)
+    return [index for index in reversed(range(len(items))) if index not in kept]
+
+
+def _enable_edit_context_menu(window) -> None:
+    """Attach on the UI thread, after pywebview sets its debug defaults."""
+    settings = None
+    reported = False
+
+    def unavailable(error):
+        nonlocal reported
+        try:
+            if settings is not None:
+                settings.AreDefaultContextMenusEnabled = False
+        except Exception:
+            pass
+        if not reported:
+            reported = True
+            print(f"[native] Edit context menu unavailable: {type(error).__name__}", flush=True)
+
+    def requested(_sender, args):
+        try:
+            if not args.ContextMenuTarget.IsEditable:
+                args.Handled = True
+                return
+            items = args.MenuItems
+            menu = [(str(items[i].Name), str(items[i].Kind) == "Separator") for i in range(items.Count)]
+            hidden = _hidden_context_menu_items(menu)
+            if len(hidden) == len(menu):
+                args.Handled = True
+            for index in hidden:
+                items.RemoveAt(index)
+        except Exception as error:
+            try:
+                args.Handled = True
+            except Exception:
+                pass
+            unavailable(error)
+
+    def ready(sender, args=None):
+        nonlocal settings
+        try:
+            if args is not None and not args.IsSuccess:
+                raise RuntimeError("WebView2 initialization failed")
+            core = sender.CoreWebView2
+            settings = core.Settings
+            core.ContextMenuRequested += requested
+            settings.AreDefaultContextMenusEnabled = True
+        except Exception as error:
+            unavailable(error)
+
+    try:
+        control = window.native.webview
+        if control.CoreWebView2 is None:
+            control.CoreWebView2InitializationCompleted += ready
+        else:
+            ready(control)
+    except Exception as error:
+        unavailable(error)
+
+
+class NativeWindowBridge(NativeThemeBridge):
+    """WebView API for the caption theme and the app-owned folder picker."""
+
+    def pick_media_folder(self) -> dict[str, str]:
+        try:
+            form = getattr(self._window, "native", None)
+            if form is None or form.IsDisposed or form.Disposing or not form.IsHandleCreated:
+                raise RuntimeError("The native window is unavailable.")
+
+            chosen = None
+
+            def show() -> None:
+                nonlocal chosen
+                # The public pywebview wrapper logs dialog exceptions and returns None.
+                from webview.platforms.winforms import OpenFolderDialog
+
+                profile = os.environ.get("USERPROFILE", "")
+                chosen = OpenFolderDialog.show(form, profile if os.path.isdir(profile) else "", False)
+
+            if form.InvokeRequired:
+                from System import Action
+
+                form.Invoke(Action(show))
+            else:
+                show()
+            return {"path": str(chosen[0]) if chosen else ""}
+        except Exception:
+            return {"path": "", "error": "The folder picker could not be opened."}
+
+
 def bundled_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS"))
@@ -310,11 +417,11 @@ def _run(paths, instance, *, headless: bool) -> int:
             unblock_bundled_assemblies()
             import webview
 
-            theme_bridge = NativeThemeBridge(saved_theme(os.environ.get("WORLDMEDIA_STATE_DIR")))
+            bridge = NativeWindowBridge(saved_theme(os.environ.get("WORLDMEDIA_STATE_DIR")))
             window = webview.create_window(
                 APP_TITLE,
                 url,
-                js_api=theme_bridge,
+                js_api=bridge,
                 width=1280,
                 height=860,
                 min_size=(980, 660),
@@ -323,7 +430,8 @@ def _run(paths, instance, *, headless: bool) -> int:
             )
             if window is None:
                 raise RuntimeError("pywebview did not create the native window")
-            theme_bridge._bind_window(window)
+            bridge._bind_window(window)
+            window.events.before_show += lambda: _enable_edit_context_menu(window)
             # Another start with this data folder asks this window to come
             # forward; the wait begins once the window exists (a request made
             # earlier is kept until then).

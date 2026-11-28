@@ -18,7 +18,25 @@
 .personal-sort-label { font-size: 12px; color: var(--text-dim); margin-left: 4px; }
 .playlist-message { flex-basis: 100%; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
 .playlist-message:empty { display: none; }
+.personal-controls.is-playlists,
+.playlist-actions { column-gap: 6px; }
+.is-playlists .personal-type { column-gap: 4px; }
+.is-playlists .personal-type .chip,
+.playlist-action-group .btn { padding-inline: 8px; }
 .playlist-actions { flex: 1 1 400px; max-width: 100%; }
+.playlist-action-group,
+.playlist-action-end { display: flex; align-items: center; gap: 6px; }
+.playlist-action-group { flex: none; white-space: nowrap; }
+.playlist-action-group select { padding-inline: 8px 22px; }
+.playlist-picker { max-width: 100%; }
+.playlist-picker > select { min-width: 0; max-width: 148px; }
+.playlist-action-end {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
 /* Favorites: "Remove all favorites" at the end of the sort row; its result
    line wraps underneath. */
 .favorites-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
@@ -40,7 +58,6 @@
   grid-template-columns: 220px minmax(0, 1fr) 0;
   grid-template-rows: 1fr;
   height: 100%;
-  transition: grid-template-columns 0.18s ease;
   overflow: hidden;
 }
 .library-root.has-detail {
@@ -230,6 +247,22 @@
   pointer-events: none;
 }
 
+.library-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.library-filter-count {
+  flex: 0 0 120px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
 .filter-chips {
   display: flex;
   gap: 6px;
@@ -238,6 +271,17 @@
   min-width: 0;
   max-width: 100%;
 }
+@media (min-width: 981px) {
+  .has-detail .search-input-wrap {
+    flex-basis: 180px;
+    min-width: 180px;
+  }
+  .has-detail .library-filters { flex: 0 1 380px; }
+  .has-detail .library-filter-count { flex: 0 0 auto; }
+  .has-detail .filter-chips { flex-wrap: nowrap; }
+  .has-detail .filter-chips > input { min-width: 0; padding-inline: 6px; }
+}
+
 .chip {
   appearance: none;
   background: var(--bg-elev-2);
@@ -269,13 +313,17 @@
 
 .results {
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 18px 18px calc(18px + var(--video-clearance));
+  padding-bottom: calc(18px + max(var(--video-clearance), var(--library-video-clearance, 0px)));
+  scroll-padding-bottom: var(--video-clearance);
   display: flex;
   flex-direction: column;
   gap: 18px;
   min-width: 0;
   max-width: 100%;
 }
+.results.is-restoring-anchor { overflow-anchor: none; }
 
 .results-status {
   display: flex;
@@ -336,6 +384,15 @@
 }
 
 .card {
+  --card-thumb-ratio: calc(16 / 9);
+  --card-title-height: 18px;
+  --card-meta-height: 40px;
+  --card-quality-line-height: 16px;
+  --card-body-gap: 8px;
+  --card-body-padding: 12px;
+  --card-body-min-height: 90px;
+  --card-body-height-estimate: var(--card-body-min-height);
+  container-type: inline-size;
   background: linear-gradient(180deg, var(--bg-elev-2), var(--bg-elev-1));
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -346,12 +403,13 @@
   min-width: 0;
   transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
   position: relative;
-  /* Browser-level virtualization: WebView2/Chromium skips layout + paint
-     for cards that aren't on-screen. `contain-intrinsic-size` reserves
-     placeholder dimensions so the scrollbar tracks accurately. This is
-     what lets us load thousands of cards without scroll lag. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 270px;
+}
+/* Estimate one line of stream details. The body can grow when it wraps. */
+:root[data-tech-details="on"] .card:has(.card-quality) {
+  --card-body-height-estimate: max(var(--card-body-min-height), calc(
+    var(--card-title-height) + var(--card-meta-height) + var(--card-quality-line-height)
+    + var(--card-body-gap) + 2 * var(--card-body-padding)
+  ));
 }
 .card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-2); }
 .card.is-playing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 24px -8px var(--accent); }
@@ -370,6 +428,10 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
+  /* Skip offscreen contents. Estimate their height from the card's actual
+     inner width and the same dimensions used by the thumbnail and body. */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(100cqi / var(--card-thumb-ratio) + var(--card-body-height-estimate));
 }
 .card-open:focus-visible {
   outline: 2px solid var(--accent);
@@ -379,7 +441,7 @@
 
 .card-thumb {
   position: relative;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--card-thumb-ratio);
   background: linear-gradient(135deg, var(--bg-elev-2), var(--bg-elev-3));
   overflow: hidden;
 }
@@ -450,20 +512,28 @@
 .card-thumb img.errored { display: none; }
 
 .card-body {
-  padding: 12px;
+  padding: var(--card-body-padding);
   display: grid;
-  grid-template-rows: 18px auto;
-  gap: 8px;
-  min-height: 90px;
+  grid-template-rows: var(--card-title-height) auto;
+  gap: var(--card-body-gap);
+  min-height: var(--card-body-min-height);
 }
 .card-title {
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
-  line-height: 18px;
+  line-height: var(--card-title-height);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.card.is-missing .card-open { opacity: 0.6; }
+.card-subtitle {
+  color: var(--text-mute);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .card-meta {
   display: grid;
@@ -473,13 +543,13 @@
   font-size: 11px;
   color: var(--text-dim);
   min-width: 0;
-  min-height: 40px;
+  min-height: var(--card-meta-height);
 }
 .source-badge {
   grid-column: 1;
   align-self: stretch;
   min-width: 0;
-  height: 40px;
+  height: var(--card-meta-height);
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -521,7 +591,7 @@
   line-clamp: 2;
   overflow: hidden;
   overflow-wrap: anywhere;
-  line-height: 16px;
+  line-height: var(--card-quality-line-height);
   font-variant-numeric: tabular-nums;
 }
 .card-star {
@@ -542,7 +612,7 @@
   z-index: 2;
 }
 .card-star:hover { transform: scale(1.08); }
-.card-star.is-fav { color: var(--accent); }
+.card-star.is-fav { color: var(--accent); background: var(--bg-elev-1); }
 
 .content-rating-badge {
   display: inline-flex;
@@ -578,11 +648,22 @@
   gap: 14px;
 }
 
-/* At narrower widths the detail panel opens above the video. */
+/* Keep the side panel's scroll area above the dock. The full-width
+   detail overlay at smaller widths already sits in front of the dock. */
 @media (width > 980px) {
+  #app.has-video .library-root {
+    --detail-dock-height: calc(var(--video-height, 0px) + var(--video-gap));
+  }
   .detail-panel {
-    padding-bottom: calc(18px + var(--video-clearance));
-    scroll-padding-bottom: var(--video-clearance);
+    margin-bottom: max(var(--video-clearance), var(--detail-dock-height, 0px));
+    padding-block: 0;
+  }
+  /* Keep the 18px inset (4px plus the 14px gap) inside the scrolling
+     content so even a tall dock can shrink the pane to the space above it. */
+  .detail-panel::before,
+  .detail-panel::after {
+    content: '';
+    flex: 0 0 4px;
   }
 }
 .detail-panel .detail-close {
@@ -1014,6 +1095,7 @@
 
   .results {
     padding: 12px 12px calc(12px + var(--video-clearance));
+    padding-bottom: calc(12px + max(var(--video-clearance), var(--library-video-clearance, 0px)));
     gap: 12px;
   }
 
@@ -1022,8 +1104,8 @@
     gap: 12px;
   }
 
-  .card-body {
-    padding: 11px;
+  .card {
+    --card-body-padding: 11px;
   }
 }
 
@@ -1043,10 +1125,14 @@
   visibility: visible;
   background: var(--warning, #f5a524);
 }
+:root:not([data-tech-details="on"]) .card {
+  --card-meta-height: 16px;
+  --card-body-gap: 4px;
+  --card-body-min-height: calc(var(--card-title-height) + var(--card-meta-height) + var(--card-body-gap) + 2 * var(--card-body-padding));
+}
 :root:not([data-tech-details="on"]) .card-body {
-  grid-template-rows: 18px 16px;
+  grid-template-rows: var(--card-title-height) var(--card-meta-height);
   min-height: 0;
-  gap: 4px;
 }
 :root:not([data-tech-details="on"]) .card-meta {
   display: flex;
@@ -1076,7 +1162,6 @@
 }
 :root:not([data-tech-details="on"]) .card-facts > span::before { content: ' · '; white-space: pre; }
 :root:not([data-tech-details="on"]) :is(.card-license, .card-quality) { display: none; }
-:root:not([data-tech-details="on"]) .card { contain-intrinsic-size: auto 220px; }
 
 /* ============ Compact cards for saved collections (Favorites / My Playlists) ============
    Most saved radio stations have no artwork, so big 16:9 placeholders waste
@@ -1086,9 +1171,10 @@
   gap: 10px;
 }
 .library-root.is-personal-view .card {
+  --card-thumb-size: 60px;
+  --card-thumb-margin: 8px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  contain-intrinsic-size: auto 80px;
 }
 /* The open button and the controls share one grid cell. Each contributes
    to its height, so even the shortest card fits the move buttons. */
@@ -1109,6 +1195,7 @@
 .library-root.is-personal-view .card-open {
   flex-direction: row;
   align-items: center;
+  contain-intrinsic-block-size: auto calc(var(--card-thumb-size) + 2 * var(--card-thumb-margin));
 }
 /* A long name takes a second line instead of being cut at once; past two
    lines it ends in an ellipsis, and the whole name is on hover. The body's
@@ -1123,11 +1210,11 @@
   overflow-wrap: anywhere;
 }
 .library-root.is-personal-view .card-thumb {
-  flex: 0 0 60px;
-  width: 60px;
-  height: 60px;
+  flex: 0 0 var(--card-thumb-size);
+  width: var(--card-thumb-size);
+  height: var(--card-thumb-size);
   aspect-ratio: auto;
-  margin: 8px 0 8px 8px;
+  margin: var(--card-thumb-margin) 0 var(--card-thumb-margin) var(--card-thumb-margin);
   border-radius: 6px;
 }
 .library-root.is-personal-view .card-thumb .placeholder svg { width: 26px; height: 26px; }

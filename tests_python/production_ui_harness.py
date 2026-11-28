@@ -212,7 +212,7 @@ async function run() {
     checks.push('eq-integration');
 
     const modes = {
-      tuner: '.tuner-root', grid: '.grid-root', discovery: '.discovery-root', about: '.about-root'
+      tuner: '.tuner-root', computer: '.computer-root', 'now-playing': '.np-root', visualizer: '.visualizer-root', about: '.about-root'
     };
     for (const [mode, selector] of Object.entries(modes)) {
       document.querySelector(`.mode-btn[data-mode="${mode}"]`).click();

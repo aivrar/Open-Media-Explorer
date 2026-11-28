@@ -128,22 +128,24 @@ test('the result is reported in plain words', () => {
 test('Star all covers every channel listed, not just the rendered cards, and asks first above the threshold', async () => {
   const news = Array.from({ length: 40 }, (_, i) => channel(`news${i}`, { title: `News ${i}` }));
   const radio = channel('news-radio', { title: 'News radio', type: 'radio', stream_kind: 'audio' });
+  const audio = channel('news-audio', { title: 'News audio', type: 'audio', stream_kind: 'audio' });
   const music = channel('music', { title: 'Music' });
   const other = channel('other-list', { title: 'News elsewhere' });
   await loadPlaylists(async () => ({ playlists: [
-    { id: 'list-a', name: 'a.m3u', items: [...news, radio, music], skipped: 0, duplicates: 0 },
+    { id: 'list-a', name: 'a.m3u', items: [...news, radio, audio, music], skipped: 0, duplicates: 0 },
     { id: 'list-b', name: 'b.m3u', items: [other], skipped: 0, duplicates: 0 },
   ] }));
   const before = { source: view.activeSource, playlistId: view.playlistId, filters: view.personalFilters.playlists };
   try {
     view.activeSource = 'playlists';
     view.playlistId = 'list-a';
-    view.personalFilters.playlists = { query: 'news', type: 'tv' };
+    view.personalFilters.playlists = { query: 'news', type: ['radio', 'tv'] };
+    const listed = [...news, radio];
     const selection = libraryExportSelection();
     assert.equal(selection.format, 'm3u8');
-    assert.equal(selection.collection, 'a.m3u');
+    assert.equal(selection.collection, 'a.m3u - Radio');
     assert.equal(selection.type, 'TV');
-    assert.deepEqual(selection.stations.map(({ name, group }) => [name, group]), news.map(({ title }) => [title, 'a.m3u']));
+    assert.deepEqual(selection.stations.map(({ name, group }) => [name, group]), listed.map(({ title }) => [title, 'a.m3u']));
     await exportPlaylist(selection, async (url, options) => {
       assert.equal(url, '/api/v1/playlists/export');
       assert.deepEqual(options, { method: 'POST', body: selection });
@@ -152,21 +154,22 @@ test('Star all covers every channel listed, not just the rendered cards, and ask
       const asked = [];
       const cancelled = starAllListed({ confirmImpl: (text) => { asked.push(text); return false; } });
       assert.equal(STAR_ALL_CONFIRM_ABOVE, 25);
-      assert.deepEqual(asked, ['Add 40 channels to Favorites? There is no undo for all of them at once.']);
+      assert.deepEqual(asked, ['Add 41 channels to Favorites? There is no undo for all of them at once.']);
       assert.equal(cancelled.cancelled, true);
       assert.equal(state.favorites.length, 0);
 
       const done = starAllListed({ confirmImpl: () => true });
-      assert.equal(done.message, 'Added 40 to Favorites.');
-      // Only the chosen playlist, type and search; in the listed order.
-      assert.deepEqual(state.favorites.map((f) => f.id), news.map((item) => item.id));
+      assert.equal(done.message, 'Added 41 to Favorites.');
+      // Only the chosen playlist, types and search, in the listed order.
+      assert.deepEqual(state.favorites.map((f) => f.id), listed.map((item) => item.id));
 
       // Few enough new channels: no question asked.
       view.playlistId = '';
-      view.personalFilters.playlists = { query: 'news', type: '' };
+      view.personalFilters.playlists = { query: 'news', type: ['radio', 'tv', 'audio', 'video'] };
+      assert.equal(libraryExportSelection().type, 'All');
       const quiet = starAllListed({ confirmImpl: () => assert.fail('must not ask') });
-      assert.equal(quiet.message, 'Added 2 to Favorites; 40 were already there.');
-      assert.deepEqual(state.favorites.slice(0, 2).map((f) => f.id), [radio.id, other.id]);
+      assert.equal(quiet.message, 'Added 2 to Favorites; 41 were already there.');
+      assert.deepEqual(state.favorites.slice(0, 2).map((f) => f.id), [audio.id, other.id]);
     });
   } finally {
     view.activeSource = before.source;
@@ -250,7 +253,10 @@ class Host extends Element {
 test('an empty My Playlists or Favorites shows its own message, even after an empty All Sources', () => {
   const oldDocument = globalThis.document;
   const oldUi = { ...ui };
-  const before = { source: view.activeSource, playlistId: view.playlistId, query: view.query, items: view.items };
+  const before = {
+    source: view.activeSource, playlistId: view.playlistId, query: view.query, items: view.items,
+    personalFilters: { ...view.personalFilters },
+  };
   const state = getState();
   const previousFavorites = state.favorites;
   try {
@@ -268,14 +274,22 @@ test('an empty My Playlists or Favorites shows its own message, even after an em
     assert.deepEqual(shown(), ['Type a search above, or browse a single source on the left.']);
     view.activeSource = 'playlists';
     view.playlistId = 'no-such-list';
+    view.personalFilters.playlists = { query: '', type: [] };
     renderResults();
     assert.deepEqual(shown(), ['Import a playlist above, or clear your filters.']);
     assert.equal(ui.playlistExport.disabled, true);
     assert.equal(ui.playlistExport.title, 'No items match this view.');
+    view.personalFilters.playlists.type = ['radio', 'tv', 'video'];
+    renderResults();
+    assert.deepEqual(shown(), ['No radio, TV, or video channels match. Import a playlist above, or clear your filters.']);
     view.activeSource = 'favorites';
+    view.personalFilters.favorites = { query: '', type: [], category: '' };
     renderResults();
     assert.deepEqual(shown(), ['Star items to save them here, or clear your filters.']);
     assert.equal(ui.favoritesExport.disabled, true);
+    view.personalFilters.favorites.type = ['radio', 'audio'];
+    renderResults();
+    assert.deepEqual(shown(), ['No radio or audio favorites match. Star items to save them here, or clear your filters.']);
     // The same message is not rebuilt on every render.
     const node = ui.resultsHost.children[0];
     renderResults();
@@ -288,6 +302,7 @@ test('an empty My Playlists or Favorites shows its own message, even after an em
     view.playlistId = before.playlistId;
     view.query = before.query;
     view.items = before.items;
+    Object.assign(view.personalFilters, before.personalFilters);
   }
 });
 

@@ -25,11 +25,12 @@ export const CHAIN_RENDER_MIN_GAP_MS = 100;
 export const view = {
   query: '',
   // Favorites also has `category`: '' (all), a category id, or ':none'.
-  personalFilters: { favorites: { query: '', type: '', category: '' }, playlists: { query: '', type: '' } },
+  personalFilters: { favorites: { query: '', type: [], category: '' }, playlists: { query: '', type: [] } },
   playlistId: '',
   activeSource: 'all', // 'all' | adapter id | 'favorites' | 'type:radio' | ...
   filters: { type: '', country: '', language: '', yearMin: null, yearMax: null },
   items: [],
+  computerHits: [],
   itemIndex: new Map(),
   currentId: null,
   detailItemId: null,

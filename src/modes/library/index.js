@@ -20,7 +20,8 @@
  */
 
 import { subscribe, getState } from '../../lib/state.js';
-import { playItem } from '../../lib/player.js';
+import { subscribeComputerLibrary, getComputerLibrary } from '../../lib/computer-library.js';
+import { isComputerItem } from '../../lib/item-model.js';
 import { view, renderedIds, thumbHydration } from './state.js';
 import { buildShell } from './shell.js';
 import {
@@ -29,14 +30,14 @@ import {
 } from './chain.js';
 import {
   renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus, syncCardStars, syncDidNotPlayMarks,
-  syncStreamLabels,
+  syncStreamLabels, filteredItemsForCurrentView, bindLibraryVideoClearance,
 } from './render.js';
 import { cancelThumbnailHydration, resetThumbnailHydrationScope } from './thumbnails.js';
 import {
   openDetail, closeDetail, getRestorableDetailItem, refreshDetailArtwork, refreshDetailPictureControls,
   refreshDetailTrouble, refreshDetailQuality,
 } from './detail.js';
-import { filterItems } from './filter.js';
+import { movedComputerDetail, nextPlayableLibraryItem, playLibraryItem, updateComputerHits } from './computer.js';
 import { libraryPool } from './personal.js';
 import { getPlaylistItems } from '../../lib/playlists.js';
 import {
@@ -80,19 +81,14 @@ function tearDown() {
 /** Skip to the next item from the current pool. Used by the player's
  *  "Try next" button when a stream fails. */
 function tryNext() {
-  const pool = libraryPool();
-  const filtered = filterItems(pool).filter((item) => item.__contentHidden !== true);
-  if (filtered.length === 0) return;
-  const idx = filtered.findIndex((it) => it.id === view.currentId);
-  const nextIdx = idx >= 0 ? (idx + 1) % filtered.length : 0;
-  const next = filtered[nextIdx];
+  const next = nextPlayableLibraryItem(filteredItemsForCurrentView(libraryPool()), view.currentId);
   if (!next) return;
   view.currentId = next.id;
   for (const card of ui.resultsHost?.querySelectorAll?.('.card') || []) {
     card.classList.toggle('is-playing', card.dataset.id === view.currentId);
   }
   openDetail(next);
-  playItem(next).catch(() => {});
+  playLibraryItem(next).catch(() => {});
 }
 
 let startTabChosen = false;
@@ -125,12 +121,14 @@ export function chooseLibraryStartTab(favoriteCount = getState().favorites.lengt
 // Marker for cache-bust verification (build id changes whenever this string
 // changes, so the WebView2 has to fetch a fresh bundle on next launch).
   // build-id: 2026-11-08-favorites-first
-export function renderLibrary(host) {
+export function renderLibrary(host, { showInComputer } = {}) {
   console.info('[library] build 2026-11-08-favorites-first loaded');
   tearDown();
   resetThumbnailHydrationScope();
   chooseLibraryStartTab();
   host.appendChild(buildShell());
+  subs.push(bindLibraryVideoClearance(ui.resultsHost.parentNode));
+  ui.showInComputer = showInComputer;
   subs.push(mountFavoriteTitles(ui.resultsHost, ui.favoriteTitles));
 
   // buildShell() created a fresh resultsHost — so any ids we tracked as
@@ -138,6 +136,25 @@ export function renderLibrary(host) {
   renderedIds.clear();
   resumeCatalogWork();
   reconcileEnabledSources();
+  let snapshot = getComputerLibrary();
+  view.currentId = getState().currentItem?.id || null;
+  updateComputerHits(snapshot);
+  subs.push(subscribeComputerLibrary((next) => {
+    const movesChanged = next.moved !== snapshot.moved;
+    const changed = next.items !== snapshot.items || next.folders !== snapshot.folders
+      || next.missingFiles !== snapshot.missingFiles || next.loaded !== snapshot.loaded || movesChanged;
+    snapshot = next;
+    if (!changed) return;
+    const hitsChanged = updateComputerHits(next);
+    if (hitsChanged || view.activeSource === 'favorites') {
+      renderResults(); renderStatus(); updateSidebarCounts(); updateSentinelStatus();
+    }
+    if (view.detailItemId?.startsWith('computer:')) {
+      const item = (movesChanged && movedComputerDetail(view.detailItemId, next))
+        || getRestorableDetailItem(getState().currentItem, view.itemIndex, getState().favorites);
+      if (isComputerItem(item)) openDetail(item);
+    }
+  }));
 
   const mountedPreference = getState().settings.showExplicitContent === true;
   const preferenceChanged = view.contentPreference != null
@@ -163,7 +180,7 @@ export function renderLibrary(host) {
   }
 
   const state = getState();
-  const restoredDetail = getRestorableDetailItem(
+  const restoredDetail = movedComputerDetail(view.detailItemId, snapshot) || getRestorableDetailItem(
     state.currentItem, view.itemIndex, [...state.favorites, ...getPlaylistItems()],
   );
   if (restoredDetail) openDetail(restoredDetail);
@@ -182,6 +199,9 @@ export function renderLibrary(host) {
     if (view.activeSource === 'favorites') { renderResults(); renderStatus(); }
     else { syncCardStars(); syncDidNotPlayMarks(); }
     refreshDetailTrouble();
+  }));
+  subs.push(subscribe('computer-stars-order', () => {
+    if (view.activeSource === 'favorites') renderResults();
   }));
   subs.push(subscribe(FAVORITE_GROUPS_EVENT, () => {
     // A deleted category falls back to "All categories" before the cards are drawn.

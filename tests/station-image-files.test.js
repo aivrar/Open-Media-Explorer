@@ -10,7 +10,7 @@ import {
 } from '../src/lib/station-image-files.js';
 import {
   STATION_IMAGE_MAX_BYTES, applyStationImageList, normalizeStationName, setStationImageTitleSource,
-  stationImageSourceFor, stationPictureFileKey,
+  migrateLegacyStationPictures, prepareStationPictureKey, stationImageSourceFor, stationPictureFileKey,
 } from '../src/lib/station-images.js';
 import { ControlApiError } from '../src/lib/capture-client.js';
 import {
@@ -91,7 +91,7 @@ test('the picture is filed under the station\'s own name, also for a renamed fav
 
 /* ============ Saving ============ */
 
-test('a picture is sent as base64 with the station\'s name and nothing that names a file', async (t) => {
+test('a picture is sent as base64 with the saved station ID', async (t) => {
   withPictures(t, ['Radio One'], []);
   const { request, calls } = requests({ files: [] }, { file: 'Radio One.png' });
   let reloads = 0;
@@ -99,15 +99,15 @@ test('a picture is sent as base64 with the station\'s name and nothing that name
   const result = await saveStationPicture(fav('a', 'Radio One'), fileOf(), {
     request, reload: async () => { reloads += 1; }, confirmImpl: (text) => { asked.push(text); return true; },
   });
-  assert.deepEqual(result, { ok: true, text: 'Picture saved for Radio One as Radio One.png.' });
+  assert.deepEqual(result, { ok: true, text: 'Picture saved for Radio One.' });
   assert.deepEqual(asked, [], 'nothing to replace: no question');
   assert.equal(reloads, 1, 'the list is read again, so every view updates');
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], { path: STATION_IMAGE_SAVE_ROUTE, method: 'POST', body: { station: 'Radio One', preview: true } },
+  assert.deepEqual(calls[0], { path: STATION_IMAGE_SAVE_ROUTE, method: 'POST', body: { station: 'Radio One', station_id: 'a', preview: true } },
     'first: what would it replace (no picture sent)');
   assert.equal(calls[1].path, STATION_IMAGE_SAVE_ROUTE);
   assert.equal(calls[1].method, 'POST');
-  assert.deepEqual(Object.keys(calls[1].body).sort(), ['data', 'replace', 'station']);
+  assert.deepEqual(Object.keys(calls[1].body).sort(), ['data', 'replace', 'station', 'station_id']);
   assert.equal(calls[1].body.station, 'Radio One');
   assert.equal(calls[1].body.replace, false);
   assert.equal(calls[1].body.data, Buffer.from(PNG_BYTES).toString('base64'));
@@ -133,8 +133,9 @@ test('a station with its own picture is only given a new one after a yes to a qu
   assert.equal(asked.at(-1), 'The files AC-DC.png and ac-dc.gif are already there. Replace them?');
   assert.equal(yes.calls[1].body.replace, true);
   assert.deepEqual(yes.calls[1].body.files, ['AC-DC.png', 'ac-dc.gif'], 'the yes carries exactly the names shown');
-  assert.deepEqual(yes.calls.map((call) => call.body.current), [ID_A, ID_A],
-    'the picture shown now is named by its id only');
+  assert.deepEqual(yes.calls.map((call) => call.body.station_id), [item.id, item.id]);
+  assert.ok(yes.calls.every((call) => !Object.hasOwn(call.body, 'current')),
+    'the save only asks about files scoped to this station');
 });
 
 test('file names are shown in full, and more files than a question can show are refused', async (t) => {
@@ -251,6 +252,36 @@ test('Remove picture names the files it deletes, then deletes only those', async
   assert.match((await removeStationPicture(item, {
     request: changed.request, reload: async () => {}, confirmImpl: () => true,
   })).text, /nothing was removed/);
+});
+
+test('removing an ID picture keeps legacy pictures for their other owners', async (t) => {
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = new Map();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value),
+  } });
+  t.after(() => {
+    if (before) Object.defineProperty(globalThis, 'localStorage', before);
+    else delete globalThis.localStorage;
+  });
+  const radio = fav('radio:remove-id', 'News');
+  const tv = fav('tv:legacy-owner', 'News', { type: 'tv' });
+  const key = await prepareStationPictureKey(radio.id);
+  withPictures(t, ['News'], [['News', ID_A], [key, ID_B]]);
+  migrateLegacyStationPictures([radio, tv]);
+  const removed = requests({ files: [key + '.png'] }, { removed: 1 });
+  const result = await removeStationPicture(radio, {
+    request: removed.request,
+    confirmImpl: (prompt) => {
+      assert.equal(prompt, 'Remove the picture of News?');
+      return true;
+    },
+    reload: async () => applyStationImageList({ images: [{ key: 'news', id: ID_A, v: '1' }] }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(removed.calls[1].body.id, ID_B);
+  assert.equal(stationImageSourceFor(radio), '');
+  assert.equal(stationImageSourceFor(tv), `station-image:${ID_A}:1`);
 });
 
 test('a renamed favorite\'s picture under the user\'s name is the one file named and removed', async (t) => {
@@ -515,10 +546,10 @@ test('validated previews show while saving, persist on a remount, and roll back 
   assert.deepEqual(released, ['optimistic']);
 });
 
-test('different stations save independently and the latest drop wins on one station', async (t) => {
+test('same-name stations save independently and the latest drop wins on one station', async (t) => {
   const { state, cardFor } = pictureTargets(t);
   const jazz = cardFor(state.favorites[0]);
-  const news = cardFor(state.favorites[1]);
+  const news = cardFor({ ...state.favorites[1], title: state.favorites[0].title, type: 'tv' });
   const first = deferred();
   const second = deferred();
   const calls = [];

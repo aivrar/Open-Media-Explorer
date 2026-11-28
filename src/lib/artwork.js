@@ -6,10 +6,12 @@
  * checks, and only the resulting opaque same-origin route may reach an <img>.
  */
 
+import { getControlSession, invalidateControlSession } from './capture-client.js';
 import {
   REFUSED_ASSET_TTL_MS, assetRefusedThisSession, isRefusedAssetError, registerCatalogAsset,
 } from './catalog-client.js';
-import { safeExternalUrl } from './item-model.js';
+import { artworkInitials, initialsHue } from './initials.js';
+import { isComputerItem, safeExternalUrl } from './item-model.js';
 import { isRetiredSource, loadAdapter } from './sources.js';
 import {
   isStationImageSource, markStationImageFailed, stationImageSourceFor, stationImageUrl,
@@ -31,20 +33,48 @@ export const PLAYBACK_ARTWORK_CONCURRENCY = 1;
 export const PLAYBACK_ARTWORK_IMAGE_CONCURRENCY = 2;
 
 const LOCAL_ASSET_RELAY = /^\/api\/v1\/assets\/[A-Za-z0-9_-]{16,}$/;
+const COMPUTER_ART_ROUTE = /^\/api\/v1\/computer\/art\/[A-Za-z0-9_-]+(?:\?size=large)?$/;
+const MISSING_COMPUTER_ART_LIMIT = 512;
+let missingComputerArt = new Set();
+const computerImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+export function clearMissingComputerArt() {
+  missingComputerArt = new Set();
+}
+
+export function computerArtSource(entryId, { large = false } = {}) {
+  return typeof entryId === 'string' && /^[A-Za-z0-9_-]+$/.test(entryId)
+    ? `/api/v1/computer/art/${entryId}${large ? '?size=large' : ''}` : '';
+}
+
+export function computerArtworkTile(doc, title) {
+  const tile = doc.createElement('span');
+  tile.className = 'card-thumb computer-cover';
+  tile.setAttribute('aria-hidden', 'true');
+  const placeholder = doc.createElement('span');
+  placeholder.className = 'placeholder has-initials';
+  const initials = doc.createElement('span');
+  initials.className = 'ph-initials';
+  initials.textContent = artworkInitials(title);
+  initials.style.setProperty?.('--ph-hue', String(initialsHue(title)));
+  placeholder.append(initials);
+  tile.append(placeholder);
+  return tile;
+}
 
 export function isArtworkRelayUrl(value) {
   return typeof value === 'string' && LOCAL_ASSET_RELAY.test(value.trim());
 }
 
-/**
- * What an item's image shows: the user's own picture from the station-images
- * folder when one is named like the item (station-images.js), otherwise its
- * relay artwork, otherwise '' (the initials tile). Every view asks this, so a
- * custom picture takes priority everywhere without per-view rules. A custom
- * picture that will not load is marked failed, and the item goes back to its
- * own artwork.
- */
-export function artworkSourceFor(item) {
+export function computerItemArtSource(item, options) {
+  const computer = item?._extra?.computer;
+  if (computer?.unreadable) return '';
+  return item?.type === 'video' || computer?.hasCover ? computerArtSource(computer?.id, options) : '';
+}
+
+/** The Computer cover, a custom station picture, relay artwork, or initials. */
+export function artworkSourceFor(item, options) {
+  if (isComputerItem(item)) return computerItemArtSource(item, options);
   return stationImageSourceFor(item)
     || (isArtworkRelayUrl(item?.thumbnail) ? item.thumbnail.trim() : '');
 }
@@ -268,6 +298,7 @@ function waitForArtworkImage(image, source, signal, requireConnected = true, tim
 export async function loadArtworkImage(image, relayUrl, opts = {}) {
   const source = typeof relayUrl === 'string' ? relayUrl.trim() : '';
   if (isStationImageSource(source)) return loadStationArtwork(image, source, opts);
+  if (COMPUTER_ART_ROUTE.test(source)) return loadComputerArtwork(image, source, opts);
   if (!isArtworkRelayUrl(source)) {
     throw imageLoadError('Artwork image source is not an opaque relay URL.');
   }
@@ -290,6 +321,49 @@ export async function loadArtworkImage(image, relayUrl, opts = {}) {
     }
   }
   throw lastError || imageLoadError();
+}
+
+async function loadComputerArtwork(image, source, {
+  signal, priority, fetchImpl = globalThis.fetch,
+  createUrl = URL.createObjectURL, revokeUrl = URL.revokeObjectURL,
+  requireConnected, imageTimeoutMs, keepObjectUrl,
+}) {
+  if (missingComputerArt.has(source)) throw imageLoadError();
+  return artworkImageQueue.enqueue(async () => {
+    signal?.throwIfAborted();
+    if (missingComputerArt.has(source)) throw imageLoadError();
+    const { token } = await getControlSession({ fetchImpl, signal });
+    signal?.throwIfAborted();
+    const misses = missingComputerArt;
+    const response = await fetchImpl(source, {
+      signal, credentials: 'same-origin', cache: 'no-cache', headers: { 'X-WorldMedia-Token': token },
+    });
+    if (response.status === 404 && !misses.has(source)) {
+      if (misses.size === MISSING_COMPUTER_ART_LIMIT) misses.delete(misses.values().next().value);
+      misses.add(source);
+    }
+    signal?.throwIfAborted();
+    if (!response.ok) {
+      if (response.status === 403) {
+        const payload = await response.json().catch(() => null);
+        if (payload?.error?.code === 'INVALID_TOKEN') invalidateControlSession(token);
+      }
+      await response.body?.cancel().catch(() => {});
+      throw imageLoadError();
+    }
+    const blob = await response.blob();
+    signal?.throwIfAborted();
+    if (!computerImageTypes.has(blob.type.split(';', 1)[0]) || !blob.size) throw imageLoadError();
+    const url = createUrl(blob);
+    let kept = false;
+    try {
+      const loaded = await waitForArtworkImage(image, url, signal, requireConnected !== false, imageTimeoutMs);
+      kept = keepObjectUrl?.(url) === true;
+      return loaded;
+    } finally {
+      if (!kept) revokeUrl(url);
+    }
+  }, priority, { signal });
 }
 
 /** A custom station picture: fetched once (with the session token) and shown
@@ -467,7 +541,7 @@ async function resolveArtworkOnce(item, candidate, opts) {
  * Concurrent consumers of the same source/item share one bounded request.
  */
 export async function resolveArtworkRelay(item, opts = {}) {
-  if (!item || typeof item !== 'object') return item;
+  if (!item || typeof item !== 'object' || isComputerItem(item)) return item;
   if (isArtworkRelayUrl(item.thumbnail)) return item;
   if (!item.id || !item.source) {
     if (item.thumbnail) item.thumbnail = '';

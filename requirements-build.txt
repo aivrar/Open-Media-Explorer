@@ -6,3 +6,4 @@ altgraph==0.17.5
 pefile==2024.8.26
 pywin32-ctypes==0.2.3
 defusedxml==0.7.1
+tinytag==2.3.2

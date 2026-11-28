@@ -733,6 +733,27 @@ function fakeSignal() {
   };
 }
 
+test('gapless FFT transients do not re-seed the meter or extend its peak hold', (t) => {
+  const meter = createPlayerMeter({ canvas: fakeCanvas(), signal: fakeSignal(), win: {}, doc: null });
+  t.after(meter.destroy);
+  meter.resize(90, 36);
+  const steady = {
+    active: true, dt: 1 / METER_FPS, minDecibels: -85, maxDecibels: -15,
+    bars: (_count, out) => out.fill(0.48),
+  };
+  for (let index = 0; index < 30; index++) meter.onFrame(steady);
+  const state = () => [meter.state.levels, meter.state.peaks, meter.state.holds, meter.state.trackedDb, meter.lit];
+  const before = state().map((values) => values.slice());
+  const loud = { ...steady, handoffTime: 2, bars: (_count, out) => out.fill(1) };
+  meter.onFrame({ ...loud, time: 2.06 });
+  meter.onFrame({ ...loud, time: 2.11 });
+  assert.deepEqual(state(), before);
+  meter.onFrame({ ...loud, time: 2.14 });
+  assert.ok(meter.state.levels[0] > before[0][0], 'a sustained louder track still raises the meter');
+  meter.onFrame({ active: false, time: 2.15 });
+  assert.ok(meter.lit.every((value) => value === 0), 'pause still clears the meter');
+});
+
 test('the meter listens only while enabled, laid out and allowed to move', () => {
   const signal = fakeSignal();
   const canvas = fakeCanvas();

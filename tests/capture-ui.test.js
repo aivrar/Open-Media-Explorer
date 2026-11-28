@@ -67,7 +67,7 @@ test('polling keeps capture status attached to item identity across item and mod
       id: 'archive:second', title: 'Second item', delivery: 'on-demand',
       download_url: 'https://media.example/second.mp3', stream_kind: 'audio', type: 'audio',
     });
-    setMode('grid');
+    setMode('computer');
     await controller.refresh();
     assert.equal(elements['player-capture-label'].textContent, 'Download');
     // A standing hint: on the button's hover and description, not in the bar.

@@ -21,6 +21,7 @@ import { filterContentItems } from '../../lib/content-rating.js';
 import { removeSourceItems } from './catalog-store.js';
 import { createSnapshotManager } from './snapshots.js';
 import { createLineWatch } from './line-watch.js';
+import { updateComputerHits } from './computer.js';
 import {
   renderResults, renderStatus, updateSidebarCounts,
   updateSentinelStatus, setSourceStatus, expandRenderWindow, effectiveStatusSources,
@@ -328,8 +329,8 @@ export async function runSearch() {
   view.catalogActive = true;
   const query = (view.query || '').trim();
   view.lastQuery = query;
+  updateComputerHits();
   view.renderLimit = RENDER_LIMIT_INITIAL;
-  view.renderStart = 0;
 
   const hasBrowseHistory = view.sourceCounts.size > 0
     || [...view.sourceProgress.values()].some((progress) => (

@@ -14,7 +14,10 @@
  */
 
 import { controlRequest } from './capture-client.js';
-import { isStationImageSource, loadStationImages, STATION_IMAGE_MAX_BYTES, stationImageSourceFor } from './station-images.js';
+import {
+  hideLegacyStationPicture, isScopedStationPicture, isStationImageSource, loadStationImages,
+  prepareStationPictureKey, STATION_IMAGE_MAX_BYTES, stationImageSourceFor,
+} from './station-images.js';
 
 export const STATION_IMAGE_SAVE_ROUTE = '/api/v1/station-images/save';
 export const STATION_IMAGE_REMOVE_ROUTE = '/api/v1/station-images/remove';
@@ -34,8 +37,7 @@ export const TOO_MANY_FILES_TEXT = 'More than 20 files in the station-images fol
   + 'are kept, belong to this station, so nothing was changed and nothing was deleted. Tidy that folder by hand '
   + 'first, then try again.';
 
-/** The station's own name, which its picture is filed under: for a favorite
- *  the user renamed, the name it came with (as station-images.js matches). */
+/** The station's original name for the picture messages. */
 export function stationOwnName(item) {
   if (!item || typeof item !== 'object') return '';
   if (item.__favoriteName === true && typeof item.originalTitle === 'string' && item.originalTitle) {
@@ -151,18 +153,15 @@ export function replaceQuestion(files) {
 export async function saveStationPicture(item, file, {
   confirmImpl = (text) => globalThis.confirm(text),
   request = controlRequest,
-  reload = () => loadStationImages(),
-  currentSource = stationImageSourceFor,
+  reload = () => loadStationImages({ afterCurrent: true }),
   retryChanged = true,
 } = {}) {
   const name = stationOwnName(item);
-  if (!name.trim()) return { ok: false, text: 'This station has no name to keep its picture under.' };
+  if (!name.trim()) return { ok: false, text: 'This station has no name.' };
+  if (typeof item.id !== 'string' || !item.id) return { ok: false, text: 'Save this station before choosing a picture.' };
   if (!file || !(Number(file.size) > 0)) return { ok: false, text: PICTURE_EMPTY_TEXT };
   if (Number(file.size) > STATION_IMAGE_MAX_BYTES) return { ok: false, text: PICTURE_TOO_LARGE_TEXT };
   const shown = shownName(name);
-  // The picture shown for it now, by id: the server only acts on it for a
-  // station matched by spelling, and names its file in the question.
-  const current = pictureIdOf(currentSource(item));
   let data;
   try {
     data = await fileToBase64(file);
@@ -171,12 +170,12 @@ export async function saveStationPicture(item, file, {
   }
   const lost = 'The picture could not be saved: the app did not answer.';
   const ask = () => request(STATION_IMAGE_SAVE_ROUTE, {
-    method: 'POST', body: { station: name, preview: true, ...(current ? { current } : {}) },
+    method: 'POST', body: { station: name, station_id: item.id, preview: true },
   });
   const send = (files) => request(STATION_IMAGE_SAVE_ROUTE, {
     method: 'POST',
     body: {
-      station: name, data, replace: files.length > 0, ...(current ? { current } : {}),
+      station: name, station_id: item.id, data, replace: files.length > 0,
       ...(files.length ? { files } : {}),
     },
   });
@@ -199,9 +198,9 @@ export async function saveStationPicture(item, file, {
       if (!changed || !retryChanged || round > 0) return { ok: false, text: failureText(error, lost) };
     }
   }
+  await prepareStationPictureKey(item.id);
   try { await reload(); } catch (_) { /* shown after the next Refresh */ }
-  const savedAs = typeof result?.file === 'string' && result.file ? ` as ${shownName(result.file)}` : '';
-  return { ok: true, text: `Picture saved for ${shown}${savedAs}.` };
+  return { ok: true, text: `Picture saved for ${shown}.` };
 }
 
 /** "Remove the picture of NAME? This file is deleted from the
@@ -219,10 +218,12 @@ export function removeQuestion(shown, files) {
 export async function removeStationPicture(item, {
   confirmImpl = (text) => globalThis.confirm(text),
   request = controlRequest,
-  reload = () => loadStationImages(),
+  reload = () => loadStationImages({ afterCurrent: true }),
   currentSource = stationImageSourceFor,
 } = {}) {
-  const id = pictureIdOf(currentSource(item));
+  const source = currentSource(item);
+  const id = pictureIdOf(source);
+  const scoped = isScopedStationPicture(item, source);
   const shown = shownName(stationOwnName(item));
   if (!id) return { ok: false, text: `${shown || 'This station'} has no picture of its own.` };
   let files;
@@ -234,12 +235,18 @@ export async function removeStationPicture(item, {
   }
   if (!files.length) return { ok: false, text: `${shown || 'This station'} has no picture of its own.` };
   if (files.length > MAX_FILES_SHOWN) return { ok: false, text: TOO_MANY_FILES_TEXT };
-  if (!confirmImpl(removeQuestion(shown, files))) return { ok: false, cancelled: true, text: '' };
+  const question = scoped ? `Remove the picture of ${shown}?` : removeQuestion(shown, files);
+  if (!confirmImpl(question)) return { ok: false, cancelled: true, text: '' };
   let result;
   try {
     result = await request(STATION_IMAGE_REMOVE_ROUTE, { method: 'POST', body: { id, files } });
   } catch (error) {
     return { ok: false, text: failureText(error, 'The picture could not be removed: the app did not answer.') };
+  }
+  if (Number(result?.removed) > 0 && scoped) {
+    try { hideLegacyStationPicture(item); } catch (error) {
+      console.warn('Could not save station picture preference:', error);
+    }
   }
   try { await reload(); } catch (_) { /* shown after the next Refresh */ }
   if (!(Number(result?.removed) > 0)) {

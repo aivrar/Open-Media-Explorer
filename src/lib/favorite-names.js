@@ -20,6 +20,8 @@
  * favorite-rename.js.
  */
 
+import { isComputerFavoriteId } from './profile-storage.js';
+
 export const FAVORITE_NAMES_KEY = 'worldmedia.favnames.v1';
 export const FAVORITE_NAMES_VERSION = 1;
 // A name longer than this made a Tuner card hundreds of pixels wide; a
@@ -65,7 +67,7 @@ export function parseFavoriteNames(raw) {
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return EMPTY;
   for (const [favoriteId, name] of Object.entries(stored)) {
     if (names.size >= MAX_FAVORITE_NAMES) break;
-    if (!favoriteId || favoriteId.length > MAX_FAVORITE_ID_LENGTH) continue;
+    if (!favoriteId || isComputerFavoriteId(favoriteId) || favoriteId.length > MAX_FAVORITE_ID_LENGTH) continue;
     const clean = cleanFavoriteName(name);
     if (clean) names.set(favoriteId, clean);
   }

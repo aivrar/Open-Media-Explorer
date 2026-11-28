@@ -2,13 +2,11 @@
  * The user's own station pictures: the station-images folder in the data
  * folder (worldmedia_station_images.py).
  *
- * The backend lists the pictures by normalized name. A picture is shown for
- * any item whose title normalizes to the same name, in place of its own
- * artwork (artwork.js decides; every view goes through it). The list is
- * fetched once at startup and again when the user presses Refresh in
- * Settings. A picture is fetched with the session token like every control
- * request and shown through an object URL; the page never sees a file path,
- * and nothing about it is saved in the profile.
+ * Pictures set in the app use a key derived from the saved station ID.
+ * Existing name-based pictures are bound to the saved stations that matched
+ * when first scanned. Unmatched files still work by name. Only these legacy
+ * assignments are saved with the profile. Picture files stay in the folder
+ * and are fetched with the session token for display through object URLs.
  *
  * Matching rule (the same as normalize_station_name in Python; the shared
  * cases are in tests/fixtures/station-image-names.json): Unicode NFKC, every
@@ -27,7 +25,10 @@
 
 import { controlRequest, getControlSession, invalidateControlSession } from './capture-client.js';
 import { getState } from './state.js';
-import { getPlaylistItems } from './playlists.js';
+import { getPlaylistItems, loadPlaylists } from './playlists.js';
+import { favoriteNamesSnapshot, withFavoriteName } from './favorite-names.js';
+import { checkProfileStorageBudget, STATION_IMAGE_OWNERS_KEY } from './profile-storage.js';
+import { scheduleProfileHandoff } from './profile-transfer.js';
 
 export const STATION_IMAGES_ROUTE = '/api/v1/station-images';
 export const STATION_IMAGES_OPEN_ROUTE = '/api/v1/station-images/open-folder';
@@ -46,6 +47,7 @@ export const STATION_IMAGE_PROBLEMS_SHOWN = 10;
 const SOURCE_PREFIX = 'station-image:';
 const SOURCE_PATTERN = /^station-image:([0-9a-f]{32}):([0-9a-f]{1,32})$/;
 const ID_PATTERN = /^[0-9a-f]{32}$/;
+const SCOPED_KEY = /^wm-station-id-[0-9a-f]{64}$/;
 const STAMP_PATTERN = /^[0-9a-f]{1,32}$/;
 // Longer names can never match: Windows file names are at most 255 units long.
 const MAX_NAME_INPUT = 1024;
@@ -218,7 +220,7 @@ function assignPictures(titles) {
   const picks = new Map();
   const owners = new Map();
   for (const [title, info] of stations) {
-    if (info.loose || !index.byKey.has(info.exact)) continue;
+    if (info.loose || SCOPED_KEY.test(info.exact) || !index.byKey.has(info.exact)) continue;
     picks.set(title, info.exact);
     if (!owners.has(info.exact)) owners.set(info.exact, title);
   }
@@ -245,13 +247,122 @@ function assignPictures(titles) {
 
 let index = {
   version: '', folder: '', loaded: false, byKey: new Map(), canon: new Map(), files: new Map(),
-  rejected: [], rejectedMore: 0,
+  rejected: [], rejectedMore: 0, hasScoped: false,
 };
 const failed = new Set();
 const listeners = new Set();
 // source -> { promise, url }, oldest first.
 const objectUrls = new Map();
 let loading = null;
+let startupFavorites;
+const stationKeys = new Map();
+const pendingStationKeys = new Map();
+let scopedNotificationPending = false;
+let ownersDocument;
+
+function legacyOwners(storage = globalThis.localStorage) {
+  try {
+    const raw = storage?.getItem(STATION_IMAGE_OWNERS_KEY);
+    if (ownersDocument && ownersDocument.raw === raw) return ownersDocument;
+    const value = JSON.parse(raw || 'null');
+    const owners = new Map();
+    const pictures = new Map();
+    const hidden = new Set(value?.version === 1 && Array.isArray(value.hidden) ? value.hidden : []);
+    if (value?.version === 1 && value.owners && typeof value.owners === 'object') {
+      for (const [key, ids] of Object.entries(value.owners)) {
+        if (!Array.isArray(ids)) continue;
+        const valid = ids.filter((id) => typeof id === 'string' && id);
+        owners.set(key, new Set(valid));
+        for (const id of valid) {
+          if (!pictures.has(id)) pictures.set(id, []);
+          pictures.get(id).push(key);
+        }
+      }
+    }
+    return (ownersDocument = { raw, owners, pictures, hidden });
+  } catch (_) {
+    return { owners: new Map(), pictures: new Map(), hidden: new Set() };
+  }
+}
+
+function saveLegacyOwners(owners, hidden, storage) {
+  const raw = JSON.stringify({
+    version: 1,
+    owners: Object.fromEntries([...owners].map(([key, ids]) => [key, [...ids]])),
+    hidden: [...hidden],
+  });
+  checkProfileStorageBudget(storage, [[STATION_IMAGE_OWNERS_KEY, raw]]);
+  storage.setItem(STATION_IMAGE_OWNERS_KEY, raw);
+  scheduleProfileHandoff();
+}
+
+/** Bind the legacy pictures which matched a saved station at first startup. */
+export function migrateLegacyStationPictures(stations, storage = globalThis.localStorage) {
+  if (legacyOwners(storage).raw) return false;
+  const names = stations.flatMap((item) => [item.title, item.originalTitle]);
+  const { picks } = assignPictures(names);
+  const owners = new Map();
+  for (const item of stations) {
+    if (typeof item.id !== 'string' || !item.id) continue;
+    for (const title of [item.originalTitle, item.title]) {
+      const key = picks.get(title);
+      if (!key) continue;
+      if (!owners.has(key)) owners.set(key, new Set());
+      owners.get(key).add(item.id);
+    }
+  }
+  saveLegacyOwners(owners, new Set(), storage);
+  return true;
+}
+
+/** Resolve the filename key used by the native store without blocking a render. */
+export function prepareStationPictureKey(id) {
+  if (typeof id !== 'string' || !id) return Promise.resolve('');
+  if (stationKeys.has(id)) return Promise.resolve(stationKeys.get(id));
+  if (pendingStationKeys.has(id)) return pendingStationKeys.get(id);
+  if (!globalThis.crypto?.subtle) return Promise.resolve('');
+  const pending = globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(id))
+    .then((bytes) => {
+      const digest = [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+      const key = 'wm-station-id-' + digest;
+      if (stationKeys.size >= MAX_REMEMBERED_TITLES) {
+        // Prefer keeping keys which identify a picture.
+        let discard = stationKeys.keys().next().value;
+        for (const [candidate, known] of stationKeys) {
+          if (index.byKey.has(known)) continue;
+          discard = candidate;
+          break;
+        }
+        stationKeys.delete(discard);
+      }
+      stationKeys.set(id, key);
+      if (index.byKey.has(key) && !scopedNotificationPending) {
+        scopedNotificationPending = true;
+        const update = () => {
+          scopedNotificationPending = false;
+          notify();
+        };
+        if (globalThis.requestAnimationFrame) globalThis.requestAnimationFrame(update);
+        else queueMicrotask(update);
+      }
+      return key;
+    }, () => '').finally(() => pendingStationKeys.delete(id));
+  pendingStationKeys.set(id, pending);
+  return pending;
+}
+
+export function isScopedStationPicture(item, source) {
+  const key = stationKeys.get(item?.id);
+  return Boolean(key && source && index.byKey.get(key) === source);
+}
+
+/** Removing an ID picture also dismisses any legacy picture behind it for this station. */
+export function hideLegacyStationPicture(item) {
+  if (!legacyPictureFor(item)) return;
+  const storage = globalThis.localStorage;
+  const { owners, hidden } = legacyOwners(storage);
+  saveLegacyOwners(owners, new Set([...hidden, item.id]), storage);
+}
 
 // The station names pictures are shared out between: favorites and playlist
 // stations. Read again only when one of those lists or the picture list is
@@ -286,7 +397,7 @@ function pictureKeyFor(title) {
   if (key !== undefined) return key;
   key = '';
   const info = stationName(title);
-  if (info && !info.loose) key = index.byKey.has(info.exact) ? info.exact : '';
+  if (info && !info.loose) key = index.byKey.has(info.exact) && !SCOPED_KEY.test(info.exact) ? info.exact : '';
   else if (info) key = looseFits(info, current.owners).fits.find((fit) => !current.takenBy.has(fit)) || '';
   // Forget the oldest one name, not all of them, when full.
   if (otherTitles.size >= MAX_REMEMBERED_TITLES) otherTitles.delete(otherTitles.keys().next().value);
@@ -320,7 +431,7 @@ function releaseObjectUrl(source, revoke = globalThis.URL?.revokeObjectURL?.bind
  *  `retryFailed` (a fresh load: startup or Refresh) forgets which pictures
  *  failed to load, so a picture that failed once for a passing reason is
  *  tried again even when the list names it unchanged. */
-export function applyStationImageList(data, { retryFailed = false } = {}) {
+export function applyStationImageList(data, { retryFailed = false, legacyStations } = {}) {
   const byKey = new Map();
   const canon = new Map();
   const files = new Map();
@@ -329,9 +440,11 @@ export function applyStationImageList(data, { retryFailed = false } = {}) {
     if (typeof key !== 'string' || !key || key.length > MAX_NAME_INPUT || byKey.has(key)) continue;
     if (!ID_PATTERN.test(String(entry.id)) || !STAMP_PATTERN.test(String(entry.v))) continue;
     byKey.set(key, `${SOURCE_PREFIX}${entry.id}:${entry.v}`);
-    const filed = canonicalName(key);
-    if (!canon.has(filed)) canon.set(filed, []);
-    canon.get(filed).push(key);
+    if (!SCOPED_KEY.test(key)) {
+      const filed = canonicalName(key);
+      if (!canon.has(filed)) canon.set(filed, []);
+      canon.get(filed).push(key);
+    }
     if (typeof entry.file === 'string' && entry.file) files.set(key, entry.file.slice(0, 160));
   }
   const rejected = (Array.isArray(data?.rejected) ? data.rejected : [])
@@ -349,7 +462,15 @@ export function applyStationImageList(data, { retryFailed = false } = {}) {
     files,
     rejected,
     rejectedMore: count(data?.rejected_more),
+    hasScoped: [...byKey.keys()].some((key) => SCOPED_KEY.test(key)),
   };
+  if (legacyStations) {
+    try {
+      changed = migrateLegacyStationPictures(legacyStations) || changed;
+    } catch (error) {
+      console.warn('Could not save legacy station picture assignments:', error);
+    }
+  }
   const current = new Set(byKey.values());
   for (const source of [...objectUrls.keys()]) if (!current.has(source)) releaseObjectUrl(source);
   for (const source of [...failed]) {
@@ -371,18 +492,34 @@ export function stationImagesSnapshot() {
  *  Costs nothing when there are no pictures. */
 export function stationImageSourceFor(item) {
   if (index.byKey.size === 0 || !item || typeof item !== 'object' || item.__contentHidden === true) return '';
-  const title = item.title;
-  if (typeof title !== 'string' || !title) return '';
-  // A favorite the user renamed (favorite-names.js) keeps the picture named
-  // after the station; a picture named after the new name is used otherwise.
-  // A picture that will not load counts as none.
-  const own = item.__favoriteName === true && typeof item.originalTitle === 'string' ? item.originalTitle : '';
-  return (own && usablePictureFor(own)) || usablePictureFor(title);
+  if (index.hasScoped) {
+    const key = stationKeys.get(item.id);
+    if (!key) void prepareStationPictureKey(item.id);
+    const source = usablePicture(key);
+    if (source) return source;
+  }
+  return legacyPictureFor(item);
 }
 
-function usablePictureFor(title) {
-  const key = pictureKeyFor(title);
-  const source = key ? index.byKey.get(key) : '';
+function legacyPictureFor(item) {
+  const { owners, pictures, hidden } = legacyOwners();
+  if (hidden.has(item.id)) return '';
+  const own = item.__favoriteName === true ? item.originalTitle : '';
+  const keys = [own, item.title].filter((title) => typeof title === 'string' && title).map(pictureKeyFor);
+  const bound = pictures.get(item.id) || [];
+  for (const key of [
+    ...keys.filter((key) => owners.get(key)?.has(item.id)),
+    ...bound,
+    ...keys.filter((key) => !owners.has(key)),
+  ]) {
+    const source = usablePicture(key);
+    if (source) return source;
+  }
+  return '';
+}
+
+function usablePicture(key) {
+  const source = index.byKey.get(key);
   return source && !failed.has(source) ? source : '';
 }
 
@@ -423,7 +560,9 @@ export function stationImageProblems({ titles = null, limit = STATION_IMAGE_PROB
     if (titles) {
       const used = new Set([...current.picks.values()]);
       for (const [key, file] of index.files) {
-        if (!used.has(key) && !current.alsoFits.has(key)) lines.push({ file, text: STATION_IMAGE_NO_MATCH_TEXT });
+        if (!SCOPED_KEY.test(key) && !used.has(key) && !current.alsoFits.has(key)) {
+          lines.push({ file, text: STATION_IMAGE_NO_MATCH_TEXT });
+        }
       }
     }
   }
@@ -582,6 +721,13 @@ export function stationImageUrl(source, options = {}) {
   return waitForEntry(source, entry, signal);
 }
 
+export function initializeStationImages(options) {
+  const { names } = favoriteNamesSnapshot();
+  startupFavorites = legacyOwners().raw ? null
+    : getState().favorites.map((item) => withFavoriteName(item, names));
+  return loadStationImages(options);
+}
+
 /** Ask the backend for the list (it scans the folder) and take it in. */
 export function loadStationImages({ request = controlRequest, afterCurrent = false } = {}) {
   if (loading) {
@@ -589,10 +735,14 @@ export function loadStationImages({ request = controlRequest, afterCurrent = fal
     if (afterCurrent) return loading.catch(() => {}).then(() => loadStationImages({ request }));
     return loading;
   }
-  loading = Promise.resolve()
-    .then(() => request(STATION_IMAGES_ROUTE))
-    .then((data) => {
-      applyStationImageList(data, { retryFailed: true });
+  const favorites = startupFavorites;
+  const legacyStations = favorites && !legacyOwners().raw
+    ? loadPlaylists(request).then((lists) => [...favorites, ...lists.flatMap(({ items }) => items)]).catch(() => null)
+    : null;
+  loading = Promise.all([Promise.resolve().then(() => request(STATION_IMAGES_ROUTE)), legacyStations])
+    .then(([data, stations]) => {
+      applyStationImageList(data, { retryFailed: true, legacyStations: data?.problem ? null : stations });
+      if (legacyOwners().raw) startupFavorites = null;
       return data;
     })
     .finally(() => { loading = null; });

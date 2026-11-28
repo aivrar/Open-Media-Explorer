@@ -172,8 +172,7 @@ one minute, then two, four and eight, then every ten). Its page says, for
 example, "LibriVox is not answering", the line under it offers **Retry now**,
 and the sidebar shows **Wait**. Use **Retry now** to try at once. When the
 connection has dropped and comes back, World Media notices within about half a
-minute and asks the waiting sources again by itself. In the Tuner and the
-Grid, a source that could not be loaded is tried again by itself after 15
+minute and asks the waiting sources again by itself. In the Tuner, a source that could not be loaded is tried again by itself after 15
 seconds, then after a minute, then every five minutes, and at once when the
 connection comes back; the other sources stay in the list meanwhile. A large
 catalog such as LibriVox arrives 30 items at a time, one request after
@@ -190,7 +189,7 @@ podcast feed, or offline Owncast server must not retire the other
 sources. Public providers can still be unavailable for hours; the app cannot
 invent missing records.
 
-## Thumbnails or Grid logos are blank
+## Thumbnails or station logos are blank
 
 Artwork is lazy and passes through an opaque local asset relay. Check the
 following before assuming the catalog is empty:
@@ -203,8 +202,6 @@ following before assuming the catalog is empty:
 
 The generic TV/radio placeholder is valid when a provider has no safe artwork,
 when an image failed after bounded retries, or while lazy hydration is pending.
-Grid mounts a tile before observing it so WebView2 receives the initial visibility
-event; rebuilding from the current source includes this fix.
 
 ## My own station picture does not show
 
@@ -213,9 +210,11 @@ The target card reads "Drop to set this station's picture". It previews the
 image with **Saving…** and goes back to its previous picture if saving fails.
 Read the reason in the refusal message. Escape, a click or a new drag clears
 the message, or it clears by itself after 6 seconds (8 for longer messages).
+A picture you set this way belongs to that station. To give a TV channel
+and a radio station with the same name the same picture, set it on each card.
 
-Pictures in the `station-images` folder (Settings → Station images → **Open
-folder**) are matched by file name. Check:
+If you put a picture directly in the folder opened by **Settings > Station
+images > Open folder**, the app matches it by name. Check:
 
 - The file name, without its extension, must be the station's name. Capital
   letters and extra spaces do not matter. A longer or different name does not
@@ -445,6 +444,15 @@ See [Visualizer](09-visualizer.md) for every control. Common causes:
   and cannot be turned off.
 - **The notice came back.** **Clear local cache** resets the Visualizer's
   choices, so the notice is shown again.
+
+## A Computer folder or file will not play
+
+- If a folder says **Not connected**, reconnect the drive. Use **Locate...**
+  if the folder moved or its drive letter changed.
+- If a format needs conversion, use a capable FFmpeg copy or install it
+  from Settings.
+- If subtitles are missing, check that the film has a text subtitle track,
+  or put a matching .srt, .vtt or .ass file beside it or in a **Subs** folder.
 
 ## Download fails
 

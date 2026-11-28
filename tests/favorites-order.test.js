@@ -19,7 +19,7 @@ import { ui } from '../src/modes/library/shell-refs.js';
 import { libraryPool } from '../src/modes/library/personal.js';
 import { reorderScrollSpeed } from '../src/modes/library/reorder-scroll.js';
 import {
-  FAVORITE_DRAG_TYPE, favoriteDropPlace, favoritesManualOrder, onDropFavorite, onMoveFavorite, renderResults,
+  FAVORITE_DRAG_TYPE, favoriteDropPlace, favoritesManualOrder, filteredItemsForCurrentView, onDropFavorite, onMoveFavorite, renderResults,
 } from '../src/modes/library/render.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -1236,4 +1236,35 @@ test('the drag styles use the theme accent and add nothing that keeps running', 
   assert.match(css, /\.card\.drop-after \{ box-shadow: inset -4px -4px 0 var\(--accent\); border-color: var\(--accent\); \}/);
   const block = css.slice(css.indexOf('.card.is-draggable'), css.indexOf('.card.drop-after'));
   assert.doesNotMatch(block, /animation|transition/);
+});
+
+test('Library Favorites bounds its mounted cards with up to 10,000 local stars', (t) => {
+  const previous = globalThis.window;
+  globalThis.window = {};
+  t.after(() => {
+    if (previous) globalThis.window = previous;
+    else delete globalThis.window;
+  });
+  for (const size of [200, 2_000, 10_000]) {
+    const favorites = Array.from({ length: size }, (_, index) => ({
+      id: `computer:${index.toString(16).padStart(24, '0')}`, title: `Track ${index}`,
+      source: 'computer', type: 'audio', _extra: { computer: { id: String(index) } },
+    }));
+    withLibrary(favorites, ({ host }) => {
+      view.renderStart = 0;
+      const start = performance.now();
+      renderResults();
+      const elapsed = performance.now() - start;
+      const mounted = host.children.length;
+      assert.equal(mounted, Math.min(size, 300));
+      assert.equal(filteredItemsForCurrentView(libraryPool()).length, size);
+      t.diagnostic(`${size} local stars: ${elapsed.toFixed(2)} ms, ${mounted} mounted cards`);
+      if (size > mounted) {
+        view.renderStart = size - mounted;
+        renderResults();
+        assert.equal(host.children.length, mounted);
+        assert.equal(host.children.at(-1).dataset.id, favorites.at(-1).id);
+      }
+    });
+  }
 });

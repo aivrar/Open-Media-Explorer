@@ -208,7 +208,7 @@ test('off, or the notice not accepted, or no sound: no layer and nothing loaded'
     // Only its own state listeners (settings, playing, item, mode), which
     // start nothing while it is not wanted.
     assert.equal(app.count(), 4);
-    app.emit('mode-change', 'grid');
+    app.emit('mode-change', 'computer');
     app.emit('playing-change', true);
     await settle();
     assert.equal(app.loads, 0);
@@ -270,8 +270,8 @@ test('a visit, leaving, another visit: one import per visit that wants it, no li
   assert.equal(app.loads, 1);
   assert.equal(app.count(), 4);
   // Left (main.js: the mode first, then the next tab is drawn).
-  app.set({ mode: 'grid' });
-  app.emit('mode-change', 'grid');
+  app.set({ mode: 'computer' });
+  app.emit('mode-change', 'computer');
   assert.equal(app.mounts[0].destroyed, 1);
   assert.equal(app.count(), 0, 'no listener after leaving');
   assert.equal(layerOf(rootA), null);
@@ -294,8 +294,8 @@ test('a visit, leaving, another visit: one import per visit that wants it, no li
   assert.ok(layerOf(rootB));
   assert.equal(app.count(), 4);
   // A visit that does not want it (no sound): no import.
-  app.set({ mode: 'grid' });
-  app.emit('mode-change', 'grid');
+  app.set({ mode: 'computer' });
+  app.emit('mode-change', 'computer');
   assert.equal(app.count(), 0);
   app.set({ mode: 'tuner', isPlaying: false });
   app.emit('mode-change', 'tuner');
@@ -643,8 +643,8 @@ test('the real Visualizer behind the Tuner: switching the setting off, or leavin
   r.win.observers.at(-1).fire(1600, 900);
   r.h.run(500, 1000 / 30);
   const lab2 = liveDensityWorker();
-  r.app.set({ mode: 'grid' });
-  r.app.emit('mode-change', 'grid');
+  r.app.set({ mode: 'computer' });
+  r.app.emit('mode-change', 'computer');
   assert.equal(r.lost(), 2, 'Tuner left: the WebGL context given back');
   assert.equal(lab2.workers[0].terminated, true, 'Tuner left: the density worker ended');
   // Left: the controller detached itself, not even its listeners remain.

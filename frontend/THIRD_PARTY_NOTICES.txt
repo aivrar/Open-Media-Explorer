@@ -1,4 +1,4 @@
-Open Media Explorer 0.1.18 - Third-Party Notices
+Open Media Explorer 0.1.19 - Third-Party Notices
 =================================================
 
 This notice is distributed inside the World Media portable folder and is served
@@ -418,6 +418,10 @@ https://github.com/python/typing_extensions/blob/4.15.0/LICENSE
 
 defusedxml 0.7.1 - Python Software Foundation License 2.0
 https://github.com/tiran/defusedxml/blob/v0.7.1/LICENSE
+
+TinyTag 2.3.2 - MIT
+Copyright (c) 2014-2026 Tom Wallroth, Mat (mathiascode), et al.
+https://pypi.org/project/tinytag/2.3.2/
 
 cryptography 49.0.0 - Apache-2.0 OR BSD-3-Clause
 https://github.com/pyca/cryptography/blob/49.0.0/LICENSE

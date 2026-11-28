@@ -1069,7 +1069,7 @@ test('player wiring: failures, cancellation and lifecycle hooks go through the r
   assert.match(source, /failPlayback\('Playback error'\);/);
   assert.match(source, /Events\.LEVEL_LOADED/);
   assert.match(source, /export function stop\(\) \{\s+cancelReconnect\(\);/);
-  assert.match(source, /export async function playItem\(item, options = \{\}\) \{[\s\S]*?cancelReconnect\(\);\s+(?:\/\/[^\n]*\n\s+)?startOutcome\.begin\(item\?\.id\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item, options\);/);
+  assert.match(source, /export async function playItem\(item, options = \{\}\) \{[\s\S]*?cancelReconnect\(\);\s+(?:\/\/[^\n]*\n\s+)?if \(isComputerItem\(item\)\) startOutcome\.cancel\(\);\s+else startOutcome\.begin\(item\?\.id\);\s+startsInFlight \+= 1;\s+try \{\s+await startPlayback\(item, options\);/);
   assert.match(source, /subscribe\('sleep-fired', \(\) => \{[\s\S]*?\n    stopReconnecting\(\);\s+\}\)/);
   assert.match(source, /addEventListener\('online', \(\) => \{ liveResume\.networkBack\(\); \}\)/);
   assert.match(source, /addEventListener\('pagehide'/);
@@ -1078,14 +1078,14 @@ test('player wiring: failures, cancellation and lifecycle hooks go through the r
   assert.match(source, /resolveMessage = resolveFailureMessage\(err\);/);
   assert.match(source, /showBrokenState\(resolveMessage \|\| 'No stream URL'\);/);
   assert.match(source, /setActionHandler\('pause', \(\) => \{ pauseFromUser\(\); \}\)/);
-  assert.match(source, /await audioEngine\.resume\(\{ create: true \}\);\s+\/\/[^\n]*\n\s+if \(myToken !== playToken\) return;/);
+  assert.match(source, /await audioEngine\.resume\(\{ create: true \}\);\s+\/\/[^\n]*\n\s+if \(myToken !== playToken\) (?:\{[^}]*?)?return;/);
   assert.match(source, /setActionHandler\('play', \(\) => \{ playFromUser\(\)\.catch\(\(\) => \{\}\); \}\)/);
   assert.match(source, /export async function togglePlay\(\) \{[\s\S]*?return playFromUser\(\);/);
   // The hls.js error callback never tears down synchronously.
   const fail = source.match(/function failPlayback\([\s\S]*?\n\}/)[0];
   assert.match(fail, /queueMicrotask\(/);
   assert.doesNotMatch(fail, /stopLoad|showReconnecting/);
-  assert.match(source, /\['seeking', owned\(\(\) => noteSeeking\(el, true\)\)\]/);
+  assert.match(source, /\['seeking', owned\(\(\) => \{\s+if \(computerPlayback\?\.hls && computerPlayback\.finished\) \{\s+seekFromControls\(el, el\.currentTime\);\s+return;\s+\}\s+noteSeeking\(el, true\);/);
   assert.match(source, /\['seeked', owned\(\(\) => \{\s+noteSeeking\(el, false\);/);
   // The first-tier HLS recovery budgets are untouched.
   const hls = readFileSync(new URL('../src/lib/hls-recovery.js', import.meta.url), 'utf8');

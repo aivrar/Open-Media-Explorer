@@ -10,7 +10,8 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 |---|---|
 | Source registry/adapters | `src/lib/sources.js`, `src/adapters/*.js` |
 | Library collection | `src/modes/library/`, `src/lib/search.js`, `src/lib/catalog-scheduler.js` |
-| Grid/Discovery | `src/modes/grid.js`, `src/modes/discovery.js` |
+| Computer | `worldmedia_computer*.py`, `src/modes/computer*.js`, `src/lib/computer-*.js`, `src/modes/library/computer.js`, `src/styles/computer.css` |
+| Random picks | `src/modes/now-playing-surprise.js`, `src/modes/discovery-attempt.js` |
 | Player and failover | `src/lib/player.js`, `src/lib/media-failover.js`, `src/lib/start-failover.js`, `src/lib/hls-recovery.js`, `src/lib/dash-player.js` |
 | Pick the best stream | `src/lib/best-stream.js` (ranking and the setting), `src/lib/best-stream-auto.js` and `src/lib/stream-verify.js` (Auto (verified) checks), `src/lib/stream-lookups.js`, `worldmedia_stream_probe.py` |
 | Processor use | `src/lib/processor-budget.js`, `worldmedia_processor.py`, the Processor use section in `src/modes/about.js` |
@@ -33,6 +34,25 @@ are listed in [docs/FILE_TREE.md](../FILE_TREE.md).
 | Native server/security | `worldmedia_server.py`, `worldmedia_security.py`, `worldmedia_catalog.py`, `worldmedia_media.py` |
 | Jobs/downloads/recording | `worldmedia_jobs.py`, `worldmedia_downloads.py`, `worldmedia_recording.py`, `worldmedia_ffmpeg.py` |
 | Runtime/launcher | `worldmedia_native.py`, `worldmedia_runtime.py`, `worldmedia_theme.py` |
+
+## Computer API
+
+Computer uses these local routes under `/api/v1/computer`:
+
+| Method and path | Purpose |
+|---|---|
+| `GET /folders`, `GET /status` | List saved folders and check scan status |
+| `POST /folders/add`, `/remove`, `/relocate` | Add, remove or relocate a folder under `/folders` |
+| `POST /scan` | Start a scan |
+| `GET /library` | Read the index or changes since a revision |
+| `GET /stars`, `POST /stars` | Read or update starred files |
+| `POST /play`, `POST /loudness` | Prepare playback and request loudness measurement |
+| `GET /art/{id}`, `GET /subtitle` | Read artwork or a subtitle track |
+| `GET /media/{token}`, `GET /hls/{token}/{file}` | Read a local file or converted video |
+| `POST /hls/{token}/release` | Release a video conversion session |
+
+Both Windows packages include TinyTag 2.3.2 (MIT) to read music tags and
+embedded covers.
 
 ## Local setup
 
@@ -88,7 +108,7 @@ Outputs are normally:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.18-portable.zip
+dist\WorldMediaWindows-0.1.19-portable.zip
 ```
 
 `--skip-frontend` assumes `frontend/` was already produced by `npm run build`.
@@ -114,7 +134,7 @@ Before replacing the EXE:
 2. Copy the current EXE to a backup name or record its hash.
 3. Copy the new EXE into the test root without touching the data directory.
 4. Launch and verify Settings runtime paths, Favorites count, a Library source,
-   Grid artwork, playback, and Shutdown.
+   Computer folder and artwork, playback, and Shutdown.
 
 Since v0.1.16 a second start with the same data folder only brings the first
 window to the front, so the old process must have exited (step 1) before the new
@@ -123,8 +143,8 @@ EXE is tried; a test copy with its own data folder runs beside it.
 Do not use `git clean`, recursive deletion, or a profile reset against a user
 data directory without an explicit backup and approval.
 
-For the v0.1.18 checks and artifact hashes, see the
-[release record](../RELEASE_RECORD_0.1.18.md). The optional
+For the v0.1.19 checks and artifact hashes, see the
+[release record](../RELEASE_RECORD_0.1.19.md). The optional
 `tests_python/playlist_release_browser_smoke.py` uses Playwright and installed
 Edge to test the packaged app with disposable state. To prepare the GitHub wiki
 from these docs, run `python scripts/prepare_wiki.py <wiki-checkout>` and review

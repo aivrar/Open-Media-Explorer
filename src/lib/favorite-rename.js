@@ -8,7 +8,7 @@
  * favorites change, as categories are (favorite-groups.js).
  */
 
-import { emit, getState, subscribe } from './state.js';
+import { emit, getState, isLocalFileFavorite, subscribe } from './state.js';
 import { scheduleProfileHandoff } from './profile-transfer.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 import {
@@ -20,7 +20,7 @@ export const FAVORITE_NAMES_EVENT = 'favorite-names-change';
 export const RENAME_SAVE_FAILED = 'The new name could not be saved. Check available disk space and try again.';
 
 function savedFavorite(favoriteId) {
-  return getState().favorites.find((favorite) => favorite?.id === favoriteId) || null;
+  return getState().favorites.find((favorite) => favorite?.id === favoriteId && !isLocalFileFavorite(favorite)) || null;
 }
 
 function commit(names, detail) {

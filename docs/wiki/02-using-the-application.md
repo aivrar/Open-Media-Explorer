@@ -20,31 +20,35 @@ and one running copy per data folder require v0.1.16 or newer. **Picture**,
 **Export...**, **Stream address...**, **Show what's playing**, audio parts,
 batch EQ assignments, Q controls, Now Playing blur and **Tabs shown** require
 v0.1.17 or newer. The new Tuner layout and the Picture panel's **Quality**
-row require v0.1.18 or newer.
+row require v0.1.18 or newer. The **Computer** tab and **Surprise me**
+in **Now Playing** require v0.1.19 or newer.
 
 ## Window layout
 
 The top bar is shared by every mode:
 
 - **World Media** opens the current view.
-- **Library**, **Tuner**, **Grid**, **Discovery**, **Now Playing**,
-  **Visualizer**, and **About** switch modes.
+- **Library**, **Tuner**, **Computer**, **Now Playing**, **Visualizer**,
+  and **About** switch modes.
 - The **Sleep** control starts or cancels the sleep timer.
 - The musical note opens the **Song log**.
 - The gear opens **Settings**.
 - **Shutdown** asks the local runtime to stop catalog workers, artwork, media,
   downloads, recording, and FFmpeg work before the process exits.
 
+Right-click a text field for **Undo**, **Cut**, **Copy**, **Paste** and
+**Select all**.
+
 The bottom player bar is global. It survives mode switches, so you can start a
-station in Library, inspect Grid, and return without losing the current player.
+station in Library and open Computer without interrupting playback.
 Outside the Tuner's TV layout, video appears above the bar at the bottom
 right. It grows with the window, and the button in its top-right corner
 switches between the normal
 and a larger size; the choice is remembered. Audio keeps the bar visible
 without showing a video element, including radio stations that stream in a
 video format (HLS or DASH) but carry no picture. While the picture is open,
-Library, Grid, Now Playing, About and the Visualizer panel leave scroll room
-so you can reach their bottom controls. Library, Grid, About and Now Playing
+Library, Now Playing, About and the Visualizer panel leave scroll room
+so you can reach their bottom controls. Library, About and Now Playing
 keep that room during a video channel change, then release it on Stop, on a
 failed start or when the next item has no picture.
 
@@ -116,17 +120,19 @@ for their buttons at every width.
 ### Search and filters
 
 The search box accepts ordinary words such as `news`, `BBC`, or `Prelinger`.
-Search fan-outs run against every enabled source and stream partial results into
-the grid as providers answer. The additional filters are:
+Results appear as providers answer. Search also finds your files and labels
+them **Computer**. Use **Audio** or **Video** to narrow these results.
+Use the live radio and TV filters to browse stations. Other filters include:
 
 - **Country** — ISO-style country code, for example `US` or `GB`.
-- **Lang** — language token, for example `en`.
+- **Lang** — a language code or name, for example `en`, `eng` or `English`.
+  This also works for iptv-org TV channels.
 - **Year ≥** and **Year ≤** — inclusive numeric year bounds.
 
-Changing the search starts a new page-0 search generation. An old generation is
-cancelled so late responses cannot overwrite the new query. Search results are
-bounded to the first page from each source; blank search text returns to the
-continuous browse chain.
+Search shows the first page of matches from each source. Clear what you typed
+in Search, Country or Language to return to where you were. The count beside
+the filters shows how many channels, stations or items match, with "so far"
+while sources load. Clicking a card opens its details and keeps it in place.
 
 ### Sidebar sections
 
@@ -190,6 +196,11 @@ all enabled sources, so rapidly switching tabs cannot wipe the catalog.
 4. Choose that playlist (or **All playlists**), search titles/groups, or press
    one of the type buttons (**All / Radio / TV / Audio / Video**). Click a
    channel to play; star it to save it in Favorites, or press **Star all**.
+
+A playlist that points to a channel list on the web can import that list's
+channels. The app follows up to four links per import, one level deep. It
+imports up to 5,000 channels. If a linked list cannot be loaded, its link
+stays as one entry and the import message says so.
 
 **Star all** adds every channel that is listed under the chosen playlist, type
 button and search to Favorites, including channels further down that are not
@@ -271,8 +282,8 @@ Media keeps is not meant to be edited by hand. Imports are snapshots:
 reimport the file or add the same online link to update its entries. Links are
 identified by URL, so two different links with the same display name do not
 overwrite each other. A direct channel is saved without opening a connection;
-availability is checked when you play it. They currently appear in Library and
-Favorites, not the provider catalogs in Grid, Tuner, or Discovery.
+availability is checked when you play it. Find your imports in
+**Library > My Playlists** and starred imports in **Favorites**.
 
 The importer is for live TV/radio channel lists, not local media files, private
 network streams, DRM, provider login/cookie workflows, or Kodi/pipe-URL options.
@@ -299,9 +310,11 @@ with their custom names, edited addresses and backups.
 
 Open a station in **Favorites** or **My Playlists** and press **Stream
 address...** in its details. Edit the main address or add up to five
-**Backup addresses**. World Media validates public HTTP and HTTPS addresses
-before saving. If the main address fails to start, the app tries the backups
-in order. It also uses them when reconnecting. Data backups keep the addresses.
+**Backup addresses**. Press **Up** on the first backup to make it the main
+address. The app remembers stream format and quality until the main address
+changes. World Media validates public HTTP and HTTPS addresses before saving.
+If the main address fails to start, the app tries the backups in order.
+It also uses them when reconnecting. Data backups keep the addresses.
 
 When writing a playlist by hand, use a `backups` list in JSON or a
 `#WORLDMEDIA-BACKUP:` line for each backup in M3U.
@@ -484,23 +497,6 @@ nothing is removed and a message says so. In the one case where the curves
 could not be put back, the favorites stay but now use the main equalizer, and
 the message says that too. To remove just one favorite, press its star.
 
-## Grid
-
-Grid is a live guide. Choose **Live TV** or **Radio**, then optionally filter by
-category, country, source, and the text **Filter…** box. The built-in category
-list includes News, Music, Sports, Movies, Documentary, Kids, Entertainment,
-and Education.
-
-Tiles appear as each live source answers; a source that does not answer within
-20 seconds is marked unavailable. Click a tile or press Enter/Space while it is
-focused to play it. Tile logos are
-viewport hydrated, so the first visible rows load before far-away rows. The Grid
-and Library share the same artwork relay and playback priority rules.
-
-Grid does not host channels or manufacture schedules. IPTV, Owncast, PeerTube,
-Radio Browser, gPodder live entries, and C3VOC contribute whatever public live
-items they report at refresh time.
-
 ## Tuner
 
 The dial is on the left and the station list is on the right.
@@ -525,7 +521,8 @@ in full. The dial glows when it can turn and the pointer is over it. The
 first station is at the top.
 
 The list highlights the tuned station and keeps it in view as you turn
-the dial. Each entry shows its name and a second line with its source,
+the dial. Clicking a station already in view leaves the list in place.
+Each entry shows its name and a second line with its source,
 country when known, and format and bitrate when known for radio. Stars
 mark favorites on the dial and in the list. The list fits whole rows and
 uses two columns when there is room. Its caption shows how many stations
@@ -575,17 +572,46 @@ Stations appear as each live source answers. A source that does not
 answer within 20 seconds is marked unavailable. If no stations load,
 read the message in the list and press **Radio** or **TV** to try again.
 
-## Discovery
+## Computer
 
-Discovery is a bounded random picker. Select **Any**, **Radio**, **TV**,
-**Video**, or **Audio**, then optionally provide country, tag, and source
-filters. **Surprise Me** starts a globally scheduled attempt; **Surprise Me
-Again** or **Next** chooses another item.
+Use **Add folder...** to choose a folder with music, films, shows or audiobooks.
+You can add up to 200 folders. The app includes their subfolders and reuses
+what it read from unchanged files on the next scan. Disconnected folders
+stay in the list. Use **Locate...** to point to the new location after a move
+or drive letter change.
 
-Each provider gets its own deadline and the scheduler cancels losing/expired
-attempts. A provider that is slow or unavailable does not block the other
-providers indefinitely. Discovery is not a guarantee of uniqueness across all
-time; it is a fresh candidate selection from current provider data.
+- **Music** has **Albums**, **Artists**, **Songs**, **Genres** and **Folders**.
+  Covers can come from files or from the folder. The player prepares the
+  next song of an album so it can start as the current one ends.
+- **Videos** has **Movies** with posters and a details panel, **Shows** by
+  season, **All videos** and **Folders**.
+- **Audiobooks** shows chapters when available. Open the book to continue
+  where you stopped.
+- **Favorites** shows your starred files. Use the star button or press **F**
+  on a song, album, artist, film or show. Starred files also appear in
+  **Library > Favorites**. Stars follow files the app can match after a
+  move or rename.
+
+Search or sort the list, use **Play all** or **Shuffle**, and use **Previous**
+and **Next** to move through the queue. The app handles large collections
+(tested with 50,000 files).
+
+The player can read MP3, AAC / M4A, FLAC, PCM WAV, Ogg Vorbis and Opus
+directly when it supports the file. FFmpeg prepares other formats for playback
+with seeking. Examples include AIFF, ALAC, APE, WavPack, DSD, WMA, AC-3 and
+DTS for sound, and MPEG-2 / DVD VOB, AVI, WMV, HEVC and other MKV or MP4
+variants for video. Video conversion uses the graphics card's encoder when
+available. The app can rebuild the timeline for DVD VOB files with restarting
+timestamps, for the true length and exact seeking. Use an existing capable
+FFmpeg pair or confirm the install in Settings.
+[FFmpeg management](04-playback-eq-downloads-recording.md#ffmpeg-management)
+
+Open **Subtitles** in the player bar to choose text subtitles. The app reads
+.srt, .vtt and .ass files beside the film or in a **Subs** folder, and text
+subtitles inside the film. **C** turns subtitles on or off. Picture-based
+DVD and Blu-ray subtitles are unavailable. Use **Audio** to switch sound
+tracks, such as stereo, 5.1, another language or commentary. The app remembers
+your choices per film and by language.
 
 ## Now Playing
 
@@ -610,7 +636,8 @@ to show fewer animations. When muted, the large meter turns red and reads
 **Muted**, which screen readers announce. **Settings > Appearance > Now
 Playing background blur** sets the background blur. Play, pause and stop stay in the player bar, and a TV channel or video
 keeps playing in its own square. With nothing playing, the tab says so and
-offers the Library and the Tuner. Nothing in the tab runs while it is closed.
+offers the Library and the Tuner. Turn on **Surprise me** to play a random
+pick from your enabled sources.
 
 ## Visualizer
 
@@ -639,8 +666,8 @@ restart; the local server port is explicitly marked **for next launch**.
 
 - **Theme:** System, Dark · Teal, Light, Midnight · Blue, Forest · Green,
   Ember · Orange, or Amethyst · Violet.
-- **Default mode on launch:** Library, Tuner, Grid, or Discovery (About is
-  accepted by the state normalizer but is not offered as a default selector).
+- **Default mode on launch** offers **Library**, **Tuner** or **Computer**.
+  Library opens if your saved start tab was removed.
 - **Tabs shown** hides individual tabs. Library is always visible. If you hide
   the tab you are on, the app opens Library.
 - **Now Playing background blur** offers **Off**, **Light**, **Medium**
@@ -664,6 +691,14 @@ restart; the local server port is explicitly marked **for next launch**.
 The native title bar starts in the saved theme and follows theme changes
 immediately, including on Windows 10 (where only its dark/light mode can be
 set, not the exact palette color).
+
+### Playback
+
+**Volume levelling** applies to music from Computer. Choose **Off**,
+**Track** to even out songs or **Album** to keep the loudness differences
+between songs on the same album. With levelling on, **Pre-amp** adjusts
+the overall level. The app uses ReplayGain tags or measures untagged songs
+in the background, one song ahead.
 
 ### Content
 
@@ -906,7 +941,7 @@ line says how many pictures were found and why any were ignored, for example
 - If two files would match the same station, the one whose file name sorts
   first is used, so `Radio Paradise.jpg` wins over `Radio Paradise.png`.
 - The picture is used everywhere the station appears: cards, favorites,
-  imported playlists, the detail panel, the player bar, Discovery and the
+  imported playlists, the detail panel, the player bar, Now Playing and the
   Tuner (on Medium and Large cards). If a picture cannot be shown, the
   station's own logo (or its initials) is shown instead.
 - Your picture is always shown whole and centered, never cut off, so a picture
@@ -922,20 +957,10 @@ drop one picture file on the station's card in **Favorites** or **My
 Playlists**. Only the card under the pointer is highlighted during a drag.
 It reads "Drop to set this station's picture". The new picture appears on
 the card with **Saving…** while it is stored. If saving fails, the card
-returns to its previous picture. World Media checks the picture as it checks
-the folder (an SVG or a file that is not really a picture is refused),
-then saves a copy in the `station-images` folder, named after the station by
-the rules above. For example, `Nu-Metal/Alternative` gets
-`Nu-Metal-Alternative.png`. A renamed favorite's picture is named after the
-station's own name. If a file is already there for the station, you are asked
-before it is replaced, and the question names it, for example "The file
-AC-DC.png is already there. Replace it?". **Remove picture**, shown while the
-station has a picture of its own, asks first, naming the file or files it will
-delete, and then deletes only those files from the folder. For a renamed
-favorite whose picture is named after your name for it, that one file is the
-one named and deleted. File names are always shown in full. If more than 20
-files in the folder belong to one station, nothing is replaced or deleted and
-a message asks you to tidy the folder by hand first. If you drop a picture
+returns to its previous picture. The app checks the picture and saves a copy
+for that station. A radio station and a TV channel with the same name can
+have their own pictures. The app asks before replacing a picture. **Remove
+picture** asks before deleting the station's picture. If you drop a picture
 outside an eligible card, a message says where to drop it. Refusal messages
 clear after 6 seconds, or 8 for longer text. Escape, a click or a new drag
 clears them right away. Playlist files dropped on the window are imported.
@@ -960,7 +985,8 @@ The list follows the last scan. It is made again when you press **Refresh**, and
 it is hidden when there is nothing to report.
 
 World Media lists the folder when it starts and again whenever you press
-**Refresh**. Nothing about the pictures is stored in your settings.
+**Refresh**. The app remembers which saved stations used older pictures
+matched by name.
 
 #### Clear local cache
 
@@ -1035,7 +1061,8 @@ one that is restored, when the timer ends or is cancelled.
 Cards, sidebar rows, dialogs, the tuner dial, sliders, the volume control, and
 buttons expose keyboard focus and ARIA labels. Enter/Space activates focused
 cards and tuner selection; arrow keys navigate sidebar/tuner controls; Escape
-closes Settings and EQ dialogs. On the volume control and on the Tuner's
+closes Settings and EQ dialogs. Press **F** to star the focused item on
+Computer and **C** to turn available subtitles on or off. On the volume control and on the Tuner's
 **Visualizer:** control, the arrow keys change the level by 1, Page Up and Page
 Down by 10, and Home and End set the lowest and the highest level. Reduced-motion and forced-colors behavior is covered by the
 frontend accessibility tests.

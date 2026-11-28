@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   connectMediaRelay, playedStream, probeMediaRelay, streamCandidatesForItem,
 } from '../src/lib/media-failover.js';
+import { startFailureKind } from '../src/lib/did-not-play.js';
 
 function tvItem() {
   return {
@@ -150,4 +151,179 @@ test('HLS preflight probes the newest live segment instead of an evicted oldest 
     '/api/v1/media/child_newest_1234567890.m3u8',
     '/api/v1/media/newest_segment_1234567890.ts',
   ]);
+});
+
+const HLS_HEADERS = { 'content-type': 'application/vnd.apple.mpegurl' };
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('header-only HLS waits twelve seconds, then expires and tries its listed backup', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const item = tvItem();
+  const backup = 'https://good.example/live.m3u8';
+  const registered = [];
+  const expired = [];
+  let emptyReads = 0;
+  const connecting = connectMediaRelay(item, {
+    addresses: { main: item.stream_url, backups: [backup], ordered: true },
+    registerImpl: async ({ stream_url }) => {
+      registered.push(stream_url);
+      const id = stream_url === backup ? 'backup_manifest' : 'empty_manifest';
+      return { media_id: id, relay_url: '/api/v1/media/' + id + '.m3u8' };
+    },
+    fetchImpl: async (path) => {
+      if (path.includes('empty_manifest')) {
+        emptyReads++;
+        return new Response('#EXTM3U\n#EXT-X-MAP:URI="/api/v1/media/init_segment.mp4"\n', { headers: HLS_HEADERS });
+      }
+      if (path.endsWith('.m3u8')) {
+        return new Response('#EXTM3U\n#EXTINF:4,\n/api/v1/media/backup_segment.ts', { headers: HLS_HEADERS });
+      }
+      return new Response(new Uint8Array([0x47]));
+    },
+    expireImpl: async (id) => { expired.push(id); },
+  });
+  await settle();
+  for (let second = 0; second < 11; second++) {
+    t.mock.timers.tick(1_000);
+    await settle();
+  }
+  t.mock.timers.tick(999);
+  assert.deepEqual(registered, [item.stream_url]);
+  t.mock.timers.tick(1);
+  assert.equal((await connecting).media_id, 'backup_manifest');
+  assert.equal(emptyReads, 13);
+  assert.deepEqual(registered, [item.stream_url, backup]);
+  assert.deepEqual(expired, ['empty_manifest']);
+});
+
+test('an empty HLS media playlist can recover, cancel, or fail after twelve seconds', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const root = '/api/v1/media/root_manifest.m3u8';
+  const child = '/api/v1/media/child_manifest.m3u8';
+  const segment = '/api/v1/media/first_segment.ts';
+  let childReads = 0;
+  let recover = true;
+  const controller = new AbortController();
+  const fetchImpl = async (path) => {
+    if (path === root) return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n' + child, { headers: HLS_HEADERS });
+    if (path === segment) return new Response(new Uint8Array([0x47]));
+    assert.equal(path, child);
+    childReads++;
+    if (recover && childReads === 2) {
+      return new Response('#EXTM3U\n#EXT-X-PART:DURATION=1,URI="' + segment + '"', { headers: HLS_HEADERS });
+    }
+    const body = '#EXTM3U\n';
+    return new Response(body, { headers: { ...HLS_HEADERS, 'content-length': String(body.length) } });
+  };
+  const probe = (signal) => probeMediaRelay({ relay_url: root }, { kind: 'hls' }, { fetchImpl, signal });
+  const recovered = probe();
+  await settle();
+  t.mock.timers.tick(1_000);
+  assert.equal(await recovered, true);
+  recover = false;
+  const cancelled = assert.rejects(probe(controller.signal), { name: 'AbortError' });
+  await settle();
+  controller.abort();
+  await cancelled;
+  t.mock.timers.tick(15_000);
+  await settle();
+  assert.equal(childReads, 3, 'the cancelled probe did not poll again');
+
+  let failed = false;
+  const outcome = assert.rejects(probe(), (error) => {
+    failed = true;
+    return error.code === 'EMPTY_HLS_MANIFEST' && startFailureKind(error) === 'refused';
+  });
+  await settle();
+  for (let second = 0; second < 11; second++) {
+    t.mock.timers.tick(1_000);
+    await settle();
+  }
+  t.mock.timers.tick(999);
+  await settle();
+  assert.equal(failed, false);
+  assert.equal(childReads, 15);
+  t.mock.timers.tick(1);
+  await outcome;
+  assert.equal(childReads, 16);
+});
+test('HLS preflight leaves inconclusive replies and ordinary starts on the immediate path', async () => {
+  const root = '/api/v1/media/root_manifest.m3u8';
+  const child = '/api/v1/media/child_manifest.m3u8';
+  const part = '/api/v1/media/latest_part.m4s';
+  const cases = [
+    ['#EXTM3U\n#EXT-X-TARGETDURATION:6\n', []],
+    ['#EXTM3U\n#EXT-X-ENDLIST\n', []],
+    ['#EXTM3U\n#EXT-X-UNRECOGNIZED:VALUE\n', []],
+    ['#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n', []],
+    ['#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI="' + child + '"\n', [child, part]],
+    ['#EXTM3U\n#EXT-X-PART:DURATION=1,URI="' + part + '"\n', [part]],
+    ['#EXTM3U\n', [], 206],
+  ];
+
+  for (const [manifest, expected, status = 200] of cases) {
+    const requests = [];
+    const ready = await probeMediaRelay({ relay_url: root }, { kind: 'hls' }, {
+      fetchImpl: async (path) => {
+        requests.push(path);
+        if (path === root) return new Response(manifest, { status, headers: HLS_HEADERS });
+        if (path === child) return new Response('#EXTM3U\n#EXT-X-PART:DURATION=1,URI="' + part + '"\n', { headers: HLS_HEADERS });
+        assert.equal(path, part);
+        return new Response(new Uint8Array([0x47]));
+      },
+      onEmptyPlaylist: () => assert.fail('this response must not start polling'),
+    });
+    assert.equal(ready, true, manifest);
+    assert.deepEqual(requests, [root, ...expected]);
+  }
+});
+
+test('HLS preflight rejects refused, blank, and non-HLS replies without waiting or polling', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const root = '/api/v1/media/root_manifest.m3u8';
+  const refused = Response.json({ error: { code: 'INVALID_HLS_MANIFEST' } }, { status: 502 });
+  const blank = new Response('', { headers: HLS_HEADERS });
+  const binary = new Response(new Uint8Array([0x47]), { headers: { 'content-type': 'application/octet-stream' } });
+  for (const response of [refused, blank, binary]) {
+    let reads = 0;
+    await assert.rejects(probeMediaRelay({ relay_url: root }, { kind: 'hls' }, {
+      fetchImpl: async () => {
+        reads++;
+        return response;
+      },
+      onEmptyPlaylist: () => assert.fail('this response must not start polling'),
+    }), (error) => error.code === 'INVALID_HLS_MANIFEST' && (response.ok || error.status === 502));
+    t.mock.timers.tick(12_000);
+    await settle();
+    assert.equal(reads, 1);
+  }
+});
+
+test('a complete empty HLS response polls, even when it has an end marker and parts', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const root = '/api/v1/media/root_manifest.m3u8';
+  const part = '/api/v1/media/latest_part.m4s';
+  const cases = [
+    '#EXTM3U\n#EXT-X-TARGETDURATION:6\n',
+    '#EXTM3U\n#EXT-X-PART:DURATION=1,URI="' + part + '"\n#EXT-X-ENDLIST\n',
+  ];
+  for (const manifest of cases) {
+    let polls = 0;
+    const requests = [];
+    const result = probeMediaRelay({ relay_url: root }, { kind: 'hls' }, {
+      fetchImpl: async (path) => {
+        requests.push(path);
+        assert.equal(path, root);
+        const body = requests.length === 1 ? manifest : '#EXTM3U\n#EXTINF:6,\nsegment.ts\n';
+        return new Response(body, { headers: { ...HLS_HEADERS, 'content-length': String(body.length) } });
+      },
+      onEmptyPlaylist: () => { polls++; },
+    });
+    await settle();
+    assert.equal(polls, 1);
+    assert.deepEqual(requests, [root]);
+    t.mock.timers.tick(1_000);
+    assert.equal(await result, true);
+    assert.deepEqual(requests, [root, root]);
+  }
 });

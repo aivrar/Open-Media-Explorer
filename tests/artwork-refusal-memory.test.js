@@ -8,6 +8,7 @@ import {
   registerCatalogAsset,
 } from '../src/lib/catalog-client.js';
 import { artworkNeedsResolution, artworkRequests, resolveArtworkRelay } from '../src/lib/artwork.js';
+import { resolveItemArtwork } from '../src/modes/library/thumbnails.js';
 
 function response(status, payload) {
   return {
@@ -123,7 +124,7 @@ test('a refused picture shows the initials tile on every visit without an error 
   forgetRefusedAssets();
   const logo = 'https://owncast.example.org/logo.png';
   const app = fakeApp(() => [403, 'NON_GLOBAL_MEDIA_TARGET']);
-  // Each Grid visit builds new item objects for the same station.
+  // Each visit builds new item objects for the same station.
   const visit = () => ({
     id: 'owncast:station', source: 'owncast', thumbnail: '', _extra: { artworkUrl: logo },
   });
@@ -188,8 +189,34 @@ test('an item refused by a name lookup asks again at its first render after 10 m
 test('the Library logs a failed picture only when it really failed', async () => {
   const thumbnails = (await readFile(new URL('../src/modes/library/thumbnails.js', import.meta.url), 'utf8'))
     .replace(/\r\n/g, '\n');
-  // The warning sits in the rejection path, which a refusal no longer takes.
-  assert.match(thumbnails, /return resolveArtworkRelay\(item, opts\)\.catch\(\(error\) => \{\n\s+console\.warn\('thumbnail hydrate failed:', error\);/);
+  // The warning is for a terminal failure. Refusals resolve and aborts skip it.
+  assert.match(thumbnails, /return resolveArtworkRelay\(item, opts\)\.catch\(\(error\) => \{\n\s+if \(error\?\.name !== 'AbortError'\) console\.warn\('thumbnail hydrate failed:', error\);/);
   const artwork = (await readFile(new URL('../src/lib/artwork.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   assert.match(artwork, /if \(isRefusedAssetError\(error\)\) return \{ relayUrl: '', canonicalUrl: '' \};/);
+});
+
+test('Library artwork resolution warns once for a failed lookup and stays quiet on cancellation', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const error = new Error('picture lookup failed');
+  const item = (name) => ({ id: 'owncast:' + name, source: 'owncast', thumbnail: 'https://pictures.example/logo.png' });
+  await assert.rejects(resolveItemArtwork(item('failed'), {
+    registerAssetImpl: async () => { throw error; },
+    retry: { attempts: 1 },
+  }), error);
+  assert.deepEqual(warn.mock.calls.map((call) => call.arguments), [['thumbnail hydrate failed:', error]]);
+
+  const controller = new AbortController();
+  let begin;
+  const started = new Promise((resolve) => { begin = resolve; });
+  const cancelled = assert.rejects(resolveItemArtwork(item('cancelled'), {
+    signal: controller.signal,
+    registerAssetImpl: async (_scope, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      begin();
+    }),
+  }), { name: 'AbortError' });
+  await started;
+  controller.abort();
+  await cancelled;
+  assert.equal(warn.mock.callCount(), 1);
 });

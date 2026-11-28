@@ -13,7 +13,7 @@ test('a directory mirror that stayed silent until the caller gave up is dropped;
   assert.equal(mirrorTooSlow(1_000, 1_000), false);
   assert.equal(mirrorTooSlow(1_000, 1_000 + SLOW_MIRROR_MS - 1), false);
   assert.equal(mirrorTooSlow(1_000, 1_000 + SLOW_MIRROR_MS), true);
-  // The Tuner's and the Grid's time limit for a source, and the background
+  // The Tuner's time limit for a source, and the background
   // check's, are long enough to tell a slow mirror; a quick cancel is not.
   assert.ok(SLOW_MIRROR_MS < LIVE_SOURCE_TIMEOUT_MS);
   assert.ok(SLOW_MIRROR_MS < CHECK_LOOKUP_MS);

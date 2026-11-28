@@ -10,7 +10,7 @@
  * collection filters never start a provider search.
  */
 
-import { SOURCES, SOURCE_IDS } from '../../lib/sources.js';
+import { SOURCES, SOURCE_IDS, getSourceLabel } from '../../lib/sources.js';
 import { getState } from '../../lib/state.js';
 import { el } from './utils.js';
 import { ui } from './shell-refs.js';
@@ -46,54 +46,83 @@ export function buildSidebar() {
   for (const sec of sections) {
     list.appendChild(el('li', { className: 'source-section-header', attrs: { 'aria-hidden': 'true' }, text: sec.header }));
     for (const s of sec.items) {
-      const isDirectSource = SOURCE_IDS.includes(s.id);
-      const li = el('li', {
-        className: 'source-item' + (view.activeSource === s.id ? ' is-active' : ''),
-        attrs: {
-          'data-source': s.id,
-          role: 'option',
-          tabindex: '0',
-          'aria-selected': view.activeSource === s.id ? 'true' : 'false',
-        },
-        on: {
-          click: () => selectSource(s.id),
-          keydown: (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              selectSource(s.id);
-              return;
-            }
-            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-            event.preventDefault();
-            const options = [...list.querySelectorAll('.source-item')];
-            const index = options.indexOf(event.currentTarget);
-            const next = event.key === 'Home' ? options[0]
-              : event.key === 'End' ? options.at(-1)
-                : options[index + (event.key === 'ArrowDown' ? 1 : -1)];
-            next?.focus();
-            next?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-          },
-        },
-      });
-      li.appendChild(el('span', { className: 'source-name' },
-        el('span', { className: 'source-dot', style: { background: s.color } }),
-        el('span', { className: 'source-label', text: s.name }),
-      ));
-      li.appendChild(el('span', { className: 'source-count', attrs: { 'data-role': 'count' } }));
-      if (isDirectSource) {
-        li.appendChild(el('span', {
-          className: 'source-health is-pull',
-          text: 'Pull',
-          attrs: { 'data-role': 'source-health', title: 'Collecting' },
-        }));
-      }
-      list.appendChild(li);
+      list.appendChild(sourceRow(s, list));
     }
   }
   syncSidebarSources(getState().settings.enabledSources, list);
   ui.sidebar.appendChild(list);
   queueMicrotask(() => list.querySelector('.source-item.is-active')
     ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }));
+}
+
+function sourceRow(s, list) {
+  const isDirectSource = SOURCE_IDS.includes(s.id);
+  const li = el('li', {
+    className: 'source-item' + (view.activeSource === s.id ? ' is-active' : ''),
+    attrs: {
+      'data-source': s.id,
+      role: 'option',
+      tabindex: '0',
+      'aria-selected': view.activeSource === s.id ? 'true' : 'false',
+    },
+    on: {
+      click: () => selectSource(s.id),
+      keydown: (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectSource(s.id);
+          return;
+        }
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const options = [...list.querySelectorAll('.source-item')];
+        const index = options.indexOf(event.currentTarget);
+        const next = event.key === 'Home' ? options[0]
+          : event.key === 'End' ? options.at(-1)
+            : options[index + (event.key === 'ArrowDown' ? 1 : -1)];
+        next?.focus();
+        next?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      },
+    },
+  });
+  li.appendChild(el('span', { className: 'source-name' },
+    el('span', { className: 'source-dot', style: { background: s.color } }),
+    el('span', { className: 'source-label', text: s.name }),
+  ));
+  li.appendChild(el('span', { className: 'source-count', attrs: { 'data-role': 'count' } }));
+  if (isDirectSource) {
+    li.appendChild(el('span', {
+      className: 'source-health is-pull',
+      text: 'Pull',
+      attrs: { 'data-role': 'source-health', title: 'Collecting' },
+    }));
+  }
+  return li;
+}
+
+export function syncComputerSource() {
+  const list = ui.sidebar?.querySelector?.('.source-list');
+  if (!list) return;
+  const row = [...list.children].find((child) => child.dataset.source === 'computer');
+  if (view.computerHits.length) {
+    if (!row) list.appendChild(sourceRow({ id: 'computer', name: getSourceLabel('computer'), color: 'var(--accent)' }, list));
+    return;
+  }
+  if (view.activeSource === 'computer') {
+    view.activeSource = 'all';
+    markSelectedSource('all');
+    closeDetail();
+  }
+  row?.remove();
+}
+
+function markSelectedSource(sourceId) {
+  for (const li of ui.sidebar.querySelectorAll('.source-item')) {
+    const active = li.dataset.source === sourceId;
+    li.classList.toggle('is-active', active);
+    li.setAttribute('aria-selected', active ? 'true' : 'false');
+    if (active) li.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }
 }
 
 // Only the source switches drive this order. Status and count updates leave rows in place.
@@ -135,12 +164,7 @@ export function selectSource(sourceId) {
   } else {
     view.filters.type = '';
   }
-  for (const li of ui.sidebar.querySelectorAll('.source-item')) {
-    const active = li.dataset.source === sourceId;
-    li.classList.toggle('is-active', active);
-    li.setAttribute('aria-selected', active ? 'true' : 'false');
-    if (active) li.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-  }
+  markSelectedSource(sourceId);
   closeDetail();
 
   // Just re-render with the new filter. No refetch — the chain keeps going

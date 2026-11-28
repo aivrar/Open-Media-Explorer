@@ -24,6 +24,9 @@ export const METER_TILT_DB_PER_OCTAVE = 3;
  *  main-thread commit and a compositor frame, so this is kept low on purpose;
  *  the timings below are tuned for it. */
 export const METER_FPS = 15;
+// A shared FFT window can include the outgoing track as the standby starts.
+// Keep levels, peak hold and gain history through those boundary samples.
+const HANDOFF_SETTLE_SECONDS = 0.12;
 const MUTED_COLORS = Object.freeze({ on: '#f04848', hot: '#f04848', offAlpha: 0.16 });
 const FRAME_OPTIONS = Object.freeze({
   minHz: METER_MIN_HZ, maxHz: METER_MAX_HZ, tiltDbPerOctave: METER_TILT_DB_PER_OCTAVE,
@@ -342,6 +345,7 @@ export function createPlayerMeter({
       draw();
       return;
     }
+    if (frame.time < frame.handoffTime + HANDOFF_SETTLE_SECONDS) return;
     if (frame.dt > 0) {
       meterTargetsFromFrame(state, frame);
       stepMeter(state, state.targets, frame.dt);

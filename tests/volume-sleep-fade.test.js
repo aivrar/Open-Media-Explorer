@@ -70,6 +70,8 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   });
   const audio = elements['audio-el'];
   const video = elements['video-el'];
+  const standby = elements['computer-audio-el'];
+  emitVolumeChanges(standby);
   emitVolumeChanges(audio);
   emitVolumeChanges(video);
 
@@ -140,6 +142,8 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   await flush();
   assert.equal(audio.dataset.preFadeVol, '0.8');
   assert.ok(Math.abs(audio.volume - 0.64) < 1e-9, `fading: ${audio.volume}`);
+  assert.equal(standby.volume, audio.volume);
+  assert.equal(standby.dataset.preFadeVol, '0.8');
   shows(80, 'the fade is not the user\'s volume');
   key('Home');
   await flush();
@@ -188,6 +192,7 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   assert.equal(elements['player-mute'].getAttribute('aria-pressed'), 'true');
   assert.equal(elements['player-mute'].dataset.silent, 'true');
   assert.equal(audio.muted, true);
+  assert.equal(standby.muted, true);
   video.muted = false;
   await flush();
   assert.equal(elements['player-mute'].getAttribute('aria-pressed'), 'false');
@@ -203,6 +208,7 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   assert.equal(video.paused, false);
   choose('1');
   t.mock.timers.tick(50_000); // the fade begins
+  standby.paused = false;
   t.mock.timers.tick(10_000); // and runs out
   await flush();
   assert.equal(select.value, '0');
@@ -210,6 +216,18 @@ test('the volume and the sleep-timer fade: a level set while it fades is the one
   assert.equal(audio.dataset.preFadeVol, undefined);
   assert.equal(audio.volume, 0.5);
   assert.equal(video.volume, 0.5);
+  assert.equal(standby.paused, true);
+  assert.equal(standby.volume, 0.5);
+  assert.equal(standby.dataset.preFadeVol, undefined);
+  standby.volume = 0.35;
+  await flush();
+  assert.equal(audio.volume, 0.35);
+  assert.equal(video.volume, 0.35);
+  standby.volume = 0.352;
+  await flush();
+  assert.equal(audio.volume, standby.volume);
+  player.setVolume(50);
+  await flush();
   shows(50, 'after the fade ran out');
   assert.deepEqual(silenceChanges, [], 'the volume is restored at fade completion');
   assert.equal(elements['player-mute'].getAttribute('aria-pressed'), 'false');

@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 
 import { FakeElement, createPlayerDom } from './helpers/fake-dom.js';
 import { getState, normalizeSettings } from '../src/lib/state.js';
+import { makeComputerItem } from '../src/lib/computer-play.js';
 import { resetControlSession } from '../src/lib/capture-client.js';
 import {
   applyStationImageList, markStationImageFailed, onStationImagesChange,
 } from '../src/lib/station-images.js';
-import { syncTileStationImages } from '../src/modes/grid.js';
-import { openDetail, closeDetail, refreshDetailArtwork } from '../src/modes/library/detail.js';
+import { openDetail, closeDetail, detailPictureControls, refreshDetailArtwork } from '../src/modes/library/detail.js';
 import { ui } from '../src/modes/library/shell-refs.js';
+import { dropStationPicture, pictureDropTarget } from '../src/modes/library/picture-drop.js';
 
 /* Just enough DOM for the views to mount, swap and remove pictures. */
 class Node extends FakeElement {
@@ -89,69 +90,6 @@ function withPage(fn) {
 
 const images = (node) => node.children.filter((child) => child.tagName === 'IMG');
 
-test('Grid: a new picture list redraws only the tiles whose picture changed', () => withPage(() => {
-  const host = new Node('', 'div');
-  host.root = true;
-  // Tiles as renderTiles() leaves them before any list has arrived. These
-  // items have no artwork of their own, so only station pictures show.
-  const tiles = ['Radio Paradise', 'KEXP', 'Jazz FM'].map((title, index) => {
-    const tile = host.appendChild(new Node('', 'div'));
-    tile.className = 'channel-tile';
-    const logoWrap = tile.appendChild(new Node('', 'div'));
-    const placeholder = logoWrap.appendChild(new Node('', 'div'));
-    placeholder.className = 'channel-logo-placeholder';
-    tile.__stationImage = { logoWrap, item: { id: `t${index}`, title, source: '', type: 'radio' }, source: '' };
-    return { tile, logoWrap, placeholder };
-  });
-  const [a, b, c] = tiles;
-  // As renderGrid() does.
-  let redrawn = [];
-  const off = onStationImagesChange(() => { redrawn.push(syncTileStationImages(host)); });
-  try {
-    c.tile.focus();
-    applyStationImageList({ images: [picture('radio paradise', '1')] });
-    assert.deepEqual(redrawn, [1]);
-    const [first] = images(a.logoWrap);
-    assert.ok(first, 'the picture is shown');
-    assert.equal(a.tile.__stationImage.source, source('1'));
-    assert.deepEqual([images(b.logoWrap), images(c.logoWrap)], [[], []]);
-    assert.deepEqual(host.children, tiles.map(({ tile }) => tile), 'the tiles themselves stay');
-    assert.equal(a.logoWrap.children[0], a.placeholder);
-    assert.equal(globalThis.document.activeElement, c.tile, 'focus is not moved');
-
-    // Nothing new: nothing redrawn.
-    assert.equal(syncTileStationImages(host), 0);
-    // The file replaced on disk: only its tile gets a new picture.
-    redrawn = [];
-    applyStationImageList({ images: [picture('radio paradise', '1', 'bbb222')] });
-    assert.deepEqual(redrawn, [1]);
-    const [second] = images(a.logoWrap);
-    assert.notEqual(second, first);
-    assert.equal(first.parentNode, null);
-    assert.equal(images(a.logoWrap).length, 1);
-
-    // A picture for another station: that tile only.
-    applyStationImageList({ images: [picture('radio paradise', '1', 'bbb222'), picture('kexp', '2')] });
-    assert.equal(images(a.logoWrap)[0], second);
-    assert.equal(images(b.logoWrap).length, 1);
-    assert.equal(images(c.logoWrap).length, 0);
-
-    // A picture that will not load: its tile goes back to its own artwork.
-    markStationImageFailed(source('1', 'bbb222'));
-    assert.deepEqual(images(a.logoWrap), []);
-    assert.equal(a.logoWrap.children[0], a.placeholder);
-    assert.equal(images(b.logoWrap).length, 1);
-
-    // Pictures removed.
-    redrawn = [];
-    applyStationImageList({ images: [] });
-    assert.deepEqual(redrawn, [1]);
-    assert.deepEqual(images(b.logoWrap), []);
-  } finally {
-    off();
-  }
-}));
-
 test('Library detail panel: only its picture is swapped when the list changes', () => withPage(() => {
   const state = getState();
   const previous = { settings: state.settings, root: ui.root, panel: ui.detailPanel };
@@ -200,6 +138,35 @@ test('Library detail panel: only its picture is swapped when the list changes', 
     state.settings = previous.settings;
   }
 }));
+
+test('Library Computer favorites refuse station picture selection and drops without an error', async () => {
+  const result = withPage(() => {
+    const state = getState();
+    const { favorites, mode } = state;
+    const previous = { ...ui };
+    const item = makeComputerItem({ id: 'local-picture', kind: 'audio', title: 'Local album track' });
+    const root = new Node('', 'div');
+    const card = new Node('', 'article');
+    card.__item = item;
+    root.appendChild(card);
+    try {
+      Object.assign(state, { mode: 'library', favorites: [item] });
+      Object.assign(ui, { root, resultsHost: root, detailPanel: null });
+      openDetail(item);
+      assert.equal(detailPictureControls(), null);
+      const target = { closest: () => card };
+      assert.equal(pictureDropTarget(target), null);
+      return dropStationPicture(new File(['image'], 'cover.jpg'), target, {
+        validate: () => assert.fail('a Computer picture drop must be ignored'),
+      });
+    } finally {
+      closeDetail();
+      Object.assign(ui, previous);
+      Object.assign(state, { favorites, mode });
+    }
+  });
+  assert.equal(await result, null);
+});
 
 class MemoryStorage {
   constructor() { this.data = new Map(); }

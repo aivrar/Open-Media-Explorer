@@ -68,8 +68,9 @@ export function isValidThumbnailUrl(u) {
 function startThumbImage(img, opts = {}) {
   const src = img?.dataset?.artworkSrc;
   if (!img || !src || img.dataset.artworkStarted === 'true') return;
-  img.dataset.artworkStarted = 'true';
   const signal = opts.signal || getThumbnailHydrationSignal();
+  if (signal.aborted) return;
+  img.dataset.artworkStarted = 'true';
   void loadArtworkImage(img, src, {
     signal,
     priority: opts.priority ?? (opts.eager === true ? 20 : 5),
@@ -123,7 +124,7 @@ export async function resolveItemArtwork(item, opts = {}) {
   if (!isContentAllowed(item, getState().settings) || item?.__contentHidden === true) return item;
   if (!item || isValidThumbnailUrl(item.thumbnail) || !artworkNeedsResolution(item)) return item;
   return resolveArtworkRelay(item, opts).catch((error) => {
-    console.warn('thumbnail hydrate failed:', error);
+    if (error?.name !== 'AbortError') console.warn('thumbnail hydrate failed:', error);
     throw error;
   });
 }
@@ -132,7 +133,7 @@ async function hydrateCardThumbnail(item, thumb, beforeNode, opts = {}) {
   if (!item) return;
   try {
     if (!artworkSourceFor(item)) await resolveItemArtwork(item, opts);
-    if (thumb && thumb.isConnected) {
+    if (!opts.signal?.aborted && thumb?.isConnected) {
       insertThumbImage(thumb, item, beforeNode, opts);
       startThumbImage(thumb.querySelector('img'), opts);
     }
@@ -148,11 +149,13 @@ export function requestThumbnailHydration(card, item, thumb, beforeNode, opts = 
   if (!hasArtwork && !artworkNeedsResolution(item)) return;
   const signal = opts.signal || getThumbnailHydrationSignal();
   const activate = (priority, eager) => {
+    if (signal.aborted) return;
+    const current = card.__item || item;
     const activeOptions = { ...opts, signal, priority, eager };
-    if (artworkSourceFor(item)) {
+    if (artworkSourceFor(current)) {
       startThumbImage(thumb?.querySelector('img'), activeOptions);
     } else {
-      hydrateCardThumbnail(item, thumb, beforeNode, activeOptions);
+      hydrateCardThumbnail(current, thumb, beforeNode, activeOptions);
     }
   };
   if (opts.eager === true) {
@@ -170,13 +173,14 @@ export function requestThumbnailHydration(card, item, thumb, beforeNode, opts = 
   }
   if (!thumbHydration.observer) {
     thumbHydration.observerRoot = observerRoot;
-    thumbHydration.observer = new IntersectionObserver((entries) => {
+    const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        thumbHydration.observer.unobserve(entry.target);
+        observer.unobserve(entry.target);
         const cfg = entry.target.__thumbHydration;
         delete entry.target.__thumbHydration;
-        if (!cfg) continue;
+        if (!cfg || cfg.opts.signal.aborted) continue;
+        const current = entry.target.__item || cfg.item;
         const rootRect = observerRoot?.getBoundingClientRect?.()
           || { top: 0, bottom: globalThis.innerHeight || 0 };
         const visibleNow = entry.boundingClientRect.bottom >= rootRect.top
@@ -186,13 +190,14 @@ export function requestThumbnailHydration(card, item, thumb, beforeNode, opts = 
           priority: visibleNow ? 20 : 5,
           eager: visibleNow,
         };
-        if (artworkSourceFor(cfg.item)) {
+        if (artworkSourceFor(current)) {
           startThumbImage(cfg.thumb?.querySelector('img'), activeOptions);
         } else {
-          hydrateCardThumbnail(cfg.item, cfg.thumb, cfg.beforeNode, activeOptions);
+          hydrateCardThumbnail(current, cfg.thumb, cfg.beforeNode, activeOptions);
         }
       }
     }, { root: observerRoot, rootMargin: `${THUMBNAIL_PREFETCH_MARGIN_PX}px 0px` });
+    thumbHydration.observer = observer;
   }
   card.__thumbHydration = { item, thumb, beforeNode, opts: { ...opts, signal } };
   thumbHydration.observer.observe(card);

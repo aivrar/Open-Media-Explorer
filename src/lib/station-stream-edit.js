@@ -58,6 +58,8 @@ export async function saveStationStreams(item, value, { request = controlRequest
   scheduleProfileHandoff();
   emit('station-streams-change', item.id);
   clearDidNotPlay(item.id);
-  clearPlayedStream(item.id);
+  if (safeExternalUrl(previous?.main || original) !== safeExternalUrl(main || original)) {
+    clearPlayedStream(item.id);
+  }
   return true;
 }

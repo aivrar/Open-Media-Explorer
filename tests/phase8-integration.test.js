@@ -77,14 +77,13 @@ test('the source registry is one immutable ten-entry authority with one lazy ada
   }
 });
 
-test('Settings, About, Library, live modes, Discovery, and the production harness consume the registry', async () => {
+test('Settings, About, Library, Tuner, Surprise me, and the production harness consume the registry', async () => {
   const files = Object.fromEntries(await Promise.all([
     'src/lib/settings.js',
     'src/modes/about.js',
     'src/modes/library/sidebar.js',
     'src/modes/tuner.js',
-    'src/modes/grid.js',
-    'src/modes/discovery.js',
+    'src/modes/now-playing-surprise.js',
     'src/test-adapter.html',
   ].map(async (name) => [name, await read(name)])));
 
@@ -93,13 +92,12 @@ test('Settings, About, Library, live modes, Discovery, and the production harnes
   assert.match(files['src/modes/about.js'], /SOURCES\.map/);
   assert.match(files['src/modes/about.js'], /s\.rightsNote/);
   assert.match(files['src/modes/library/sidebar.js'], /items:\s*SOURCES\.map/);
-  for (const name of ['src/modes/tuner.js', 'src/modes/grid.js']) {
-    assert.match(files[name], /function liveSources\(\)/);
-    assert.match(files[name], /source\.capabilities\.some/);
-    assert.match(files[name], /contentAwareLiveSourceIds/);
-    assert.match(files[name], /enabledSignature/);
-  }
-  assert.match(files['src/modes/discovery.js'], /SOURCES\.filter/);
+  const name = 'src/modes/tuner.js';
+  assert.match(files[name], /function liveSources\(\)/);
+  assert.match(files[name], /source\.capabilities\.some/);
+  assert.match(files[name], /contentAwareLiveSourceIds/);
+  assert.match(files[name], /enabledSignature/);
+  assert.match(files['src/modes/now-playing-surprise.js'], /SOURCES\.filter/);
   assert.match(files['src/test-adapter.html'], /SOURCES/);
   assert.match(files['src/test-adapter.html'], /loadAdapter/);
 
@@ -124,11 +122,11 @@ test('Settings, About, Library, live modes, Discovery, and the production harnes
 test('central policy overrides caller options and IPTV reveals cached ratings without a refetch', async () => {
   const originalFetch = globalThis.fetch;
   const originalStorage = globalThis.localStorage;
-  let requests = 0;
+  const requests = [];
   globalThis.localStorage = memoryStorage();
   globalThis.fetch = async (input) => {
-    requests += 1;
     const url = String(input);
+    requests.push(new URL(url).pathname.split('/').at(-1));
     if (url.endsWith('/streams.json')) return json([
       { channel: 'safe.us', title: 'Safe Music', url: 'https://safe.example/live.m3u8' },
       { channel: 'explicit.us', title: 'Marked Music', url: 'https://marked.example/live.m3u8' },
@@ -137,7 +135,7 @@ test('central policy overrides caller options and IPTV reveals cached ratings wi
       { id: 'safe.us', name: 'Safe Music', country: 'US', languages: ['eng'], categories: ['music'], is_nsfw: false },
       { id: 'explicit.us', name: 'Marked Music', country: 'US', languages: ['eng'], categories: ['music'], is_nsfw: true },
     ]);
-    if (url.endsWith('/logos.json')) return json([]);
+    if (url.endsWith('/logos.json') || url.endsWith('/feeds.json')) return json([]);
     throw new Error(`unexpected IPTV request ${url}`);
   };
 
@@ -148,7 +146,8 @@ test('central policy overrides caller options and IPTV reveals cached ratings wi
       throwOnError: true,
     });
     assert.deepEqual(hidden.map((item) => item.content_rating), ['not-explicit']);
-    assert.equal(requests, 3);
+    assert.deepEqual([...requests].sort(), ['channels.json', 'feeds.json', 'logos.json', 'streams.json']);
+    const initialRequests = requests.length;
 
     setShowExplicitContent(true);
     const shown = await searchOne('iptv-org', 'music', {
@@ -156,13 +155,13 @@ test('central policy overrides caller options and IPTV reveals cached ratings wi
       throwOnError: true,
     });
     assert.deepEqual(shown.map((item) => item.content_rating).sort(), ['explicit', 'not-explicit']);
-    assert.equal(requests, 3, 'the reversible preference must reuse the joined IPTV cache');
+    assert.equal(requests.length, initialRequests, 'the reversible preference must reuse the joined IPTV cache');
 
     const live = await browseLiveOne('iptv-org', {
       type: 'tv', country: 'US', tag: 'music', showExplicitContent: false,
     });
     assert.equal(live.length, 2, 'persisted preference also overrides live-mode caller options');
-    assert.equal(requests, 3);
+    assert.equal(requests.length, initialRequests);
   } finally {
     setShowExplicitContent(false);
     globalThis.fetch = originalFetch;

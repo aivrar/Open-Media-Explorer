@@ -109,6 +109,8 @@
   --chrome: #dfeaf1;
   /* Slider tracks use the light palette's higher-contrast text colour. */
   --slider-track: var(--text-mute);
+  /* Behind a station logo in the player bar: pale logos vanish on the light surface. */
+  --logo-tile: #7a8694;
   --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
   --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
   --source-radio-browser: #0b63b6;
@@ -225,6 +227,8 @@
     --accent-contrast: #001311;
     --chrome: #dfeaf1;
     --slider-track: var(--text-mute);
+    /* Behind a station logo in the player bar: pale logos vanish on the light surface. */
+    --logo-tile: #7a8694;
     --shadow-1: 0 1px 2px rgba(15, 17, 21, 0.08);
     --shadow-2: 0 8px 24px rgba(15, 17, 21, 0.12);
     --source-radio-browser: #0b63b6;
@@ -368,7 +372,7 @@ html, body {
   gap: var(--topbar-gap);
 }
 
-/* Keep seven tabs beside the brand and the full Sleep countdown down to
+/* Keep six tabs beside the brand and the full Sleep countdown down to
    1001 px. The strip scrolls if the font needs more room. */
 @media (min-width: 1001px) and (max-width: 1240px) {
   .topbar { padding: 0 12px; }
@@ -473,7 +477,6 @@ html, body {
   color: var(--danger);
 }
 
-.grid-controls select,
 .tuner-filter select,
 .modal select,
 .picture-panel select {
@@ -491,7 +494,6 @@ html, body {
   background-repeat: no-repeat;
 }
 
-.grid-controls select,
 .modal select,
 .picture-panel select { min-height: 34px; }
 
@@ -500,7 +502,6 @@ html, body {
 }
 
 .sleep-timer select:enabled:hover,
-.grid-controls select:enabled:hover,
 .tuner-filter select:enabled:hover,
 .modal select:enabled:hover,
 .picture-panel select:enabled:hover,
@@ -632,6 +633,7 @@ html, body {
    cards. A square picture fills the square as before. */
 #player-art.is-logo {
   object-fit: contain;
+  background: var(--logo-tile, var(--bg-elev-3));
 }
 /* The user's own station picture: whole and centred, never cropped. While it
    is shown, the box and the initials behind it step aside, so the sides of a
@@ -847,6 +849,7 @@ html, body {
 .player-action,
 .player-action-secondary,
 .player-picture,
+.player-track-button,
 .player-eq {
   appearance: none;
   border: 1px solid var(--border);
@@ -872,6 +875,7 @@ html, body {
 .player-action:hover:not(:disabled):not([aria-disabled="true"]),
 .player-action-secondary:hover:not(:disabled),
 .player-picture:hover,
+.player-track-button:hover,
 .player-eq:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--bg-elev-3);
@@ -879,12 +883,64 @@ html, body {
 .player-action:active:not(:disabled):not([aria-disabled="true"]),
 .player-action-secondary:active:not(:disabled),
 .player-picture:active,
+.player-track-button:active,
 .player-eq:active:not(:disabled) { transform: scale(.97); }
 
 .player-action, .player-eq { flex-shrink: 0; }
 .player-picture-slot { display: flex; flex: none; }
 .player-picture-slot[inert] { display: none; }
 .player-picture { width: 64px; }
+.player-track-button { flex: none; }
+.player-track-button svg { flex: none; }
+#player-subtitles[aria-busy="true"] { position: relative; }
+#player-subtitles[aria-busy="true"]::after {
+  content: "\2026";
+  position: absolute;
+  top: 0;
+  right: 2px;
+  color: var(--accent-strong);
+  line-height: 1;
+}
+.player-track-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  min-width: 144px;
+  max-width: min(280px, calc(100vw - 16px));
+  max-height: min(18rem, 45vh);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.player-track-menu button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) 2.5em;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.player-track-menu button:is(:hover, :focus-visible) { background: var(--bg-elev-3); }
+.player-track-menu button > :last-child { text-align: right; }
+.player-bar:not([data-fit="full"]) .player-track-button { width: 36px; padding: 0; }
+.player-bar:not([data-fit="full"]) .player-track-button span { display: none; }
+@media (max-width: 1024px) {
+  .player-bar .player-track-button { width: 36px; padding: 0; }
+  .player-bar .player-track-button span { display: none; }
+}
 
 .picture-panel {
   position: fixed;
@@ -958,16 +1014,21 @@ html, body {
 .video-dock video.video-fit-zoom-133 { object-view-box: inset(12.40602%); }
 
 /* Keep the native controls and confine their scrim to the control row. */
+#video-el::cue {
+  color: white;
+  background-color: rgb(0 0 0 / 78%);
+  font-family: sans-serif;
+  font-weight: 600;
+  text-shadow: 0 1px 2px black;
+}
+
 #video-el::-webkit-media-controls-panel {
-  background: linear-gradient(to top, rgb(0 0 0 / 45%), transparent 48px) !important;
+  background: linear-gradient(to top, rgb(0 0 0 / 55%), transparent 48px) !important;
 }
 #video-el:fullscreen::-webkit-media-controls-panel {
-  background: linear-gradient(to top, rgb(0 0 0 / 45%), transparent 64px) !important;
+  background: linear-gradient(to top, rgb(0 0 0 / 55%), transparent 64px) !important;
 }
-#video-el::-webkit-media-controls-play-button,
 #video-el::-webkit-media-controls-mute-button,
-#video-el::-webkit-media-controls-fullscreen-button,
-#video-el::-webkit-media-controls-overlay-play-button,
 #video-el::-webkit-media-controls-current-time-display,
 #video-el::-webkit-media-controls-time-remaining-display,
 #video-el::-webkit-media-controls-volume-slider,
@@ -1646,6 +1707,25 @@ html, body {
   .eq-preset-row { gap: 7px; padding-block: 8px; }
 }
 
+@media (height < 900px) {
+  .eq-header { padding-block: 8px; }
+  .eq-toolbar,
+  .eq-preset-row { padding-block: 5px; }
+  .eq-stations,
+  .eq-advanced { padding-block: 4px; }
+  .eq-response { height: clamp(64px, 10vh, 96px); margin-top: 8px; }
+  .eq-bands {
+    --eq-fader-height: clamp(130px, 20vh, 172px);
+    min-height: 0;
+    padding-block: 6px;
+  }
+  .eq-band {
+    grid-template-rows: 20px calc(var(--eq-fader-height) + 6px) 18px;
+    padding-block: 2px;
+  }
+  .eq-band-slider { height: var(--eq-fader-height); }
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -1726,7 +1806,7 @@ input[type="checkbox"].switch {
   width: 36px;
   min-width: 36px;
   height: 20px;
-  background: var(--bg-elev-3);
+  background: var(--slider-track, var(--bg-elev-3));
   border-radius: 999px;
   position: relative;
   cursor: pointer;
@@ -1876,8 +1956,8 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
 
 /* Scrollbar (WebKit only — KHTMLs use system) */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--bg-elev-3); border-radius: 6px; border: 2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+::-webkit-scrollbar-thumb { background: var(--slider-track, var(--bg-elev-3)); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--slider-track, var(--border-strong)); }
 
 @media (max-width: 1000px) {
   .topbar {
@@ -2021,7 +2101,6 @@ input[type="checkbox"].switch:checked::after { transform: translateX(16px); }
   .is-playing,
   .is-fav,
   .card,
-  .channel-tile,
   .content-rating-badge {
     border-color: CanvasText !important;
   }

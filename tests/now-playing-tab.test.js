@@ -16,10 +16,13 @@ import { createPlayerMeter } from '../src/lib/player-meter.js';
 import { NOW_PLAYING_EVENT } from '../src/lib/now-playing.js';
 import { PLAYER_SILENT_CHANGE } from '../src/lib/player.js';
 import { FAVORITE_GROUPS_EVENT } from '../src/lib/favorite-groups.js';
+import { SOURCES } from '../src/lib/sources.js';
 import { COPIED_LABEL, COPY_FAILED, COPY_LABEL } from '../src/lib/song-log-panel.js';
 import { fakeMotion, fakeResizeObserverWin } from './helpers/visualizer-fakes.js';
 import { createClockHarness, fakeAnalyser } from './helpers/signal-harness.js';
 import { createAudioSignal } from '../src/lib/audio-signal.js';
+import { makeComputerItem } from '../src/lib/computer-play.js';
+import { catalogScheduler } from '../src/lib/catalog-scheduler.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -331,7 +334,8 @@ function fakeStarred() {
 function harness({
   item = null, playing = false, title = '', favorite = false, names = new Map(), groups = null,
   custom = '', customFails = false, resolveTo = '', clipboard = undefined, openMode = () => {},
-  bestStream = () => null, settings = {}, makeSignal = null, loadImage = null,
+  bestStream = () => null, settings = {}, makeSignal = null, loadImage = null, random, randomNumber,
+  isComputerPlaybackConverted = () => false,
 } = {}) {
   const bus = fakeBus();
   const docListeners = new Map();
@@ -358,9 +362,11 @@ function harness({
   let now = 0;
   const clock = createPlayClock({ now: () => now });
   const state = {
+    mode: NOW_PLAYING_MODE,
     item,
     playing,
     advancing: playing,
+    playbackActions: 0,
     silent: false,
     stream: null,
     nowPlaying: title && item ? { itemId: item.id, mediaId: 'm1', title, changedAt: 1 } : null,
@@ -379,11 +385,25 @@ function harness({
     win,
     subscribe: (event, fn) => bus.subscribe(event, fn),
     getCurrentItem: () => state.item,
+    isComputerPlaybackConverted,
     getNowPlaying: () => state.nowPlaying,
     isPlaying: () => state.playing,
     isAdvancing: () => state.advancing,
     isSilent: () => state.silent,
     getSettings: () => state.settings,
+    getMode: () => state.mode,
+    saveSettings: (partial) => {
+      Object.assign(state.settings, partial);
+      bus.emit('settings-change', state.settings);
+    },
+    random,
+    randomNumber,
+    playbackActionCount: () => state.playbackActions,
+    play: async (entry) => {
+      state.playbackActions++;
+      state.item = entry;
+      bus.emit('current-item', entry);
+    },
     isFavorite: (id) => state.favorites.has(id),
     addFavorite: (entry) => { state.favorites.add(entry.id); bus.emit('favorites-change'); },
     removeFavorite: (id) => { state.favorites.delete(id); bus.emit('favorites-change'); },
@@ -421,7 +441,7 @@ function harness({
   const host = new FakeEl('main');
   const view = mountNowPlaying(host, deps);
   return {
-    view, host, bus, doc, docListeners, signalSubs, signal, motion, win, timers, loads, resolves, pictureListeners,
+    view, host, deps, bus, doc, docListeners, signalSubs, signal, motion, win, timers, loads, resolves, pictureListeners,
     clock, state, starred, meters,
     get now() { return now; },
     set now(value) { now = value; },
@@ -434,6 +454,318 @@ function harness({
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('Surprise drops late picks after Next, another play, Pause, or Stop', async (t) => {
+  const local = makeComputerItem({ id: 'current', kind: 'audio', title: 'Track' });
+  const localNext = makeComputerItem({ id: 'next', kind: 'audio', title: 'Next track' });
+  let pending;
+  const random = t.mock.fn(() => pending.promise);
+  const h = harness({ item: local, playing: true, random });
+  t.after(() => h.view.destroy());
+  const [button, , , , , , , , source, status] = h.view.parts.surpriseArea.children;
+  source.value = 'radio-browser';
+  source.dispatchEvent(new Event('change'));
+  for (const [item, playing] of [[localNext, true], [RADIO, true], [local, false], [null, false], [local, true]]) {
+    h.state.item = local;
+    h.state.playing = true;
+    pending = Promise.withResolvers();
+    const before = random.mock.callCount();
+    button.click();
+    await settle();
+    assert.equal(random.mock.callCount(), before + 1);
+    h.state.item = item;
+    h.state.playing = playing;
+    h.state.playbackActions++;
+    pending.resolve([RADIO]);
+    await settle();
+    assert.equal(h.state.item, item);
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, 'Surprise Me');
+    assert.equal(status.textContent, '');
+  }
+  source.value = 'all';
+  source.dispatchEvent(new Event('change'));
+});
+
+test('Surprise me uses the filters, enabled sources and content rating, then shows the pick in Now Playing', async (t) => {
+  const match = {
+    id: 'radio:jazz', source: 'radio-browser', title: 'Jazz station', type: 'radio', country: 'US', tags: ['Smooth Jazz'],
+  };
+  const calls = [];
+  let allowMatch = false;
+  const h = harness({
+    random: async (id, opts) => {
+      calls.push({ id, ...opts });
+      return [
+        { ...match, title: 'Wrong type', type: 'video' },
+        { ...match, title: 'Wrong country', country: 'CA' },
+        { ...match, title: 'Wrong tags', tags: ['news'] },
+        { ...match, title: 'Explicit', content_rating: 'explicit' },
+        ...(allowMatch ? [match] : []),
+      ];
+    },
+  });
+  t.after(() => h.view.destroy());
+  const { surpriseArea, surpriseToggle, title, empty } = h.view.parts;
+  const [button, anyType, radio, tv, video, audio, country, tag, source, status] = surpriseArea.children;
+
+  assert.equal(empty.hidden, false);
+  assert.equal(surpriseArea.hidden, false);
+  assert.equal(surpriseToggle.checked, true);
+  assert.equal(surpriseToggle.getAttribute('type'), 'checkbox');
+  assert.equal(button.textContent, 'Surprise Me');
+  assert.deepEqual([anyType, radio, tv, video, audio].map((chip) => chip.textContent),
+    ['Any type', 'Radio only', 'TV only', 'Video only', 'Audio only']);
+  assert.equal(status.getAttribute('role'), 'status');
+  radio.click();
+  assert.equal(radio.getAttribute('aria-pressed'), 'true');
+  assert.equal(anyType.getAttribute('aria-pressed'), 'false');
+  country.value = 'us';
+  country.dispatchEvent(new Event('input'));
+  tag.value = 'Jazz';
+  tag.dispatchEvent(new Event('input'));
+  source.value = 'radio-browser';
+  source.dispatchEvent(new Event('change'));
+  button.click();
+  assert.equal(button.textContent, 'Searching\u2026');
+  assert.equal(button.disabled, true);
+  await settle();
+  assert.equal(button.textContent, 'No results \u2014 try again');
+  assert.equal(h.state.item, null);
+
+  allowMatch = true;
+  button.click();
+  await settle();
+  assert.deepEqual(calls.map(({ id, country, tag, limit }) => [id, country, tag, limit]),
+    [['radio-browser', 'US', 'jazz', 20], ['radio-browser', 'US', 'jazz', 20]]);
+  assert.equal(button.textContent, 'Surprise Me Again');
+  assert.equal(button.disabled, false);
+  assert.match(status.textContent, /^Selected from /);
+  assert.equal(empty.hidden, true);
+  assert.equal(title.textContent, match.title);
+  assert.notEqual(h.state.item, match, 'playback owns a distinct instance of the pick');
+
+  h.state.settings.enabledSources = { 'radio-browser': false };
+  h.bus.emit('settings-change', h.state.settings);
+  assert.equal(source.value, 'all');
+  assert.equal(source.children.some((option) => option.value === 'radio-browser'), false);
+  assert.equal(button.textContent, 'Surprise Me');
+  assert.equal(status.textContent, '');
+
+  h.state.settings.enabledSources = {};
+  h.bus.emit('settings-change', h.state.settings);
+  source.value = 'radio-browser';
+  source.dispatchEvent(new Event('change'));
+  h.bus.emit('player-broken-next');
+  await settle();
+  assert.equal(calls.length, 2, 'disallowing the pick clears its retry ID');
+  const toggle = (on) => {
+    surpriseToggle.checked = on;
+    surpriseToggle.dispatchEvent(new Event('change'));
+  };
+  toggle(false);
+  assert.equal(h.state.settings.nowPlayingSurprise, false);
+  assert.equal(surpriseArea.hidden, true);
+  assert.equal(surpriseArea.children.length, 0);
+  assert.equal(h.bus.events().includes('player-broken-next'), false);
+  h.bus.emit('player-broken-next');
+  await settle();
+  assert.equal(calls.length, 2);
+
+  toggle(true);
+  assert.equal(h.state.settings.nowPlayingSurprise, true);
+  assert.equal(surpriseArea.children[2].getAttribute('aria-pressed'), 'true');
+  assert.equal(surpriseArea.children[6].value, 'US');
+  assert.equal(surpriseArea.children[7].value, 'jazz');
+  assert.equal(surpriseArea.children[8].value, 'radio-browser');
+  // Reset session filters before the next test.
+  surpriseArea.children[1].click();
+  for (const field of surpriseArea.children.slice(6, 8)) {
+    field.value = '';
+    field.dispatchEvent(new Event('input'));
+  }
+  surpriseArea.children[8].value = 'all';
+  surpriseArea.children[8].dispatchEvent(new Event('change'));
+});
+
+test('Surprise me retries the last pick by ID in Now Playing and cancels work when turned off', async (t) => {
+  const entry = { id: 'radio:same', source: 'radio-browser', title: 'Same station', type: 'radio' };
+  let calls = 0;
+  let waiting;
+  const h = harness({
+    random: async (_source, { signal }) => {
+      calls += 1;
+      if (calls === 1) return [entry];
+      if (calls === 2) return [];
+      return new Promise((resolve) => { waiting = { signal, resolve }; });
+    },
+  });
+  t.after(() => h.view.destroy());
+  const [firstButton, , , , , , , , source] = h.view.parts.surpriseArea.children;
+  source.value = 'radio-browser';
+  source.dispatchEvent(new Event('change'));
+  t.after(() => {
+    source.value = 'all';
+    source.dispatchEvent(new Event('change'));
+  });
+
+  firstButton.click();
+  await settle();
+  assert.equal(calls, 1);
+  assert.notEqual(h.state.item, entry);
+  h.state.item = { ...entry, id: 'radio:other' };
+  h.bus.emit('player-broken-next');
+  // Same-ID reconnects keep the original player object.
+  h.state.item = entry;
+  h.state.mode = 'computer';
+  h.bus.emit('player-broken-next');
+  await settle();
+  assert.equal(calls, 1);
+  h.view.destroy();
+
+  h.state.mode = NOW_PLAYING_MODE;
+  const reopened = mountNowPlaying(h.host, h.deps);
+  t.after(() => reopened.destroy());
+  const { surpriseArea, surpriseToggle } = reopened.parts;
+  const [button, , , , , , , , , status] = surpriseArea.children;
+  assert.equal(button.textContent, 'Surprise Me Again');
+  assert.equal(status.textContent, 'Selected from Radio Browser.');
+  h.bus.emit('player-broken-next');
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(button.textContent, 'No results \u2014 try again');
+
+  button.click();
+  await settle();
+  assert.equal(calls, 3);
+  assert.equal(waiting.signal.aborted, false);
+  const searching = status.textContent;
+  surpriseToggle.checked = false;
+  surpriseToggle.dispatchEvent(new Event('change'));
+  assert.equal(waiting.signal.aborted, true);
+  assert.equal(h.bus.events().includes('player-broken-next'), false);
+  waiting.resolve([{ ...entry, title: 'Late pick' }]);
+  await settle();
+  assert.equal(h.state.item, entry);
+  assert.equal(status.textContent, searching);
+  surpriseToggle.checked = true;
+  surpriseToggle.dispatchEvent(new Event('change'));
+  h.bus.emit('player-broken-next');
+  await settle();
+  assert.equal(calls, 3);
+});
+
+test('Surprise skips a slow source after four seconds and puts the last pick source last', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const eligible = new Set(['radio-browser', 'media-ccc', 'peertube']);
+  const enabledSources = Object.fromEntries(SOURCES.map(({ id }) => [id, eligible.has(id)]));
+  let seed = 1000;
+  const calls = [];
+  let stalled;
+  let onlyMatch;
+  const h = harness({
+    settings: { enabledSources },
+    randomNumber: () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 2 ** 32;
+    },
+    random: async (source, { signal }) => {
+      calls.push(source);
+      if (onlyMatch && source !== onlyMatch) return [];
+      if (source === 'media-ccc') {
+        if (stalled) return [];
+        stalled = signal;
+        return new Promise((resolve) => signal.addEventListener('abort', () => resolve([]), { once: true }));
+      }
+      return [{ id: source + ':pick', source, title: 'Pick', type: source === 'radio-browser' ? 'radio' : 'video' }];
+    },
+  });
+  t.after(() => h.view.destroy());
+  const [button, , , , , , , , sourceSelect] = h.view.parts.surpriseArea.children;
+  // Set a known previous source before testing the session's rotation.
+  sourceSelect.value = 'peertube';
+  sourceSelect.dispatchEvent(new Event('change'));
+  button.click();
+  await settle();
+  sourceSelect.value = 'all';
+  sourceSelect.dispatchEvent(new Event('change'));
+  seed = 1000;
+  calls.length = 0;
+
+  button.click();
+  await settle();
+  assert.deepEqual(calls, ['media-ccc']);
+  t.mock.timers.tick(3999);
+  await settle();
+  assert.equal(calls.length, 1);
+  t.mock.timers.tick(1);
+  await settle();
+  assert.equal(stalled.aborted, true);
+  assert.deepEqual(calls, ['media-ccc', 'radio-browser']);
+  assert.equal(h.state.item.source, 'radio-browser');
+  button.click();
+  await settle();
+  assert.deepEqual(calls, ['media-ccc', 'radio-browser', 'peertube']);
+  assert.equal(h.state.item.source, 'peertube');
+
+  onlyMatch = 'peertube';
+  calls.length = 0;
+  button.click();
+  await settle();
+  assert.equal(calls.at(-1), 'peertube');
+  assert.deepEqual(new Set(calls), eligible);
+  assert.equal(calls.length, 3, 'each source is tried once');
+  assert.equal(button.textContent, 'Surprise Me Again');
+});
+
+test('Surprise caps the whole search at 20 seconds', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const calls = [];
+  const settings = { enabledSources: Object.fromEntries(SOURCES.map(({ id }, index) => [id, index < 6])) };
+  const h = harness({
+    settings,
+    randomNumber: () => 0,
+    random: (source, { signal }) => {
+      calls.push(source);
+      return new Promise((resolve) => signal.addEventListener('abort', () => resolve([]), { once: true }));
+    },
+  });
+  t.after(() => h.view.destroy());
+  const [button] = h.view.parts.surpriseArea.children;
+  button.click();
+  await settle();
+  for (let index = 0; index < 4; index++) {
+    t.mock.timers.tick(4_000);
+    await settle();
+  }
+  assert.equal(calls.length, 5);
+  assert.equal(button.disabled, true);
+  t.mock.timers.tick(4_000);
+  await settle();
+  assert.equal(calls.length, 5);
+  assert.equal(new Set(calls).size, 5);
+  assert.equal(button.disabled, false);
+  assert.equal(h.state.item, null);
+});
+
+test('Surprise me replaces the searching status when the search throws', (t) => {
+  const h = harness();
+  t.after(() => h.view.destroy());
+  const [button, , , , , , , , , status] = h.view.parts.surpriseArea.children;
+  const error = new Error('Search failed');
+  t.mock.method(catalogScheduler, 'enqueue', () => {
+    assert.match(status.textContent, /^Searching /);
+    throw error;
+  });
+  const warn = t.mock.method(console, 'warn', () => {});
+
+  button.click();
+
+  assert.deepEqual(warn.mock.calls[0].arguments, ['Surprise me failed:', error]);
+  assert.equal(button.textContent, 'Surprise Me');
+  assert.equal(button.disabled, false);
+  assert.equal(status.textContent, 'Something went wrong. Try again.');
+});
 
 test('My Playlists stream details update when playback format is remembered or cleared', (t) => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -599,6 +931,106 @@ test('a playing station: large picture, name, category, song with star and Copy,
   assert.equal(h.signal.opts.fps, 15);
   assert.equal(parts.canvas.height, 200);
   h.view.destroy();
+});
+
+test('Computer files show file details and share one retained large cover with the backdrop', async (t) => {
+  const audio = makeComputerItem({
+    id: 'local-audio', kind: 'audio', title: 'Local track', artist: 'Artist', album: 'Album',
+    duration: 137, acodec: 'flac', lossless: true, bits: 24, sample_rate: 96000, channels: 2, has_cover: true, bitrate: 800000,
+  });
+  const video = makeComputerItem({ id: 'local-video', kind: 'video', title: 'Local clip', duration: 62,
+    ext: 'mp4', width: 1920, height: 800, vcodec: 'h264', acodec: 'aac', bitrate: 1975000, channels: 6 });
+  const loads = [];
+  const bestStream = t.mock.fn();
+  const converted = new Set([audio.id]);
+  const h = harness({
+    item: audio, playing: true, title: 'Stale station song', bestStream,
+    isComputerPlaybackConverted: (id) => converted.has(id),
+    async loadImage(img, source, options) {
+      const url = 'blob:' + loads.length;
+      img.setAttribute('src', url);
+      assert.equal(options.keepObjectUrl(url), true);
+      loads.push({ source, url });
+      return img;
+    },
+  });
+  t.after(() => h.view.destroy());
+  const { parts } = h.view;
+  const revoked = [];
+  t.mock.method(URL, 'revokeObjectURL', (url) => {
+    assert.equal(parts.artImg.getAttribute('src'), null);
+    assert.equal(parts.backdropImg.getAttribute('src'), null);
+    revoked.push(url);
+  });
+  const facts = () => parts.facts.children.map(({ children }) => children.map(({ textContent }) => textContent));
+  await settle();
+  assert.equal(parts.title.textContent, 'Local track');
+  assert.equal(parts.kind.textContent, 'Music');
+  assert.equal(parts.part.textContent, 'Artist \u00b7 Album');
+  assert.equal(parts.detailsHeading.textContent, 'File details');
+  assert.equal(parts.convertedCopy.hidden, true);
+  assert.deepEqual(facts(), [['Format', 'FLAC 24/96'], ['Bitrate', '800 kbps'], ['Length', '2:17'], ['Source', 'Computer']]);
+  assert.equal(parts.song.hidden, true);
+  assert.equal(parts.empty.hidden, true, 'the Library and Tuner buttons are in the hidden empty state');
+  assert.equal(parts.bestHost.children.length, 0);
+  assert.equal(bestStream.mock.callCount(), 0);
+  assert.equal(h.resolves.length, 0);
+  assert.equal(h.view.timerPending, false);
+  assert.deepEqual(loads, [{ source: '/api/v1/computer/art/local-audio?size=large', url: 'blob:0' }]);
+  assert.equal(parts.artImg.getAttribute('src'), 'blob:0');
+  assert.equal(parts.backdropImg.getAttribute('src'), 'blob:0');
+  assert.deepEqual(revoked, []);
+
+  h.deps.saveSettings({ showTechnicalDetails: true });
+  assert.equal(parts.convertedCopy.hidden, false);
+  assert.equal(parts.convertedCopy.textContent, 'Playing a converted copy');
+  assert.deepEqual(facts()[0], ['Format', 'FLAC \u00b7 24-bit \u00b7 96 kHz \u00b7 Stereo']);
+  h.state.item = video;
+  h.bus.emit('current-item', video);
+  await settle();
+  assert.deepEqual(revoked, ['blob:0']);
+  assert.equal(parts.kind.textContent, 'Video');
+  assert.equal(parts.part.hidden, true);
+  assert.equal(parts.convertedCopy.hidden, true);
+  converted.add(video.id);
+  h.bus.emit('computer-converted-change');
+  assert.equal(parts.convertedCopy.hidden, false);
+  converted.delete(video.id);
+  h.bus.emit('computer-converted-change');
+  assert.equal(parts.convertedCopy.hidden, true);
+  converted.add(video.id);
+  h.bus.emit('computer-converted-change');
+  assert.equal(parts.convertedCopy.hidden, false);
+  h.deps.saveSettings({ showTechnicalDetails: false });
+  assert.equal(parts.convertedCopy.hidden, true);
+  assert.deepEqual(facts(), [['Format', '1080p \u00b7 H.264 \u00b7 AAC \u00b7 5.1'], ['Length', '1:02'], ['Source', 'Computer']]);
+  assert.equal(loads[1].source, '/api/v1/computer/art/local-video?size=large');
+  assert.equal(parts.artImg.getAttribute('src'), 'blob:1');
+  assert.equal(parts.backdropImg.getAttribute('src'), 'blob:1');
+  const noArt = makeComputerItem({ id: 'no-art', kind: 'audio', title: 'Bare track' });
+  h.state.item = noArt;
+  h.bus.emit('current-item', noArt);
+  await settle();
+  assert.equal(parts.title.textContent, 'Bare track');
+  assert.equal(parts.artImg.getAttribute('src'), null);
+  assert.equal(parts.backdropImg.getAttribute('src'), null);
+  assert.equal(loads.length, 2);
+  assert.deepEqual(revoked, ['blob:0', 'blob:1']);
+
+  const badEpisode = makeComputerItem({
+    id: 'bad-episode', kind: 'video', rel: 'Test.Show.S01E02.Pilot.mkv', title: 'Test Show',
+    season: 1, episode: 2, episode_title: 'Pilot', has_cover: true, error: 'This file could not be read.',
+  });
+  h.state.item = badEpisode;
+  h.bus.emit('current-item', badEpisode);
+  await settle();
+  assert.equal(parts.title.textContent, 'Test Show \u00b7 S01E02');
+  assert.equal(parts.part.hidden, false);
+  assert.equal(parts.part.textContent, 'Pilot');
+  assert.equal(parts.artInitials.hidden, false);
+  assert.equal(parts.artImg.getAttribute('src'), null);
+  assert.equal(parts.backdropImg.getAttribute('src'), null);
+  assert.equal(loads.length, 2);
 });
 
 test('a picture of the user\'s that will not load falls back to the item\'s own artwork; none at all leaves the initials tile', async () => {
@@ -1091,18 +1523,18 @@ test('the tab tears itself down when another tab opens', async (t) => {
 
 /* ---------------- Registration, layout and readability ---------------- */
 
-test('the tab sits after Discovery and before Visualizer, with its own styles, and the play clock starts with the player', async () => {
+test('the tab sits after Computer and before Visualizer, with its own styles, and the play clock starts with the player', async () => {
   const html = await read('src/index.html');
-  assert.match(html, /data-mode="discovery">Discovery<\/button>\s+<button class="mode-btn" data-mode="now-playing">Now Playing<\/button>\s+<button class="mode-btn" data-mode="visualizer">/);
+  assert.match(html, /data-mode="computer">Computer<\/button>\s+<button class="mode-btn" data-mode="now-playing">Now Playing<\/button>\s+<button class="mode-btn" data-mode="visualizer">/);
   assert.match(html, /<link rel="stylesheet" href="\.\/styles\/now-playing\.css" \/>/);
   const main = await read('src/main.js');
   assert.match(main, /import \{ renderNowPlaying \} from '\.\/modes\/now-playing\.js';/);
   assert.match(main, /'now-playing': renderNowPlaying,/);
   assert.match(main, /initPlayer\(\);[\s\S]{0,300}playClock\.start\(subscribe, getCurrentItem,/);
   assert.equal(NOW_PLAYING_MODE, 'now-playing');
-  // The supported launch modes stay the same.
+  // Now Playing is available from the top bar.
   const state = await read('src/lib/state.js');
-  assert.match(state, /defaultMode: \['library', 'tuner', 'grid', 'discovery', 'about'\]\.includes/);
+  assert.match(state, /defaultMode: \['library', 'tuner', 'computer', 'about'\]\.includes/);
 });
 
 test('Settings offers the Now Playing blur levels in Appearance', async () => {
@@ -1126,6 +1558,15 @@ test('nothing in the tab\'s styles moves, and the backdrop is a still CSS blur',
   assert.match(css, /\.np-art \{[^}]*width: clamp\(150px, min\(42cqw, 68cqh\), 1280px\);/);
   assert.match(css, /\.np-title \{[^}]*font-size: clamp\(22px, [\d.]+cqmin, 88px\);/);
   assert.match(css, /\.np-scroll \{[^}]*padding-bottom: var\(--video-clearance\);/);
+});
+
+test('Surprise reserves the button width and places optional status on its own line', async () => {
+  const css = await read('src/styles/now-playing.css');
+  assert.match(css, /\.np-surprise \.np-surprise-button \{ flex: 0 0 155px; \}/);
+  assert.match(css, /\.np-surprise-field \{ width: 100px; \}/);
+  assert.match(css, /\.np-surprise-source \{ width: 115px; \}/);
+  assert.match(css, /\.np-surprise-status \{[^}]*flex-basis: 100%;/);
+  assert.match(css, /\.np-surprise-status:empty \{ display: none; \}/);
 });
 
 /** The rules of a style sheet as { media, selectors, decls } (one level of @media). */
@@ -1164,9 +1605,9 @@ function cssRules(text) {
   return rules;
 }
 
-test('the top bar: a tab name never wraps, and from 967 px the seven tabs fit or scroll, with the sleep timer counting down', async () => {
-  const sheets = await Promise.all(['base', 'now-playing', 'library', 'tuner', 'grid', 'discovery', 'visualizer']
-    .map((name) => read(`src/styles/${name}.css`).catch(() => '')));
+test('the top bar: a tab name never wraps, and from 967 px the six tabs fit or scroll, with the sleep timer counting down', async () => {
+  const sheets = await Promise.all(['base', 'now-playing', 'library', 'tuner', 'computer', 'about']
+    .map((name) => read(`src/styles/${name}.css`)));
   const rules = sheets.flatMap(cssRules);
   const targetsTab = (selector) => /\.mode-btn(?![\w-])[^\s>+~]*$/.test(selector);
   const tabRules = rules.filter((rule) => rule.selectors.some(targetsTab));
@@ -1193,13 +1634,13 @@ test('the top bar: a tab name never wraps, and from 967 px the seven tabs fit or
   const html = await read('src/index.html');
   const nav = html.slice(html.indexOf('<nav class="modes"'), html.indexOf('</nav>'));
   const buttons = [...nav.matchAll(/<button class="mode-btn(?: is-active)?" data-mode="([\w-]+)"(?: aria-current="page")?>([^<]+)<\/button>/g)];
-  assert.equal(buttons.length, 7);
+  assert.equal(buttons.length, 6);
   assert.doesNotMatch(nav, /tabindex="-1"|disabled|hidden/);
 
   // The arithmetic at 1001 px with "Sleep 720:00" showing (the longest the
   // countdown gets). Text widths are Segoe UI at the bar's sizes, rounded up.
   const px = (value) => value.split(/\s+/).map((part) => Number.parseFloat(part));
-  const LABEL = { Library: 39, Tuner: 33, Grid: 24.5, Discovery: 55.5, 'Now Playing': 72, Visualizer: 54.5, About: 35.5 };
+  const LABEL = { Library: 39, Tuner: 33, Computer: 58, 'Now Playing': 72, Visualizer: 54.5, About: 35.5 };
   const plainBar = rules.find((rule) => !rule.media && rule.selectors.includes('.topbar'));
   const gap = px(plainBar.decls.get('--topbar-gap'))[0];
   const iconButton = px(plainBar.decls.get('--topbar-control-height'))[0];
@@ -1221,12 +1662,14 @@ test('the top bar: a tab name never wraps, and from 967 px the seven tabs fit or
   const tabsWidth = labels.reduce((sum, w) => sum + w + 2 * tabPad, 0) + gap * (labels.length - 1) + 2 * modesPad + 2;
   const need = 2 * barPad + 2 * gap + BRAND + tabsWidth + TOOLS;
   assert.ok(need <= 1001 - 8, `one row needs ${need} px at 1001 px`);
+  assert.equal(need, 953);
+  assert.equal(1240 - need, 287);
   // Up to 1000 px the tabs have their own row, including at the minimum width.
   const twoRow = rules.filter((rule) => rule.media === '@media (max-width: 1000px)');
   const twoRowTab = twoRow.find((rule) => rule.selectors.includes('.mode-btn'));
   const minWidth = Number.parseFloat(twoRowTab.decls.get('min-width'));
   const twoPad = px(twoRowTab.decls.get('padding'))[1] + 1;
-  const rowWidth = labels.reduce((sum, w) => sum + Math.max(minWidth, w + 2 * twoPad), 0) + gap * 6 + 2 * modesPad + 2;
+  const rowWidth = labels.reduce((sum, w) => sum + Math.max(minWidth, w + 2 * twoPad), 0) + gap * (labels.length - 1) + 2 * modesPad + 2;
   const sidePad = px(twoRow.find((rule) => rule.selectors.includes('.topbar')).decls.get('padding'))[1];
   assert.ok(rowWidth <= 967 - 2 * sidePad, `the tab row needs ${rowWidth} px at 967 px`);
   assert.equal(twoRow.find((rule) => rule.selectors.includes('.modes')).decls.get('grid-area'), 'modes');

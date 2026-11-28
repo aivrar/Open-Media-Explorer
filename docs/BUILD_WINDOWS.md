@@ -5,7 +5,7 @@ The classic single-file artifact and signed-runtime portable fallback are:
 ```text
 dist\WorldMediaWindows.exe
 dist\WorldMediaWindows\WorldMediaWindows.exe
-dist\WorldMediaWindows-0.1.18-portable.zip
+dist\WorldMediaWindows-0.1.19-portable.zip
 ```
 
 `dist\WorldMediaWindows.exe` is the owner-preferred one-file PyInstaller build.
@@ -13,6 +13,7 @@ It is unsigned and may trigger generic antivirus heuristics; locally allowing
 the exact build directory, code-signing the artifact, or obtaining a vendor
 false-positive correction may be necessary. `build_single_exe.py` disables UPX
 and pins the complete PyInstaller toolchain to make this output reproducible.
+The one-file build includes TinyTag 2.3.2 and its license metadata.
 
 The portable folder bundles:
 
@@ -21,6 +22,7 @@ The portable folder bundles:
 - Built Vite frontend
 - pywebview desktop shell
 - WebView/pythonnet bridge files
+- TinyTag 2.3.2 for music tags and embedded covers
 - World Media icon
 
 The launcher is the unmodified, Authenticode-signed `pythonw.exe` from Python's
@@ -178,7 +180,8 @@ steering, and reporting endpoints before dash.js sees the manifest.
 
 ## Optional Managed FFmpeg
 
-FFmpeg is deliberately not embedded in the portable folder. At runtime the
+FFmpeg supports recording and conversion of Computer files. It is available
+separately from the portable folder. At runtime the
 app probes, in order, an explicit `WORLDMEDIA_FFMPEG_PATH` override, a managed
 portable copy, the system `PATH`, and a managed LocalAppData fallback. Both
 `ffmpeg.exe` and `ffprobe.exe` must report every protocol, demuxer, decoder,

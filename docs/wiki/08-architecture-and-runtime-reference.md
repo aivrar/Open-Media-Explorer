@@ -10,9 +10,10 @@ Windows EXE
       │   ├─ authenticated catalog/control API
       │   ├─ HTTPS/DNS-pinned catalog boundary
       │   ├─ opaque artwork relay
-      │   └─ opaque media/HLS/DASH relay
+      │   ├─ opaque media/HLS/DASH relay
+      │   └─ Computer folder index, artwork and playback
       └─ WebView2 desktop window
-          ├─ Library / Tuner / Grid / Discovery / Visualizer / About
+          ├─ Library / Tuner / Computer / Now Playing / Visualizer / About
           ├─ catalog scheduler and adapters
           ├─ global player + HLS/DASH engines
           ├─ artwork queue
@@ -473,9 +474,12 @@ the data that version 0.1.9 added is kept apart:
 | File | Holds | Code |
 |---|---|---|
 | `state/profile-preferences.json` | The five keys every version knows: favorites, settings, volume, job history, EQ | `worldmedia_runtime.py` |
-| `state/profile-preferences-extra.json` | Favorites categories, custom station names, stations kept on their own stream, picture settings, edited stream addresses, audio bookmarks and Tuner visibility settings | `worldmedia_runtime.py` |
+| `state/profile-preferences-extra.json` | Favorites categories, custom station names, stations kept on their own stream, picture settings, edited stream addresses, audio bookmarks, Computer track choices and Tuner visibility settings | `worldmedia_runtime.py` |
 | `state/song-log.json` | The song log, at most 500 songs | `worldmedia_songlog.py` |
 | `state/starred-songs.json` | The starred songs, at most 2,000 (since 0.1.12) | `worldmedia_starred.py` |
+| `state/computer-folders.json` | Computer folders | `worldmedia_computer.py` |
+| `state/computer-library.json` | Computer media index | `worldmedia_computer_library.py` |
+| `state/computer-stars.json` | Starred Computer files | `worldmedia_computer_stars.py` |
 | `station-images/` | The user's own station pictures | `worldmedia_station_images.py` |
 
 The two settings added in 0.1.10, `tunerCardSize` and `soundMeter`, are fields
@@ -597,6 +601,9 @@ These are local implementation routes, not a public API contract:
 | `GET /api/v1/media/{id}/now-playing` | Latest song title of a live audio playback relay |
 | `POST /api/v1/jobs/download` / `record` | Start finite download/live recording |
 | `POST /api/shutdown` | Authenticated terminal shutdown request |
+
+See the [Computer API](07-developer-and-release-guide.md#computer-api) for
+the routes that serve local files and manage the index.
 
 Control routes reject query strings and unexpected fields. Never expose the
 session token or use these routes as a network service.

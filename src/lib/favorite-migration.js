@@ -14,7 +14,8 @@
  * together; if any write fails, the ones already written are put back.
  */
 
-import { emit, getState, normalizeFavoriteItem, STORAGE_KEYS } from './state.js';
+import { emit, getState, normalizeFavoriteItem, portableFavoritesText, preserveLegacyLocalStars, STORAGE_KEYS } from './state.js';
+import { isComputerFavoriteId, portableProfileValue } from './profile-storage.js';
 import { EQ_STORAGE_KEY, eqStorageEntries, loadEqState } from './eq-store.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupsTextWithNewIds } from './favorite-groups.js';
 import { favoriteNamesTextWithNewIds } from './favorite-names.js';
@@ -81,7 +82,8 @@ function writeAll(storage, writes) {
  *  (then nothing changed). One favorites-change event. */
 export function moveFavoritesToNewIds(moves, storage = globalThis.localStorage) {
   const state = getState();
-  const live = new Map([...moves].filter(([oldId]) => state.favorites.some((favorite) => favorite.id === oldId)));
+  const live = new Map([...moves].filter(([oldId, item]) => !isComputerFavoriteId(oldId)
+    && !isComputerFavoriteId(item?.id) && state.favorites.some((favorite) => favorite.id === oldId)));
   if (live.size === 0) return { moved: 0, failed: false };
   if (!storage) return { moved: 0, failed: true };
   const ids = new Map([...live].map(([oldId, item]) => [oldId, item.id]));
@@ -95,7 +97,7 @@ export function moveFavoritesToNewIds(moves, storage = globalThis.localStorage) 
   const currentId = state.currentItem?.id;
   const playingMoved = Boolean(currentId) && ids.has(currentId);
   if (playingMoved) emit('eq-before-scope-change', { itemId: currentId, scope: 'global' });
-  const writes = [[STORAGE_KEYS.favorites, JSON.stringify(next)]];
+  const writes = [[STORAGE_KEYS.favorites, portableFavoritesText(next)]];
   let eqRaw = null;
   try { eqRaw = storage.getItem(EQ_STORAGE_KEY); } catch (_) { eqRaw = null; }
   if (eqRaw != null) {
@@ -115,16 +117,21 @@ export function moveFavoritesToNewIds(moves, storage = globalThis.localStorage) 
   }
   let groupsRaw = null;
   try { groupsRaw = storage.getItem(STORAGE_KEYS.favoriteGroups); } catch (_) { groupsRaw = null; }
-  const groupsNext = favoriteGroupsTextWithNewIds(groupsRaw, ids);
+  const groupsNext = favoriteGroupsTextWithNewIds(portableProfileValue(STORAGE_KEYS.favoriteGroups, groupsRaw), ids);
   if (groupsNext !== groupsRaw) writes.push([STORAGE_KEYS.favoriteGroups, groupsNext]);
   // The user's names for them move with them too.
   let namesRaw = null;
   try { namesRaw = storage.getItem(STORAGE_KEYS.favoriteNames); } catch (_) { namesRaw = null; }
-  const namesNext = favoriteNamesTextWithNewIds(namesRaw, ids);
+  const namesNext = favoriteNamesTextWithNewIds(portableProfileValue(STORAGE_KEYS.favoriteNames, namesRaw), ids);
   if (namesNext !== namesRaw) writes.push([STORAGE_KEYS.favoriteNames, namesNext]);
   if (streamsNext !== streamsRaw) writes.push([STATION_STREAMS_KEY, streamsNext]);
 
-  if (!writeAll(storage, writes)) {
+  let saved = false;
+  try {
+    preserveLegacyLocalStars(storage);
+    saved = writeAll(storage, writes);
+  } catch (_) { /* Keep the legacy list if its retry copy could not be saved. */ }
+  if (!saved) {
     if (playingMoved) emit('eq-scope-change', { itemId: currentId, scope: 'favorite' });
     return { moved: 0, failed: true };
   }

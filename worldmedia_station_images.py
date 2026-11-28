@@ -8,7 +8,8 @@ list a scan built (never from request text), after the folder and the file
 have been checked again, and only when its bytes pass the same
 validate_image() check as remote artwork. The folder is written to only when
 the user asks: creating it to open it, saving a picture chosen for a station,
-and removing a station's pictures.
+and removing a station's pictures. Pictures set in the app use a filename
+made from the saved station ID, so they can travel with a portable backup.
 
 Matching rule (normalize_station_name; src/lib/station-images.js has the same
 one, and tests/fixtures/station-image-names.json holds the shared cases):
@@ -21,7 +22,7 @@ When several files normalize to the same name, the one whose file name comes
 first in plain character-code order is used and the others are ignored.
 
 A station's name can hold characters a file name cannot. The page (and only
-the page: this module never sees station names) therefore also accepts a file
+the page) therefore also accepts a file
 in which each such character of the station's name is written as "-", "_" or
 a space, or left out, and a name Windows reserves (CON, PRN, AUX, NUL, COM1 to
 COM9, LPT1 to LPT9) followed by "_" or "-". So "Nu-Metal/Alternative" can use
@@ -33,7 +34,7 @@ before (filename_allowed).
 The page can also give a station a picture (save) or take its picture away
 (remove); see StationImages.save. The bytes are checked by the same
 validated_picture() as the scan, the file name is made here from the
-station's name (picture_stem), never taken from the request, and the file is
+station's ID or legacy name, and the file is
 written whole (a temporary file renamed into place) inside the folder only.
 """
 from __future__ import annotations
@@ -59,6 +60,8 @@ from worldmedia_security import ApiError
 
 
 FOLDER_NAME = "station-images"
+_SCOPED_STEM = re.compile(r"wm-station-id-[0-9a-f]{64}")
+MAX_STATION_ID_LENGTH = 4096
 MAX_FILES = 2_000
 MAX_FILE_BYTES = 2 * 1024 * 1024
 # Directory entries read before a scan stops, whatever they are.
@@ -223,6 +226,19 @@ def picture_stem(station: object) -> str:
     '' when no file name can stand for the station."""
 
     return _stem_and_rule(station)[0]
+
+
+def _save_stem(station: object, station_id: object) -> tuple[str, bool]:
+    if station_id is not None:
+        if not isinstance(station_id, str) or not 0 < len(station_id) <= MAX_STATION_ID_LENGTH:
+            raise _error(HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE", "A saved station ID is required.")
+        try:
+            identity = hashlib.sha256(station_id.encode("utf-8")).hexdigest()
+        except UnicodeError as error:
+            raise _error(HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE", "The saved station ID is invalid.") from error
+        return f"wm-station-id-{identity}", False
+    stem, loose = _stem_and_rule(station)
+    return ("", False) if _SCOPED_STEM.fullmatch(normalize_station_name(stem)) else (stem, loose)
 
 
 def _same_name(first: str, second: str) -> bool:
@@ -852,11 +868,11 @@ class StationImages:
             raise _error(HTTPStatus.CONFLICT, "STATION_IMAGE_TOO_MANY_FILES", TOO_MANY_FILES)
         return existing
 
-    def replace_files(self, station: object, current: object = None) -> dict:
+    def replace_files(self, station: object, current: object = None, *, station_id: object = None) -> dict:
         """The files a new picture for `station` would replace (every name in
         full), so the page can name them in its question; changes nothing."""
 
-        stem, loose = _stem_and_rule(station)
+        stem, loose = _save_stem(station, station_id)
         key = picture_key(stem + ".png") if stem else ""
         if not key or not filename_allowed(stem + ".webp"):
             raise _error(HTTPStatus.BAD_REQUEST, "STATION_IMAGE_BAD_NAME", SAVE_BAD_NAME)
@@ -867,13 +883,13 @@ class StationImages:
             return {"files": self._existing_locked(key, loose, current)}
 
     def save(self, station: object, data: object, *, replace: bool = False, current: object = None,
-             files: object = None) -> dict:
+             files: object = None, station_id: object = None) -> dict:
         """Make `data` the own picture of the station named `station`.
 
         The bytes pass validated_picture() (the scan's check: the type from the
         content, size and dimension limits, no SVG) and the validated bytes are
-        written. The file name comes from the station's name (picture_stem)
-        and the picture's type. A station that already has a picture of its
+        written. For a saved station the file name comes from its ID and the
+        picture's type. Name-based saves use the legacy spelling rule. A station that already has a picture of its
         own (a file for the same name, or `current`, the id of the picture the
         page shows for it) gets the new one only with `replace` and `files`,
         the full names the user was shown (replace_files) and said yes to;
@@ -899,7 +915,7 @@ class StationImages:
         extension = SAVED_EXTENSIONS.get(content_type)
         if extension is None:
             raise _error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "STATION_IMAGE_NOT_PICTURE", SAVE_NOT_PICTURE)
-        stem, loose = _stem_and_rule(station)
+        stem, loose = _save_stem(station, station_id)
         filename = stem + extension
         key = picture_key(filename) if stem else ""
         if not key or not filename_allowed(filename):

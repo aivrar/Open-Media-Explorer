@@ -1,25 +1,31 @@
 # Open Media Explorer — User Wiki
 
 This is the end-to-end guide for the Windows-native World Media application.
-It describes the shipped `0.1.18` behavior in this repository: how to
-install and run it, browse all ten public sources, play media, use the
-equalizer, watch the Visualizer, download finite files, record live streams,
-preserve portable data, and diagnose provider or runtime problems.
+It covers version 0.1.19. Learn to install the app, browse ten public
+sources, play your own files, use the equalizer and Visualizer, download
+or record media, and keep your data when you update.
 
-The app is a local desktop shell around public catalogs. It does not host the
-catalogs or stream files itself, and it does not have a fixed channel list.
-Stations, channels, episodes, and archive records are discovered from the
-providers at run time and can change without an app update.
+Online sources supply their own catalogs and streams. Their stations,
+channels, episodes and archive records can change between visits.
 
 ![World Media Library with its public sources](<../../screenshots/v0.1.14/library.png>)
 
-| Tune live radio and TV | Discover something unexpected |
-|---|---|
-| ![World Media Tuner with the radio dial, tone knobs and station list](<../../screenshots/v0.1.14/tuner.png>) | ![World Media Discovery](<../../screenshots/v0.1.14/discovery.png>) |
+![World Media Tuner with the radio dial, tone knobs and station list](<../../screenshots/v0.1.14/tuner.png>)
 
 ![Ten-band equalizer with presets](<../../screenshots/v0.1.14/equalizer.png>)
 
 ![Visualizer - Black Hole with Lasers and Tron Hex Grid](<../../screenshots/v0.1.14/visualizer-black-hole.jpg>)
+
+## New in 0.1.19
+
+- **Computer** plays music, films, shows and audiobooks from folders you add.
+  Browse covers and posters, play chapters, and pick up where you stopped.
+  Star files to see them in Computer and Library **Favorites**.
+- Library search finds your own files. **Subtitles** and **Audio** let you
+  change tracks in a film. **Volume levelling** evens out music, and the player
+  prepares the next song of an album for a gapless start.
+- **Surprise me** in **Now Playing** plays a random pick from enabled sources.
+  [Using the application](02-using-the-application.md)
 
 ## New in 0.1.18
 
@@ -102,7 +108,7 @@ Thanks to TaxicabMessiah for the ideas and reports.
   and runtime
   reference](08-architecture-and-runtime-reference.md#playback-and-relay-boundary).
 - After the connection drops, sources that failed are asked again by
-  themselves when it comes back, in the Library, the Tuner and the Grid. See
+  themselves when it comes back, in the Library and the Tuner. See
   [Troubleshooting](06-troubleshooting.md).
 - Owncast and the media.ccc.de live rooms are listed from the start, whichever
   Library view is open.
@@ -119,7 +125,7 @@ Thanks to TaxicabMessiah for the ideas and reports.
 
 ## New in 0.1.13
 
-- **Now Playing:** a new tab between **Discovery** and **Visualizer** shows what
+- **Now Playing:** the new tab shows what
   plays now, large: its picture over a blurred copy, its name and category, the
   song a radio station announces (with a star and **Copy**), **Stream details**
   and a large sound meter. See [Using the
@@ -240,7 +246,7 @@ Thanks to TaxicabMessiah for the ideas and reports.
 | If you want to… | Read |
 |---|---|
 | Install the EXE or move it to another drive | [Installation and portable data](01-installation-and-portable-data.md) |
-| Learn the seven tabs, sidebar, filters, and settings | [Using the application](02-using-the-application.md) |
+| Learn the six tabs, sidebar, filters, and settings | [Using the application](02-using-the-application.md) |
 | Use the Visualizer, keep it light on a weak computer, or read about its flashing notice | [Visualizer](09-visualizer.md) |
 | Understand every source and its channel/catalog behavior | [Sources and channels](03-sources-and-channels.md) |
 | Play a stream, fix a broken stream, use EQ, download, or record | [Playback, EQ, downloads, and recording](04-playback-eq-downloads-recording.md) |
@@ -283,11 +289,10 @@ Thanks to TaxicabMessiah for the ideas and reports.
   dial with the wheel or scroll the list to browse it. **Stations** and
   **Tone knobs** show or hide the list and knobs. The TV picture sits above
   the list, and **Visualizer:** sets the background strength.
-- **Grid** is a guide-style view for live TV and radio. It uses the same live
-  adapters as Tuner but presents tiles, category/country/source filters, and a
-  text filter.
-- **Discovery** asks enabled sources for bounded random candidates and returns
-  one result at a time. It does not try to download every catalog first.
+- **Computer** browses music, films, shows and audiobooks in folders you add.
+  Search, star your files and pick up an audiobook where you stopped.
+- **Now Playing** shows what is playing. Turn on **Surprise me** for a random
+  pick from your enabled sources.
 - **Visualizer** shows pictures that move with the sound of whatever is
   playing. It loads when you open the tab or turn on the Tuner background
   during playback.
@@ -296,8 +301,7 @@ Thanks to TaxicabMessiah for the ideas and reports.
 
 ## Screenshots in this repository
 
-These are reference captures of the current UI. They are linked rather than
-copied so the wiki stays alongside the source screenshots:
+These screenshots show the main views and settings.
 
 - [All Sources](<../../screenshots/v0.1.14/library.png>)
 - [Favorites with categories and a station's details](<../../screenshots/v0.1.14/favorites.png>)
@@ -306,8 +310,6 @@ copied so the wiki stays alongside the source screenshots:
 - [Tuner with the radio dial, tone knobs and station list](<../../screenshots/v0.1.14/tuner.png>)
 - [Tuner with a TV channel playing above the station list](<../../screenshots/v0.1.14/tuner-tv.png>)
 - [Picture panel with Fit and Quality](<../../screenshots/v0.1.14/picture-panel.png>)
-- [Grid](<../../screenshots/v0.1.14/grid.png>)
-- [Discovery](<../../screenshots/v0.1.14/discovery.png>)
 - [Now Playing](<../../screenshots/v0.1.14/now-playing.png>)
 - [Equalizer](<../../screenshots/v0.1.14/equalizer.png>)
 - [Song log](<../../screenshots/v0.1.14/song-log.png>)
@@ -325,11 +327,9 @@ copied so the wiki stays alongside the source screenshots:
 - [Theme: Midnight · Blue](<../../screenshots/v0.1.14/theme-midnight.png>)
 - [Theme: Forest · Green](<../../screenshots/v0.1.14/theme-forest.png>)
 - [Theme: Ember · Orange](<../../screenshots/v0.1.14/theme-ember.png>)
-- [Theme: Amethyst · Violet](<../../screenshots/v0.1.14/theme-amethyst.png>)
 
 Short GIF demos:
 
-- [A short tour of the tabs](../../screenshots/v0.1.14/demo-tour.gif)
 - [The Tuner dial moving beside the station list, with tone knobs below](<../../screenshots/v0.1.14/demo-tuner.gif>)
 - [Now Playing with the sound meter](../../screenshots/v0.1.14/demo-now-playing.gif)
 - [The Visualizer](../../screenshots/v0.1.14/demo-visualizer.gif)

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from worldmedia_downloads import DownloadError, _validated_download_root
 from worldmedia_playlists import (
-    BACKUP_STREAM_TAG, MAX_BACKUP_STREAMS, MAX_STORE_BYTES, PlaylistStore, _web_url, parse_playlist,
+    BACKUP_STREAM_TAG, MAX_BACKUP_STREAMS, MAX_STORE_BYTES, PlaylistStore, _web_url, parse_saved_playlist,
 )
 from worldmedia_runtime import (
     LEGACY_PROFILE_TRANSFER_KEYS,
@@ -410,7 +410,7 @@ def playlist_export_text(entry: dict, edits: dict | None = None) -> tuple[str, i
     as it is: player options, local files and other lines are left out."""
 
     try:
-        parsed = parse_playlist(entry.get("text"), entry.get("default_type"), entry.get("base_url", ""))
+        parsed = parse_saved_playlist(entry)
     except ValueError:
         return "#EXTM3U\n", 0
     edits = edits or {}

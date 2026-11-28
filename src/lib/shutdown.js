@@ -49,7 +49,7 @@ function renderGoodbye() {
       </div>
     `;
   }
-  for (const id of ['audio-el', 'video-el']) {
+  for (const id of ['audio-el', 'computer-audio-el', 'video-el']) {
     const el = document.getElementById(id);
     if (el) {
       try { el.pause(); el.removeAttribute('src'); el.load(); } catch (_) {}

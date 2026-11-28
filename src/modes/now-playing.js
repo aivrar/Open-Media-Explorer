@@ -19,12 +19,15 @@
 
 import {
   addFavorite as appAddFavorite, getState, isFavorite as appIsFavorite, normalizeNowPlayingBackgroundBlur,
-  removeFavorite as appRemoveFavorite, subscribe as appSubscribe,
+  removeFavorite as appRemoveFavorite, saveSettings, subscribe as appSubscribe,
 } from '../lib/state.js';
 import {
-  PLAYER_SILENT_CHANGE, getAudioSignal, getCurrentItem as appCurrentItem,
-  getNowPlaying as appNowPlaying, getCurrentPart, isMediaAdvancing, isPlayerSilent,
+  COMPUTER_CONVERTED_CHANGE, COMPUTER_LEVELLING_CHANGE, PLAYER_SILENT_CHANGE,
+  getAudioSignal, getComputerLevellingDetails, getCurrentItem as appCurrentItem,
+  getNowPlaying as appNowPlaying, getCurrentPart, isComputerPlaybackConverted, isMediaAdvancing, isPlayerSilent,
 } from '../lib/player.js';
+import { durationTooltip, entryDurationText } from '../lib/computer-catalog.js';
+import { isComputerItem } from '../lib/item-model.js';
 import { partLabel } from '../lib/media-parts.js';
 import { NOW_PLAYING_EVENT } from '../lib/now-playing.js';
 import { bindSongStar as appBindSongStar } from '../lib/song-star.js';
@@ -35,7 +38,7 @@ import { getSourceLabel } from '../lib/sources.js';
 import { cleanBitrate, cleanCodec, formatStreamQuality } from '../lib/stream-quality.js';
 import { onPlayedStreamChange, playedStreamOf, stationStreamLabel } from '../lib/played-streams.js';
 import {
-  isArtworkRelayUrl, loadArtworkImage, resolveArtworkRelay, stationImageSourceFor,
+  computerItemArtSource, isArtworkRelayUrl, loadArtworkImage, resolveArtworkRelay, stationImageSourceFor,
 } from '../lib/artwork.js';
 import { onStationImagesChange as appOnStationImagesChange } from '../lib/station-images.js';
 import { artworkInitials, initialsHue } from '../lib/initials.js';
@@ -45,6 +48,7 @@ import { COPIED_LABEL, COPIED_MS, COPY_FAILED, COPY_LABEL } from '../lib/song-lo
 import { bestStreamAutoOn } from '../lib/best-stream.js';
 import { isTabShown } from '../lib/top-tabs.js';
 import { createBestStreamStatus } from './library/other-streams.js';
+import { mountSurprise } from './now-playing-surprise.js';
 
 export const NOW_PLAYING_MODE = 'now-playing';
 
@@ -76,6 +80,7 @@ export const NOW_PLAYING_TEXT = Object.freeze({
 export function kindText(item) {
   const type = item?.type;
   const live = item?.delivery === 'live';
+  if (isComputerItem(item)) return type === 'video' ? 'Video' : 'Music';
   if (type === 'radio') return 'Radio station';
   if (type === 'tv') return 'TV channel';
   if (item?.source === 'gpodder') return type === 'video' ? 'Video podcast' : 'Podcast';
@@ -87,7 +92,7 @@ export function kindText(item) {
 /** Whether the item is the kind that can announce songs (live radio and
  *  live audio); for these the tab says so when none is announced. */
 export function songApplies(item) {
-  if (!item) return false;
+  if (!item || isComputerItem(item)) return false;
   return item.type === 'radio' || (item.type === 'audio' && item.delivery === 'live');
 }
 
@@ -157,7 +162,7 @@ export function playingForText(playedMs, playing) {
 /** The song part: { show, title, text }. `title` is the announced song for
  *  this item ('' when none); `text` what the line says. */
 export function songView(item, nowPlaying) {
-  const title = item && nowPlaying?.title && nowPlaying.itemId === item.id ? String(nowPlaying.title) : '';
+  const title = item && !isComputerItem(item) && nowPlaying?.title && nowPlaying.itemId === item.id ? String(nowPlaying.title) : '';
   if (title) return { show: true, title, text: title };
   if (!songApplies(item)) return { show: false, title: '', text: '' };
   return { show: true, title: '', text: NOW_PLAYING_TEXT.noSong };
@@ -189,9 +194,27 @@ function playedFormat(item, stream) {
 }
 
 /** The stream details as [label, value] rows, in order; only what is known. */
-export function detailRows(item, { stream = null, playedMs = null, playing = false } = {}) {
+export function detailRows(item, { stream = null, playedMs = null, playing = false, technical = false, levelling = null } = {}) {
   if (!item) return [];
   const rows = [];
+  if (isComputerItem(item)) {
+    const computer = item._extra?.computer || {};
+    const { format = '', formatDetails, bitrate } = computer;
+    const audio = item.type === 'audio';
+    const legacyBitrate = audio ? / ([\d.,]+ kbps)$/u.exec(format)?.[1] : '';
+    const baseFormat = legacyBitrate ? format.slice(0, -legacyBitrate.length).trimEnd() : format;
+    const fileFormat = (audio && technical && formatDetails) || baseFormat;
+    const length = entryDurationText(computer);
+    if (levelling) rows.push(['Format', [fileFormat, levelling.text].filter(Boolean).join(' \u00b7 '), levelling.title]);
+    else if (fileFormat) rows.push(['Format', fileFormat]);
+    if (audio && (bitrate || legacyBitrate)) rows.push(['Bitrate', bitrate || legacyBitrate]);
+    if (length) {
+      const tooltip = durationTooltip(computer);
+      rows.push(tooltip ? ['Length', length, tooltip] : ['Length', length]);
+    }
+    rows.push(['Source', 'Computer']);
+    return rows;
+  }
   const source = getSourceLabel(item.source);
   if (source) rows.push(['Source', source]);
   const kind = kindText(item);
@@ -217,26 +240,29 @@ export function shownItem(item, favorite, names) {
  */
 export function nowPlayingView({
   item = null, favorite = false, names = new Map(), groups = null, nowPlaying = null,
-  stream = null, playedMs = null, playing = false, part = null,
+  stream = null, playedMs = null, playing = false, part = null, technical = false, levelling = null,
 } = {}) {
   if (!item) return { empty: true };
   const shown = shownItem(item, favorite, names);
   const name = (typeof shown.title === 'string' && shown.title.trim()) || NOW_PLAYING_TEXT.untitled;
   const renamed = shown.__favoriteName === true;
   const categoryId = favorite && groups ? groups.groupOf(item.id) : '';
+  const local = isComputerItem(item);
+  const { artist, album, episodeTitle } = item._extra?.computer || {};
+  const localSubtitle = item.type === 'audio' ? [artist, album].filter(Boolean).join(' \u00b7 ') : episodeTitle || '';
   return {
     empty: false,
     name,
     originalName: renamed ? (shown.originalTitle || NOW_PLAYING_TEXT.untitled) : '',
     category: categoryId ? groups.nameOf(categoryId) || '' : '',
     kind: kindText(item),
-    part: partLabel(item, part),
+    part: local ? localSubtitle : partLabel(item, part),
     favorite: favorite === true,
     initials: artworkInitials(name),
     hue: initialsHue(name),
     logo: item.type === 'radio' || item.type === 'tv',
     song: songView(item, nowPlaying),
-    rows: detailRows(item, { stream, playedMs, playing }),
+    rows: detailRows(item, { stream, playedMs, playing, technical, levelling }),
   };
 }
 
@@ -254,11 +280,15 @@ function defaultDeps() {
     subscribe: appSubscribe,
     getCurrentItem: appCurrentItem,
     getCurrentPart,
+    getComputerLevellingDetails,
+    isComputerPlaybackConverted,
     getNowPlaying: appNowPlaying,
     isPlaying: () => getState().isPlaying === true,
     isAdvancing: isMediaAdvancing,
     isSilent: isPlayerSilent,
     getSettings: () => getState().settings,
+    getMode: () => getState().mode,
+    saveSettings,
     isFavorite: appIsFavorite,
     addFavorite: appAddFavorite,
     removeFavorite: appRemoveFavorite,
@@ -370,8 +400,10 @@ export function mountNowPlaying(host, options = {}) {
 
   const details = make('section', 'np-details', { 'aria-labelledby': 'np-details-heading' });
   const facts = make('dl', 'np-facts');
+  const convertedCopy = make('p', '', null, 'Playing a converted copy');
   const bestHost = make('div', 'np-best');
-  append(details, make('h3', 'np-label', { id: 'np-details-heading' }, NOW_PLAYING_TEXT.detailsHeading), facts, bestHost);
+  const detailsHeading = make('h3', 'np-label', { id: 'np-details-heading' }, NOW_PLAYING_TEXT.detailsHeading);
+  append(details, detailsHeading, facts, convertedCopy, bestHost);
 
   append(info,
     kind,
@@ -384,8 +416,29 @@ export function mountNowPlaying(host, options = {}) {
     details);
   append(layout, art, info);
   // The picture and its scrim stay put; only this part scrolls (a short window).
+  const surpriseToggle = make('input', 'switch', { type: 'checkbox', 'aria-controls': 'np-surprise-area' });
+  const surpriseArea = make('div', 'np-surprise-area', { id: 'np-surprise-area' });
+  const surpriseBar = append(make('div', 'np-surprise'),
+    append(make('label', 'np-surprise-toggle'), surpriseToggle, make('span', '', null, 'Surprise me')),
+    surpriseArea);
+  let surprise = null;
+  function syncSurprise() {
+    const shown = deps.getSettings().nowPlayingSurprise !== false;
+    surpriseToggle.checked = shown;
+    surpriseArea.hidden = !shown;
+    if (shown) {
+      if (surprise) surprise.syncSettings();
+      else surprise = mountSurprise(surpriseArea, deps);
+    } else {
+      surprise?.destroy();
+      surprise = null;
+    }
+  }
+  listen(surpriseToggle, 'change', () => deps.saveSettings({ nowPlayingSurprise: surpriseToggle.checked }));
+  stops.push(() => surprise?.destroy());
+
   const scroller = make('div', 'np-scroll');
-  append(scroller, empty, layout);
+  append(scroller, surpriseBar, empty, layout);
   append(root, backdrop, scrim, scroller);
   host.appendChild(root);
 
@@ -414,9 +467,11 @@ export function mountNowPlaying(host, options = {}) {
       groups: item ? deps.favoriteGroups() : null,
       nowPlaying: deps.getNowPlaying(),
       part: item ? deps.getCurrentPart(item.id) : null,
+      levelling: item ? deps.getComputerLevellingDetails(item.id) : null,
       stream: item ? deps.playedStream(item) : null,
       playedMs: item ? deps.playClock.played(item.id) : null,
       playing: deps.isPlaying(),
+      technical: deps.getSettings().showTechnicalDetails === true,
     });
   }
 
@@ -425,6 +480,7 @@ export function mountNowPlaying(host, options = {}) {
     artImg.removeAttribute('src');
     artImg.classList.remove('loaded');
     backdropImg.removeAttribute('src');
+    if (picture.url) URL.revokeObjectURL(picture.url);
     backdrop.hidden = true;
     root.classList.remove('has-picture');
   }
@@ -433,8 +489,21 @@ export function mountNowPlaying(host, options = {}) {
   // resolved when needed (the same request the player bar makes). A picture
   // of the user's that will not load is marked failed by artwork.js, and the
   // station-pictures change below starts this again without it.
-  async function loadPicture(item, shown, signal) {
+  async function loadPicture(item, shown, signal, mine) {
     const options = { signal, priority: NOW_PLAYING_ART_PRIORITY };
+    if (isComputerItem(item)) {
+      const source = computerItemArtSource(item, { large: true });
+      if (!source) return '';
+      await deps.loadImage(artImg, source, {
+        ...options,
+        keepObjectUrl(url) {
+          if (signal.aborted || picture !== mine) return false;
+          mine.url = url;
+          return true;
+        },
+      });
+      return artImg.getAttribute('src') || '';
+    }
     const custom = deps.customSourceFor(shown);
     if (custom) {
       try {
@@ -461,6 +530,7 @@ export function mountNowPlaying(host, options = {}) {
   // fills it in when its stream resolves, and the player sends the item again).
   function pictureKey(item, shown) {
     if (!item) return '';
+    if (isComputerItem(item)) return computerItemArtSource(item, { large: true });
     // The user's picture wins; one that fails is dropped by artwork.js, which
     // changes this key, so the relay artwork matters only without it.
     const custom = deps.customSourceFor(shown) || '';
@@ -479,7 +549,7 @@ export function mountNowPlaying(host, options = {}) {
     if (!item) return;
     const controller = new AbortController();
     mine.abort = controller;
-    loadPicture(item, shown, controller.signal).then((url) => {
+    loadPicture(item, shown, controller.signal, mine).then((url) => {
       if (destroyed || picture !== mine || controller.signal.aborted) return;
       mine.abort = null;
       // The lookup may have filled in the artwork meanwhile: key what was
@@ -519,12 +589,15 @@ export function mountNowPlaying(host, options = {}) {
   }
 
   function renderFacts(rows) {
+    convertedCopy.hidden = !(isComputerItem(current) && deps.getSettings().showTechnicalDetails === true
+      && deps.isComputerPlaybackConverted(current.id));
     const key = JSON.stringify(rows);
     if (key === factsKey) return;
     factsKey = key;
     facts.replaceChildren();
-    for (const [label, value] of rows) {
-      append(facts, append(make('div', 'np-fact'), make('dt', '', null, label), make('dd', '', null, value)));
+    for (const [label, value, tooltip] of rows) {
+      const detail = make('dd', '', tooltip ? { title: tooltip } : null, value);
+      append(facts, append(make('div', 'np-fact'), make('dt', '', null, label), detail));
     }
   }
 
@@ -536,7 +609,7 @@ export function mountNowPlaying(host, options = {}) {
     best = null;
     bestHost.replaceChildren();
     bestFor = { id, auto };
-    if (!item) return;
+    if (!item || isComputerItem(item)) return;
     // Its "Use the station's own stream" button removes itself: focus then
     // moves to the favorite star beside the name (this tab has no panel).
     best = deps.bestStream(item, { focusAfterUse: () => fav }) || null;
@@ -569,7 +642,7 @@ export function mountNowPlaying(host, options = {}) {
   // changes. Buffering stops the clock, and with it this timer.
   function syncTick() {
     clearTick();
-    if (destroyed || !current || hidden()) return;
+    if (destroyed || !current || isComputerItem(current) || hidden()) return;
     if (!deps.playClock.running || deps.playClock.itemId !== current.id) return;
     const played = deps.playClock.played(current.id);
     tick = deps.setTimer(() => {
@@ -611,6 +684,7 @@ export function mountNowPlaying(host, options = {}) {
     art.style?.setProperty?.('--ph-hue', String(v.hue));
     art.classList.toggle('is-logo', v.logo);
     renderSong(v.song);
+    setText(detailsHeading, isComputerItem(item) ? 'File details' : NOW_PLAYING_TEXT.detailsHeading);
     renderFacts(v.rows);
     syncPicture(item);
     syncBest(item);
@@ -683,6 +757,8 @@ export function mountNowPlaying(host, options = {}) {
   on('current-item', render);
   on('playing-change', render);
   on(PLAYER_SILENT_CHANGE, syncMeter);
+  on(COMPUTER_CONVERTED_CHANGE, render);
+  on(COMPUTER_LEVELLING_CHANGE, () => renderFacts(view().rows || []));
   // The clock starts and stops with this (play-clock.js), and the timer too.
   on(MEDIA_ADVANCING_EVENT, render);
   on(NOW_PLAYING_EVENT, render);
@@ -697,9 +773,11 @@ export function mountNowPlaying(host, options = {}) {
     tunerBtn.hidden = !isTabShown('tuner', deps.getSettings());
   }
   on('settings-change', () => {
+    syncSurprise();
     syncTabLinks();
     syncBackdropBlur();
     syncBest(current);
+    if (isComputerItem(current)) renderFacts(view().rows);
   });
   const stopPictures = deps.onStationImagesChange?.(() => {
     if (!destroyed) syncPicture(deps.getCurrentItem());
@@ -711,6 +789,7 @@ export function mountNowPlaying(host, options = {}) {
     stops.push(() => doc.removeEventListener('visibilitychange', onVisibility));
   }
 
+  syncSurprise();
   syncTabLinks();
   syncBackdropBlur();
   render();
@@ -722,6 +801,7 @@ export function mountNowPlaying(host, options = {}) {
     if (copyTimer !== null) deps.clearTimer(copyTimer);
     copyTimer = null;
     picture.abort?.abort();
+    if (picture.url) clearPicture();
     picture = { key: '', abort: null };
     best?.destroy?.();
     best = null;
@@ -737,8 +817,8 @@ export function mountNowPlaying(host, options = {}) {
     destroy,
     meter,
     parts: {
-      empty, layout, title, kind, original, category, fav, song, songText, songStarBtn, copyBtn, copyStatus,
-      announcer, facts, bestHost, art, artImg, artInitials, backdrop, backdropImg, meterBox, canvas, mutedLabel, libraryBtn, tunerBtn,
+      empty, layout, surpriseToggle, surpriseArea, title, kind, original, category, fav, song, songText, songStarBtn, copyBtn, copyStatus,
+      announcer, part, detailsHeading, facts, convertedCopy, bestHost, art, artImg, artInitials, backdrop, backdropImg, meterBox, canvas, mutedLabel, libraryBtn, tunerBtn,
     },
     get timerPending() { return tick !== null || copyTimer !== null; },
     get pictureLoading() { return Boolean(picture.abort); },

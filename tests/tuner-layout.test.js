@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildDialSvg, fitDialReadout } from '../src/modes/tuner-dial.js';
+import { buildDialSvg, fitDialReadout, setDialStationName } from '../src/modes/tuner-dial.js';
 import { FakeElement } from './helpers/fake-dom.js';
 import { mountTunerStationList, stationListWindow, tunedScrollTop } from '../src/modes/tuner-station-list.js';
 import { tunerStageLayout } from '../src/modes/tuner-layout.js';
@@ -236,6 +236,36 @@ test('a second caption line fits beside the same whole-row budget across the 600
       }
     }
   }
+});
+
+test('the dial keeps hyphenated words together without changing the station text', () => {
+  const tooltip = 'Christmas FM Non-stop!';
+  const name = {
+    title: tooltip,
+    ownerDocument: { createElement: tagName => ({ tagName }) },
+    replaceChildren(...parts) { this.parts = parts; },
+    set textContent(text) { this.parts = [text]; },
+    get textContent() { return this.parts.map(part => part.textContent ?? part).join(''); },
+  };
+  setDialStationName(name, tooltip);
+  assert.deepEqual(name.parts, [
+    'Christmas', ' ', 'FM', ' ', { tagName: 'span', className: 'dial-name-word', textContent: 'Non-stop!' },
+  ]);
+  assert.equal(name.textContent, tooltip);
+  assert.equal(name.title, tooltip);
+
+  setDialStationName(name, '\u2605\u00a0Non\u2010stop Live-stream');
+  assert.deepEqual(name.parts.filter(part => typeof part !== 'string').map(part => part.textContent),
+    ['\u2605\u00a0Non\u2010stop', 'Live-stream']);
+  setDialStationName(name, 'No station');
+  assert.deepEqual(name.parts, ['No station']);
+
+  const css = readFileSync(new URL('../src/styles/tuner.css', import.meta.url), 'utf8');
+  const word = css.match(/\.tuner-frequency \.dial-name-word \{([^}]+)\}/)[1];
+  assert.match(word, /display: inline-block;/);
+  assert.match(word, /white-space: nowrap;/);
+  assert.match(word, /max-width: 100%;/);
+  assert.match(word, /overflow: hidden;\s*text-overflow: ellipsis;/);
 });
 
 test('the name uses its padded chord and the needle clears the visible text through a full turn', t => {

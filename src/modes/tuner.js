@@ -31,7 +31,7 @@ import { favoritesInDisplayOrder, normalizeFavoritesSort } from '../lib/favorite
 import { favoriteNamesSnapshot, withFavoriteName } from '../lib/favorite-names.js';
 import { FAVORITE_GROUPS_EVENT, favoriteGroupCounts, favoriteGroupsSnapshot } from '../lib/favorite-groups.js';
 import { attachTunerBackground } from './tuner-background.js';
-import { buildDialSvg, dialTurn, fitDialReadout, wheelSteps } from './tuner-dial.js';
+import { buildDialSvg, dialTurn, fitDialReadout, setDialStationName, wheelSteps } from './tuner-dial.js';
 import { mountToneKnobs } from './tuner-tone-knobs.js';
 import { placeTunerPart, tunerStageLayout } from './tuner-layout.js';
 import { mountTunerStationList } from './tuner-station-list.js';
@@ -247,10 +247,10 @@ function buildShell() {
   ui.listHeight = 0;
   ui.stationList = mountTunerStationList(ui.list, content, {
     makeOption: makeStationOption,
-    tune(index) {
+    tune(index, { pointer = false } = {}) {
       state.rotationDeg = restingRotation(index);
-      applyRotation();
-      tuneCurrent();
+      applyRotation({ pointer });
+      tuneCurrent({ pointer });
     },
     onRender: () => { if (cardPictures()) cardArt.commit(); },
     onScroll: () => { if (cardPictures()) cardArt.poke(); },
@@ -443,8 +443,9 @@ function bindDialEvents(wrap) {
   };
 }
 
-function applyRotation() {
+function applyRotation({ pointer = false } = {}) {
   if (!ui.dialBody) return;
+  if (!pointer) ui.stationList?.clearPointerSelection();
   ui.dialBody.setAttribute('transform', `rotate(${state.rotationDeg} 200 200)`);
   if (state.stations.length === 0) return;
   const degPerStation = 12;
@@ -477,7 +478,7 @@ function updateFrequencyDisplay() {
   // Only the name: the knob has little room. The source stays on the
   // station's option in the list: its second line (so also the option's
   // accessible name) and its tooltip.
-  ui.stationName.textContent = `${isFavorite(s.id) ? '\u2605\u00a0' : ''}${s.title}`;
+  setDialStationName(ui.stationName, `${isFavorite(s.id) ? '\u2605\u00a0' : ''}${s.title}`);
   // A long name ends in an ellipsis on the dial; the whole name on hover.
   ui.stationName.setAttribute('title', s.title || '');
   ui.fitReadout();
@@ -630,9 +631,10 @@ function step(dir) {
   tuneCurrent();
 }
 
-function tuneCurrent({ restart = true } = {}) {
+function tuneCurrent({ restart = true, pointer = false } = {}) {
   const s = state.stations[state.index];
   if (!s) return;
+  if (!pointer) ui.stationList?.clearPointerSelection();
   renderStationList(true);
   if (!restart && alreadyPlaying(s, getState())) return;
   playItem(s).catch((err) => console.warn('play failed:', err));

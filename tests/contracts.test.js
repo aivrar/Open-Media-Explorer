@@ -5,9 +5,42 @@ import { loadAdapter } from '../src/lib/sources.js';
 import { catalogScheduler } from '../src/lib/catalog-scheduler.js';
 import { EQ_GAIN_STEP_DB } from '../src/lib/eq-curve.js';
 import { makeItem, validateItem } from '../src/lib/item-model.js';
+import { getState, setMode } from '../src/lib/state.js';
+import { renderComputer } from '../src/modes/computer.js';
+import { FakeNodeEl } from './helpers/visualizer-fakes.js';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const contract = JSON.parse(await read('tests/fixtures/baseline-ui-contract.json'));
+
+test('release versions agree across the package, UI, runtime and docs', async () => {
+  const { version } = JSON.parse(await read('package.json'));
+  const lock = JSON.parse(await read('package-lock.json'));
+  const archive = 'WorldMediaWindows-' + version + '-portable.zip';
+  assert.equal(lock.version, version);
+  assert.equal(lock.packages[''].version, version);
+
+  for (const path of ['src/modes/about.js', 'src/lib/settings.js']) {
+    assert.ok((await read(path)).includes("const VERSION = '" + version + "';"), path);
+  }
+  for (const path of ['src/lib/http.js', 'worldmedia_ffmpeg.py', 'worldmedia_media.py', 'worldmedia_server.py']) {
+    const agents = [...(await read(path)).matchAll(/WorldMediaWindows\/(\d+\.\d+\.\d+)/g)];
+    assert.ok(agents.length, path);
+    for (const [, agentVersion] of agents) assert.equal(agentVersion, version, path);
+  }
+  for (const path of ['README.md', 'docs/BUILD_WINDOWS.md', 'docs/wiki/07-developer-and-release-guide.md']) {
+    assert.ok((await read(path)).includes(archive), path);
+  }
+  const notes = await read('docs/RELEASE_NOTES_' + version + '.md');
+  assert.ok(notes.startsWith('# Open Media Explorer v' + version + '\n')
+    || notes.startsWith('# Open Media Explorer v' + version + '\r\n'));
+  assert.ok(notes.includes(archive));
+  const changelog = await read('CHANGELOG.md');
+  assert.equal(changelog.match(/^## (\d+\.\d+\.\d+) - /m)?.[1], version);
+  const notices = await read('public/THIRD_PARTY_NOTICES.txt');
+  assert.ok(notices.startsWith('Open Media Explorer ' + version + ' - Third-Party Notices'));
+  assert.match(notices, /^TinyTag 2\.3\.2 - MIT$/m);
+  assert.match(notices, /^hls\.js \d+\.\d+\.\d+$/m);
+});
 
 test('frozen player and settings DOM contract matches source markup', async () => {
   const html = await read('src/index.html');
@@ -43,6 +76,50 @@ test('frozen player and settings DOM contract matches source markup', async () =
   assert.match(settings, /data-runtime-downloads/);
   assert.match(settings, /data-runtime-tools/);
   assert.match(settings, /data-runtime-writable/);
+});
+
+test('Computer is wired as a tab and removes its view when leaving', async (t) => {
+  const [html, main] = await Promise.all([read('src/index.html'), read('src/main.js')]);
+  assert.match(html, /href="\.\/styles\/computer\.css"/);
+  assert.match(html, /data-mode="computer">Computer<\/button>/);
+  assert.match(main, /computer: renderComputer,/);
+
+  const previous = getState().mode;
+  t.after(() => setMode(previous));
+  let root;
+  const removed = [];
+  const doc = { createElement: (tag) => new FakeNodeEl(tag) };
+  const host = {
+    ownerDocument: doc,
+    append(node) {
+      root = node;
+      node.remove = () => {
+        removed.push(node);
+        if (root === node) root = null;
+      };
+    },
+  };
+  const library = {
+    getComputerLibrary: () => ({ loaded: true, items: [], folders: [] }),
+    subscribeComputerLibrary: () => () => {},
+    openComputerLibrary() {},
+    closeComputerLibrary() {},
+  };
+  setMode('computer');
+  renderComputer(host, { library });
+  assert.equal(root.className, 'computer-root');
+  const folders = root.descendants().find((node) => node.className === 'computer-folders');
+  assert.ok(folders.descendants().some((node) => node.textContent === 'No folders added yet.'));
+  assert.ok(root.descendants().some((node) => node.className === 'computer-content'));
+  const first = root;
+  setMode('computer');
+  assert.equal(root, first);
+  renderComputer(host, { library });
+  assert.deepEqual(removed, [first]);
+  const second = root;
+  setMode('now-playing');
+  assert.equal(root, null);
+  assert.deepEqual(removed, [first, second]);
 });
 
 test('capture status is isolated from player title and source metadata', async () => {
@@ -100,9 +177,15 @@ test('even 8 px gaps between the bar controls; Record and EQ keep fixed widths',
   assert.ok(eq, 'EQ is 68 px wide');
   assert.match(css, /\.player-action, \.player-eq \{ flex-shrink: 0; \}/);
   assert.doesNotMatch(eq[1], /min-width/);
-  // Record, its second action, EQ and Picture share the 36 px height.
-  const buttons = css.match(/\n\.player-action,\n\.player-action-secondary,\n\.player-picture,\n\.player-eq \{([^}]*)\}/)[1];
-  assert.match(buttons, /height: 36px;/);
+  const buttons = css.match(/\n\.player-action,\n\.player-action-secondary,\n\.player-picture,\n\.player-track-button,\n\.player-eq \{([^}]*)\}/);
+  assert.ok(buttons, 'Record, Picture, Subtitles, Audio and EQ share a rule');
+  assert.match(buttons[1], /height: 36px;/);
+  const html = await read('src/index.html');
+  const actions = html.split('<div class="player-actions"')[1].split('<span id="player-capture-announcement"')[0];
+  for (const name of ['subtitles', 'audio']) {
+    assert.match(actions, new RegExp('<button id="player-' + name + '" class="player-track-button"'));
+  }
+  assert.match(css, /#player-subtitles\[aria-busy="true"\]::after \{[^}]*content: "\\2026";/);
 });
 
 test('the main header uses 32 px controls, even gaps, and fixed Sleep widths', async () => {

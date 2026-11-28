@@ -42,7 +42,7 @@ function fakeEvents() {
 }
 
 /**
- * A Tuner or Grid in miniature, wired as the real views are: one load asks
+ * A Tuner in miniature, wired as the real views are: one load asks
  * every source through runLiveLoad, a failure goes to the retries, a retry
  * runs one source through runLiveLoad and merges as a late answer does.
  */
@@ -403,28 +403,29 @@ test('a hidden window makes no early try; the waiting try is made once it is sho
   assert.equal(show.listeners.size, 0);
 });
 
-test('the Tuner and the Grid send failed sources to the retries and end them on every new load and on leaving', async () => {
-  for (const [path, list, name] of [['src/modes/tuner.js', 'state.stations', 'Tuner'], ['src/modes/grid.js', 'state.tiles', 'Grid']]) {
-    const source = await read(path);
-    assert.match(source, /const sourceRetries = createSourceRetries\(\{\n\s+isShown: \(\) => getState\(\)\.mode === '(tuner|grid)'/, name);
-    assert.match(source, /onAnswer: onOutsideAnswer,\n\s+lastAnswerAt: lastOutsideAnswerAt,/, name);
-    const loadStart = source.indexOf(name === 'Tuner' ? 'async function loadStations(' : 'async function load(');
-    const load = source.slice(loadStart, source.indexOf('function finishLoad()'));
-    assert.match(load, /sourceRetries\.stop\(preserve \? candidates\.map\(\(source\) => source\.id\) : null\);/, name);
-    assert.ok(load.indexOf('sourceRetries.stop(') < load.indexOf('await runLiveLoad('), `${name}: before anything is asked`);
-    assert.match(load, new RegExp(`failedSourceState\\(${list.replace('.', '\\.')}, source\\.id, message\\)`), name);
-    assert.match(load, /sourceRetries\.fail\(source, retrySource, \{\n\s+error, declaredMs: catalogScheduler\.declaredCooldownRemainingMs\(source\.id\),/, name);
-    assert.match(load, /sourceRetries\.succeeded\(source\.id\);/, name);
-    // A retry is one source through the same load path, as a job of its own.
-    assert.match(load, /const retrySource = \(source, signal, isCurrent, attempt\) => runLiveLoad\(\{\n\s+candidates: \[source\],/, name);
-    assert.match(load, /ask: \(one, oneSignal\) => ask\(one, oneSignal, attempt\),/, name);
-    assert.match(load, /:retry\$\{attempt\}/, name);
-    const finish = source.slice(source.indexOf('function finishLoad() {'));
-    assert.match(finish.slice(0, finish.indexOf('\n}\n')), /\)\) sourceRetries\.stop\(\);/, `${name}: none while the whole list is tried again`);
-    const tearDown = source.slice(source.indexOf('function tearDown() {'));
-    assert.match(tearDown.slice(0, tearDown.indexOf('\n}\n')), /sourceRetries\.stop\(\);/, name);
-    assert.doesNotMatch(source, /AudioContext/, name);
-  }
+test('the Tuner send failed sources to the retries and end them on every new load and on leaving', async () => {
+  const path = 'src/modes/tuner.js';
+  const list = 'state.stations';
+  const name = 'Tuner';
+  const source = await read(path);
+  assert.match(source, /const sourceRetries = createSourceRetries\(\{\n\s+isShown: \(\) => getState\(\)\.mode === 'tuner'/, name);
+  assert.match(source, /onAnswer: onOutsideAnswer,\n\s+lastAnswerAt: lastOutsideAnswerAt,/, name);
+  const loadStart = source.indexOf('async function loadStations(');
+  const load = source.slice(loadStart, source.indexOf('function finishLoad()'));
+  assert.match(load, /sourceRetries\.stop\(preserve \? candidates\.map\(\(source\) => source\.id\) : null\);/, name);
+  assert.ok(load.indexOf('sourceRetries.stop(') < load.indexOf('await runLiveLoad('), `${name}: before anything is asked`);
+  assert.match(load, new RegExp(`failedSourceState\\(${list.replace('.', '\\.')}, source\\.id, message\\)`), name);
+  assert.match(load, /sourceRetries\.fail\(source, retrySource, \{\n\s+error, declaredMs: catalogScheduler\.declaredCooldownRemainingMs\(source\.id\),/, name);
+  assert.match(load, /sourceRetries\.succeeded\(source\.id\);/, name);
+  // A retry is one source through the same load path, as a job of its own.
+  assert.match(load, /const retrySource = \(source, signal, isCurrent, attempt\) => runLiveLoad\(\{\n\s+candidates: \[source\],/, name);
+  assert.match(load, /ask: \(one, oneSignal\) => ask\(one, oneSignal, attempt\),/, name);
+  assert.match(load, /:retry\$\{attempt\}/, name);
+  const finish = source.slice(source.indexOf('function finishLoad() {'));
+  assert.match(finish.slice(0, finish.indexOf('\n}\n')), /\)\) sourceRetries\.stop\(\);/, `${name}: none while the whole list is tried again`);
+  const tearDown = source.slice(source.indexOf('function tearDown() {'));
+  assert.match(tearDown.slice(0, tearDown.indexOf('\n}\n')), /sourceRetries\.stop\(\);/, name);
+  assert.doesNotMatch(source, /AudioContext/, name);
   const tuner = await read('src/modes/tuner.js');
   const favorites = tuner.slice(tuner.indexOf('function loadFavoriteStations() {'), tuner.indexOf('async function loadStations('));
   assert.match(favorites, /sourceRetries\.stop\(\);/);

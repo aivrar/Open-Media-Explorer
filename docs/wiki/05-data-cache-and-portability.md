@@ -7,10 +7,12 @@ For a normal portable launch, the executable's directory is the portable root:
 ```text
 WorldMediaWindows.exe
 WorldMediaWindows-data\
-  cache\                 catalog/provider cache records
+  cache\                 catalog, artwork and Computer playback caches
   state\                 launcher.json, profile-preferences.json,
                          profile-preferences-extra.json, playlists.json,
-                         song-log.json, starred-songs.json
+                         song-log.json, starred-songs.json,
+                         computer-folders.json, computer-library.json,
+                         computer-stars.json
   station-images\        your own station pictures (made when you open it)
   logs\                  native.log and runtime diagnostics
   webview2_data\         WebView2 browser profile and localStorage
@@ -106,6 +108,26 @@ Short-lived artwork and playback relay IDs are not persisted as usable URLs.
 They are re-resolved from stable adapter metadata at the next launch. Live
 snapshot stream URLs are also revalidated instead of being trusted indefinitely.
 
+## Computer files
+
+The app reads media from folders you add and their subfolders. The files
+and their details stay on your computer.
+
+| Path in the data folder | Contents |
+|---|---|
+| `state/computer-folders.json` | Folders you added |
+| `state/computer-library.json` | Media index, including file details and measured loudness |
+| `state/computer-stars.json` | Starred Computer files |
+| `cache/computer-art` | Covers, posters and thumbnails |
+| `cache/computer-convert` | Converted audio |
+| `cache/computer-video` | Converted video segments |
+| `cache/computer-video-index` | Timelines for DVD VOB and other MPEG files |
+| `cache/computer-subs` | Subtitles prepared for playback |
+
+Audio and subtitle choices and audiobook positions are saved in
+`state/profile-preferences-extra.json`. **Volume levelling** and
+**Pre-amp** are saved with the other settings.
+
 ## Favorites backup and migration
 
 To back up the complete user profile, close World Media and copy the entire
@@ -183,11 +205,10 @@ folder and opens it. A picture named like a station, for example
 `Radio Paradise.png`, replaces that station's artwork after you press
 **Refresh**. PNG, JPG, WebP or GIF, up to 2 MB each. World Media writes to this
 folder only when you choose or drop a picture for a favorite or My Playlists
-station (it saves a checked copy, named after the station) or press **Remove
-picture** (it deletes that station's picture file); it never replaces a
-picture without asking you first. Because it is part of the data folder, it
-moves with the portable folder, and the backup ZIP includes it. **Clear local
-cache** leaves it alone.
+station, or press **Remove picture**. A picture you set belongs to that
+station, even if another station has the same name. The app asks before
+replacing a picture. The pictures move with the portable folder, and the
+backup ZIP includes them. **Clear local cache** keeps the pictures.
 [Using the application](02-using-the-application.md) has the matching rules,
 including how a station whose name has a character a file name cannot have
 (such as "/") finds its picture, and the **Pictures to check** list in Settings

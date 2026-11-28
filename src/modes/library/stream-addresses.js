@@ -1,6 +1,7 @@
 import { MAX_BACKUP_STREAMS, stationStreamAddresses } from '../../lib/station-stream-addresses.js';
 import { canEditStationStreams, saveStationStreams } from '../../lib/station-stream-edit.js';
 import { subscribe } from '../../lib/state.js';
+import { safeExternalUrl } from '../../lib/item-model.js';
 import { el } from './utils.js';
 
 const FORM_ID = 'library-detail-stream-addresses';
@@ -23,7 +24,14 @@ export function createStreamAddressEditor(item, { save = saveStationStreams, onS
   const message = el('p', { className: 'detail-rename-message', attrs: { role: 'alert' } });
   const saveButton = el('button', { className: 'btn btn-primary', text: 'Save', attrs: { type: 'submit' } });
   const restore = button('Restore original', () => {
-    main.value = item.stream_url || '';
+    const original = item.stream_url || '';
+    const canonical = safeExternalUrl(original);
+    const backup = canonical && inputs.find((input) => safeExternalUrl(input.value) === canonical);
+    if (backup && safeExternalUrl(main.value) !== canonical) {
+      if (main.value.trim()) backup.value = main.value;
+      else renderBackups(inputs.filter((input) => input !== backup).map((input) => input.value));
+    }
+    main.value = original;
     main.focus();
   });
   const form = el('form', { className: 'detail-rename', attrs: { id: FORM_ID, 'aria-label': 'Stream addresses' } });
@@ -52,7 +60,16 @@ export function createStreamAddressEditor(item, { save = saveStationStreams, onS
         renderBackups(next);
         inputs[target].focus();
       };
-      const up = button('\u2191', () => move(-1), { 'aria-label': `Move backup ${number} up`, title: 'Move up' });
+      const upLabel = index === 0 ? 'Make this the main address' : `Move backup ${number} up`;
+      const up = button('\u2191', () => {
+        if (index > 0) {
+          move(-1);
+          return;
+        }
+        [main.value, input.value] = [input.value, main.value];
+        if (item.stream_url) restore.hidden = false;
+        main.focus();
+      }, { 'aria-label': upLabel, title: index === 0 ? upLabel : 'Move up' });
       const down = button('\u2193', () => move(1), { 'aria-label': `Move backup ${number} down`, title: 'Move down' });
       const remove = button('Remove', () => {
         const next = readBackups();
@@ -60,7 +77,6 @@ export function createStreamAddressEditor(item, { save = saveStationStreams, onS
         renderBackups(next);
         (inputs[index] || inputs[index - 1] || add).focus();
       }, { 'aria-label': `Remove backup ${number}`, title: 'Remove backup' });
-      up.disabled = index === 0;
       down.disabled = number === values.length;
       const controls = el('div', { className: 'detail-backup-controls' }, up, down, remove);
       list.appendChild(el('div', { className: 'detail-rename-row' }, input, controls));

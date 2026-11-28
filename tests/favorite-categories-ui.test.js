@@ -296,12 +296,15 @@ test('a chip filters the view and combines with the type buttons, the search box
     assert.match(chipFor('Rock').className, /\bis-active\b/);
     assert.doesNotMatch(chipFor('Talk').className, /\bis-active\b/);
     assert.deepEqual(shownIds(), ['a', 'c']);
-    // With a type: Rock radio only.
-    view.personalFilters.favorites.type = 'tv';
-    renderResults();
+    const chooseType = (type) => click(ui.personalType.children.find((node) => node.getAttribute('data-type') === type));
+    chooseType('tv');
+    chooseType('video');
     assert.deepEqual(shownIds(), []);
-    assert.match(ui.resultsHost.children[0].getAttribute('data-message'), /No favorites in this category match/);
-    view.personalFilters.favorites.type = 'radio';
+    assert.match(ui.resultsHost.children[0].getAttribute('data-message'), /No TV or video favorites in this category match/);
+    assert.deepEqual(chipText(), ['All categories', 'Rock 2', 'Talk 1', 'Uncategorized 1']);
+    chooseType('video');
+    chooseType('radio');
+    assert.deepEqual(shownIds(), ['a', 'c']);
     view.personalFilters.favorites.query = 'char';
     renderResults();
     assert.deepEqual(shownIds(), ['c']);
@@ -313,7 +316,7 @@ test('a chip filters the view and combines with the type buttons, the search box
     state.settings = normalizeSettings({ favoritesSort: 'name' });
     renderResults();
     assert.deepEqual(shownIds(), ['a', 'c']);
-    view.personalFilters.favorites.type = '';
+    chooseType('');
     click(chipFor('Uncategorized'));
     assert.equal(pressedChip(), UNCATEGORIZED);
     assert.deepEqual(shownIds(), ['d']);

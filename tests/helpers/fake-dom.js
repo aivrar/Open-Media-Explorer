@@ -122,6 +122,7 @@ export function createPlayerDom() {
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement(id)]));
   elements['audio-el'] = new FakeMediaElement('audio-el', 'audio');
+  elements['computer-audio-el'] = new FakeMediaElement('computer-audio-el', 'audio');
   elements['video-el'] = new FakeMediaElement('video-el', 'video');
   elements['icon-pause'].hidden = true;
   elements['player-seek'].disabled = true;

@@ -40,6 +40,7 @@ test('iptv-org: a slow logos file holds the channel list back for a short time o
     const url = String(input);
     if (url.endsWith('/streams.json')) return json(STREAMS);
     if (url.endsWith('/channels.json')) return json(CHANNELS);
+    if (url.endsWith('/feeds.json')) return json([]);
     logoRequests += 1;
     await logosGate;
     return json(LOGOS);
@@ -72,6 +73,7 @@ test('iptv-org: a failed logos file does not hold the list back and is asked for
     const url = String(input);
     if (url.endsWith('/streams.json')) return json(STREAMS);
     if (url.endsWith('/channels.json')) return json(CHANNELS);
+    if (url.endsWith('/feeds.json')) return json([]);
     logoRequests += 1;
     return logoRequests === 1 ? json({ error: 'busy' }, 503) : json(LOGOS);
   }, async () => {
@@ -135,6 +137,33 @@ test('iptv-org: an empty answer is a failure that is never kept; a stale list is
     const fresh = await iptv.browse({ limit: 30 });
     assert.deepEqual(fresh.map((item) => item.id).sort(), ['iptv-org:a.us', 'iptv-org:b.us']);
     assert.equal(streamRequests, 4);
+  });
+});
+
+test('iptv-org: broadcast language comes from the stream feed or the channel main feed', async () => {
+  await withFetch(async (input) => {
+    const url = String(input);
+    if (url.endsWith('/streams.json')) return json([
+      { ...stream('a.us'), feed: 'Main', url: 'http://tv.example/alternate.m3u8' },
+      { ...stream('a.us'), feed: 'Other' },
+      stream('b.us'), stream('c.us'),
+    ]);
+    if (url.endsWith('/channels.json')) return json(
+      ['a.us', 'b.us', 'c.us'].map((id) => ({ id, name: id, country: 'US' })),
+    );
+    if (url.endsWith('/feeds.json')) return json([
+      { channel: 'a.us', id: 'Main', is_main: true, languages: ['eng'] },
+      { channel: 'a.us', id: 'Other', languages: ['fra'] },
+      { channel: 'b.us', id: 'Main', is_main: true, languages: ['eng'] },
+      { channel: 'b.us', id: 'Other', languages: ['deu'] },
+    ]);
+    return json(LOGOS);
+  }, async () => {
+    const iptv = await loadIptv();
+    const items = await iptv.browse();
+    assert.deepEqual(Object.fromEntries(items.map(({ id, language }) => [id, language])), {
+      'iptv-org:a.us': 'fra', 'iptv-org:b.us': 'eng', 'iptv-org:c.us': '',
+    });
   });
 });
 

@@ -95,7 +95,7 @@ live snapshot will never change.
 
 PeerTube, gPodder, iptv-org, and Owncast normalize provider ratings. The global
 setting is the only authority that reveals marked content. Filtering happens in
-Library, Grid, Tuner, Discovery, and favorites views. Enabling the setting never
+Library, Tuner, Favorites and **Surprise me** in Now Playing. Enabling the setting never
 permits unsafe URLs or unverified dynamic origins.
 
 ## Rights and channel responsibility

@@ -17,9 +17,10 @@ function shutdownDom() {
   const host = new FakeElement('view-host');
   const audio = new FakeMediaElement('audio-el', 'audio');
   const video = new FakeMediaElement('video-el', 'video');
-  const document = createFakeDocument([button, host, audio, video]);
+  const standby = new FakeMediaElement('computer-audio-el', 'audio');
+  const document = createFakeDocument([button, host, audio, video, standby]);
   document.querySelectorAll = () => [button];
-  return { button, host, audio, video, document };
+  return { button, host, audio, video, standby, document };
 }
 
 test('an accepted shutdown never shows Retry if UI cleanup or native close fails', async () => {
@@ -51,6 +52,9 @@ test('Shutdown uses authenticated JSON control and closes only after backend acc
   const previousDocument = globalThis.document;
   const { button, host, document } = shutdownDom();
   globalThis.document = document;
+  const standby = document.getElementById('computer-audio-el');
+  standby.src = '/api/v1/computer/media/prepared';
+  await standby.play();
   const calls = [];
   const fetchImpl = async (path, options = {}) => {
     calls.push({ path, options });
@@ -80,6 +84,8 @@ test('Shutdown uses authenticated JSON control and closes only after backend acc
     assert.equal(calls[1].options.body, '{}');
     assert.equal(closed, 1);
     assert.match(host.innerHTML, /Shutting down World Media/);
+    assert.equal(standby.paused, true);
+    assert.equal(standby.src, '');
     assert.equal(button.disabled, true);
   } finally {
     globalThis.document = previousDocument;

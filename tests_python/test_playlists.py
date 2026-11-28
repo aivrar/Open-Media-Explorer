@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import json
 import unittest
-import uuid
+import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 
-from worldmedia_playlists import MAX_PLAYLIST_BYTES, PlaylistStore, parse_playlist
+from worldmedia_playlists import MAX_IMPORT_CHANNELS, MAX_PLAYLIST_BYTES, PlaylistStore, parse_playlist
 from worldmedia_catalog import BoundedFetcher
 from worldmedia_media import SafeConnector
 from worldmedia_security import ApiError
 from worldmedia_runtime import PROFILE_TRANSFER_MAX_BYTES, load_profile_transfer
 
-SIMPLE = '#EXTM3U\n#EXTINF:-1,Music\nhttps://example.org/live.m3u8\n'
+SIMPLE = '#EXTM3U\n#EXTINF:-1,Music\nhttps://example.org/live\n'
 
 
 class PlaylistTests(unittest.TestCase):
@@ -49,15 +49,114 @@ class PlaylistTests(unittest.TestCase):
 
     def test_remote_list_resolves_relative_streams_and_logos_against_final_url(self):
         fetcher = mock.Mock()
-        fetcher.fetch.return_value = SimpleNamespace(data=b'#EXTM3U\n#EXTINF:-1 tvg-logo="../logo.png",Channel\nstreams/live.m3u8\n', url='https://cdn.example.org/lists/current.m3u')
+        fetcher.fetch.return_value = SimpleNamespace(data=b'#EXTM3U\n#EXTINF:-1 tvg-logo="../logo.png",Channel\nstreams/live.ts\n', url='https://cdn.example.org/lists/current.m3u')
         store, records = self.link_store(fetcher)
         saved = store.import_link({'url': 'https://example.org/playlist', 'name': 'My list', 'kind': 'playlist', 'default_type': 'tv'})
         item = saved['playlist']['items'][0]
-        self.assertEqual(item['stream_url'], 'https://cdn.example.org/lists/streams/live.m3u8')
+        self.assertEqual(item['stream_url'], 'https://cdn.example.org/lists/streams/live.ts')
         self.assertEqual(item['_extra']['artworkUrl'], 'https://cdn.example.org/logo.png')
         self.assertEqual(store.list()[0]['items'][0]['stream_url'], item['stream_url'])
         self.assertEqual(records[0]['base_url'], 'https://cdn.example.org/lists/current.m3u')
         self.assertEqual(fetcher.fetch.call_args.kwargs['max_decoded'], MAX_PLAYLIST_BYTES)
+
+    def test_file_and_online_wrappers_expand_one_level_with_child_base(self):
+        text = '#EXTM3U\nhttps://example.org/channels.m3u?key=1\n'
+        child = SimpleNamespace(
+            data=b'#EXTM3U\n#EXTINF:-1 tvg-logo="../logo.png",News\nnews.m3u\n#EXTINF:-1,Radio\nfm.mp3\n',
+            url='https://cdn.example.org/lists/all.m3u',
+        )
+        for online in (False, True):
+            with self.subTest(online=online):
+                fetcher = mock.Mock()
+                store, records = self.link_store(fetcher)
+                if online:
+                    fetcher.fetch.side_effect = [SimpleNamespace(data=text.encode(), url='https://example.org/root'), child]
+                    answer = store.import_link({'url': 'https://example.org/root', 'name': '', 'kind': 'playlist', 'default_type': 'auto'})
+                else:
+                    fetcher.fetch.return_value = child
+                    answer = store.import_file({'name': 'wrapper.m3u', 'text': text, 'default_type': 'auto'})
+                playlist = answer['playlist']
+                self.assertEqual(playlist['linked_playlists'], 1)
+                self.assertEqual(playlist['linked_failed'], 0)
+                self.assertEqual(playlist['default_type'], 'radio')
+                self.assertEqual([item['title'] for item in playlist['items']], ['News', 'Radio'])
+                self.assertEqual(playlist['items'][0]['stream_url'], 'https://cdn.example.org/lists/news.m3u')
+                self.assertEqual(playlist['items'][0]['_extra']['artworkUrl'], 'https://cdn.example.org/logo.png')
+                self.assertEqual(PlaylistStore._entries(json.dumps({'version': 1, 'playlists': records})), records)
+                self.assertEqual(store.list()[0]['items'], playlist['items'])
+                self.assertEqual(fetcher.fetch.call_count, 2 if online else 1)
+
+    def test_hls_manifests_and_failed_fetch_keep_original_entries(self):
+        text = '#EXTM3U\n#EXTINF:-1,Station\nhttps://example.org/stream.m3u8\n'
+        for data in (b'#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1280000\nstream.m3u8',
+                     b'#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nsegment.ts',
+                     b'<html>Unavailable</html>', None):
+            with self.subTest(data=data):
+                fetcher = mock.Mock()
+                if data is None:
+                    fetcher.fetch.side_effect = TimeoutError()
+                else:
+                    fetcher.fetch.return_value = SimpleNamespace(data=data, url='https://example.org/stream.m3u8')
+                store, _ = self.link_store(fetcher)
+                playlist = store.import_file({'name': 'list', 'text': text, 'default_type': 'tv'})['playlist']
+                self.assertEqual(playlist['items'], parse_playlist(text)['items'])
+                self.assertEqual(playlist['linked_playlists'], 0)
+                self.assertEqual(playlist['linked_failed'], int(data is None or data.startswith(b'<')))
+
+    def test_only_first_four_m3u_candidates_and_no_fetch_for_normal_stream_lists(self):
+        fetcher = mock.Mock()
+        fetcher.fetch.side_effect = TimeoutError()
+        store, _ = self.link_store(fetcher)
+        for extension, calls in [('m3u', 4), ('m3u8', 0), ('ts', 0)]:
+            fetcher.reset_mock()
+            urls = [f'https://example.org/{i}.{extension}?key=1' for i in range(5)]
+            text = '#EXTM3U\n' + '\n'.join(urls)
+            playlist = store.import_file({'name': 'list', 'text': text, 'default_type': 'tv'})['playlist']
+            self.assertEqual([call.args[0] for call in fetcher.fetch.call_args_list], urls[:calls])
+            self.assertEqual(playlist['items'], parse_playlist(text)['items'])
+
+    def test_import_caps_result_count_and_aggregate_bytes(self):
+        text = '#EXTM3U\nhttps://example.org/one.m3u\nhttps://example.org/two.m3u\nhttps://example.org/three.m3u\n'
+        child = '#EXTM3U\n' + ''.join(f'#EXTINF:-1,Channel {i}\n{i}.mp3\n' for i in range(MAX_IMPORT_CHANNELS + 2))
+        fetcher = mock.Mock()
+        store, _ = self.link_store(fetcher)
+        fetcher.fetch.side_effect = [
+            SimpleNamespace(data=child.encode(), url='https://example.org/one.m3u'),
+            ApiError(502, 'CATALOG_BODY_TOO_LARGE', 'Too large'),
+        ]
+        playlist = store.import_file({'name': 'list', 'text': text, 'default_type': 'tv'})['playlist']
+        self.assertEqual(len(playlist['items']), MAX_IMPORT_CHANNELS)
+        self.assertEqual(len(store.list()[0]['items']), MAX_IMPORT_CHANNELS)
+        self.assertEqual(playlist['truncated'], 4)
+        self.assertEqual(playlist['linked_byte_limited'], 2)
+        self.assertEqual(fetcher.fetch.call_count, 2)
+        for call, remaining in zip(fetcher.fetch.call_args_list, [MAX_PLAYLIST_BYTES - len(text),
+                                                                  MAX_PLAYLIST_BYTES - len(text) - len(child)]):
+            self.assertEqual(call.kwargs['max_decoded'], remaining)
+            self.assertEqual(call.kwargs['max_compressed'], remaining)
+
+    def test_partial_failed_fetch_still_uses_the_shared_byte_budget(self):
+        text = '#EXTM3U\nhttps://example.org/one.m3u\nhttps://example.org/two.m3u\n'
+        response = SimpleNamespace(
+            status=200,
+            getheader=lambda name, default='': 'text/plain' if name == 'Content-Type' else default,
+        )
+
+        def stalled(*, cancel):
+            yield b'x' * 100
+            raise TimeoutError()
+
+        upstream = SimpleNamespace(response=response, url='https://example.org/list', iter_chunks=stalled, close=lambda: None)
+        connector = mock.Mock()
+        connector.open.return_value = upstream
+        fetcher = BoundedFetcher(connector)
+        store, _ = self.link_store(fetcher)
+        with mock.patch.object(fetcher, 'fetch', wraps=fetcher.fetch) as fetch:
+            answer = store.import_file({'name': 'wrapper', 'text': text, 'default_type': 'tv'})['playlist']
+        self.assertEqual(answer['linked_failed'], 2)
+        self.assertEqual(answer['items'], parse_playlist(text)['items'])
+        self.assertEqual([call.kwargs['max_decoded'] for call in fetch.call_args_list],
+                         [MAX_PLAYLIST_BYTES - len(text), MAX_PLAYLIST_BYTES - len(text) - 100])
 
     def test_bad_link_and_remote_failures_do_not_change_existing_lists(self):
         fetcher = mock.Mock()
@@ -94,12 +193,9 @@ class PlaylistTests(unittest.TestCase):
         self.assertEqual(result['skipped'], 3)
 
     def test_real_portable_store_survives_reload_and_removal(self):
-        # Ordinary inherited workspace permissions: no private temp-directory
-        # ACLs and no access to the user's portable test data.
-        root = Path(__file__).resolve().parents[1] / 'build' / 'audit-tests' / uuid.uuid4().hex
-        root.mkdir(parents=True)
-        path = root / 'playlists.json'
-        try:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / 'playlists.json'
             saved = PlaylistStore(path).import_file({'name': 'Music.m3u', 'text': SIMPLE, 'default_type': 'radio'})
             reloaded = PlaylistStore(path).list()
             self.assertEqual(reloaded[0]['items'][0]['type'], 'radio')
@@ -107,9 +203,6 @@ class PlaylistTests(unittest.TestCase):
             PlaylistStore(path).remove(saved['playlist']['id'])
             self.assertEqual(PlaylistStore(path).list(), [])
             self.assertEqual(list(root.iterdir()), [path])  # No abandoned atomic-write files.
-        finally:
-            path.unlink(missing_ok=True)
-            root.rmdir()
 
     def test_extended_mixed_playlist_and_capture_headers(self):
         result = parse_playlist('''\ufeff#EXTM3U

@@ -8,16 +8,19 @@ and can also run directly for development.
 """
 from __future__ import annotations
 
+import gzip
 import http.server
 import json
 import os
 import re
 import socket
 import socketserver
+import struct
 import sys
 import threading
 import time
 import urllib.parse
+import zlib
 from collections import deque
 from http import HTTPStatus
 from pathlib import Path
@@ -25,6 +28,12 @@ from typing import Callable
 
 from worldmedia_backup import BackupError, create_backup
 from worldmedia_catalog import AssetRegistry, CatalogService, FIXED_METADATA_HOSTS
+from worldmedia_computer import COMPUTER_FOLDERS_FILENAME, ComputerFolders, FolderMismatch
+from worldmedia_computer_art import ART_ROUTE as COMPUTER_ART_ROUTE, ComputerArt, find_art_ffmpeg
+from worldmedia_computer_convert import ComputerConvert
+from worldmedia_computer_video import HLS_ROUTE, ComputerVideo
+from worldmedia_computer_media import MEDIA_CHUNK_SIZE, MEDIA_ROUTE as COMPUTER_MEDIA_ROUTE, ComputerMedia, media_range
+from worldmedia_computer_subtitles import SUBTITLE_ROUTE, serve_subtitle
 from worldmedia_downloads import DownloadError, DownloadService
 from worldmedia_ffmpeg import FfmpegError, FfmpegService
 from worldmedia_jobs import (
@@ -101,6 +110,7 @@ from worldmedia_security import (
     validate_authenticated_get,
     validate_control_origin,
     validate_mutation,
+    validate_token,
 )
 
 
@@ -108,7 +118,7 @@ APP_NAME = "World Media"
 BASE_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("WORLDMEDIA_FRONTEND", BASE_DIR / "frontend")).resolve()
 PORT = int(os.environ.get("WORLDMEDIA_PORT") or os.environ.get("WORLDMEDIA_WINDOWS_PORT") or DEFAULT_SERVER_PORT)
-USER_AGENT = "WorldMediaWindows/0.1.18 (https://github.com/aivrar/Open-Media-Explorer)"
+USER_AGENT = "WorldMediaWindows/0.1.19 (https://github.com/aivrar/Open-Media-Explorer)"
 MAX_SIZE = 50 * 1024 * 1024
 
 ALLOWED_HOSTS = frozenset(
@@ -145,6 +155,19 @@ PLAYLIST_STORE = PlaylistStore(RUNTIME_PATHS.state_root / "state" / "playlists.j
 CATALOG_SERVICE = CatalogService(RUNTIME_PATHS.state_root / "cache")
 ASSET_REGISTRY = AssetRegistry(RUNTIME_PATHS.state_root / "cache")
 FFMPEG_SERVICE = FfmpegService(RUNTIME_PATHS)
+COMPUTER_FOLDERS = ComputerFolders(
+    RUNTIME_PATHS.state_root / "state" / COMPUTER_FOLDERS_FILENAME,
+    ffprobe=lambda refresh: FFMPEG_SERVICE.status(refresh=refresh).ffprobe_path,
+)
+COMPUTER_ART = ComputerArt(RUNTIME_PATHS.state_root / "cache" / "computer-art",
+                           ffmpeg=lambda: find_art_ffmpeg(FFMPEG_SERVICE.paths))
+COMPUTER_MEDIA = ComputerMedia(
+    ComputerConvert(RUNTIME_PATHS.state_root / "cache" / "computer-convert",
+                    ffmpeg=lambda: find_art_ffmpeg(FFMPEG_SERVICE.paths)),
+    video=ComputerVideo(RUNTIME_PATHS.state_root / "cache" / "computer-video",
+                        ffmpeg=lambda: find_art_ffmpeg(FFMPEG_SERVICE.paths)),
+)
+_COMPUTER_MEDIA_LOG_PATH = re.compile(r"(/api/v1/computer/(?:media|hls)/)[^\s]*", re.IGNORECASE)
 DOWNLOAD_SERVICE = DownloadService(MEDIA_REGISTRY, JOB_REGISTRY, RUNTIME_PATHS)
 RECORDING_SERVICE = RecordingService(MEDIA_REGISTRY, JOB_REGISTRY, FFMPEG_SERVICE, RUNTIME_PATHS)
 RELAY_SLOTS = threading.BoundedSemaphore(16)
@@ -166,6 +189,12 @@ CATALOG_BODY_LIMITS = {
     "/api/v1/assets/register": 24 * 1024,
     "/api/v1/runtime/server-port": 1024,
     "/api/v1/backup/create": 1024,
+    "/api/v1/computer/folders/add": 16 * 1024,
+    "/api/v1/computer/folders/remove": 1024,
+    "/api/v1/computer/scan": 1024,
+    "/api/v1/computer/stars": 4 * 1024 * 1024,
+    "/api/v1/computer/play": 1024,
+    "/api/v1/computer/loudness": 1024,
     "/api/v1/song-log": SONG_LOG_BODY_LIMIT,
     "/api/v1/song-log/export": SONG_LOG_BODY_LIMIT,
     "/api/v1/starred-songs": STARRED_SONGS_BODY_LIMIT,
@@ -443,6 +472,9 @@ def shutdown_services(timeout: float = 12.0) -> bool:
     def remaining() -> float:
         return max(0.0, deadline - time.monotonic())
 
+    computer_media_stopped = COMPUTER_MEDIA.shutdown(timeout=remaining())
+    computer_art_stopped = COMPUTER_ART.shutdown(timeout=remaining())
+    computer_stopped = COMPUTER_FOLDERS.library.shutdown(timeout=remaining())
     # Cancel metadata/artwork reads first; their registries contain only
     # ephemeral opaque IDs and never browser-profile favorites or EQ state.
     catalogs_stopped = CATALOG_SERVICE.shutdown(timeout=remaining())
@@ -455,13 +487,25 @@ def shutdown_services(timeout: float = 12.0) -> bool:
     ffmpeg_stopped = FFMPEG_SERVICE.shutdown(timeout=remaining())
     MEDIA_REGISTRY.clear()
     return (
-        catalogs_stopped
+        computer_media_stopped
+        and computer_art_stopped
+        and computer_stopped
+        and catalogs_stopped
         and assets_stopped
         and recordings_stopped
         and jobs_stopped
         and downloads_stopped
         and ffmpeg_stopped
     )
+
+
+def _encode_computer_library(data: dict) -> tuple[bytes, bytes, int]:
+    # Cache the envelope up to its per-request ID. End the gzip prefix on a
+    # DEFLATE block boundary so the ID can finish the same gzip member.
+    prefix = json.dumps(success_envelope(data, ""), separators=(",", ":")).encode("utf-8")[:-3]
+    compressor = zlib.compressobj(level=3, wbits=31)
+    compressed = compressor.compress(prefix) + compressor.flush(zlib.Z_FULL_FLUSH)
+    return prefix, compressed, zlib.crc32(prefix)
 
 
 class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
@@ -488,10 +532,11 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             or path.startswith("/api/v1/catalog/")
             or path.startswith("/api/v1/media/")
             or path.startswith("/api/v1/dash/")
+            or path.startswith((COMPUTER_MEDIA_ROUTE, HLS_ROUTE))
         )
         if high_volume and 200 <= status < 400:
             return
-        path = redact_text(path, limit=256)
+        path = redact_text(_COMPUTER_MEDIA_LOG_PATH.sub(r"\1<redacted>", path), limit=256)
         request_id = getattr(self, "request_id", "-")
         method = (getattr(self, "command", None) or "-")[:16]
         sys.stderr.write(
@@ -507,7 +552,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             message = fmt
         sys.stderr.write(
             f"[{time.strftime('%H:%M:%S')}] request={request_id} "
-            f"message={redact_text(message)}\n"
+            f"message={redact_text(_COMPUTER_MEDIA_LOG_PATH.sub(r'\1<redacted>', message))}\n"
         )
 
     def handle(self) -> None:
@@ -598,6 +643,15 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
         station_image_match = re.fullmatch(r"/api/v1/station-images/([0-9a-f]{32})", parsed.path)
         if station_image_match:
             return self._handle_station_image(method, station_image_match.group(1), parsed.query)
+        if parsed.path.startswith(COMPUTER_ART_ROUTE):
+            return self._handle_computer_art(method, parsed.path[len(COMPUTER_ART_ROUTE):], parsed.query)
+        if parsed.path.startswith(HLS_ROUTE):
+            return self._handle_computer_media(method, parsed.path[len(HLS_ROUTE):], parsed.query, hls=True)
+        if parsed.path == SUBTITLE_ROUTE:
+            return serve_subtitle(self, method, parsed.query, media=COMPUTER_MEDIA, folders=COMPUTER_FOLDERS,
+                                  session_token=SESSION_TOKEN, client_gone=lambda: client_went_away(self.connection))
+        if parsed.path.startswith(COMPUTER_MEDIA_ROUTE):
+            return self._handle_computer_media(method, parsed.path[len(COMPUTER_MEDIA_ROUTE):], parsed.query)
         if not rate_limit(self.client_address[0]):
             if parsed.path == "/api/v1" or parsed.path.startswith("/api/v1/"):
                 return self._send_api_error(ApiError(
@@ -609,6 +663,8 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             return self.send_error(HTTPStatus.TOO_MANY_REQUESTS, "rate limit")
 
         if parsed.path == "/api/v1" or parsed.path.startswith("/api/v1/"):
+            if method == "GET" and parsed.path == "/api/v1/computer/library":
+                return self._handle_control_api(method, parsed.path, parsed.query)
             if parsed.query:
                 return self._send_api_error(ApiError(
                     HTTPStatus.BAD_REQUEST,
@@ -658,7 +714,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             return None
         return self.send_error(HTTPStatus.NOT_FOUND)
 
-    def _handle_control_api(self, method: str, path: str) -> None:
+    def _handle_control_api(self, method: str, path: str, query: str = "") -> None:
         try:
             if path == "/api/v1/session":
                 validate_control_origin(self.headers, self.server.server_port, required=False)
@@ -704,6 +760,18 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     # keys (worldmedia_runtime.load_profile_transfer_report).
                     values, copied = load_profile_transfer_report(RUNTIME_PATHS)
                     return self._send_api_success({"values": values, "copied": copied})
+                if path == "/api/v1/computer/folders":
+                    return self._send_api_success({"folders": COMPUTER_FOLDERS.list()})
+                if path == "/api/v1/computer/status":
+                    return self._send_api_success(self._computer_library_call(COMPUTER_FOLDERS.library.status))
+                if path == "/api/v1/computer/library":
+                    return self._handle_computer_library(query)
+                if path == "/api/v1/computer/stars":
+                    data = self._computer_stars_call(COMPUTER_FOLDERS.stars.snapshot)
+                    return self._send_api_success(data, compress=True)
+                if path in {"/api/v1/computer/folders/add", "/api/v1/computer/folders/remove",
+                            "/api/v1/computer/folders/relocate", "/api/v1/computer/scan", "/api/v1/computer/play", "/api/v1/computer/loudness"}:
+                    raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "POST is required.")
                 if path == "/api/v1/song-log":
                     try:
                         return self._send_api_success(load_song_log(RUNTIME_PATHS))
@@ -768,6 +836,42 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     SESSION_TOKEN,
                     max_bytes=body_limit,
                 )
+                if path in {"/api/v1/computer/folders", "/api/v1/computer/status", "/api/v1/computer/library"}:
+                    raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "GET is required.")
+                if path in {"/api/v1/computer/folders/add", "/api/v1/computer/folders/remove",
+                            "/api/v1/computer/folders/relocate"}:
+                    return self._handle_computer_folders(path, body)
+                if path == "/api/v1/computer/scan":
+                    action = body.get("action")
+                    if set(body) != {"action"} or action not in ("start", "cancel"):
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_COMPUTER_SCAN", "Choose start or cancel.")
+                    library = COMPUTER_FOLDERS.library
+                    operation = library.start if action == "start" else library.cancel
+                    return self._send_api_success(self._computer_library_call(operation))
+                if path == "/api/v1/computer/stars":
+                    return self._send_api_success(self._computer_stars_call(COMPUTER_FOLDERS.stars.update, body))
+                if path == "/api/v1/computer/loudness":
+                    if set(body) != {"id"} or not isinstance(body["id"], str):
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_COMPUTER_LOUDNESS", "Choose a file to measure.")
+                    try:
+                        data = self._computer_library_call(COMPUTER_MEDIA.loudness, COMPUTER_FOLDERS, body["id"],
+                                                           lambda: client_went_away(self.connection))
+                        return self._send_api_success(data)
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        return self._abort_relay_response()
+                if path == "/api/v1/computer/play":
+                    if ("id" not in body or set(body) - {"id", "convert", "audio", "standby"}
+                            or type(body.get("convert", False)) is not bool or type(body.get("standby", False)) is not bool
+                            or ("audio" in body and (type(body["audio"]) is not int or body["audio"] < 0))):
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_COMPUTER_PLAY", "Choose a file to play.")
+                    try:
+                        data = self._computer_library_call(COMPUTER_MEDIA.register, COMPUTER_FOLDERS, body["id"],
+                                                           lambda: client_went_away(self.connection),
+                                                           body.get("convert", False), body.get("audio"),
+                                                           body.get("standby", False), retryable=False)
+                        return self._send_api_success(data)
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        return self._abort_relay_response()
                 if path == "/api/v1/playlists/export":
                     return self._send_api_success(export_library_playlist(body, RUNTIME_PATHS))
                 if path == "/api/v1/playlists/validate-stream-addresses":
@@ -944,19 +1048,19 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     # A fixed location: the folder is made when there is none yet.
                     return self._send_api_success({"opened": True, "path": STATION_IMAGES.open_folder()})
                 if path == "/api/v1/station-images/save":
-                    # The picture's bytes and the station's name; the file name is
-                    # made from that name in worldmedia_station_images, never sent.
-                    # First {"station", "current"?, "preview": true}: the files a
-                    # new picture would replace, named in full for the question.
+                    # Preview lists the files a save would replace. The server
+                    # derives the filename from the saved station ID.
                     if "preview" in body:
                         if (body["preview"] is not True or "station" not in body
-                                or set(body) - {"station", "current", "preview"}):
+                                or set(body) - {"station", "station_id", "current", "preview"}):
                             raise ApiError(
                                 HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE",
                                 "Asking what a picture would replace needs only the station's name.",
                             )
-                        return self._send_api_success(STATION_IMAGES.replace_files(body["station"], body.get("current")))
-                    if not {"station", "data"}.issubset(body) or set(body) - {"station", "data", "replace", "current", "files"}:
+                        return self._send_api_success(STATION_IMAGES.replace_files(
+                            body["station"], body.get("current"), station_id=body.get("station_id"),
+                        ))
+                    if not {"station", "data"}.issubset(body) or set(body) - {"station", "station_id", "data", "replace", "current", "files"}:
                         raise ApiError(
                             HTTPStatus.BAD_REQUEST, "INVALID_STATION_IMAGE",
                             "A station picture needs only the station's name, the picture and the answer to replace.",
@@ -964,6 +1068,7 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                     result = STATION_IMAGES.save(
                         body["station"], decode_picture_data(body["data"]),
                         replace=body.get("replace", False), current=body.get("current"), files=body.get("files"),
+                        station_id=body.get("station_id"),
                     )
                     self.log_message("station picture saved replaced=%s", result["replaced"])
                     return self._send_api_success(result)
@@ -1142,8 +1247,219 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
                 HTTPStatus.INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
                 "The local control service could not complete the request.",
-                retryable=True,
+                retryable=path != "/api/v1/computer/play",
             ))
+
+    def _handle_computer_folders(self, path: str, body: dict) -> None:
+        folder = None
+        removed = False
+        library = COMPUTER_FOLDERS.library
+        try:
+            if path.endswith("/add"):
+                if set(body) != {"path"}:
+                    raise ValueError("Enter a folder path.")
+                folder = COMPUTER_FOLDERS.add(body["path"])
+            elif path.endswith("/relocate"):
+                if set(body) != {"id", "path"}:
+                    raise ValueError("Choose a saved folder and its new location.")
+                folder = COMPUTER_FOLDERS.relocate(body["id"], body["path"])
+            else:
+                if set(body) != {"id"}:
+                    raise ValueError("Choose a folder to remove.")
+                removed = COMPUTER_FOLDERS.remove(body["id"])
+        except FolderMismatch as error:
+            raise ApiError(HTTPStatus.CONFLICT, "COMPUTER_FOLDER_MISMATCH", str(error)) from error
+        except ValueError as error:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_COMPUTER_FOLDER", str(error)) from error
+        except OSError as error:
+            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "COMPUTER_FOLDERS_UNAVAILABLE",
+                           "The saved folders could not be updated.", retryable=True) from error
+        if path.endswith("/add"):
+            library.start(folder_added=True)
+        elif folder is not None:
+            COMPUTER_MEDIA.cancel_folder(folder["id"])
+        else:
+            if removed:
+                COMPUTER_MEDIA.cancel_folder(body["id"])
+            library.remove_folder(body["id"], removed)
+        folders = COMPUTER_FOLDERS.list()
+        data = {"folders": folders}
+        if folder is not None:
+            # A concurrent removal can take the folder out of this listing.
+            data["folder"] = next((entry for entry in folders if entry["id"] == folder["id"]),
+                                  {"id": folder["id"], "path": folder["path"], "added": folder["added"],
+                                   "available": False})
+        return self._send_api_success(data)
+
+    @staticmethod
+    def _computer_library_call(operation, *args, retryable=True):
+        try:
+            return operation(*args)
+        except ConnectionAbortedError:
+            raise
+        except OSError as error:
+            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "COMPUTER_LIBRARY_UNAVAILABLE",
+                           "The library index could not be opened or saved.", retryable=retryable) from error
+
+    @staticmethod
+    def _computer_stars_call(operation, *args):
+        try:
+            return operation(*args)
+        except OSError as error:
+            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "COMPUTER_STARS_UNAVAILABLE",
+                           "Starred files could not be opened or saved.", retryable=True) from error
+
+    def _handle_computer_library(self, query: str) -> None:
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True, strict_parsing=True, max_num_fields=2)
+            if params.keys() - {"since", "gen"} or any(len(values) != 1 for values in params.values()):
+                raise ValueError
+            since = params.get("since", [None])[0]
+            if since is not None and not re.fullmatch(r"[0-9]{1,16}", since):
+                raise ValueError
+        except ValueError:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_COMPUTER_REVISION", "Enter a valid library revision.") from None
+        gen = params.get("gen", [None])[0]
+        data, encoded = self._computer_library_call(
+            COMPUTER_FOLDERS.library.response_snapshot, int(since) if since is not None else None, gen,
+            _encode_computer_library)
+        if encoded is None:
+            return self._send_api_success(data, compress="items" in data)
+        prefix, compressed, crc = encoded
+        request_id = getattr(self, "request_id", None) or new_request_id()
+        suffix = (json.dumps(request_id) + "}").encode("utf-8")
+        gzipped = self._client_accepts_gzip(self.headers.get_all("Accept-Encoding", []))
+        if gzipped:
+            tail = zlib.compress(suffix, level=3, wbits=-15)
+            trailer = struct.pack("<II", zlib.crc32(suffix, crc), (len(prefix) + len(suffix)) % 2**32)
+            body = (compressed, tail, trailer)
+        else:
+            body = (prefix, suffix)
+        self._send_json_body(body, HTTPStatus.OK, request_id, compress=True, gzipped=gzipped)
+
+    def _handle_computer_art(self, method: str, identity: str, query: str) -> None:
+        response_started = False
+        try:
+            validate_authenticated_get(self.headers, self.server.server_port, SESSION_TOKEN)
+            if method not in {"GET", "HEAD"}:
+                raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "Pictures support GET and HEAD only.")
+            if query not in {"", "size=large"}:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_COMPUTER_ART_SIZE", "Choose a valid picture size.")
+            validators = self.headers.get_all("If-None-Match", [])
+            if len(validators) > 1:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "DUPLICATE_HEADER", "If-None-Match must appear at most once.")
+            validator = validators[0] if validators else ""
+            if not validator.isascii() or len(validator) > 1024 or re.search(r"[\r\n\0]", validator):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_VALIDATOR", "Picture cache validator is invalid.")
+            data, mime, etag = COMPUTER_ART.read(COMPUTER_FOLDERS, identity, large=bool(query),
+                                                 client_gone=lambda: client_went_away(self.connection))
+            not_modified = any(value.strip().removeprefix("W/") in {"*", etag} for value in validator.split(","))
+            self.send_response(HTTPStatus.NOT_MODIFIED if not_modified else HTTPStatus.OK)
+            if not not_modified:
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(len(data)))
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "private, max-age=86400")
+            self._send_upstream_safety_headers()
+            self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
+            response_started = True
+            self.end_headers()
+            if not not_modified and method == "GET":
+                self.wfile.write(data)
+        except ApiError as error:
+            self._send_api_error(error)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self._abort_relay_response()
+        except OSError as error:
+            if response_started:
+                self._abort_relay_response()
+            else:
+                self.log_message("computer picture failure type=%s", type(error).__name__)
+                self._send_api_error(ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "COMPUTER_ART_UNAVAILABLE",
+                                              "The picture could not be read.", retryable=True))
+        except Exception as error:
+            self._computer_response_failed("picture", error, response_started)
+
+    def _handle_computer_media(self, method: str, token: str, query: str, *, hls=False) -> None:
+        response_started = False
+        try:
+            action = re.fullmatch(r"([0-9a-f]{64})/(release|keep)", token)
+            if action and method == "POST" and not query and (not hls or action[2] == "release"):
+                validate_control_origin(self.headers, self.server.server_port, required=True)
+                validate_token(self.headers, SESSION_TOKEN)
+                # A beacon may include a body. Close after replying to discard it.
+                self.close_connection = True
+                if action[2] == "keep":
+                    COMPUTER_MEDIA.keep(action[1])
+                else:
+                    COMPUTER_MEDIA.release(action[1], hls=hls)
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Cache-Control", "no-store")
+                self._send_upstream_safety_headers()
+                self.send_header("X-Request-ID", self.request_id)
+                return self.end_headers()
+            validate_control_origin(self.headers, self.server.server_port, required=False)
+            if method not in {"GET", "HEAD"}:
+                raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "Media supports GET and HEAD only.")
+            if query:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "QUERY_NOT_ALLOWED", "Media does not accept query parameters.")
+            ranges = self.headers.get_all("Range", []) if method == "GET" else []
+            if any(not value.isascii() for value in ranges):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_RANGE", "Media byte range is invalid.")
+            options = {"hls": True, "head": method == "HEAD",
+                       "client_gone": lambda: client_went_away(self.connection)} if hls else {}
+            if not hls and ranges and self.headers.get_all("X-Computer-Start") == ["1"]:
+                options["start"] = True
+            with COMPUTER_MEDIA.open(COMPUTER_FOLDERS, token, **options) as (handle, size, mime):
+                status, start, length = media_range([] if hls else ranges, size)
+                if start:
+                    handle.seek(start)
+                self.send_response(status)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(length))
+                self.send_header("Accept-Ranges", "bytes")
+                if status == HTTPStatus.PARTIAL_CONTENT:
+                    self.send_header("Content-Range", f"bytes {start}-{start + length - 1}/{size}")
+                if status == HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE:
+                    self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Cache-Control", "no-store")
+                self._send_upstream_safety_headers()
+                self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
+                response_started = True
+                self.end_headers()
+                if method == "GET":
+                    remaining = length
+                    while remaining:
+                        wanted = min(remaining, MEDIA_CHUNK_SIZE)
+                        chunk = handle.read(wanted)
+                        if chunk:
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                        if len(chunk) < wanted:
+                            self._abort_relay_response()
+                            break
+        except ApiError as error:
+            self._send_api_error(error)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self._abort_relay_response()
+        except OSError:
+            if response_started:
+                self._abort_relay_response()
+            else:
+                self._send_api_error(ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "COMPUTER_MEDIA_UNAVAILABLE",
+                                              "The file could not be read.", retryable=True))
+        except Exception as error:
+            self._computer_response_failed("media", error, response_started)
+
+    def _computer_response_failed(self, resource: str, error: Exception, response_started: bool) -> None:
+        self.log_message("computer %s failure type=%s", resource, type(error).__name__)
+        if response_started:
+            self._abort_relay_response()
+            return
+        self.close_connection = True
+        self._headers_buffer = []
+        self._send_api_error(ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR",
+                                      "The request could not be completed."))
 
     def _handle_station_image(self, method: str, picture_id: str, query: str) -> None:
         """One of the user's station pictures, by the id the folder listing gave.
@@ -1499,8 +1815,9 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
             self.wfile.flush()
 
-    def _send_api_success(self, data, status: HTTPStatus = HTTPStatus.OK) -> None:
-        self._send_json(success_envelope(data, getattr(self, "request_id", new_request_id())), status=status)
+    def _send_api_success(self, data, status: HTTPStatus = HTTPStatus.OK, *, compress: bool = False) -> None:
+        self._send_json(success_envelope(data, getattr(self, "request_id", new_request_id())),
+                        status=status, compress=compress)
 
     def _send_api_error(self, error: ApiError) -> None:
         # Header/auth/size failures may occur before a request body is read.
@@ -1526,13 +1843,25 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
         status: HTTPStatus = HTTPStatus.OK,
         *,
         response_headers: dict[str, str] | None = None,
+        compress: bool = False,
     ) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        gzipped = compress and self._client_accepts_gzip(self.headers.get_all("Accept-Encoding", []))
+        if gzipped:
+            body = gzip.compress(body, compresslevel=3, mtime=0)
+        self._send_json_body((body,), status, getattr(self, "request_id", None) or new_request_id(),
+                             response_headers=response_headers, compress=compress, gzipped=gzipped)
+
+    def _send_json_body(self, body, status, request_id, *, response_headers=None, compress=False, gzipped=False):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(sum(map(len, body))))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Request-ID", getattr(self, "request_id", new_request_id()))
+        self.send_header("X-Request-ID", request_id)
+        if compress:
+            self.send_header("Vary", "Accept-Encoding")
+        if gzipped:
+            self.send_header("Content-Encoding", "gzip")
         for name, value in (response_headers or {}).items():
             if name == "Retry-After" and value.isdecimal():
                 self.send_header(name, value)
@@ -1540,7 +1869,8 @@ class WorldMediaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Connection", "close")
         self.end_headers()
         if getattr(self, "command", "") != "HEAD":
-            self.wfile.write(body)
+            for chunk in body:
+                self.wfile.write(chunk)
             self.wfile.flush()
 
     def _handle_proxy(self, method: str, query: str) -> None:

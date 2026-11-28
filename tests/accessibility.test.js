@@ -4,17 +4,17 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('primary navigation, Library cards, source status, and discovery controls expose keyboard state', async () => {
-  const [html, tabs, cards, shell, sidebar, detail, grid, tuner, discovery] = await Promise.all([
+test('primary navigation, Library cards, source status, and Surprise me controls expose keyboard state', async () => {
+  const [html, tabs, cards, shell, sidebar, detail, tuner, surprise, nowPlaying] = await Promise.all([
     read('src/index.html'),
     read('src/lib/top-tabs.js'),
     read('src/modes/library/render.js'),
     read('src/modes/library/shell.js'),
     read('src/modes/library/sidebar.js'),
     read('src/modes/library/detail.js'),
-    read('src/modes/grid.js'),
     read('src/modes/tuner.js'),
-    read('src/modes/discovery.js'),
+    read('src/modes/now-playing-surprise.js'),
+    read('src/modes/now-playing.js'),
   ]);
 
   assert.match(html, /<nav[^>]*id="modes-nav"[^>]*aria-label="Primary views"/);
@@ -43,12 +43,11 @@ test('primary navigation, Library cards, source status, and discovery controls e
   assert.match(detail, /detailReturnFocus\?\.isConnected/);
   assert.match(detail, /'aria-pressed':\s*isFavorite/);
 
-  assert.match(grid, /aria-pressed/);
-  assert.match(grid, /restoreFocus:\s*true/);
-  assert.match(grid, /aria-label.*Play/);
   assert.match(tuner, /Tuner dial\. Use arrow keys/);
   assert.match(tuner, /aria-pressed/);
-  assert.match(discovery, /aria-pressed/);
+  assert.match(surprise, /aria-pressed/);
+  assert.match(nowPlaying, /make\('input', 'switch', \{ type: 'checkbox'/);
+  assert.match(nowPlaying, /make\('label', 'np-surprise-toggle'\), surpriseToggle, make\('span', '', null, 'Surprise me'\)/);
 });
 
 test('dialogs, player state, status announcements, reduced motion, and forced colors remain connected', async () => {

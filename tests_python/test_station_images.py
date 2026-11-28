@@ -1,6 +1,8 @@
 """Station pictures from the data folder: matching, scanning, serving, backup."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.client
 import json
 import os
@@ -18,7 +20,7 @@ import worldmedia_station_images as station_images
 from worldmedia_backup import create_backup
 from worldmedia_catalog import _encode_png_rgba
 from worldmedia_playlists import PlaylistStore
-from worldmedia_runtime import RuntimePaths
+from worldmedia_runtime import RuntimePaths, load_profile_transfer, save_profile_transfer
 from worldmedia_security import ApiError
 from worldmedia_station_images import (
     StationImages,
@@ -473,6 +475,37 @@ class BackupTests(FolderTestCase):
         self.addCleanup(archive.close)
         return result, archive
 
+    def test_favorite_pictures_and_legacy_owners_survive_backup_restore(self) -> None:
+        radio = {"id": "radio:news", "title": "Renamed", "type": "radio",
+                 "stream_url": "https://example.org/radio"}
+        tv = {"id": "tv:news", "title": "Local News", "type": "tv",
+              "stream_url": "https://example.org/tv"}
+        owner_key = "worldmedia.stationimageowners.v1"
+        owners = json.dumps({"version": 1, "owners": {"local news": [radio["id"]]}, "hidden": []})
+        save_profile_transfer({"worldmedia.favorites.v1": json.dumps([radio, tv]), owner_key: owners}, self.paths)
+        self.put("Local News.png", png())
+        saved = self.images.save(radio["title"], png(3, 3), station_id=radio["id"])
+        _, archive = self.backup()
+
+        prefix = self.state_root.name + "/"
+        restored = self.root / "restore"
+        for member in archive.namelist():
+            if member.startswith(prefix):
+                path = restored / member
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(archive.read(member))
+        restored_root = restored / self.state_root.name
+        paths = RuntimePaths(portable_root=restored, state_root=restored_root,
+                             downloads_root=restored / "downloads", tools_root=restored / "tools")
+        values = load_profile_transfer(paths)
+        self.assertEqual(json.loads(values["worldmedia.favorites.v1"]), [radio, tv])
+        self.assertEqual(values[owner_key], owners)
+        legacy = json.loads((restored_root / "state" / "profile-preferences.json").read_text(encoding="utf-8"))
+        self.assertNotIn(owner_key, legacy["values"])
+        images = StationImages(restored_root)
+        self.assertEqual(images.read(saved["id"])[0], png(3, 3))
+        self.assertEqual(images.read(picture_id("local news"))[0], png())
+
     def test_pictures_in_use_are_copied_and_described(self) -> None:
         self.put("Radio Paradise.png", png())
         self.put("KEXP.jpg", jpeg())
@@ -656,6 +689,30 @@ class RouteTests(unittest.TestCase):
                 self.assertIn(response.status, {400, 404})
                 self.assertNotEqual(data, png(3, 3))
                 self.assertNotEqual(data, png())
+
+    def test_scoped_picture_routes_do_not_replace_same_name_files(self) -> None:
+        headers = self.headers(**{"Content-Type": "application/json"})
+        station_id = "radio:news"
+        save = {"station": "Radio Paradise", "station_id": station_id}
+        response, data = self.request("POST", self.LIST + "/save", headers,
+                                      json.dumps({**save, "preview": True}).encode())
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(data)["data"]["files"], [])
+        response, data = self.request("POST", self.LIST + "/save", headers,
+                                      json.dumps({**save, "data": base64.b64encode(png(3, 3)).decode()}).encode())
+        self.assertEqual(response.status, 200)
+        saved = json.loads(data)["data"]
+        key = "wm-station-id-" + hashlib.sha256(station_id.encode()).hexdigest()
+        self.assertEqual(saved["key"], key)
+        self.assertEqual(self.images.replace_files("Renamed", station_id=station_id)["files"], [saved["file"]])
+        self.assertEqual(self.images.replace_files("Radio Paradise", station_id="tv:news")["files"], [])
+        response, data = self.request("POST", self.LIST + "/remove", headers,
+                                      json.dumps({"id": saved["id"], "files": [saved["file"]]}).encode())
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(data)["data"]["removed"], 1)
+        self.assertEqual(self.images.read(picture_id("radio paradise"))[0], png())
+        with self.assertRaises(ApiError):
+            self.images.read(saved["id"])
 
     def test_open_folder_is_a_checked_mutation(self) -> None:
         json_headers = self.headers(**{"Content-Type": "application/json"})

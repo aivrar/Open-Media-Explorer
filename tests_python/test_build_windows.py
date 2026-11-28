@@ -96,6 +96,9 @@ class PortableBuildTests(unittest.TestCase):
             )
             self.assertTrue((output / "Lib" / "site-packages" / "sitecustomize.py").is_file())
             manifest = json.loads((output / "BUILD_MANIFEST.json").read_text(encoding="utf-8"))
+            version = json.loads((build_windows.ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+            self.assertEqual(manifest["version"], version)
+            self.assertEqual(build_windows.ARCHIVE_PATH.name, f"WorldMediaWindows-{version}-portable.zip")
             self.assertEqual(manifest["python_archive_sha256"], build_windows.PYTHON_SHA256)
             self.assertEqual(
                 manifest["runtime_requirements"],

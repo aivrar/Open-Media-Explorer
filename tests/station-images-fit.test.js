@@ -36,8 +36,7 @@ function rule(css, selector) {
 test('every view shows a station picture whole and centred, and remote artwork as before', async () => {
   const base = await read('src/styles/base.css');
   const library = await read('src/styles/library.css');
-  const discovery = await read('src/styles/discovery.css');
-  const grid = await read('src/styles/grid.css');
+  const nowPlaying = await read('src/styles/now-playing.css');
   assert.equal(STATION_IMAGE_CLASS, 'is-station-image');
 
   // Remote artwork keeps exactly today's fit.
@@ -48,15 +47,13 @@ test('every view shows a station picture whole and centred, and remote artwork a
   assert.match(rule(library, '.detail-thumb'), /aspect-ratio: 16 \/ 9;\s+object-fit: cover;/);
   // A station's logo is shown whole in the details panel, as on the cards.
   assert.match(rule(library, '.detail-thumb.logo-art'), /object-fit: contain;/);
-  assert.match(rule(discovery, '.discovery-now img'), /object-fit: cover;/);
-  // The Grid's logo box already shows any picture whole, on its own surface.
-  assert.match(rule(grid, '.channel-tile .channel-logo'), /background: var\(--bg-elev-3\);\s+object-fit: contain;/);
+  assert.match(rule(nowPlaying, '.np-art-img'), /object-fit: cover;/);
 
   // A station picture: never cropped, centred (contain centres by default).
   const player = rule(base, '#player-art.is-station-image');
   const card = rule(library, '.card-thumb img.is-station-image');
   const detail = rule(library, '.detail-thumb.is-station-image');
-  const now = rule(discovery, '.discovery-now img.is-station-image');
+  const now = rule(nowPlaying, '.np-art-img.is-station-image');
   for (const body of [player, card, detail, now]) {
     assert.match(body, /object-fit: contain;/);
     assert.doesNotMatch(body, /object-position|cover|#000|black/);
@@ -74,7 +71,7 @@ test('every view shows a station picture whole and centred, and remote artwork a
   assert.match(card, /background:\s+radial-gradient\(circle at center, rgba\(255,255,255,0\.04\), transparent 62%\),\s+linear-gradient\(135deg, var\(--bg-elev-2\), var\(--bg-elev-3\)\);/);
   // Same as a radio/TV logo's background, so a square picture there looks as before.
   assert.equal(card.match(/background:[^;]*;/)[0], rule(library, '.card-thumb img.logo-art').match(/background:[^;]*;/)[0]);
-  // Nothing is behind the detail panel's or Discovery's picture: the panel or card shows.
+  // Nothing is behind the detail panel's or Now Playing's station picture.
   assert.match(detail, /background: transparent;/);
   assert.match(now, /background: transparent;/);
   // The station-picture rule follows the logo rule, so it applies to radio cards too.
@@ -457,8 +454,10 @@ test('player bar: a radio or TV logo is shown whole in the square, other artwork
   const base = await read('src/styles/base.css');
   const logo = rule(base, '#player-art.is-logo');
   assert.match(logo, /object-fit: contain;/);
-  // On the plain surface #player-art already has: no other colour, no padding.
-  assert.doesNotMatch(logo, /background|padding|object-position/);
+  // On the plain surface #player-art already has, except on the light themes, which set
+  // --logo-tile so that a pale logo does not vanish on the light surface. No padding.
+  assert.match(logo, /background: var\(--logo-tile, var\(--bg-elev-3\)\);/);
+  assert.doesNotMatch(logo, /padding|object-position/);
   assert.match(rule(base, '#player-art'), /background: var\(--bg-elev-3\);/);
   // The station-picture rule follows it, so a station picture keeps its own surface.
   assert.ok(base.indexOf('#player-art.is-logo') > base.indexOf('#player-art {'));

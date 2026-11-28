@@ -8,8 +8,8 @@
     <script>
       window.WORLDMEDIA_PROXY = "/api/proxy?url=";
     </script>
-    <script type="module" crossorigin src="/assets/index-QzKo98u1.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CY7vS4cL.css">
+    <script type="module" crossorigin src="/assets/index-B4Cb0Exa.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BPiFm2qD.css">
   </head>
   <body>
     <div id="app">
@@ -21,8 +21,7 @@
         <nav class="modes" id="modes-nav" aria-label="Primary views">
           <button class="mode-btn is-active" data-mode="library" aria-current="page">Library</button>
           <button class="mode-btn" data-mode="tuner">Tuner</button>
-          <button class="mode-btn" data-mode="grid">Grid</button>
-          <button class="mode-btn" data-mode="discovery">Discovery</button>
+          <button class="mode-btn" data-mode="computer">Computer</button>
           <button class="mode-btn" data-mode="now-playing">Now Playing</button>
           <button class="mode-btn" data-mode="visualizer">Visualizer</button>
           <button class="mode-btn" data-mode="about">About</button>
@@ -135,6 +134,14 @@
           <span id="player-picture-slot" class="player-picture-slot" inert>
             <button id="player-picture" class="player-picture" type="button" popovertarget="picture-panel">Picture</button>
           </span>
+          <button id="player-subtitles" class="player-track-button" type="button" aria-label="Subtitles" aria-keyshortcuts="C" aria-haspopup="menu" aria-expanded="false" aria-controls="player-subtitles-menu" title="Subtitles (C)" popovertarget="player-subtitles-menu" hidden>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M6 12h4m3 0h5M6 15h7m3 0h2"/></svg>
+            <span>Subtitles</span>
+          </button>
+          <button id="player-audio" class="player-track-button" type="button" aria-label="Audio" aria-haspopup="menu" aria-expanded="false" aria-controls="player-audio-menu" title="Audio" popovertarget="player-audio-menu" hidden>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>
+            <span>Audio</span>
+          </button>
         </div>
         <span id="player-capture-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
         <div class="player-progress">
@@ -165,6 +172,8 @@
           <input id="player-volume" type="range" min="0" max="100" value="80" aria-label="Volume" hidden />
         </div>
       </footer>
+      <div id="player-subtitles-menu" class="player-track-menu" popover role="menu" aria-labelledby="player-subtitles"></div>
+      <div id="player-audio-menu" class="player-track-menu" popover role="menu" aria-labelledby="player-audio"></div>
 
       <div id="video-dock" class="video-dock">
         <video id="video-el" hidden playsinline controls controlslist="nodownload"></video>
@@ -207,6 +216,7 @@
         <p>Recordings and downloads are unaffected.</p>
         <p id="picture-feedback" role="status"></p>
       </div>
+      <audio id="computer-audio-el" hidden></audio>
       <audio id="audio-el" hidden></audio>
     </div>
 

@@ -324,12 +324,16 @@ test('the Picture controls are labelled, and live CSS hides only the three timel
     ['timeline', 'current-time-display', 'time-remaining-display']);
 });
 
-test('native controls use a short lighter scrim and keep a shadow on the on-demand timeline', async () => {
+test('native controls use a short scrim and keep the play and fullscreen buttons shadow-free', async () => {
   const html = await readFile(new URL('../src/index.html', import.meta.url), 'utf8');
   const css = await readFile(new URL('../src/styles/base.css', import.meta.url), 'utf8');
   assert.match(html, /<video id="video-el"[^>]*\scontrols\b/);
-  assert.match(css, /#video-el::-webkit-media-controls-panel \{[^}]*rgb\(0 0 0 \/ 45%\), transparent 48px/);
+  assert.match(css, /#video-el::-webkit-media-controls-panel \{[^}]*rgb\(0 0 0 \/ 55%\), transparent 48px/);
   assert.match(css, /#video-el:fullscreen::-webkit-media-controls-panel \{[^}]*transparent 64px/);
   assert.match(css, /#video-el::-webkit-media-controls-timeline \{[^}]*filter: drop-shadow/);
+  const shadowRules = [...css.matchAll(/([^{}]+)\{[^{}]*filter:\s*drop-shadow[^{}]*\}/g)];
+  for (const [, selectors] of shadowRules) {
+    assert.doesNotMatch(selectors, /::-webkit-media-controls-(?:play|fullscreen|overlay-play)-button/);
+  }
   assert.match(css, /\.is-live-video::-webkit-media-controls-timeline,[^}]*display: none !important/);
 });

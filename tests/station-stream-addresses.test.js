@@ -289,6 +289,32 @@ test('the editor supports ownership, cancel, adding, reordering, removing, and r
   click(button('Restore original'));
   await submit();
   assert.deepEqual(draft.at(-1), { main: original, backups: [backup2] });
+
+  click(editor.button);
+  const promote = byAria('Make this the main address');
+  assert.equal(promote.getAttribute('title'), 'Make this the main address');
+  assert.notEqual(promote.disabled, true);
+  click(promote);
+  assert.equal(main.value, backup2);
+  assert.equal(byAria('Backup address 1').value, original);
+  click(button('Restore original'));
+  assert.equal(main.value, original);
+  assert.equal(byAria('Backup address 1').value, backup2);
+  click(promote);
+  click(button('Cancel'));
+  click(editor.button);
+  assert.equal(main.value, original);
+  assert.equal(byAria('Backup address 1').value, backup2);
+
+  rememberPlayedStream(station.id, { codec: 'MP3', bitrate: 128 });
+  click(byAria('Make this the main address'));
+  await submit();
+  assert.deepEqual(draft.at(-1), { main: backup2, backups: [original] });
+  assert.equal(stationStreamLabel(station), '', 'a promoted main clears the learned format');
+  click(editor.button);
+  click(button('Restore original'));
+  await submit();
+  assert.deepEqual(draft.at(-1), { main: original, backups: [backup2] });
 });
 
 test('a type migration moves the addresses and rolls back if they cannot be saved', async (t) => {

@@ -83,9 +83,9 @@ test('the floating video scales with the window and has a size button', async ()
 });
 
 test('a visible video leaves room in the other tabs even in fullscreen', async () => {
-  const [base, library, grid, about, visualizer] = await Promise.all([
-    'src/styles/base.css', 'src/styles/library.css', 'src/styles/grid.css',
-    'src/styles/about.css', 'src/visualizer/visualizer.css',
+  const [base, library, computer, about, visualizer, player] = await Promise.all([
+    'src/styles/base.css', 'src/styles/library.css', 'src/styles/computer.css',
+    'src/styles/about.css', 'src/visualizer/visualizer.css', 'src/lib/player.js',
   ].map(read));
 
   assert.match(base, /--video-clearance: 0px;/);
@@ -94,15 +94,25 @@ test('a visible video leaves room in the other tabs even in fullscreen', async (
   assert.doesNotMatch(base, /:fullscreen[^{]*\{[^}]*--video-clearance:/);
   for (const [css, selector, inset] of [
     [library, 'results', 18], [library, 'results', 12],
-    [grid, 'grid-tiles', 18], [grid, 'grid-tiles', 12],
+    [computer, 'computer-root', '[0-9]+'],
     [visualizer, 'viz-panel', 16],
   ]) {
     assert.match(css, new RegExp('\\.' + selector + ' \\{[^}]*padding: [^;]+calc\\(' + inset + 'px \\+ var\\(--video-clearance\\)\\);'));
   }
-  assert.match(library, /@media \(width > 980px\) \{\s*\.detail-panel \{\s*padding-bottom: calc\(18px \+ var\(--video-clearance\)\);/);
+  // The wide scrollport ends at the dock's top edge, keeping all its content clear.
+  assert.match(library, /\.detail-panel \{[^}]*overflow-y: auto;\s*padding: 18px;/);
+  assert.match(library,
+    /@media \(width > 980px\) \{\s*#app\.has-video \.library-root \{\s*--detail-dock-height: calc\(var\(--video-height, 0px\) \+ var\(--video-gap\)\);\s*\}\s*\.detail-panel \{\s*margin-bottom: max\(var\(--video-clearance\), var\(--detail-dock-height, 0px\)\);\s*padding-block: 0;/);
+  assert.match(library, /\.detail-panel::before,\s*\.detail-panel::after \{\s*content: '';\s*flex: 0 0 4px;/);
+  // Fullscreen video measurements leave the dock's windowed height in place.
+  assert.match(player, /if \(document\.fullscreenElement \|\| !app\) return;\s*const height = entry\.borderBoxSize\[0\]\.blockSize;/);
   assert.match(about, /\.about-root \{[^}]*overflow-y: auto;/);
   assert.match(about, /\.about-page \{[^}]*padding: 48px 32px calc\(80px \+ var\(--video-clearance\)\);/);
   const dockZ = Number(base.match(/\.video-dock \{[^}]*z-index: (\d+);/)[1]);
+  // The narrow detail overlay fills the view and sits in front of the dock.
+  const narrow = library.match(/^@media \(max-width: 980px\) \{[\s\S]*?^\}/m)?.[0] ?? '';
+  const overlay = narrow.match(/\.detail-panel \{\s*position: absolute;\s*inset: 0;\s*z-index: (\d+);/);
+  assert.ok(overlay && Number(overlay[1]) > dockZ, 'narrow details are above the dock');
   const modalZ = Number(base.match(/\.modal-backdrop \{[^}]*z-index: (\d+);/)[1]);
   assert.ok(modalZ > dockZ, 'Settings and Song log are above the dock');
 });

@@ -109,7 +109,7 @@ try:
         page.locator('.search-input').fill('')
         page.locator('.personal-type [data-type=""]').click(); page.wait_for_timeout(400)
         mark('Favorites type filter and local search')
-        for mode in ['tuner','grid','discovery','about','library']:
+        for mode in ['tuner','computer','now-playing','visualizer','about','library']:
             page.locator(f'.mode-btn[data-mode="{mode}"]').click()
             page.locator(f'#{"view-host"}[data-mode="{mode}"]').wait_for()
             assert page.locator('.error-pane').count() == 0

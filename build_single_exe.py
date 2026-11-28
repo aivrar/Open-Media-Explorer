@@ -81,6 +81,7 @@ clr_datas, clr_binaries, clr_hiddenimports = collect_all('clr_loader')
 # adapter and needlessly bundles the full lxml/BeautifulSoup dependency
 # graph. Retain the package's license metadata and hide-import the exact parser.
 defusedxml_datas = copy_metadata('defusedxml')
+tinytag_datas = copy_metadata('tinytag')
 
 a = Analysis(
     [{str(ROOT / 'worldmedia_native.py')!r}],
@@ -89,7 +90,7 @@ a = Analysis(
     datas=[
         ({str(FRONTEND_PATH)!r}, 'frontend'),
         ({str(ICON_PATH)!r}, 'assets'),
-    ] + webview_datas + pythonnet_datas + clr_datas + defusedxml_datas,
+    ] + webview_datas + pythonnet_datas + clr_datas + defusedxml_datas + tinytag_datas,
     hiddenimports=webview_hiddenimports + pythonnet_hiddenimports + clr_hiddenimports + [
         'webview.platforms.winforms',
         'webview.platforms.edgechromium',

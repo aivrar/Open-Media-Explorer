@@ -12,6 +12,7 @@ import {
 import { codecFromContentType, formatStreamQuality } from '../src/lib/stream-quality.js';
 import { createNowPlayingPoller } from '../src/lib/now-playing.js';
 import { clearCache, getState, STORAGE_KEYS } from '../src/lib/state.js';
+import { saveStationStreams } from '../src/lib/station-stream-edit.js';
 import { syncTunerMarks } from '../src/modes/tuner.js';
 import { view, renderedIds } from '../src/modes/library/state.js';
 import { ui } from '../src/modes/library/shell-refs.js';
@@ -214,6 +215,29 @@ test('HLS addresses retain independent facts in the same bounded cache', (t) => 
   assert.deepEqual(playedStreamOf('other'), mainFacts);
 });
 
+test('editing backups retains facts for the canonical effective main address', async (t) => {
+  withStorage(t);
+  const state = getState();
+  const favorites = state.favorites;
+  t.after(() => { state.favorites = favorites; });
+  const main = 'https://radio.example/live.m3u8';
+  const first = 'https://radio.example/first.m3u8';
+  const second = 'https://radio.example/second.m3u8';
+  const item = { id: 'radio:edited-stream', type: 'radio', stream_url: main, stream_kind: 'hls' };
+  state.favorites = [item];
+  const facts = { hls: true, codec: 'AAC', bitrate: 128 };
+  rememberPlayedStream(item.id, facts, main);
+  const save = (main, backups) => saveStationStreams(item, { main, backups }, { request: async () => {} });
+  assert.equal(await save('https://RADIO.example:443/live.m3u8', [first, second]), true);
+  assert.equal(await save(main, [second, first]), true);
+  assert.equal(await save(main, [first]), true);
+  forgetLoadedPlayedStreams();
+  assert.deepEqual(playedStreamOf(item.id, main), facts);
+  assert.equal(await save(first, [main]), true);
+  assert.equal(playedStreamOf(item.id, main), null);
+  assert.equal(playedStreamOf(item.id), null);
+});
+
 test('a startup HLS rendition must play five seconds to replace facts saved for its address', (t) => {
   const storage = withStorage(t);
   const id = 'radio:hls-reconnect';
@@ -375,7 +399,7 @@ test('nothing is remembered for a start that does not play', () => {
 
 test('the player ties the facts to its start: begin with each start, played after a second of play', async () => {
   const player = await read('src/lib/player.js');
-  assert.match(player, /playSession = newPlaySession\(myToken\);\s+playedStreamNote\.begin\(\);/);
+  assert.match(player, /const addresses = local \? null : stationStreamAddresses\(item\);\s+if \(addresses\) \{\s+playedStreamNote\.begin\(\);/);
   assert.match(player, /startOutcome\.played\(currentItem\?\.id\);[\s\S]{0,120}playedStreamNote\.played\(currentItem\?\.id\);/);
   assert.match(player, /onStream: \(\{ itemId, stream \}\) => \{\s+if \(itemId && itemId === currentItem\?\.id && streamAddressesCurrent\(\)\) playedStreamNote\.heard\(itemId, stream\);/);
   // No timer or request of its own: the facts come with the song poll.
@@ -573,7 +597,8 @@ test('technical stream details use a full-width row with up to two lines', async
     read('src/modes/tuner.js'), read('src/modes/library/index.js'),
   ]);
   assert.match(libraryCss, /:root:not\(\[data-tech-details="on"\]\) :is\(\.card-license, \.card-quality\) \{ display: none; \}/);
-  assert.match(libraryCss, /\.card-body \{[^}]*grid-template-rows: 18px auto;/);
+  assert.match(libraryCss, /\.card \{[^}]*--card-title-height: 18px;/);
+  assert.match(libraryCss, /\.card-body \{[^}]*grid-template-rows: var\(--card-title-height\) auto;/);
   assert.match(libraryCss, /\.card-meta \{[^}]*column-gap: 6px;/);
   assert.match(libraryCss,
     /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-meta:has\(> \.card-quality\) \{\s*row-gap: 0;/);
@@ -583,7 +608,8 @@ test('technical stream details use a full-width row with up to two lines', async
   assert.match(quality, /grid-column: 1 \/ -1;/);
   assert.match(quality, /display: -webkit-box;\s*-webkit-box-orient: vertical;\s*-webkit-line-clamp: 2;/);
   assert.match(quality, /overflow: hidden;/);
-  assert.match(quality, /line-height: 16px;/);
+  assert.match(libraryCss, /\.card \{[^}]*--card-quality-line-height: 16px;/);
+  assert.match(quality, /line-height: var\(--card-quality-line-height\);/);
   assert.doesNotMatch(quality, /white-space: nowrap;|(?:^|\n)\s*(?:min-|max-)?height:/);
   assert.match(libraryCss,
     /:root\[data-tech-details="on"\] \.library-root\.is-personal-view \.card-quality \{ flex: 0 0 100%; \}/);

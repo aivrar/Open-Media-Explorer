@@ -18,6 +18,9 @@ import { TOP_TABS, isTabShown } from './top-tabs.js';
 import { TUNER_BACKGROUND_RELEASED, TUNER_BACKGROUND_TEXT } from './tuner-background.js';
 import { BEST_STREAM_MODES, BEST_STREAM_MODE_LABELS, bestStreamMode } from './best-stream.js';
 import {
+  LEVELLING_MODES, LEVELLING_PREAMP_MIN, LEVELLING_PREAMP_MAX, levellingMode, levellingPreamp,
+} from './computer-levelling.js';
+import {
   PROCESSOR_LIMIT_MAX, PROCESSOR_LIMIT_MIN, PROCESSOR_LIMIT_STEP, PROCESSOR_USE_LABELS, PROCESSOR_USE_LEVELS,
   normalizeProcessorLimit, normalizeProcessorUse, processorBudget,
 } from './processor-budget.js';
@@ -40,7 +43,7 @@ const BEST_STREAM_DESCRIPTIONS = {
   off: 'tries the first two listed streams together and plays whichever answers first.',
 };
 
-const VERSION = '0.1.18';
+const VERSION = '0.1.19';
 
 function buildModal() {
   const state = getState();
@@ -77,8 +80,7 @@ function buildModal() {
             <select id="settings-default-mode" data-field="defaultMode">
               <option value="library">Library</option>
               <option value="tuner">Tuner</option>
-              <option value="grid">Grid</option>
-              <option value="discovery">Discovery</option>
+              <option value="computer">Computer</option>
             </select>
           </div>
           <div class="row">
@@ -126,6 +128,27 @@ function buildModal() {
               </div>
             `).join('')}
           </fieldset>
+        </section>
+        <section>
+          <h3>Playback</h3>
+          <div class="row">
+            <div>
+              <label for="settings-volume-levelling">Volume levelling</label>
+              <span class="description" id="settings-volume-levelling-hint">Evens out loudness between songs from your computer. Album keeps the loudness differences inside an album.</span>
+            </div>
+            <select id="settings-volume-levelling" data-field="volumeLevelling" aria-describedby="settings-volume-levelling-hint">
+              ${Object.entries(LEVELLING_MODES).map(([id, label]) => `<option value="${id}">${label}</option>`).join('')}
+            </select>
+          </div>
+          <div class="row" data-levelling-preamp hidden>
+            <label for="settings-levelling-preamp">Pre-amp</label>
+            <select id="settings-levelling-preamp" data-field="levellingPreamp">
+              ${Array.from({ length: LEVELLING_PREAMP_MAX - LEVELLING_PREAMP_MIN + 1 }, (_, index) => {
+                const db = LEVELLING_PREAMP_MIN + index;
+                return `<option value="${db}">${db > 0 ? '+' : ''}${db} dB</option>`;
+              }).join('')}
+            </select>
+          </div>
         </section>
         <section data-content-settings>
           <h3>Content</h3>
@@ -371,6 +394,19 @@ function buildModal() {
   const bestSel = root.querySelector('select[data-field="bestStreamMode"]');
   bestSel.value = bestStreamMode(state.settings);
   bestSel.addEventListener('change', () => saveSettings({ bestStreamMode: bestStreamMode({ bestStreamMode: bestSel.value }) }));
+
+  const levellingSel = root.querySelector('[data-field="volumeLevelling"]');
+  const preampSel = root.querySelector('[data-field="levellingPreamp"]');
+  const preampRow = root.querySelector('[data-levelling-preamp]');
+  function syncLevellingControls(settings) {
+    levellingSel.value = levellingMode(settings);
+    preampSel.value = String(levellingPreamp(settings));
+    preampRow.hidden = levellingSel.value === 'off';
+  }
+  syncLevellingControls(state.settings);
+  const unsubscribeLevelling = subscribe('settings-change', syncLevellingControls);
+  levellingSel.addEventListener('change', () => saveSettings({ volumeLevelling: levellingSel.value }));
+  preampSel.addEventListener('change', () => saveSettings({ levellingPreamp: Number(preampSel.value) }));
 
   bindProcessorUse(root, state.settings);
 
@@ -651,6 +687,7 @@ function buildModal() {
     window.clearTimeout(ffmpegTimer);
     unsubscribeTunerVisualizer?.();
     unsubscribeTabControls();
+    unsubscribeLevelling();
     const app = document.getElementById('app');
     if (app) app.inert = false;
     root.remove();

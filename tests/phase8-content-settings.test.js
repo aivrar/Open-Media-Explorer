@@ -131,7 +131,7 @@ test('isolated 58-favorite migration preserves IDs, unknown fields, settings, an
     assert.deepEqual(getState().favorites[37].futureItemField, { index: 37 });
     assert.equal(getState().settings.version, 77);
     assert.equal(getState().settings.theme, 'forest');
-    assert.equal(getState().settings.defaultMode, 'grid');
+    assert.equal(getState().settings.defaultMode, 'library');
     assert.equal(getState().settings.recordingQuality, 'high');
     assert.deepEqual(getState().settings.futureSetting, { preserve: true });
     assert.equal(getState().settings.enabledSources['radio-browser'], false);

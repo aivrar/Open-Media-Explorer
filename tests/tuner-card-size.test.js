@@ -28,7 +28,7 @@ function px(body, property) {
 test('the knob shows the station name only, never its source', async () => {
   const tuner = await read('src/modes/tuner.js');
   const display = tuner.match(/function updateFrequencyDisplay\(\) \{[\s\S]*?\n\}/)[0];
-  assert.match(display, /ui\.stationName\.textContent = `\$\{isFavorite\(s\.id\) \? '\\u2605\\u00a0' : ''\}\$\{s\.title\}`;/);
+  assert.match(display, /setDialStationName\(ui\.stationName, `\$\{isFavorite\(s\.id\) \? '\\u2605\\u00a0' : ''\}\$\{s\.title\}`\);/);
   assert.doesNotMatch(display, /getSourceLabel|\u00b7|\\u00b7/);
   assert.match(tuner, /el\('small', \{ className: 'tuner-station-details' \}\)/);
   assert.match(tuner, /\[source, country, quality\]\.filter\(Boolean\)\.join\(' · '\)/);

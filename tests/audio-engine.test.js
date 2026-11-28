@@ -15,6 +15,7 @@ class FakeParam {
   constructor(value = 0) { this.value = value; this.events = []; }
   cancelScheduledValues(time) { this.events.push(['cancel', time]); }
   setValueAtTime(value, time) { this.value = value; this.events.push(['value', value, time]); }
+  linearRampToValueAtTime(value, time) { this.events.push(['ramp', value, time]); }
   setTargetAtTime(value, time, constant) {
     this.value = value;
     this.events.push(['target', value, time, constant]);
@@ -78,10 +79,17 @@ class FakeContext {
     return node;
   }
   async resume() { this.state = 'running'; }
+  async suspend() { this.state = 'suspended'; }
   async close() { this.state = 'closed'; }
 }
 
-const media = (id) => ({ id, paused: false, ended: false });
+const media = (id) => Object.assign(new EventTarget(), {
+  id, paused: false, ended: false,
+  pause() {
+    this.paused = true;
+    this.dispatchEvent(new Event('pause'));
+  },
+});
 
 test('one context builds the approved EQ topology and one source per media element', async () => {
   const context = new FakeContext();
@@ -142,6 +150,130 @@ test('curve updates are smoothed and true bypass retains the wet curve', async (
   engine.setBypassed(false);
   assert.equal(engine.graph.dry.gain.value, 0);
   assert.equal(engine.graph.wet.gain.value, 1);
+});
+
+test('a full three seconds idle across all routed elements suspends once and silences the analysers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const context = new FakeContext();
+  const suspend = t.mock.method(context, 'suspend');
+  const engine = new AudioEngine({ contextFactory: () => context });
+  const audio = media('audio');
+  const video = media('video');
+  await engine.attachElement(audio);
+  await engine.attachElement(video);
+  engine.graph.analyser.sampleValue = 0.5;
+  assert.ok(engine.visualTapFor(audio));
+  audio.pause();
+  video.dispatchEvent(new Event('waiting'));
+  t.mock.timers.tick(5_000);
+  assert.equal(suspend.mock.callCount(), 0, 'the unpaused video is still playing during a stall');
+
+  video.ended = true;
+  video.dispatchEvent(new Event('ended'));
+  t.mock.timers.tick(2_999);
+  assert.equal(suspend.mock.callCount(), 0);
+  video.paused = true;
+  video.ended = false;
+  video.dispatchEvent(new Event('emptied'));
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(suspend.mock.callCount(), 1, 'another idle event preserves the deadline');
+  assert.equal(engine.getStatus().contextState, 'suspended');
+  assert.equal(engine.getStatus().state, 'suspended');
+  assert.deepEqual(engine.getAnalyserData(new Float32Array([1, 1])), new Float32Array(2));
+  assert.equal(engine.visualTapFor(audio), null);
+  assert.equal(engine.graph.visual, null);
+  t.mock.timers.tick(30_000);
+  assert.equal(suspend.mock.callCount(), 1, 'no recurring idle timer');
+  await engine.destroy();
+});
+
+test('pending starts and a new play interrupt the idle deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const context = new FakeContext();
+  let pending = false;
+  const engine = new AudioEngine({ contextFactory: () => context, isPlaybackPending: () => pending });
+  const audio = media('audio');
+  await engine.attachElement(audio);
+  audio.pause();
+  t.mock.timers.tick(2_999);
+  pending = true;
+  engine.updateIdle();
+  t.mock.timers.tick(10_000);
+  assert.equal(context.state, 'running');
+  pending = false;
+  engine.updateIdle();
+  t.mock.timers.tick(2_999);
+  audio.paused = false;
+  audio.dispatchEvent(new Event('play'));
+  t.mock.timers.tick(1);
+  audio.pause();
+  t.mock.timers.tick(2_999);
+  assert.equal(context.state, 'running');
+  t.mock.timers.tick(1);
+  assert.equal(context.state, 'suspended');
+  await engine.destroy();
+});
+
+test('the play event resumes a routed element, including across an in-flight suspension', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const context = new FakeContext();
+  const events = [];
+  const engine = new AudioEngine({ contextFactory: () => context });
+  const audio = media('audio');
+  await engine.attachElement(audio);
+  const resume = context.resume.bind(context);
+  t.mock.method(context, 'resume', () => { events.push('resume'); return resume(); });
+  let finishSuspend;
+  t.mock.method(context, 'suspend', () => new Promise((resolve) => {
+    finishSuspend = () => { context.state = 'suspended'; resolve(); };
+  }));
+
+  audio.pause();
+  t.mock.timers.tick(3_000);
+  audio.paused = false;
+  audio.dispatchEvent(new Event('play'));
+  audio.dispatchEvent(new Event('playing'));
+  assert.deepEqual(events, []);
+  finishSuspend();
+  assert.equal(await engine.resume(), true);
+  assert.deepEqual(events, ['resume'], 'all requests share the resume after suspension');
+  assert.equal(context.state, 'running');
+  await engine.destroy();
+});
+
+test('gain and EQ changes take effect before the first render and new ramps use resumed time', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const context = new FakeContext();
+  const engine = new AudioEngine({ contextFactory: () => context });
+  const audio = media('audio');
+  assert.equal(await engine.resume(), true);
+  assert.equal(engine.context, null);
+  await engine.attachElement(audio, { levelledInput: true });
+  const gain = context.sources[0].outputs[0].gain;
+  const preamp = engine.graph.preamp.gain;
+  audio.pause();
+  t.mock.timers.tick(3_000);
+  await Promise.resolve();
+  engine.setLevellingGain(audio, 0.4, { rampSeconds: 1.5 });
+  engine.applyCurve({ preamp: -4 });
+  assert.deepEqual(gain.events.at(-1), ['value', 0.4, 1.25]);
+  assert.deepEqual(preamp.events.at(-1), ['value', dbToGain(-4), 1.25]);
+  const resume = context.resume.bind(context);
+  const resumed = t.mock.method(context, 'resume', () => {
+    assert.equal(gain.value, 0.4);
+    assert.equal(preamp.value, dbToGain(-4));
+    context.currentTime = 10;
+    return resume();
+  });
+  audio.paused = false;
+  audio.dispatchEvent(new Event('play'));
+  assert.equal(await engine.resume(), true);
+  assert.equal(await engine.resume(), true);
+  assert.equal(resumed.mock.callCount(), 1);
+  engine.setLevellingGain(audio, 0.6, { rampSeconds: 1.5 });
+  assert.deepEqual(gain.events.slice(-2), [['value', 0.4, 10], ['ramp', 0.6, 11.5]]);
+  await engine.destroy();
 });
 
 test('local response measurements are flat, frequency-selective, bounded, and bypassable', () => {

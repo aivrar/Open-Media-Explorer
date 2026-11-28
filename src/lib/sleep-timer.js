@@ -112,6 +112,10 @@ function setSleep(ms, { choice = '0', custom = 0 } = {}) {
   startCountdown();
 }
 
+function mediaElements() {
+  return ['audio-el', 'computer-audio-el', 'video-el'].map((id) => document.getElementById(id)).filter(Boolean);
+}
+
 function scheduleFire(ms) {
   const beforeFade = Math.max(0, ms - FADE_MS);
   outerTimerId = setTimeout(() => {
@@ -119,12 +123,9 @@ function scheduleFire(ms) {
     startFade(FADE_MS);
     fadeTimerId = setTimeout(() => {
       fadeTimerId = null;
-      const audio = document.getElementById('audio-el');
-      const video = document.getElementById('video-el');
-      try { audio?.pause(); } catch (_) {}
-      try { video?.pause(); } catch (_) {}
-      if (audio?.dataset.preFadeVol) audio.volume = +audio.dataset.preFadeVol;
-      if (video?.dataset.preFadeVol) video.volume = +video.dataset.preFadeVol;
+      for (const el of mediaElements()) {
+        try { el.pause(); } catch (_) {}
+      }
       cancel();
       emit('sleep-fired');
     }, FADE_MS);
@@ -133,9 +134,7 @@ function scheduleFire(ms) {
 
 function startFade(durationMs) {
   if (fadeIntervalId) clearInterval(fadeIntervalId);
-  const audio = document.getElementById('audio-el');
-  const video = document.getElementById('video-el');
-  const els = [audio, video].filter(Boolean);
+  const els = mediaElements();
   for (const el of els) el.dataset.preFadeVol = String(el.volume);
   const startV = Math.max(...els.map((el) => el.volume), 0);
   if (startV <= 0) return;
@@ -171,10 +170,12 @@ function cancel() {
   endsAt = null;
   getState().sleepTimer.until = null;
   // Restore any in-progress faded volume so a future play isn't silent.
-  const audio = document.getElementById('audio-el');
-  const video = document.getElementById('video-el');
-  if (audio?.dataset.preFadeVol) { audio.volume = +audio.dataset.preFadeVol; delete audio.dataset.preFadeVol; }
-  if (video?.dataset.preFadeVol) { video.volume = +video.dataset.preFadeVol; delete video.dataset.preFadeVol; }
+  for (const el of mediaElements()) {
+    if (el.dataset.preFadeVol) {
+      el.volume = +el.dataset.preFadeVol;
+      delete el.dataset.preFadeVol;
+    }
+  }
   if (display) display.textContent = 'Sleep';
   runningChoice = '0';
   showChoice();

@@ -12,7 +12,7 @@
  */
 
 import {
-  getState, isFavorite, addFavorite, removeFavorite, moveFavorite, moveFavoriteTo,
+  getState, isFavorite, isLocalFileFavorite, addFavorite, removeFavorite, moveFavorite, moveFavoriteTo,
 } from '../../lib/state.js';
 import { FAVORITES_SORT_MANUAL, normalizeFavoritesSort } from '../../lib/favorites-order.js';
 import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
@@ -20,13 +20,13 @@ import { syncFavoriteTitles } from './favorite-titles.js';
 import { startReorderScroll } from './reorder-scroll.js';
 import { buildCategoryButton, closeDetachedCategoryMenu, updateCategoryButton } from './card-category.js';
 import {
-  canonicalArtworkUrl, isArtworkRelayUrl, isStationImageSource, stationImageSourceFor,
+  canonicalArtworkUrl, computerItemArtSource, isArtworkRelayUrl, isStationImageSource, stationImageSourceFor,
 } from '../../lib/artwork.js';
 import { SOURCES, getSourceLabel } from '../../lib/sources.js';
 import { el, setDescriptionReference } from './utils.js';
 import { artworkInitials, initialsHue } from '../../lib/initials.js';
 import { stationStreamLabel, streamTooltipLine } from '../../lib/played-streams.js';
-import { shownLicense } from '../../lib/item-model.js';
+import { isComputerItem, shownLicense } from '../../lib/item-model.js';
 import {
   view, renderedIds,
   RENDER_LIMIT_INITIAL, RENDER_LIMIT_STEP, RENDER_WINDOW_MAX,
@@ -34,6 +34,7 @@ import {
 } from './state.js';
 import { filterItems } from './filter.js';
 import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
+import { normalizePersonalTypes, personalTypeFilterLabels } from './personal-types.js';
 import { getPlaylistItems } from '../../lib/playlists.js';
 import { carriesFiles } from '../../lib/playlist-drop.js';
 import { mountPictureDropPreview } from './picture-drop.js';
@@ -44,7 +45,9 @@ import {
   THUMBNAIL_EAGER_CARD_COUNT,
 } from './thumbnails.js';
 import { openDetail } from './detail.js';
-import { playItem } from '../../lib/player.js';
+import { COMPUTER_OFFLINE_TOOLTIP } from '../../lib/computer-play.js';
+import { computerCardSubtitle, playLibraryItem } from './computer.js';
+import { syncComputerSource } from './sidebar.js';
 import {
   contentBadgeText,
 } from '../../lib/content-rating.js';
@@ -62,11 +65,12 @@ let filteredCache = {
   items: [],
 };
 
+let filteredComputerCache = { hits: null, context: '', items: [] };
+
 function filterContextSignature() {
   const settings = getState().settings;
   return JSON.stringify([
     view.activeSource,
-    view.lastQuery,
     view.playlistId,
     isPersonalSource() ? personalFilters() : null,
     view.filters.type,
@@ -84,6 +88,17 @@ function filterContextSignature() {
  * pass, while ordinary continuous collection stays proportional to page size. */
 export function filteredItemsForCurrentView(pool = view.items) {
   const context = filterContextSignature();
+  const items = filteredProviderOrPersonalItems(pool, context + (view.lastQuery || '').trim());
+  if (isPersonalSource() || pool !== view.items || !view.computerHits.length) return items;
+  const localContext = context + (view.query || '').trim();
+  if (filteredComputerCache.hits !== view.computerHits || filteredComputerCache.context !== localContext) {
+    filteredComputerCache = { hits: view.computerHits, context: localContext, items: filterItems(view.computerHits) };
+  }
+  const local = filteredComputerCache.items;
+  return local.length ? [...local, ...items] : items;
+}
+
+function filteredProviderOrPersonalItems(pool, context) {
   const revision = Number(view.catalogRevision) || 0;
   if (filteredCache.pool === pool && filteredCache.context === context) {
     if (filteredCache.revision === revision && filteredCache.poolLength === pool.length) {
@@ -113,9 +128,206 @@ export function filteredItemsForCurrentView(pool = view.items) {
 
 // The window start the mounted cards were drawn for.
 let lastRenderStart = 0;
+let lastRenderHost = null;
+let lastCollection = '';
+let filterView = null;
+let filterAnchor = null;
+let pendingFilterRestore = null;
+let lastRenderWasFiltered = false;
+let stopCardAnchorRestore = null;
+
+function hasBoxFilters() {
+  const { country, language, yearMin, yearMax } = view.filters;
+  return Boolean(country || language || yearMin != null || yearMax != null);
+}
+
+function dropPendingFilterRestore() {
+  pendingFilterRestore?.stopWatching();
+  pendingFilterRestore = null;
+}
+
+/** Observe search input immediately, even when the catalog render is debounced. */
+export function syncFilterAnchor() {
+  const personal = isPersonalSource() ? personalFilters() : null;
+  const scope = JSON.stringify([
+    view.activeSource, view.playlistId, view.filters.type,
+    personal?.type, personal?.category,
+    view.activeSource === 'favorites' ? normalizeFavoritesSort(getState().settings.favoritesSort) : null,
+  ]);
+  const query = personal ? personal.query : view.query;
+  const typed = hasBoxFilters() || Boolean(query?.trim());
+  const context = JSON.stringify([
+    scope, query, view.filters.country, view.filters.language, view.filters.yearMin, view.filters.yearMax,
+    getState().settings.showExplicitContent === true,
+  ]);
+  if (filterView?.context !== context || filterView?.host !== ui.resultsHost) {
+    stopCardAnchorRestore?.();
+    dropPendingFilterRestore();
+  }
+  if (!filterView || filterView.host !== ui.resultsHost || filterView.scope !== scope) {
+    filterAnchor = null;
+    filterView = { host: ui.resultsHost, scope, typed, baseItems: null };
+  } else if (typed !== filterView.typed) {
+    filterView.typed = typed;
+    if (typed) {
+      const anchor = filterView.baseItems && captureCardAnchor();
+      filterAnchor = anchor ? { anchor, order: filterView.baseItems.map(({ id }) => id), missing: false } : null;
+    } else if (filterAnchor) {
+      pendingFilterRestore = {
+        ...filterAnchor, until: Date.now() + 2000, initial: true,
+        stopWatching: watchScrollInput(filterAnchor.anchor.scroller, dropPendingFilterRestore),
+      };
+      filterAnchor = null;
+    }
+  }
+  filterView.context = context;
+}
+
+function survivingNeighbour(order, id, items) {
+  const oldIndex = order.indexOf(id);
+  if (oldIndex < 0 || items.length === 0) return -1;
+  const positions = new Map(items.map((item, index) => [item.id, index]));
+  for (let distance = 1; distance < order.length; distance++) {
+    const index = positions.get(order[oldIndex - distance]) ?? positions.get(order[oldIndex + distance]);
+    if (index != null) return index;
+  }
+  return -1;
+}
+
+/** Read the mounted grid before its contents or width change. */
+export function captureCardAnchor(itemId = null, { viewport = false } = {}) {
+  const scroller = ui.resultsHost?.parentNode;
+  const bounds = scroller?.getBoundingClientRect?.();
+  if (!bounds) return null;
+  const card = itemId ? mountedCard(itemId) : Array.from(ui.resultsHost.children).find((node) => {
+    if (!node.dataset?.id) return false;
+    const rect = node.getBoundingClientRect?.();
+    return rect && rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  const rect = card?.getBoundingClientRect?.();
+  return rect ? { id: card.dataset.id, offset: rect.top - (viewport ? 0 : bounds.top), scroller, viewport } : null;
+}
+
+function alignCardAnchor(anchor) {
+  if (!anchor || anchor.scroller !== ui.resultsHost?.parentNode) return false;
+  const rect = mountedCard(anchor.id)?.getBoundingClientRect?.();
+  if (!rect) return false;
+  const { scroller } = anchor;
+  const delta = rect.top - (anchor.viewport ? 0 : scroller.getBoundingClientRect().top) - anchor.offset;
+  if (Math.abs(delta) > 1) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
+  return true;
+}
+
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
+function watchScrollInput(scroller, stop) {
+  const keyTarget = scroller.ownerDocument || scroller;
+  const onKey = (event) => {
+    if (SCROLL_KEYS.has(event.key) && !event.target?.closest?.('input, textarea, select, [contenteditable]')) stop();
+  };
+  const onPointer = (event) => {
+    if (event.target === scroller || event.button === 1) stop();
+  };
+  const passiveCapture = { passive: true, capture: true };
+  scroller.addEventListener('wheel', stop, passiveCapture);
+  scroller.addEventListener('touchmove', stop, passiveCapture);
+  scroller.addEventListener('pointerdown', onPointer, passiveCapture);
+  keyTarget.addEventListener('keydown', onKey, passiveCapture);
+  return () => {
+    scroller.removeEventListener('wheel', stop, passiveCapture);
+    scroller.removeEventListener('touchmove', stop, passiveCapture);
+    scroller.removeEventListener('pointerdown', onPointer, passiveCapture);
+    keyTarget.removeEventListener('keydown', onKey, passiveCapture);
+  };
+}
+
+/** Hold the offset through the first few layouts after a filter or pane change. */
+export function restoreCardAnchor(anchor) {
+  stopCardAnchorRestore?.();
+  if (!anchor || anchor.scroller !== ui.resultsHost?.parentNode) return false;
+  if (typeof requestAnimationFrame !== 'function') return alignCardAnchor(anchor);
+
+  const grid = ui.resultsHost;
+  const { scroller } = anchor;
+  scroller.classList.add('is-restoring-anchor');
+  if (!alignCardAnchor(anchor)) {
+    scroller.classList.remove('is-restoring-anchor');
+    return false;
+  }
+
+  let expectedScrollTop = scroller.scrollTop;
+  let frame;
+  const stop = () => {
+    if (stopCardAnchorRestore !== stop) return;
+    stopCardAnchorRestore = null;
+    globalThis.cancelAnimationFrame?.(frame);
+    for (const timer of timers) clearTimeout(timer);
+    observer?.disconnect();
+    stopWatchingInput();
+    scroller.removeEventListener('scroll', onScroll);
+    scroller.classList.remove('is-restoring-anchor');
+  };
+  const check = () => {
+    if (stopCardAnchorRestore !== stop) return;
+    if (grid.isConnected === false || grid !== ui.resultsHost || !alignCardAnchor(anchor)) {
+      stop();
+      return;
+    }
+    expectedScrollTop = scroller.scrollTop;
+  };
+  const onScroll = () => {
+    // Native scrollbar drags can scroll without a pointer event reaching the page.
+    // A smaller grid can also clamp a scroll we set, which the next check corrects.
+    const maximum = scroller.scrollHeight - scroller.clientHeight;
+    const expected = Math.min(expectedScrollTop, Math.max(0, maximum));
+    if (Math.abs(scroller.scrollTop - expected) > 1) stop();
+  };
+  const stopWatchingInput = watchScrollInput(scroller, stop);
+  scroller.addEventListener('scroll', onScroll, { passive: true });
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(check) : null;
+  const timers = [setTimeout(check, 250), setTimeout(check, 600), setTimeout(stop, 1000)];
+  stopCardAnchorRestore = stop;
+  observer?.observe(grid);
+  frame = requestAnimationFrame(() => {
+    check();
+    if (stopCardAnchorRestore === stop) frame = requestAnimationFrame(check);
+  });
+  return true;
+}
+
+/** Keep enough of the old video clearance to avoid clamping the scroll when
+ * a smaller picture arrives or the player releases its reservation. */
+export function bindLibraryVideoClearance(scroller) {
+  const app = scroller?.closest?.('#app');
+  if (!app || typeof MutationObserver !== 'function') return () => {};
+  let reserved = 0;
+  const sync = () => {
+    // The computed scroll padding resolves the same length used by the CSS.
+    const actual = Math.ceil(parseFloat(getComputedStyle(scroller).scrollPaddingBottom) || 0);
+    if (reserved === actual) return;
+    const lostSpace = reserved - actual;
+    if (lostSpace > 0 && scroller.scrollTop > Math.max(0, scroller.scrollHeight - scroller.clientHeight - lostSpace)) return;
+    reserved = actual;
+    scroller.style.setProperty('--library-video-clearance', `${reserved}px`);
+  };
+  const observer = new MutationObserver(sync);
+  observer.observe(app, { attributes: true, attributeFilter: ['class', 'style', 'data-video-clearance'] });
+  const layout = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
+  layout?.observe(scroller);
+  layout?.observe(ui.resultsHost);
+  scroller.addEventListener('scroll', sync, { passive: true });
+  sync();
+  return () => {
+    observer.disconnect();
+    layout?.disconnect();
+    scroller.removeEventListener('scroll', sync);
+  };
+}
 
 export function renderResults() {
-  // Favorites is its own pool (kept in state, persisted to localStorage)
+  syncFilterAnchor();
+  syncComputerSource();
+  // Favorites is its own pool (kept in state)
   // and lives outside the regular accumulating view.items. This keeps a
   // visit to Favorites from polluting your browse pool, and means clearing
   // the search box doesn't wipe what you favorited.
@@ -124,24 +336,53 @@ export function renderResults() {
   const exportButton = view.activeSource === 'favorites' ? ui.favoritesExport
     : view.activeSource === 'playlists' ? ui.playlistExport : null;
   if (exportButton) {
-    exportButton.disabled = !filtered.some((item) => item.__contentHidden !== true);
+    exportButton.disabled = !filtered.some((item) => item.__contentHidden !== true && !isLocalFileFavorite(item));
     exportButton.title = exportButton.disabled ? 'No items match this view.' : 'Export the items shown';
   }
+  updateFilterCount(filtered);
+  const collection = JSON.stringify([view.activeSource, view.playlistId]);
+  const sameHost = ui.resultsHost === lastRenderHost;
+  const sameCollection = sameHost && collection === lastCollection;
+  lastRenderHost = ui.resultsHost;
+  lastCollection = collection;
   const signature = JSON.stringify([
-    view.activeSource, view.lastQuery, view.filters.type, view.filters.country,
-    view.playlistId, isPersonalSource() ? personalFilters() : null,
+    collection, view.computerHits.length ? (view.query || '').trim() : '', view.lastQuery, view.filters.type, view.filters.country,
+    isPersonalSource() ? personalFilters() : null,
     view.filters.language, view.filters.yearMin, view.filters.yearMax,
     getState().settings.showExplicitContent === true,
   ]);
   const signatureChanged = signature !== view.renderSignature;
   if (favoriteDrag && (signatureChanged || !favoritesManualOrder()
       || !filtered.some((item) => item.id === favoriteDrag.id))) endFavoriteDrag(false);
-  if (signatureChanged) {
-    view.renderSignature = signature;
-    view.renderStart = 0;
+  // The applied catalog query can lag behind the search box during debounce.
+  const showingFiltered = hasBoxFilters() || Boolean((isPersonalSource()
+    ? personalFilters().query : view.lastQuery)?.trim() || (view.computerHits.length && view.query?.trim()));
+  const wasFiltered = lastRenderWasFiltered;
+  lastRenderWasFiltered = showingFiltered;
+  filterView.baseItems = showingFiltered ? null : filtered;
+
+  const pending = pendingFilterRestore;
+  const canRetry = pending && Date.now() <= pending.until;
+  if (pending && !pending.initial && !canRetry) dropPendingFilterRestore();
+  const clearing = !showingFiltered && pending?.initial;
+  const retrying = !showingFiltered && !pending?.initial && canRetry;
+  const filterIndex = filterAnchor ? filtered.findIndex((item) => item.id === filterAnchor.anchor.id) : -1;
+  const filtering = filterAnchor && (signatureChanged || filterAnchor.missing !== (filterIndex < 0));
+  let anchor = clearing || retrying ? pending.anchor : filtering ? filterAnchor.anchor
+    : signatureChanged && sameCollection && !showingFiltered && !wasFiltered ? captureCardAnchor() : null;
+  let anchorIndex = filtering ? filterIndex : anchor ? filtered.findIndex(({ id }) => id === anchor.id) : -1;
+  const originalFound = anchorIndex >= 0;
+  if (clearing && !originalFound) {
+    anchorIndex = survivingNeighbour(pending.order, anchor.id, filtered);
+    if (anchorIndex >= 0) anchor = { ...anchor, id: filtered[anchorIndex].id };
   }
+  const resetWindow = signatureChanged || clearing || filtering || (retrying && originalFound);
   view.renderLimit = Math.min(RENDER_WINDOW_MAX, view.renderLimit || RENDER_LIMIT_INITIAL);
   const limit = favoriteDrag?.limit ?? view.renderLimit;
+  if (resetWindow) {
+    view.renderSignature = signature;
+    view.renderStart = anchorIndex < limit ? 0 : anchorIndex - Math.floor(limit / 3);
+  }
   const maximumStart = Math.max(0, filtered.length - limit);
   view.renderStart = Math.max(0, Math.min(view.renderStart || 0, maximumStart));
   const visible = filtered.slice(view.renderStart, view.renderStart + limit);
@@ -153,51 +394,32 @@ export function renderResults() {
       ? `Show earlier items (currently ${view.renderStart + 1}-${view.renderStart + visible.length})`
       : 'Show earlier items';
   }
-  const visibleIds = new Set();
-  for (const it of visible) visibleIds.add(it.id);
-
-  // If any currently-mounted card is no longer in the visible slice (because
-  // the user changed source/type filters, or scrolled UP enough that the old
-  // cards fell out of the window), full clear-and-rebuild.
-  let needClear = false;
-  for (const id of renderedIds) {
-    if (!visibleIds.has(id)) { needClear = true; break; }
-  }
-  // ALSO: the DOM order has to match the visible-array order. When a search
-  // term filtered the pool to a subset and we rendered those subset cards,
-  // they're in the DOM in their pool-insertion order. Clearing the search
-  // relaxes the filter — the filtered cards are still part of `visible` but
-  // now sit at positions 30+ in the array, while the newly-relaxed cards
-  // occupy positions 0-29. Without an order check we'd just APPEND the new
-  // cards after the existing filtered ones, leaving the old search hits
-  // pinned at the top — looks like "the search is still active". Comparing
-  // DOM[i].data-id to visible[i].id catches that and forces a rebuild.
-  if (!needClear) {
-    const cards = ui.resultsHost.children;
-    for (let i = 0; i < cards.length && i < visible.length; i++) {
-      if (cards[i].dataset && (cards[i].dataset.id !== visible[i].id
-          || Number(cards[i].dataset.revision || 0) !== Number(visible[i].__revision || 0))) {
-        needClear = true;
-        break;
-      }
-    }
-  }
-  // Favorites reordered by hand or by the sort choice, or one added/removed,
-  // under unchanged filters: move the mounted cards instead of rebuilding
-  // them, so artwork does not flash, scrolling stays put and focus survives.
-  // A shifted window normally rebuilds. During a drag the source stays mounted.
-  if (needClear && !signatureChanged && (!windowMoved || favoriteDrag) && view.activeSource === 'favorites'
-      && reconcileCardsInPlace(visible)) {
-    needClear = false;
-  }
-  if (needClear) {
-    if (thumbHydration.observer) thumbHydration.observer.disconnect();
+  const cards = ui.resultsHost.children;
+  const outOfOrder = renderedIds.size > visible.length || Array.from(cards).some((card, i) => (
+    card.dataset?.id && (card.dataset.id !== visible[i]?.id
+      || Number(card.dataset.revision || 0) !== Number(visible[i]?.__revision || 0))
+  ));
+  const refreshAnchor = outOfOrder && sameCollection && !resetWindow && !windowMoved
+    && !stopCardAnchorRestore && view.activeSource !== 'favorites' ? captureCardAnchor() : null;
+  if (outOfOrder && (!sameCollection || !reconcileCardsInPlace(visible))) {
+    thumbHydration.observer?.disconnect();
     thumbHydration.observer = null;
     thumbHydration.observerRoot = null;
     resetThumbnailHydrationScope();
     ui.resultsHost.innerHTML = '';
     renderedIds.clear();
   }
+  const restoreScroll = () => {
+    const target = (anchorIndex >= 0 ? anchor : null) || refreshAnchor;
+    const restored = clearing || (retrying && originalFound) ? restoreCardAnchor(target) : alignCardAnchor(target);
+    if (!restored && sameHost && resetWindow && ui.resultsHost.parentNode) ui.resultsHost.parentNode.scrollTop = 0;
+    if (filtering) filterAnchor.missing = !originalFound;
+    if (clearing && !originalFound && canRetry) {
+      pending.initial = false;
+    } else if (clearing || (retrying && originalFound)) {
+      dropPendingFilterRestore();
+    }
+  };
 
   if (visible.length === 0) {
     closeDetachedCategoryMenu();
@@ -236,6 +458,7 @@ export function renderResults() {
       // or loading again after a hold): no "No matching items" meanwhile.
       ui.resultsHost.querySelector('.empty-state')?.remove();
     }
+    restoreScroll();
     return;
   }
 
@@ -258,6 +481,7 @@ export function renderResults() {
   syncDidNotPlayMarks();
   syncStreamLabels();
   refocus?.();
+  restoreScroll();
 }
 
 /* ============ "Did not play last time" mark ============ */
@@ -316,7 +540,7 @@ function setCardStream(card) {
   const item = card?.__item;
   if (!item || !card.__meta) return;
   const quality = stationStreamLabel(item);
-  const title = item.title || 'Untitled';
+  const title = item.__computerOffline ? COMPUTER_OFFLINE_TOOLTIP : item.title || 'Untitled';
   if (card.__streamShown && card.__streamShown.quality === quality && card.__streamShown.title === title) return;
   card.__streamShown = { quality, title };
   const streamLine = streamTooltipLine(quality);
@@ -325,7 +549,7 @@ function setCardStream(card) {
     ? el('span', { className: 'card-quality', text: quality, attrs: { title: streamLine } })
     : null;
   if (card.__quality) card.__meta.appendChild(card.__quality);
-  const tooltip = [title, streamLine].filter(Boolean).join('\n');
+  const tooltip = item.__computerOffline ? title : [title, streamLine].filter(Boolean).join('\n');
   card.__open?.setAttribute?.('title', tooltip);
   card.__titleNode?.setAttribute?.('title', tooltip);
 }
@@ -339,15 +563,25 @@ export function syncStreamLabels() {
   }
 }
 
+const typeList = new Intl.ListFormat('en', { type: 'disjunction' });
+
 /** What an empty Favorites or My Playlists view says. */
 function personalEmptyMessage() {
-  if (view.activeSource === 'playlists') return 'Import a playlist above, or clear your filters.';
-  const category = personalFilters()?.category || '';
-  if (category === UNCATEGORIZED) return 'Every favorite is in a category. Choose All categories to see them all.';
-  if (category && favoriteGroupsSnapshot().has(category)) {
-    return 'No favorites in this category match. Use the category button on a favorite to put it here, or clear your filters.';
+  const { type, category } = personalFilters();
+  const labels = personalTypeFilterLabels(type).map((label) => label === 'TV' ? label : label.toLowerCase());
+  const prefix = labels.length ? `${typeList.format(labels)} ` : '';
+  if (view.activeSource === 'playlists') {
+    const hint = 'Import a playlist above, or clear your filters.';
+    return prefix ? `No ${prefix}channels match. ${hint}` : hint;
   }
-  return 'Star items to save them here, or clear your filters.';
+  if (category === UNCATEGORIZED) {
+    return `No uncategorized ${prefix}favorites match. Choose All categories, or clear your filters.`;
+  }
+  if (category && favoriteGroupsSnapshot().has(category)) {
+    return `No ${prefix}favorites in this category match. Use the category button on a favorite to put it here, or clear your filters.`;
+  }
+  const hint = 'Star items to save them here, or clear your filters.';
+  return prefix ? `No ${prefix}favorites match. ${hint}` : hint;
 }
 
 /** What a card shows, apart from artwork (see artworkIdentity). */
@@ -355,6 +589,7 @@ function cardContentKey(item) {
   return JSON.stringify([
     item.title || '', item.originalTitle || '', item.source || '', item.type || '', item.year || '', item.country || '',
     item.license || '', item.content_rating || '', item.__contentHidden === true, Number(item.__revision) || 0,
+    item.__computerMissing === true, item.__computerOffline === true, isComputerItem(item) ? computerCardSubtitle(item) : '',
   ]);
 }
 
@@ -363,6 +598,7 @@ function cardContentKey(item) {
  *  it works), which the card already handles without being rebuilt. */
 function artworkIdentity(item) {
   if (item?.__contentHidden === true) return '';
+  if (isComputerItem(item)) return computerItemArtSource(item);
   // The user's own station picture stands in for the provider artwork.
   return stationImageSourceFor(item)
     || canonicalArtworkUrl(item?._extra?.artworkUrl) || canonicalArtworkUrl(item?.thumbnail) || '';
@@ -424,7 +660,7 @@ function refreshChangedCards(visible) {
     const fresh = renderCard(entry.item, { eagerArtwork: entry.index < THUMBNAIL_EAGER_CARD_COUNT });
     let held = null;
     for (let node = focused; node; node = node.parentNode) if (node === card) { held = focused; break; }
-    thumbHydration.observer?.unobserve?.(card);
+    retireCardArtwork(card);
     host.insertBefore(fresh, card);
     card.remove();
     if (held) refocus = () => matchingControl(fresh, held)?.focus?.({ preventScroll: true });
@@ -450,12 +686,7 @@ function reconcileCardsInPlace(visible) {
   if (typeof host?.insertBefore !== 'function') return false;
   const wanted = new Map(visible.map((item) => [item.id, item]));
   const cards = [...host.children];
-  for (const card of cards) {
-    const id = card.dataset?.id;
-    if (!id) return false;
-    const item = wanted.get(id);
-    if (item && !favoriteDrag && Number(card.dataset.revision || 0) !== Number(item.__revision || 0)) return false;
-  }
+  if (cards.some((card) => !card.dataset?.id)) return false;
   const scroller = host.parentNode;
   const scrollTop = scroller?.scrollTop;
   const focused = globalThis.document?.activeElement;
@@ -465,7 +696,7 @@ function reconcileCardsInPlace(visible) {
       mounted.set(card.dataset.id, card);
       continue;
     }
-    thumbHydration.observer?.unobserve?.(card);
+    retireCardArtwork(card);
     card.remove();
     renderedIds.delete(card.dataset.id);
   }
@@ -476,7 +707,9 @@ function reconcileCardsInPlace(visible) {
       renderedIds.add(item.id);
     }
     const current = host.children[index] || null;
-    if (current !== card) host.insertBefore(card, current);
+    if (current === card) continue;
+    if (card.parentNode === host && host.moveBefore) host.moveBefore(card, current);
+    else host.insertBefore(card, current);
   }
   if (typeof scrollTop === 'number' && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop;
   // Moving a node in the DOM drops its focus; put it back on the same control.
@@ -501,7 +734,7 @@ function syncFavoriteCategoryControls() {
   for (const card of ui.resultsHost.children) {
     if (!card.dataset?.id) continue;
     let button = card.__categoryButton || null;
-    if (!favorites) {
+    if (!favorites || isLocalFileFavorite(card.__item)) {
       if (button) {
         button.remove();
         card.__categoryButton = null;
@@ -765,9 +998,10 @@ function syncFavoriteOrderControls(filtered) {
   // Runs in every view: a card reused from Favorites (same item, same place,
   // for example in My Playlists) must lose its move buttons there.
   const manual = favoritesManualOrder();
-  const positions = manual ? new Map(filtered.map((item, index) => [item.id, index])) : null;
+  const ordered = manual ? filtered.filter((item) => !isLocalFileFavorite(item)) : [];
+  const positions = new Map(ordered.map((item, index) => [item.id, index]));
   // The shown order the drag marks use (a drop works it out again).
-  shownFavoritePositions = positions || new Map();
+  shownFavoritePositions = positions;
   if (manual) bindFavoriteDrag(ui.resultsHost);
   for (const card of ui.resultsHost.children) {
     const id = card.dataset?.id;
@@ -775,7 +1009,7 @@ function syncFavoriteOrderControls(filtered) {
     // Cards can be dragged into place in "My order" only.
     if (typeof card.setAttribute === 'function') setCardDraggable(card, manual && positions.has(id));
     let controls = card.__orderControls || null;
-    if (!manual) {
+    if (!positions.has(id)) {
       if (controls) {
         controls.remove();
         card.__orderControls = null;
@@ -784,7 +1018,7 @@ function syncFavoriteOrderControls(filtered) {
       continue;
     }
     if (!controls) {
-      const item = filtered[positions.get(id)];
+      const item = ordered[positions.get(id)];
       if (!item) continue;
       controls = buildOrderControls(item, card);
       card.__orderControls = controls;
@@ -796,8 +1030,8 @@ function syncFavoriteOrderControls(filtered) {
     const index = positions.get(id) ?? -1;
     setMoveEnabled(controls.__buttons.top, index > 0);
     setMoveEnabled(controls.__buttons.up, index > 0);
-    setMoveEnabled(controls.__buttons.down, index >= 0 && index < filtered.length - 1);
-    setMoveEnabled(controls.__buttons.bottom, index >= 0 && index < filtered.length - 1);
+    setMoveEnabled(controls.__buttons.down, index < ordered.length - 1);
+    setMoveEnabled(controls.__buttons.bottom, index < ordered.length - 1);
   }
 }
 
@@ -871,10 +1105,16 @@ export function rewindRenderWindow() {
 
 /* ============ Individual card ============ */
 
+function retireCardArtwork(card) {
+  thumbHydration.observer?.unobserve?.(card);
+  delete card.__thumbHydration;
+  card.__artworkAbort?.abort();
+}
+
 function renderCard(item, opts = {}) {
   const sourceLabel = getSourceLabel(item.source);
   const card = el('article', {
-    className: 'card' + (view.currentId === item.id ? ' is-playing' : ''),
+    className: 'card' + (view.currentId === item.id ? ' is-playing' : '') + ((item.__computerMissing || item.__computerOffline) ? ' is-missing' : ''),
     attrs: {
       'data-id': item.id,
       'data-revision': String(Number(item.__revision) || 0),
@@ -884,7 +1124,7 @@ function renderCard(item, opts = {}) {
     className: 'card-open',
     attrs: {
       type: 'button',
-      'aria-label': `Open ${item.title || 'Untitled'} from ${sourceLabel}`,
+      'aria-label': `Open ${item.title || 'Untitled'} from ${sourceLabel}${item.__computerOffline ? ', not connected' : item.__computerMissing ? ', not found' : ''}`,
       // The whole name on hover anywhere on the card; on the card itself it
       // may end in an ellipsis.
       title: item.title || 'Untitled',
@@ -920,9 +1160,10 @@ function renderCard(item, opts = {}) {
     html: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
   });
   const previewPending = mountPictureDropPreview(thumb, item);
+  card.__artworkAbort = new AbortController();
   const artworkOptions = {
     eager: opts.eagerArtwork === true || previewPending,
-    signal: getThumbnailHydrationSignal(),
+    signal: AbortSignal.any([getThumbnailHydrationSignal(), card.__artworkAbort.signal]),
   };
   insertThumbImage(thumb, item, null, artworkOptions);
   const ratingLabel = contentBadgeText(item);
@@ -941,6 +1182,8 @@ function renderCard(item, opts = {}) {
     text: item.title || 'Untitled',
     attrs: { title: item.title || 'Untitled' },
   }));
+  const subtitle = isComputerItem(item) ? computerCardSubtitle(item) : '';
+  if (subtitle) body.appendChild(el('div', { className: 'card-subtitle', text: subtitle, attrs: { title: item.__computerOffline ? COMPUTER_OFFLINE_TOOLTIP : subtitle } }));
   const meta = el('div', { className: 'card-meta' });
   meta.appendChild(el('span', {
     className: 'source-badge',
@@ -977,13 +1220,15 @@ function renderCard(item, opts = {}) {
 }
 
 function onCardClick(item) {
-  view.currentId = item.id;
-  for (const card of ui.resultsHost.querySelectorAll('.card')) {
-    card.classList.toggle('is-playing', card.dataset.id === item.id);
+  if (!isComputerItem(item)) {
+    view.currentId = item.id;
+    for (const card of ui.resultsHost.querySelectorAll('.card')) {
+      card.classList.toggle('is-playing', card.dataset.id === item.id);
+    }
   }
-  openDetail(item, { focus: true });
+  openDetail(item, { focus: true, anchorCard: true });
   if (item.__contentHidden === true) return;
-  playItem(item).catch((err) => console.warn('play failed:', err));
+  playLibraryItem(item).catch((err) => console.warn('play failed:', err));
 }
 
 function setStarState(btn, fav) {
@@ -1264,6 +1509,22 @@ export function renderStatus() {
 
 /* ============ Sentinel status (bottom of results) ============ */
 
+function updateFilterCount(items) {
+  if (!ui.filterCount) return;
+  const count = items.length.toLocaleString('en-US');
+  let text = `${count} so far`;
+  if (!viewSourcesLoading()) {
+    const types = isPersonalSource() ? normalizePersonalTypes(personalFilters().type)
+      : view.filters.type ? [view.filters.type] : SOURCES.find(({ id }) => id === view.activeSource)?.types || [];
+    const onlyType = types.length === 1 ? types[0] : items[0]?.type;
+    const stationView = (onlyType === 'tv' || onlyType === 'radio')
+      && (types.length === 1 || items.every(({ type }) => type === onlyType));
+    const noun = stationView ? (onlyType === 'tv' ? 'channel' : 'station') : 'item';
+    text = `${count} ${noun}${items.length === 1 ? '' : 's'}`;
+  }
+  if (ui.filterCount.textContent !== text) ui.filterCount.textContent = text;
+}
+
 export function updateSentinelStatus() {
   if (!ui.sentinelStatus || !ui.sentinelButton) return;
   if (isPersonalSource()) {
@@ -1351,6 +1612,8 @@ export function updateSidebarCounts() {
     }
   }
 
+  totalAll += view.computerHits.length;
+  for (const item of view.computerHits) typeCounts.set(item.type, (typeCounts.get(item.type) || 0) + 1);
   for (const li of ui.sidebar.querySelectorAll('.source-item')) {
     const id = li.dataset.source;
     const span = li.querySelector('[data-role="count"]');
@@ -1361,6 +1624,7 @@ export function updateSidebarCounts() {
     if (id === 'all') n = totalAll;
     else if (id === 'favorites') n = getState().favorites.length;
     else if (id === 'playlists') n = getPlaylistItems().length;
+    else if (id === 'computer') n = view.computerHits.length;
     else if (id.startsWith('type:')) n = typeCounts.get(id.slice('type:'.length)) || 0;
     else if (!isDisabled) n = cum.get(id) || 0;
     const countText = String(n);

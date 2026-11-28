@@ -10,7 +10,7 @@ import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import {
-  renderResults, renderStatus, updateSentinelStatus, rewindRenderWindow,
+  renderResults, renderStatus, updateSidebarCounts, updateSentinelStatus, rewindRenderWindow, syncFilterAnchor,
 } from './render.js';
 import {
   runSearch, onSentinelVisible, retrySources, loadMoreNow,
@@ -18,6 +18,30 @@ import {
 import { buildSidebar } from './sidebar.js';
 import { buildPersonalControls } from './personal-controls.js';
 import { isPersonalSource, personalFilters } from './personal.js';
+import { updateComputerHits } from './computer.js';
+
+let filterPlaceholderObserver = null;
+
+function observeFilterPlaceholders() {
+  filterPlaceholderObserver?.disconnect();
+  if (typeof ResizeObserver !== 'function') return;
+  const fields = [
+    [ui.countryInput, 'Country'],
+    [ui.languageInput, 'Language'],
+    [ui.yearMinInput, 'From'],
+    [ui.yearMaxInput, 'To'],
+  ].map(([input, short]) => ({
+    input, short, long: input.getAttribute('placeholder'), width: parseFloat(input.style.width),
+  }));
+  filterPlaceholderObserver = new ResizeObserver(() => {
+    const narrow = fields.some(({ input, width }) => input.offsetWidth > 0 && input.offsetWidth < width);
+    for (const { input, short, long } of fields) {
+      const placeholder = narrow ? short : long;
+      if (input.getAttribute('placeholder') !== placeholder) input.setAttribute('placeholder', placeholder);
+    }
+  });
+  for (const { input } of fields) filterPlaceholderObserver.observe(input);
+}
 
 export function buildShell() {
   ui.root = el('div', { className: 'library-root' });
@@ -45,7 +69,7 @@ export function buildShell() {
   ui.countryInput = el('input', {
     className: 'chip',
     attrs: { type: 'text', placeholder: 'Country (e.g. US)', maxlength: '2', size: '6' },
-    style: { width: '120px', padding: '4px 10px' },
+    style: { width: '120px' },
     on: { input: (e) => {
       view.filters.country = e.target.value.trim().toUpperCase();
       renderResults(); renderStatus(); updateSentinelStatus();
@@ -54,8 +78,8 @@ export function buildShell() {
   ui.countryInput.value = view.filters.country || '';
   ui.languageInput = el('input', {
     className: 'chip',
-    attrs: { type: 'text', placeholder: 'Lang (e.g. en)', maxlength: '3', size: '6' },
-    style: { width: '110px', padding: '4px 10px' },
+    attrs: { type: 'text', placeholder: 'Lang (e.g. en)', size: '6' },
+    style: { width: '110px' },
     on: { input: (e) => {
       view.filters.language = e.target.value.trim().toLowerCase();
       renderResults(); renderStatus(); updateSentinelStatus();
@@ -65,7 +89,7 @@ export function buildShell() {
   ui.yearMinInput = el('input', {
     className: 'chip',
     attrs: { type: 'number', placeholder: 'Year ≥', min: '1800', max: '2100' },
-    style: { width: '90px', padding: '4px 10px' },
+    style: { width: '90px' },
     on: { input: (e) => {
       view.filters.yearMin = parseInt(e.target.value, 10) || null;
       renderResults(); renderStatus(); updateSentinelStatus();
@@ -75,7 +99,7 @@ export function buildShell() {
   ui.yearMaxInput = el('input', {
     className: 'chip',
     attrs: { type: 'number', placeholder: 'Year ≤', min: '1800', max: '2100' },
-    style: { width: '90px', padding: '4px 10px' },
+    style: { width: '90px' },
     on: { input: (e) => {
       view.filters.yearMax = parseInt(e.target.value, 10) || null;
       renderResults(); renderStatus(); updateSentinelStatus();
@@ -86,7 +110,12 @@ export function buildShell() {
   ui.chipsHost.appendChild(ui.languageInput);
   ui.chipsHost.appendChild(ui.yearMinInput);
   ui.chipsHost.appendChild(ui.yearMaxInput);
-  searchBar.appendChild(ui.chipsHost);
+  observeFilterPlaceholders();
+  ui.filterCount = el('span', {
+    className: 'library-filter-count',
+    attrs: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+  });
+  searchBar.appendChild(el('div', { className: 'library-filters' }, ui.chipsHost, ui.filterCount));
   searchBar.appendChild(buildPersonalControls());
 
   const main = el('section', { className: 'library-main' }, searchBar);
@@ -151,6 +180,10 @@ export function buildShell() {
       return;
     }
     view.query = e.target.value;
+    syncFilterAnchor();
+    if (updateComputerHits()) {
+      renderResults(); renderStatus(); updateSidebarCounts(); updateSentinelStatus();
+    }
     debounced();
   });
 

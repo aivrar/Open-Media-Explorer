@@ -4,7 +4,7 @@ import {
 } from '../../lib/playlists.js';
 import { moveFavoritesToNewIds, planTypeMoves, typeMoveMessage } from '../../lib/favorite-migration.js';
 import {
-  addFavorites, BULK_FAVORITES_LIMIT, countNewFavorites, getState, removeAllFavorites, saveSettings,
+  addFavorites, BULK_FAVORITES_LIMIT, countNewFavorites, getState, isLocalFileFavorite, removeAllFavorites, saveSettings,
 } from '../../lib/state.js';
 import { FAVORITES_SORT_MANUAL, FAVORITES_SORT_NAME, normalizeFavoritesSort } from '../../lib/favorites-order.js';
 import { favoriteGroupsSnapshot, UNCATEGORIZED } from '../../lib/favorite-groups.js';
@@ -15,6 +15,7 @@ import { el } from './utils.js';
 import { ui } from './shell-refs.js';
 import { view } from './state.js';
 import { isPersonalSource, libraryPool, personalFilters } from './personal.js';
+import { normalizePersonalTypes, personalTypeFilterLabels, PERSONAL_TYPES, togglePersonalType } from './personal-types.js';
 import { filteredItemsForCurrentView, renderResults, renderStatus, updateSentinelStatus } from './render.js';
 import { buildFavoriteCategories, syncFavoriteCategories } from './favorite-categories.js';
 import { favoriteTitlesButton, syncFavoriteTitles } from './favorite-titles.js';
@@ -69,7 +70,7 @@ function starAllSummary({ added, already, refused, leftOut, failed }) {
   return `${parts.join('; ')}.`;
 }
 
-/** Star every channel My Playlists lists now: the chosen playlist, type and
+/** Star every channel My Playlists lists now: the chosen playlist, types and
  *  search, including cards not rendered yet. */
 export function starAllListed({ confirmImpl = (text) => globalThis.confirm(text) } = {}) {
   const listed = filteredItemsForCurrentView(libraryPool());
@@ -97,9 +98,29 @@ export function importResultMessage(data, type = 'tv') {
   // `skipped`; they get their own sentence saying why.
   const skipped = count(playlist.skipped);
   const privateSkipped = Math.min(count(playlist.private), skipped);
-  let text = `${data?.replaced ? 'Updated' : 'Imported'} ${plural(count(playlist.items?.length), 'channel', 'channels')}; `
-    + `${plural(skipped - privateSkipped, 'unsupported entry', 'unsupported entries')} skipped; `
-    + `${plural(count(playlist.duplicates), 'duplicate', 'duplicates')} removed.`;
+  const linked = count(playlist.linked_playlists);
+  let text = `${data?.replaced ? 'Updated' : 'Imported'} ${plural(count(playlist.items?.length), 'channel', 'channels')}`;
+  if (linked) text += ` from ${plural(linked, 'linked playlist', 'linked playlists')}.`;
+  const unsupported = skipped - privateSkipped;
+  const duplicates = count(playlist.duplicates);
+  if (!linked || unsupported || duplicates) {
+    text += `${linked ? ' ' : '; '}${plural(unsupported, 'unsupported entry', 'unsupported entries')} skipped; `
+      + `${plural(duplicates, 'duplicate', 'duplicates')} removed.`;
+  }
+  const failed = count(playlist.linked_failed);
+  if (failed) {
+    text += ` ${plural(failed, 'linked playlist', 'linked playlists')} could not be loaded and `
+      + (failed === 1 ? 'was kept as a single entry.' : 'were kept as single entries.');
+  }
+  const byteLimited = count(playlist.linked_byte_limited);
+  if (byteLimited) {
+    text += ` The import reached 8 MiB and kept ${plural(byteLimited, 'linked playlist', 'linked playlists')} as `
+      + (byteLimited === 1 ? 'a single entry.' : 'single entries.');
+  }
+  const truncated = count(playlist.truncated);
+  if (truncated) {
+    text += ` The import stopped at 5,000 channels. ${plural(truncated, 'channel was', 'channels were')} left out.`;
+  }
   if (privateSkipped) {
     text += privateSkipped === 1
       ? ' 1 entry was skipped because it points at this computer or a private network address.'
@@ -179,12 +200,12 @@ function selectControl(label, options, onChange) {
   return select;
 }
 
-const PERSONAL_TYPES = [['', 'All'], ['radio', 'Radio'], ['tv', 'TV'], ['audio', 'Audio'], ['video', 'Video']];
-
-/** Shows `type` as the one pressed button in the media type group. */
-export function pressTypeButton(group, type) {
+/** Sync the pressed states of the media type buttons. */
+export function pressTypeButton(group, value) {
+  const selected = normalizePersonalTypes(value);
   for (const button of group.children) {
-    const active = button.getAttribute('data-type') === type;
+    const type = button.getAttribute('data-type');
+    const active = type === '' ? selected.length === 0 : selected.includes(type);
     button.classList.toggle('is-active', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
@@ -226,7 +247,8 @@ function buildFavoritesSort() {
 export function libraryExportSelection(format = 'm3u8') {
   if (!isPersonalSource()) return null;
   const filters = personalFilters();
-  const type = PERSONAL_TYPES.find(([value]) => value === filters.type)?.[1] || 'All';
+  const typeLabels = personalTypeFilterLabels(filters.type);
+  const type = typeLabels.pop() || 'All';
   const favorites = view.activeSource === 'favorites';
   const groups = favoriteGroupsSnapshot();
   const { names } = favoriteNamesSnapshot();
@@ -235,8 +257,12 @@ export function libraryExportSelection(format = 'm3u8') {
   const collection = favorites
     ? ['Favorites', filters.category === UNCATEGORIZED ? 'Uncategorized' : groups.nameOf(filters.category)].filter(Boolean).join(' - ')
     : lists.length === 1 ? lists[0].name : 'My Playlists';
+  // The export service takes one type label and appends it to the filename.
+  // Include any earlier labels in the collection, within its 75-character limit.
+  const suffix = typeLabels.length ? ` - ${typeLabels.join(' - ')}` : '';
+  const exportName = suffix ? [...collection].slice(0, 75 - suffix.length).join('').trimEnd() + suffix : collection;
   const stations = filteredItemsForCurrentView(libraryPool())
-    .filter((item) => item.__contentHidden !== true)
+    .filter((item) => item.__contentHidden !== true && !isLocalFileFavorite(item))
     .map((item) => {
       const { main, backups } = stationStreamAddresses(item);
       const audio = item.type === 'radio' || item.type === 'audio';
@@ -265,7 +291,7 @@ export function libraryExportSelection(format = 'm3u8') {
         language: item.language,
       };
     });
-  return { format, collection, type, stations };
+  return { format, collection: exportName, type, stations };
 }
 
 function buildExportControls(message) {
@@ -297,9 +323,14 @@ export function buildPersonalControls() {
   ui.personalControls = el('div', { className: 'personal-controls' });
   // One click per type, instead of opening a dropdown first.
   ui.personalType = el('div', { className: 'personal-type', attrs: { role: 'group', 'aria-label': 'Filter saved items by media type' } },
-    ...PERSONAL_TYPES.map(([value, text]) => el('button', {
+    ...[['', 'All'], ...PERSONAL_TYPES].map(([value, text]) => el('button', {
       className: 'chip', text, attrs: { type: 'button', 'data-type': value, 'aria-pressed': 'false' },
-      on: { click: () => { personalFilters().type = value; pressTypeButton(ui.personalType, value); refresh(); } },
+      on: { click: () => {
+        const filters = personalFilters();
+        filters.type = togglePersonalType(filters.type, value);
+        pressTypeButton(ui.personalType, filters.type);
+        refresh();
+      } },
     })));
   ui.playlistSelect = selectControl('Choose an imported playlist', [], (event) => {
     view.playlistId = event.target.value;
@@ -426,8 +457,13 @@ export function buildPersonalControls() {
   const playlistExport = buildExportControls(message);
   ui.playlistExport = playlistExport.button;
   ui.playlistActions = el('div', { className: 'playlist-actions' },
-    el('label', { className: 'playlist-media-type', text: 'Add as ' }, defaultType), addLink, importButton, removeButton, starAll,
-    playlistExport.format, ui.playlistExport, file, linkForm);
+    el('div', { className: 'playlist-action-group playlist-picker' }, ui.playlistSelect,
+      el('label', { className: 'playlist-media-type', text: 'Add as ' }, defaultType)),
+    el('div', { className: 'playlist-action-group' }, addLink, importButton),
+    el('div', { className: 'playlist-action-end' },
+      el('div', { className: 'playlist-action-group' }, removeButton, starAll),
+      el('div', { className: 'playlist-action-group' }, playlistExport.format, ui.playlistExport)),
+    file, linkForm);
   ui.favoritesSort = buildFavoritesSort();
   // Remove all favorites: asks first, with the count (removeAllFavoritesAsked).
   const favoritesMessage = el('span', { className: 'playlist-message', attrs: { role: 'status', 'aria-live': 'polite' } });
@@ -442,7 +478,7 @@ export function buildPersonalControls() {
   // Favorites categories: a second row of chips (favorite-categories.js).
   buildFavoriteCategories();
   ui.personalControls.append(ui.personalType, ui.favoritesSort, ui.favoritesActions, ui.favoriteCategories,
-    ui.playlistSelect, ui.playlistActions, message);
+    ui.playlistActions, message);
   syncPersonalControls();
   return ui.personalControls;
 }
@@ -465,7 +501,7 @@ export function syncPersonalControls() {
   syncFavoriteTitles();
   ui.favoriteCategories.style.display = view.activeSource === 'favorites' ? '' : 'none';
   syncFavoriteCategories();
-  ui.playlistSelect.style.display = playlist ? '' : 'none';
+  ui.personalControls.classList.toggle('is-playlists', playlist);
   ui.playlistActions.style.display = playlist ? 'flex' : 'none';
   ui.playlistMessage.style.display = playlist ? '' : 'none';
   if (personal) pressTypeButton(ui.personalType, personalFilters().type);

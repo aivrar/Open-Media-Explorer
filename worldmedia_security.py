@@ -96,15 +96,19 @@ def _single_header(headers: Mapping[str, str], name: str) -> str | None:
 
 
 def validate_control_host(headers: Mapping[str, str], port: int) -> str:
-    host = (_single_header(headers, "Host") or "").strip().lower()
-    if host not in allowed_host_values(port):
+    raw_host = _single_header(headers, "Host") or ""
+    host = raw_host.strip().lower()
+    if not raw_host.isascii() or host not in allowed_host_values(port):
         raise ApiError(HTTPStatus.FORBIDDEN, "INVALID_HOST", "Request host is not authorized.")
     return host
 
 
 def validate_control_origin(headers: Mapping[str, str], port: int, *, required: bool) -> str | None:
     host = validate_control_host(headers, port)
-    origin = (_single_header(headers, "Origin") or "").strip()
+    raw_origin = _single_header(headers, "Origin") or ""
+    if not raw_origin.isascii():
+        raise ApiError(HTTPStatus.FORBIDDEN, "INVALID_ORIGIN", "Request origin is not authorized.")
+    origin = raw_origin.strip()
     if not origin:
         if required:
             raise ApiError(HTTPStatus.FORBIDDEN, "ORIGIN_REQUIRED", "A same-origin request is required.")
@@ -117,7 +121,7 @@ def validate_control_origin(headers: Mapping[str, str], port: int, *, required: 
 
 def validate_token(headers: Mapping[str, str], expected_token: str) -> None:
     supplied = _single_header(headers, TOKEN_HEADER) or ""
-    if not supplied or not hmac.compare_digest(supplied, expected_token):
+    if not supplied or not supplied.isascii() or not hmac.compare_digest(supplied, expected_token):
         raise ApiError(HTTPStatus.FORBIDDEN, "INVALID_TOKEN", "Session token is missing or invalid.")
 
 

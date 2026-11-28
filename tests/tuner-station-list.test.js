@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { makeStationOption } from '../src/modes/tuner.js';
-import { mountTunerStationList } from '../src/modes/tuner-station-list.js';
+import { mountTunerStationList, tunedScrollTop } from '../src/modes/tuner-station-list.js';
 import { clearDidNotPlay, markDidNotPlay } from '../src/lib/did-not-play.js';
 import { getState } from '../src/lib/state.js';
 import { FakeElement } from './helpers/fake-dom.js';
@@ -183,6 +183,82 @@ test('only keyboard focus marks a station, separately from the tuned row', t => 
   assert.equal(list.getAttribute('aria-activedescendant'), null);
   view.update(stations, 2, 184, 'small');
   check(2, null);
+});
+
+test('clicks keep whole rows still and reveal clipped rows by the smallest scroll', (t) => {
+  for (const columns of [1, 2]) {
+    const list = new Node(), content = new Node();
+    const stations = Array.from({ length: 40 }, (_, id) => ({ id }));
+    const height = 162;
+    const update = (index, force = false) => view.update(stations, index, height, 'small', force, columns);
+    const view = mountTunerStationList(list, content, {
+      makeOption: () => new Node(),
+      tune(index) {
+        // The dial redraws on rotation, then tuneCurrent forces a redraw.
+        update(index);
+        update(index, true);
+      },
+      onRender() {}, onScroll() {},
+    });
+    t.after(view.destroy);
+    update(0);
+    list.scrollTop = 137;
+    dispatch(list, 'scroll');
+    const click = (row) => {
+      const index = row * columns + columns - 1;
+      const target = content.children.find((node) => Number(node.dataset.index) === index);
+      assert.ok(target);
+      dispatch(list, 'click', { target });
+      dispatch(list, 'scrollend');
+    };
+    click(3);
+    assert.equal(list.scrollTop, 137, 'a fully visible row stays still');
+    click(2);
+    assert.equal(list.scrollTop, 128, 'top edge');
+    click(4);
+    assert.equal(list.scrollTop, 150, 'bottom edge, without snapping at scrollend');
+    update(6 * columns, true);
+    const total = Math.ceil(stations.length / columns) * 64 - 8;
+    assert.equal(list.scrollTop, tunedScrollTop(6 * columns, columns, 64, height, total));
+  }
+});
+
+test('a click at either rounded edge survives a playback layout redraw', (t) => {
+  for (const [height, row, scrollTop, rounding] of [
+    [184, 10, 640, -0.75], [184, 46, 2816, 0.75], [120, 27, 1728, -0.75],
+  ]) {
+    const list = new Node(), content = new Node();
+    const stations = Array.from({ length: 80 }, (_, id) => ({ id }));
+    const bounds = { top: 200.4, bottom: 200.4 + height };
+    list.getBoundingClientRect = () => bounds;
+    const update = (index, force = false) => view.update(stations, index, height, 'small', force);
+    const view = mountTunerStationList(list, content, {
+      makeOption() {
+        const option = new Node();
+        option.getBoundingClientRect = () => {
+          const top = bounds.top + parseFloat(option.style.top) - list.scrollTop + rounding;
+          return { top, bottom: top + 56 };
+        };
+        return option;
+      },
+      tune(index) { update(index); },
+      onRender() {}, onScroll() {},
+    });
+    t.after(view.destroy);
+    update(0);
+    list.scrollTop = scrollTop;
+    dispatch(list, 'scroll');
+    const target = content.children.find((node) => Number(node.dataset.index) === row);
+    assert.ok(target);
+    dispatch(list, 'click', { target });
+    assert.equal(list.scrollTop, scrollTop);
+    update(row, true);
+    dispatch(list, 'scrollend');
+    assert.equal(list.scrollTop, scrollTop, 'a redraw must not center a clicked edge row');
+    view.clearPointerSelection();
+    update(row, true);
+    assert.equal(list.scrollTop, tunedScrollTop(row, 1, 64, height, 80 * 64 - 8));
+  }
 });
 
 test('the listbox suppresses its outline and only the focused option has an inset accent outline', () => {

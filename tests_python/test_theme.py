@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import worldmedia_theme
+from worldmedia_native import _enable_edit_context_menu, _hidden_context_menu_items
 from worldmedia_theme import (
     DWMWA_BORDER_COLOR,
     DWMWA_CAPTION_COLOR,
@@ -44,6 +46,51 @@ class _Window:
 
 
 class ThemeTests(unittest.TestCase):
+    def test_edit_context_menu_keeps_edit_commands_and_one_separator_between_groups(self):
+        names = ["", "undo", "redo", "", "share", "", "cut", "copy", "paste", "pasteAndMatchStyle",
+                 "pasteAsPlainText", "selectAll", "inspectElement", "emoji", "webCapture", ""]
+        self.assertEqual(_hidden_context_menu_items([(name, not name) for name in names]),
+                         [15, 14, 13, 12, 5, 4, 0])
+        self.assertEqual(_hidden_context_menu_items([("", True), ("inspectElement", False)]), [1, 0])
+
+    def test_native_menu_is_suppressed_outside_editable_targets_and_on_api_failure(self):
+        class Event:
+            def __iadd__(self, handler):
+                self.handler = handler
+                return self
+
+        class Menu(list):
+            @property
+            def Count(self):
+                return len(self)
+
+            def RemoveAt(self, index):
+                self.pop(index)
+
+        settings = SimpleNamespace(AreDefaultContextMenusEnabled=False)
+        core = SimpleNamespace(Settings=settings, ContextMenuRequested=Event())
+        control = SimpleNamespace(CoreWebView2=core)
+        _enable_edit_context_menu(SimpleNamespace(native=SimpleNamespace(webview=control)))
+        self.assertTrue(settings.AreDefaultContextMenusEnabled)
+
+        event = core.ContextMenuRequested.handler
+        page = SimpleNamespace(Handled=False, ContextMenuTarget=SimpleNamespace(IsEditable=False))
+        event(None, page)
+        self.assertTrue(page.Handled)
+        items = Menu(SimpleNamespace(Name=name, Kind="Command") for name in ["paste", "inspectElement"])
+        field = SimpleNamespace(Handled=False, ContextMenuTarget=SimpleNamespace(IsEditable=True), MenuItems=items)
+        event(None, field)
+        self.assertFalse(field.Handled)
+        self.assertEqual([item.Name for item in items], ["paste"])
+
+        missing = SimpleNamespace(Handled=False, ContextMenuTarget=SimpleNamespace())
+        with mock.patch("builtins.print") as log:
+            event(None, missing)
+            event(None, missing)
+        self.assertTrue(missing.Handled)
+        self.assertFalse(settings.AreDefaultContextMenusEnabled)
+        log.assert_called_once()
+
     @staticmethod
     def _relative_luminance(value: str) -> float:
         channels = [int(value[index:index + 2], 16) / 255 for index in (1, 3, 5)]

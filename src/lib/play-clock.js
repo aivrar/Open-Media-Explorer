@@ -65,6 +65,9 @@ export function createPlayClock({ now = monotonicNow } = {}) {
 
   return {
     itemChanged,
+    rekey(from, to) {
+      if (itemId === from) itemId = to;
+    },
     advancingChanged,
     played,
     start,

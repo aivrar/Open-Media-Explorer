@@ -1,6 +1,6 @@
 import { cloneEqCurve, EQ_DEFAULT_Q, normalizeEqCurve } from './eq-curve.js';
 import { BUILT_IN_EQ_PRESETS, customEqPresetKey } from './eq-presets.js';
-import { checkProfileStorageBudget, EQ_EXTRA_STORAGE_KEY, EQ_STORAGE_KEY } from './profile-storage.js';
+import { checkProfileStorageBudget, EQ_EXTRA_STORAGE_KEY, EQ_STORAGE_KEY, isComputerFavoriteId } from './profile-storage.js';
 
 export * from './eq-curve.js';
 
@@ -34,7 +34,7 @@ export function normalizeEqState(value) {
   const favorites = {};
   if (source.favorites && typeof source.favorites === 'object' && !Array.isArray(source.favorites)) {
     for (const [itemId, curve] of Object.entries(source.favorites)) {
-      if (itemId && itemId.length <= 512 && curve && typeof curve === 'object') {
+      if (itemId && !isComputerFavoriteId(itemId) && itemId.length <= 512 && curve && typeof curve === 'object') {
         defineOwn(favorites, itemId, normalizeEqCurve(curve));
       }
     }
@@ -55,7 +55,7 @@ export function normalizeEqState(value) {
   const savedAssignments = source.assignments;
   if (savedAssignments && typeof savedAssignments === 'object' && !Array.isArray(savedAssignments)) {
     for (const [itemId, presetId] of Object.entries(savedAssignments)) {
-      if (!itemId || itemId.length > 512 || typeof presetId !== 'string') continue;
+      if (!itemId || isComputerFavoriteId(itemId) || itemId.length > 512 || typeof presetId !== 'string') continue;
       const key = customEqPresetKey(presetId);
       if (builtIns.has(presetId) || (key && Object.hasOwn(customPresets, key))) {
         defineOwn(assignments, itemId, presetId);
@@ -88,7 +88,7 @@ export function isEqStation(item) {
 }
 
 export function canSaveFavoriteEq(itemId, favorited) {
-  return Boolean(favorited && itemId && itemId.length <= 512);
+  return Boolean(favorited && itemId && !isComputerFavoriteId(itemId) && itemId.length <= 512);
 }
 
 export function hasFavoriteEq(state, itemId, favorited) {
@@ -108,7 +108,7 @@ export function setStationEqPreset(eqState, itemIds, presetId = '') {
   const state = normalizeEqState(eqState);
   if (presetId && !getEqPreset(state, presetId)) return state;
   for (const itemId of itemIds) {
-    if (typeof itemId !== 'string' || !itemId || itemId.length > 512) continue;
+    if (typeof itemId !== 'string' || !itemId || isComputerFavoriteId(itemId) || itemId.length > 512) continue;
     if (presetId) defineOwn(state.assignments, itemId, presetId);
     else delete state.assignments[itemId];
   }
@@ -117,7 +117,7 @@ export function setStationEqPreset(eqState, itemIds, presetId = '') {
 
 export function addFavoriteEq(eqState, itemId, effectiveCurve = null) {
   const state = normalizeEqState(eqState);
-  if (!itemId) return state;
+  if (!itemId || isComputerFavoriteId(itemId)) return state;
   return {
     ...state,
     favorites: {
@@ -135,7 +135,7 @@ export function addFavoritesEq(eqState, itemIds) {
   const state = normalizeEqState(eqState);
   const favorites = { ...state.favorites };
   for (const itemId of itemIds || []) {
-    if (itemId) defineOwn(favorites, itemId, cloneEqCurve(state.global));
+    if (itemId && !isComputerFavoriteId(itemId)) defineOwn(favorites, itemId, cloneEqCurve(state.global));
   }
   return { ...state, favorites };
 }
@@ -151,7 +151,7 @@ export function removeFavoriteEq(eqState, itemId) {
 export function setScopedEq(eqState, itemId, favorited, curve) {
   const state = normalizeEqState(eqState);
   const normalized = cloneEqCurve(curve);
-  if (favorited && itemId) {
+  if (canSaveFavoriteEq(itemId, favorited)) {
     return { ...state, favorites: { ...state.favorites, [itemId]: normalized } };
   }
   return { ...state, global: normalized };

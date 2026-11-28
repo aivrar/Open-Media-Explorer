@@ -24,9 +24,10 @@ import threading
 import time
 import urllib.parse
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from http import HTTPStatus
+from http.client import IncompleteRead
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -601,6 +602,7 @@ class Fetched:
     etag: str
     last_modified: str
     retry_after: int | None = None
+    body_bytes: int = field(default=0, compare=False)
 
 
 def _challenge_error(retry_after: int) -> CatalogError:
@@ -694,6 +696,8 @@ class BoundedFetcher:
         # Ask for gzip: the bounded decoder below enforces both limits, and a
         # large feed or list is often a fifth of its size compressed.
         upstream = self.connector.open(url, method="GET", headers=request_headers, cancel=self.cancel, accept_gzip=True)
+        compressed = 0
+        decoded = bytearray()
         try:
             response = upstream.response
             status = int(response.status)
@@ -747,8 +751,6 @@ class BoundedFetcher:
                 decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
             elif encoding == "deflate":
                 decoder = zlib.decompressobj()
-            compressed = 0
-            decoded = bytearray()
             for chunk in upstream.iter_chunks(cancel=self.cancel):
                 compressed += len(chunk)
                 if compressed > wire_limit:
@@ -769,7 +771,18 @@ class BoundedFetcher:
                     raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_DECOMPRESSION_FAILED", "Catalog response compression is invalid.") from None
                 if len(decoded) > max_decoded or not decoder.eof:
                     raise _error(HTTPStatus.BAD_GATEWAY, "CATALOG_DECOMPRESSION_FAILED", "Catalog response compression is invalid.")
-            return Fetched(status, bytes(decoded), content_type, upstream.url, etag, modified, retry)
+            return Fetched(status, bytes(decoded), content_type, upstream.url, etag, modified, retry,
+                           body_bytes=max(compressed, len(decoded)))
+        except IncompleteRead as error:
+            truncated = _error(HTTPStatus.BAD_GATEWAY, "CATALOG_BODY_TRUNCATED",
+                               "Catalog source ended before its response was complete.", True)
+            truncated.body_bytes = max(compressed + len(error.partial), len(decoded))
+            raise truncated from error
+        except (ApiError, OSError, ValueError) as error:
+            # Imports sharing a byte budget must also charge for bytes read
+            # before a failed or interrupted response.
+            error.body_bytes = max(compressed, len(decoded))
+            raise
         finally:
             upstream.close()
 

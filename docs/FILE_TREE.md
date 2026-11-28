@@ -36,6 +36,7 @@ WorldMediaWindows/
 |   |-- RELEASE_NOTES_0.1.16.md
 |   |-- RELEASE_NOTES_0.1.17.md
 |   |-- RELEASE_NOTES_0.1.18.md
+|   |-- RELEASE_NOTES_0.1.19.md
 |   |-- RELEASE_RECORD_0.1.3.md
 |   |-- RELEASE_RECORD_0.1.4.md
 |   |-- RELEASE_RECORD_0.1.5.md
@@ -52,6 +53,7 @@ WorldMediaWindows/
 |   |-- RELEASE_RECORD_0.1.16.md
 |   |-- RELEASE_RECORD_0.1.17.md
 |   |-- RELEASE_RECORD_0.1.18.md
+|   |-- RELEASE_RECORD_0.1.19.md
 |   |-- REPOSITORY_SETUP.md
 |   `-- WIKI.md
 |-- frontend/
@@ -68,8 +70,30 @@ WorldMediaWindows/
 |-- src/
 |   |-- adapters/
 |   |-- lib/
+|   |   |-- computer-catalog.js
+|   |   |-- computer-client.js
+|   |   |-- computer-levelling.js
+|   |   |-- computer-library.js
+|   |   |-- computer-play.js
+|   |   |-- computer-track-prefs.js
+|   |   |-- computer-tracks.js
+|   |   `-- top-tabs.js
 |   |-- modes/
+|   |   |-- computer.js
+|   |   |-- computer-albums.js
+|   |   |-- computer-browse.js
+|   |   |-- computer-chapters.js
+|   |   |-- computer-favorites.js
+|   |   |-- computer-folders.js
+|   |   |-- computer-star.js
+|   |   |-- computer-table.js
+|   |   |-- computer-window.js
+|   |   |-- discovery-attempt.js
+|   |   |-- library/
+|   |   |   `-- computer.js
+|   |   `-- now-playing-surprise.js
 |   |-- styles/
+|   |   `-- computer.css
 |   |-- vendor/
 |   |-- visualizer/
 |   `-- index.html
@@ -78,13 +102,16 @@ WorldMediaWindows/
 |   |-- helpers/
 |   |-- contracts.test.js
 |   |-- accessibility.test.js
+|   |-- computer-*.test.js
 |   |-- discovery.test.js
+|   |-- top-tabs.test.js
 |   |-- harness.test.js
 |   `-- thumbnails.test.js
 |-- tests_python/
 |   |-- fixtures/
 |   |-- fakes.py
 |   |-- fixture_server.py
+|   |-- test_computer_*.py
 |   |-- test_contract_schemas.py
 |   |-- test_fakes.py
 |   `-- test_fixture_server.py
@@ -96,6 +123,17 @@ WorldMediaWindows/
 |-- requirements-build.txt
 |-- vite.config.js
 |-- worldmedia_backup.py
+|-- worldmedia_computer.py
+|-- worldmedia_computer_art.py
+|-- worldmedia_computer_convert.py
+|-- worldmedia_computer_library.py
+|-- worldmedia_computer_loudness.py
+|-- worldmedia_computer_media.py
+|-- worldmedia_computer_probe.py
+|-- worldmedia_computer_stars.py
+|-- worldmedia_computer_subtitles.py
+|-- worldmedia_computer_tags.py
+|-- worldmedia_computer_video.py
 |-- worldmedia_downloads.py
 |-- worldmedia_ffmpeg.py
 |-- worldmedia_icy.py
@@ -134,6 +172,7 @@ WorldMediaWindows/
 | `worldmedia_jobs.py` | Thread-safe capture job registry, limits, transitions, and shutdown coordination. |
 | `worldmedia_catalog.py` | Bounded persistent catalog cache, safe dynamic feed/PeerTube/Owncast resolvers, and opaque artwork registry. |
 | `worldmedia_media.py` | DNS-pinned same-origin media relay, opaque registrations, and safe HLS/DASH rewriting. |
+| `worldmedia_computer*.py` | Computer folder management, scanning, stars, artwork, metadata, subtitles, volume levelling and playback. |
 | `worldmedia_ffmpeg.py` | Verified FFmpeg discovery, capability probes, managed acquisition, and lifecycle. |
 | `worldmedia_downloads.py` | Original finite-media downloads, safe resume, atomic publication, and folder access. |
 | `worldmedia_backup.py` | Settings backup ZIP: copies of the saved state files plus universal `.m3u8` playlists, written to the downloads folder. |
@@ -153,7 +192,10 @@ WorldMediaWindows/
 | `src/modes/library/catalog-store.js` | Bounded resident catalog, stable merge/update identities, snapshot replacement, and eviction pins. |
 | `src/modes/library/snapshots.js` | Independent live-snapshot refresh (read once at start, then only while the list is shown), stale-cache state, reconciliation, and teardown. |
 | `src/modes/library/line-watch.js` | Notices that the connection is back after a drop and wakes the Library sources that are waiting. |
-| `src/lib/live-load.js` | Tuner/Grid progressive source loading and per-source time limits. |
+| `src/modes/computer*.js`, `src/styles/computer.css` | Computer browsing, Details, Favorites and folder controls. |
+| `src/lib/computer-*.js`, `src/modes/library/computer.js` | Local search, playback, track choices, levelling and Computer results in Library. |
+| `src/modes/now-playing-surprise.js` | Random picks in Now Playing. |
+| `src/lib/live-load.js` | Tuner progressive source loading and per-source time limits. |
 | `src/lib/initials.js` | Initials and stable colours for items without artwork. |
 | `src/lib/playlist-drop.js` | Drag-and-drop import of local playlist files (`.m3u`, `.m3u8`, `.pls`, `.xspf`, `.json`, `.csv`); keeps other dropped files from being opened by Windows. |
 | `src/lib/video-picture.js` | Decides whether the floating video is shown: at once for TV/video, only with a picture for radio/audio. |
@@ -266,7 +308,7 @@ WorldMediaWindows/
 | `tests/best-stream.test.js`, `tests/best-stream-auto.test.js`, `tests_python/test_stream_probe.py` | Pick the best stream: ranking, the hand-over to the next stream, the Auto checks and the server's look at two streams. |
 | `tests/processor-budget.test.js`, `tests/processor-extras.test.js`, `tests/visualizer-processor-use.test.js`, `tests_python/test_processor.py` | Processor use: levels and limit, the steering, Very high and the larger simulations, and the server's reading. |
 | `tests/paging-guard.test.js`, `tests/library-slow-retry.test.js`, `tests/library-line-watch.test.js` | Library catalog retries: the wait, the slow retry after two failures, a refused page, and the wake-up when the connection is back. |
-| `tests/http-outside-gate.test.js`, `tests/iptv-radio-robustness.test.js`, `tests/live-source-retry.test.js` | The limit of four catalog requests at a time, the iptv-org and Radio Browser loading rules, and the Tuner and Grid retry of a source that failed. |
+| `tests/http-outside-gate.test.js`, `tests/iptv-radio-robustness.test.js`, `tests/live-source-retry.test.js` | The limit of four catalog requests at a time, the iptv-org and Radio Browser loading rules, and the Tuner retry of a source that failed. |
 | `tests/adapter-playable-picks.test.js`, `tests_python/test_podcast_enclosures.py`, `tests_python/test_download_content_types.py` | Which file of an item is played: Internet Archive, Wikimedia Commons, Radio Browser and LibriVox picks, podcast episode formats, and sound downloads labelled as video. |
 | `tests_python/test_connect_first.py` | Connecting to a host with several addresses: all tried together, IPv4 first, the last good one remembered. |
 | `tests/played-streams.test.js` | The format and bitrate stations played with: reading them from the relay's reply, remembering them once a start has played, the label, and where it shows. |
@@ -318,4 +360,6 @@ WorldMediaWindows/
 | `docs/RELEASE_NOTES_0.1.17.md` | GitHub release notes for the `v0.1.17` tag and its release assets. |
 | `docs/RELEASE_RECORD_0.1.17.md` | What was checked for v0.1.17, with artifact sizes and hashes. |
 | `docs/RELEASE_NOTES_0.1.18.md` | GitHub release notes for the `v0.1.18` tag and its release assets. |
+| `docs/RELEASE_NOTES_0.1.19.md` | Release notes and download names for `v0.1.19`. |
 | `docs/RELEASE_RECORD_0.1.18.md` | What was checked for v0.1.18, with artifact sizes and hashes. |
+| `docs/RELEASE_RECORD_0.1.19.md` | What was checked for v0.1.19, with artifact sizes and hashes. |

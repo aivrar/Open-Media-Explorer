@@ -91,14 +91,13 @@ test('playing an item that needs the removed adapter fails with one plain line',
 test('no list of sources shows the removed one', async () => {
   assert.equal(SOURCE_IDS.includes(RETIRED), false);
   assert.equal(SOURCES.some((source) => source.id === RETIRED), false);
-  // Sidebar, Settings, About, Discovery, Grid and Tuner all build their lists
+  // Sidebar, Settings, About, Surprise me and Tuner all build their lists
   // from the registry.
   const users = {
     'src/modes/library/sidebar.js': /SOURCES\.map/,
     'src/lib/settings.js': /SOURCES\.map/,
     'src/modes/about.js': /SOURCES\.map/,
-    'src/modes/discovery.js': /SOURCES\.filter/,
-    'src/modes/grid.js': /SOURCES\.filter/,
+    'src/modes/now-playing-surprise.js': /SOURCES\.filter/,
     'src/modes/tuner.js': /SOURCES\.filter/,
   };
   for (const [path, pattern] of Object.entries(users)) assert.match(await read(path), pattern, path);

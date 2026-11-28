@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.1.19 - 2026-11-27
+
+The **Computer** tab plays music, films, shows and audiobooks from folders
+you add. The Library can find your files too. **Surprise me** in Now Playing
+plays a random pick from your enabled sources.
+
+- **Computer** — Add up to 200 folders with **Add folder...**. Subfolders
+  are included. Browse albums, artists, songs, genres and music folders.
+  Find movies with posters and details, shows by season, all videos and
+  video folders. Audiobooks show chapters when available and remember where
+  you stopped. Search, sort, use **Play all** or **Shuffle**, and step
+  through the queue with **Previous** and **Next**.
+- **Album covers** — Album covers for a large library fill in quickly,
+  and songs can start while covers load.
+- **Favorites and Library search** — Star songs, albums, artists, films
+  and shows with the star button or **F**. Starred files show in Computer
+  and Library **Favorites**. Library search labels local results **Computer**,
+  with **Audio** and **Video** filters.
+- **Playback** — Common formats play directly. FFmpeg prepares other audio
+  and video formats for playback with seeking. Video uses the graphics card's
+  encoder when available. The app can rebuild the timeline of DVD VOB files
+  whose timestamps restart, for the true length and exact seeking.
+  The current item plays until the next file is ready. If the new file
+  cannot be opened, playback continues and a short message appears. The app
+  uses almost no processor time when nothing is playing. Sound processing
+  pauses after a few seconds of silence.
+- **Tracks** — **Subtitles** offers text subtitles in or beside a film,
+  including files in a **Subs** folder. Older Cyrillic, Greek, Turkish,
+  Central European and Baltic encodings are supported. A subtitle goes with
+  the film whose name is the longest match. **C** turns subtitles on or off.
+  **Audio** switches sound tracks. Choices are remembered per film and by
+  language.
+- **Music** — **Settings > Playback > Volume levelling** offers **Off**,
+  **Track** and **Album**, with a **Pre-amp**. The app uses ReplayGain tags
+  or measures untagged songs one song ahead. It prepares the next song of an
+  album for a gapless start.
+- **Scans** — Tested with 50,000 files. Scans reuse the results for
+  unchanged files. Disconnected folders stay in the list and can be pointed
+  to a new location with **Locate...**. Stars follow files the app recognizes
+  after a move or rename.
+- **Tabs** — **Library**, **Tuner**, **Computer**, **Now Playing**,
+  **Visualizer** and **About**. Library covers Grid's live stations, and
+  **Surprise me** in Now Playing takes the place of Discovery. An old Grid
+  or Discovery start setting opens Library. Hide Computer under **Tabs shown**.
+- **Light theme** — The scrollbar and switches that are off are easy to see.
+  Pale channel logos stay visible in the player bar and appear larger on
+  a grey tile in the Tuner's picture box.
+- **Library details** — In small windows, the details pane stays clear of
+  the video box.
+- **Playlist import (issue #6)** — Import channels from a linked web list,
+  up to four links per import, one level deep, and up to 5,000 channels.
+  A link that cannot be loaded stays as one entry and the import message
+  says so.
+- **Text fields (issue #6)** — Right-click for **Undo**, **Cut**, **Copy**,
+  **Paste** and **Select all**.
+- **Stream addresses (issue #6)** — **Up** on the first backup makes it the
+  main address. Stream format and quality stay saved until the main address
+  changes.
+- **Station pictures (issue #6)** — A picture you set stays with its station,
+  even when a radio station and a TV channel share a name.
+- **Video box (issue #6)** — The dark blur over **Play** and **Fullscreen**
+  is gone.
+- **Library (issue #6)** — Clear Search, Country or Language to return to
+  where you were. A count beside the filters shows how many results match,
+  with "so far" while sources load. Cards stay put when their details open.
+  Language accepts codes and names such as `en`, `eng` and `English`,
+  including for iptv-org TV channels.
+- **Tuner (issue #6)** — Clicking a station already in view keeps the list
+  in place.
+- **Saved stations (issue #6)** — If an address answers without sending a
+  stream, the app tries the backups. If none start, it marks the station
+  "Did not play last time."
+
 ## 0.1.18 - 2026-11-26
 
 The Tuner puts the dial and tone knobs beside a station list and keeps TV

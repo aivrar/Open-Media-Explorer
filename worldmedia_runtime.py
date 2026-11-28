@@ -29,6 +29,7 @@ PROFILE_TRANSFER_KEYS = frozenset({
     "worldmedia.eq-extra.v1",
     "worldmedia.settings-extra.v1",
     "worldmedia.picture.v1",
+    "worldmedia.stationimageowners.v1",  # Legacy station picture assignments
     "worldmedia.favgroups.v1",  # Favorites categories (src/lib/favorite-groups.js)
     "worldmedia.favnames.v1",  # The user's names for favorites (src/lib/favorite-names.js)
     "worldmedia.ownstream.v1",  # Stations kept on their own stream (src/lib/stream-verify.js)
@@ -169,12 +170,15 @@ def profile_transfer_copy_path(paths: RuntimePaths | None = None) -> Path:
     return profile_transfer_path(paths).with_name(PROFILE_TRANSFER_COPY_FILENAME)
 
 
-def _atomic_write_json(path: Path, value: object) -> None:
+def _atomic_write_json(path: Path, value: object, *, buffered: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:
         with temporary.open("w", encoding="utf-8", newline="\n") as handle:
-            json.dump(value, handle, separators=(",", ":"))
+            if buffered:
+                handle.write(json.dumps(value, separators=(",", ":")))
+            else:
+                json.dump(value, handle, separators=(",", ":"))
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

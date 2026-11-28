@@ -48,6 +48,8 @@
  *               (the engine makes it again after a pause, mute, hidden window
  *               or suspended context), so there is a gap in the data before
  *               it; 0 before the first read.
+ *   handoffTime animation-clock seconds at the last gapless promotion of
+ *               this source, or undefined
  *   active      true when the arrays hold real data from the playing media
  *   running     false only on the last frame sent when the loop stops
  *   sampleRate  Hz of the audio context (0 until known)
@@ -366,6 +368,7 @@ export function createAudioSignal({
     dt: 0,
     version: 0,
     tapVersion: 0,
+    handoffTime: undefined,
     active: false,
     running: false,
     sampleRate: 0,
@@ -509,6 +512,7 @@ export function createAudioSignal({
   }
 
   function clearFrame() {
+    frame.handoffTime = undefined;
     frame.active = false;
     frame.spectrum.fill(0);
     if (frame.spectrumDb) frame.spectrumDb.fill(Number.NEGATIVE_INFINITY);
@@ -680,6 +684,8 @@ export function createAudioSignal({
     lastFrameMs = now;
     const wantFloat = markDue(now);
     frame.volume = readVolume();
+    frame.handoffTime = undefined;
+    try { frame.handoffTime = source.getHandoffTime?.(); } catch (_) {}
     try {
       readFrame(node, wantFloat);
     } catch (_) {

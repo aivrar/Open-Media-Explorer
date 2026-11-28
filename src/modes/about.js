@@ -9,7 +9,7 @@
 import { SOURCES, getSourceColor } from '../lib/sources.js';
 import { PROCESSOR_EXTRAS_RELEASED } from '../lib/processor-budget.js';
 
-const VERSION = '0.1.18';
+const VERSION = '0.1.19';
 const PROJECT_URL = 'https://github.com/aivrar/Open-Media-Explorer';
 
 export function renderAbout(host) {
@@ -32,8 +32,9 @@ export function renderAbout(host) {
           <p>
             Explore internet radio, live TV, podcasts, public-domain films, space media,
             cultural archives, audiobooks, conference recordings, and independent streams
-            from ten public sources. Search across them, save favorites, browse the live
-            Grid, spin the Tuner, or let Discovery choose something unexpected.
+            from ten public sources. Search across them, save favorites, spin the Tuner,
+            or let Surprise me on Now Playing choose something unexpected.
+            Use the Computer tab to add folders of music and videos from your own computer.
             Import your own M3U, M3U8, PLS, XSPF, JSON or CSV channel lists or paste a direct
             stream link in Library's My Playlists, and organize Favorites by media
             type, your own order and your own categories.

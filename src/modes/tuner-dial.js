@@ -54,6 +54,23 @@ function visibleTextRadius(readout, x, y) {
   return radius;
 }
 
+export function setDialStationName(name, text) {
+  const hyphen = /[-\u2010]/;
+  if (!hyphen.test(text)) {
+    name.textContent = text;
+    return;
+  }
+  // Keep each hyphenated word intact without changing the underlying text.
+  const parts = text.split(/([ \t\r\n\f]+)/).map(part => {
+    if (!hyphen.test(part)) return part;
+    const word = name.ownerDocument.createElement('span');
+    word.className = 'dial-name-word';
+    word.textContent = part;
+    return word;
+  });
+  name.replaceChildren(...parts);
+}
+
 export function fitDialReadout(dial, readout, needle) {
   const { left, top, width: diameter } = dial.getBoundingClientRect();
   if (!diameter) return;

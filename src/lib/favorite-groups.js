@@ -17,6 +17,7 @@
  */
 
 import { emit, getState, STORAGE_KEYS, subscribe } from './state.js';
+import { isComputerFavoriteId } from './profile-storage.js';
 import { scheduleProfileHandoff } from './profile-transfer.js';
 import { reportPersistenceFailure, clearPersistenceFailure } from './persistence-notice.js';
 
@@ -183,7 +184,8 @@ function commit(groups, assign, detail) {
   }
   const saved = new Set(getState().favorites.map((favorite) => favorite?.id).filter(Boolean));
   const ids = new Set(groups.map((group) => group.id));
-  const kept = new Map([...assign].filter(([favoriteId, groupId]) => saved.has(favoriteId) && ids.has(groupId)));
+  const kept = new Map([...assign].filter(([favoriteId, groupId]) =>
+    !isComputerFavoriteId(favoriteId) && saved.has(favoriteId) && ids.has(groupId)));
   let raw = null;
   try {
     if (groups.length === 0) {
@@ -209,7 +211,8 @@ function commit(groups, assign, detail) {
 }
 
 function savedFavorite(favoriteId) {
-  return Boolean(favoriteId) && getState().favorites.some((favorite) => favorite?.id === favoriteId);
+  return Boolean(favoriteId) && !isComputerFavoriteId(favoriteId)
+    && getState().favorites.some((favorite) => favorite?.id === favoriteId);
 }
 
 /** Make a category. With `assign`, also put that favorite in it (one save). */

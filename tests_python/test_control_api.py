@@ -4,14 +4,18 @@ import gzip
 import http.client
 import io
 import json
+import tempfile
 import threading
 import time
 import unittest
 import urllib.parse
+from pathlib import Path
 from unittest import mock
 
 import worldmedia_server
 from worldmedia_ffmpeg import FfmpegError, ToolStatus
+from worldmedia_computer_stars import ComputerStars
+from worldmedia_runtime import _atomic_write_json
 from worldmedia_security import MAX_JSON_BODY
 
 
@@ -101,6 +105,113 @@ class ControlApiTests(unittest.TestCase):
             response, _ = self.request('POST', '/api/v1/playlists/remove', headers=self.mutation_headers(), body=b'{"id":"example"}')
             self.assertEqual(response.status, 200)
             store.remove.assert_called_once_with('example')
+
+    def test_session_actions_require_origin_and_token_and_accept_an_empty_post(self):
+        token = "1" * 64
+        for kind, action in (("media", "release"), ("media", "keep"), ("hls", "release")):
+            route = f"/api/v1/computer/{kind}/{token}/{action}"
+            with self.subTest(route=route), mock.patch.object(worldmedia_server.COMPUTER_MEDIA, action) as update:
+                for headers in ({}, {"Origin": self.origin}, {"X-WorldMedia-Token": self.token},
+                                self.mutation_headers(Origin="https://example.org")):
+                    response, _ = self.request("POST", route, headers=headers)
+                    self.assertEqual(response.status, 403)
+                update.assert_not_called()
+                for _ in range(2):
+                    response, body = self.request("POST", route, headers={"Origin": self.origin,
+                                                  "X-WorldMedia-Token": self.token})
+                    self.assertEqual((response.status, body), (204, b""))
+                expected = mock.call(token, hls=kind == "hls") if action == "release" else mock.call(token)
+                self.assertEqual(update.call_args_list, [expected, expected])
+
+    def test_computer_play_reports_nonretryable_control_failures(self) -> None:
+        route = "/api/v1/computer/play"
+        cases = (
+            (None, b"{}", 400, "INVALID_COMPUTER_PLAY"),
+            (None, b'{"id":"track","standby":1}', 400, "INVALID_COMPUTER_PLAY"),
+            (OSError("private path"), b'{"id":"track"}', 503, "COMPUTER_LIBRARY_UNAVAILABLE"),
+            (RuntimeError("private path"), b'{"id":"track"}', 500, "INTERNAL_ERROR"),
+        )
+        for error, body, status, code in cases:
+            with self.subTest(code=code), mock.patch.object(worldmedia_server.COMPUTER_MEDIA, "register", side_effect=error):
+                response, payload = self.request("POST", route, headers=self.mutation_headers(), body=body)
+                self.assert_api_error(response, payload, status, code)
+                self.assertIs(payload["error"]["retryable"], False)
+                self.assertNotIn("private path", payload["error"]["message"])
+
+    def test_computer_loudness_requires_authenticated_bounded_post(self) -> None:
+        route = "/api/v1/computer/loudness"
+        auth = {"X-WorldMedia-Token": self.token}
+        headers = self.mutation_headers()
+        with mock.patch.object(worldmedia_server.COMPUTER_MEDIA, "loudness") as measure:
+            response, _ = self.request("POST", route, headers={"Content-Type": "application/json"}, body=b"{}")
+            self.assertEqual(response.status, 403)
+            response, payload = self.request("GET", route, headers=auth)
+            self.assert_api_error(response, payload, 405, "METHOD_NOT_ALLOWED")
+            response, payload = self.request("POST", route, headers=headers, declared_length=1025)
+            self.assert_api_error(response, payload, 413, "BODY_TOO_LARGE")
+            for body in (b"{}", b'{"id":2}', b'{"id":"track","path":"private"}'):
+                response, payload = self.request("POST", route, headers=headers, body=body)
+                self.assert_api_error(response, payload, 400, "INVALID_COMPUTER_LOUDNESS")
+            measure.assert_not_called()
+
+    def test_computer_stars_authentication_limits_and_responses(self) -> None:
+        route = "/api/v1/computer/stars"
+        identity = "0" * 24
+        auth = {"X-WorldMedia-Token": self.token}
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        stars = ComputerStars(root / "computer-stars.json", clock=lambda: 1_000_000)
+        with mock.patch.object(worldmedia_server.COMPUTER_FOLDERS, "stars", stars):
+            for method, headers, body in (
+                ("GET", {}, None), ("GET", {**auth, "Origin": "https://example.org"}, None),
+                ("POST", auth, b"{}"), ("POST", self.mutation_headers(Origin="https://example.org"), b"{}"),
+            ):
+                response, _ = self.request(method, route, headers=headers, body=body)
+                self.assertEqual(response.status, 403)
+            response, payload = self.request("GET", route, headers=auth)
+            self.assertEqual((response.status, payload["data"]), (200, {"stars": [], "count": 0}))
+            response, payload = self.request("POST", route, headers=self.mutation_headers(),
+                                             declared_length=4 * 1024 * 1024 + 1)
+            self.assert_api_error(response, payload, 413, "BODY_TOO_LARGE")
+            self.assertEqual(payload["error"]["message"], "JSON request body is too large.")
+            self.assertEqual(response.getheader("Connection"), "close")
+            batch = json.dumps({"remove": [f"{index:024x}" for index in range(2001)]},
+                               separators=(",", ":")).encode()
+            response, payload = self.request("POST", route, headers=self.mutation_headers(), body=batch)
+            self.assert_api_error(response, payload, 400, "INVALID_COMPUTER_STARS")
+            self.assertEqual(payload["error"]["message"], "Choose at most 2,000 files at a time.")
+            snap = {"title": "Song"}
+            body = json.dumps({"add": [{"id": identity, "snap": snap}]}).encode()
+            response, payload = self.request("POST", route, headers=self.mutation_headers(), body=body)
+            record = {"id": identity, "t": 1, "seq": 1}
+            self.assertEqual((response.status, payload["data"]), (200, {"added": [record], "removed": [], "count": 1}))
+            response, payload = self.request("GET", route, headers=auth)
+            self.assertEqual((response.status, payload["data"]),
+                             (200, {"stars": [{**record, "snap": snap}], "count": 1}))
+
+    def test_computer_stars_saves_2000_snapshots_in_one_write(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        stars = ComputerStars(root / "computer-stars.json")
+        add = [
+            {"id": f"{index:024x}", "snap": {
+                "title": f"Night Train Across the Valley (Live at the Riverside Theater) - Track {index + 1}",
+                "artist": "The Cedar Valley Orchestra featuring the Riverside Quartet",
+                "album": "The Riverside Sessions: Complete Recordings and Alternate Takes",
+                "duration": 245.75, "kind": "audio", "ext": "flac", "format": "FLAC",
+            }}
+            for index in range(2000)
+        ]
+        body = json.dumps({"add": add}, separators=(",", ":")).encode()
+        self.assertGreater(len(body), MAX_JSON_BODY)
+        with mock.patch.object(worldmedia_server.COMPUTER_FOLDERS, "stars", stars), \
+             mock.patch("worldmedia_computer_stars._atomic_write_json", wraps=_atomic_write_json) as save:
+            response, payload = self.request("POST", "/api/v1/computer/stars",
+                                             headers=self.mutation_headers(), body=body)
+            self.assertEqual(response.status, 200)
+            save.assert_called_once()
+        self.assertEqual(payload["data"]["count"], 2000)
+        self.assertEqual([row["id"] for row in payload["data"]["added"]], [row["id"] for row in add])
+        persisted = ComputerStars(stars.path).snapshot()
+        self.assertEqual([{"id": row["id"], "snap": row["snap"]} for row in persisted["stars"]], add)
 
     def test_playlist_export_requires_authenticated_post(self) -> None:
         path = '/api/v1/playlists/export'

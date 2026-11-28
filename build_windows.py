@@ -21,7 +21,7 @@ DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 LOCAL_CACHE_DIR = BUILD_DIR / "local-cache"
 OUTPUT_DIR = DIST_DIR / "WorldMediaWindows"
-ARCHIVE_PATH = DIST_DIR / "WorldMediaWindows-0.1.18-portable.zip"
+ARCHIVE_PATH = DIST_DIR / "WorldMediaWindows-0.1.19-portable.zip"
 PYTHON_VERSION = "3.13.14"
 PYTHON_ARCHIVE = f"python-{PYTHON_VERSION}-embed-amd64.zip"
 PYTHON_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{PYTHON_ARCHIVE}"
@@ -35,6 +35,7 @@ RUNTIME_WHEELS = (
     "pycparser==3.0",
     "pythonnet==3.1.0",
     "pywebview==6.2.1",
+    "tinytag==2.3.2",
     "typing_extensions==4.16.0",
 )
 RUNTIME_SOURCE_PACKAGES = ("proxy_tools==0.1.0",)
@@ -153,7 +154,7 @@ def write_runtime_configuration() -> None:
     shutil.copy2(ASSET_DIR / "embedded" / "sitecustomize.py", site_packages / "sitecustomize.py")
     manifest = {
         "application": "World Media",
-        "version": "0.1.18",
+        "version": "0.1.19",
         "python": PYTHON_VERSION,
         "python_archive": PYTHON_ARCHIVE,
         "python_archive_sha256": PYTHON_SHA256,

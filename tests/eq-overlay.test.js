@@ -110,6 +110,37 @@ test('station and Q controls use labelled inputs and default to closed', () => {
   assert.match(overlay, /Stop using for this station/);
 });
 
+test('short EQ fits the faders and labels at 640px and the Advanced row at 800px', () => {
+  const css = readFileSync(new URL('../src/styles/base.css', import.meta.url), 'utf8');
+  assert.match(css, /\.eq-content \{\s*overflow: auto;\s*overscroll-behavior: contain;/);
+  assert.match(css, /\.eq-band \{\s*display: grid;\s*grid-template-rows: 24px 190px 22px;/);
+  assert.match(css, /\.eq-band-slider \{[^}]*height: 184px;/);
+  const short = css.split('@media (height < 900px) {')[1].split('\n}')[0];
+  const padding = selector => 2 * Number(short.match(new RegExp(selector + ' \\{\\s*padding-block: (\\d+)px;'))[1]);
+  const header = 15 * 1.45 + 3 + 12 * 1.45 + 1 + padding('.eq-header');
+  const toolbar = 13 * 1.45 + 14 + 1 + padding('.eq-preset-row');
+  const preset = 34 + 1 + padding('.eq-preset-row');
+  const presetName = 14 * 1.45 + 16 + 1 + padding('.eq-preset-row');
+  const summary = 14 * 1.45 + 6 + padding('.eq-advanced');
+  assert.match(short, /\.eq-toolbar,\s*\.eq-preset-row \{/);
+  assert.match(short, /\.eq-stations,\s*\.eq-advanced \{/);
+  assert.match(short, /\.eq-response \{ height: clamp\(64px, 10vh, 96px\); margin-top: 8px; \}/);
+  assert.match(short, /\.eq-bands \{\s*--eq-fader-height: clamp\(130px, 20vh, 172px\);\s*min-height: 0;\s*padding-block: 6px;/);
+  assert.match(short, /grid-template-rows: 20px calc\(var\(--eq-fader-height\) \+ 6px\) 18px;\s*padding-block: 2px;/);
+  assert.match(short, /\.eq-band-slider \{ height: var\(--eq-fader-height\); \}/);
+
+  for (const height of [640, 800]) {
+    const curve = Math.max(64, Math.min(height * 0.1, 96)) + 8;
+    const slider = Math.max(130, Math.min(height * 0.2, 172));
+    const bands = 20 + slider + 6 + 18 + 4 + 12;
+    const throughBands = 2 + header + toolbar + preset + presetName + summary + 1 + curve + bands;
+    // Include the stacked player at 640px, which leaves less room than the 74px player.
+    const maxHeight = Math.min(height * 0.88, height - 20 - (height === 640 ? 120 : 74));
+    assert.ok(slider - 20 >= 110, 'the fader has room for at least 110px of travel with a 20px thumb');
+    assert.ok(throughBands + (height === 800 ? summary : 0) <= maxHeight);
+  }
+});
+
 function withOverlay(run) {
   class Element extends FakeElement {
     get childElementCount() { return this.children.length; }

@@ -11,6 +11,8 @@ export const MAX_MEDIA_CANDIDATES = 8;
 // before that chain completed, so leave enough room for the initial probe.
 export const MEDIA_PROBE_TIMEOUT_MS = 15_000;
 export const MEDIA_PROBE_CONCURRENCY = 2;
+const EMPTY_HLS_WAIT_MS = 12_000;
+const HLS_POLL_MS = 1_000;
 // With "Pick the best stream", the preferred stream of each pair is started
 // alone and has this long to deliver before the next listed stream starts
 // too; from then on whichever delivers first plays. If the preferred one
@@ -201,15 +203,6 @@ async function fetchProbe(url, range, { fetchImpl, signal }) {
   return response;
 }
 
-function hlsResources(text) {
-  const resources = [];
-  for (const line of String(text || '').split(/\r?\n/)) {
-    const value = line.trim();
-    if (value && !value.startsWith('#')) resources.push(value);
-  }
-  return resources;
-}
-
 function firstHlsAttributeResource(text) {
   const attribute = String(text || '').match(/\bURI\s*=\s*"([^"\r\n]+)"/i)
     || String(text || '').match(/\bURI\s*=\s*([^,\s]+)/i);
@@ -223,9 +216,40 @@ function localRelayResource(value) {
   return '';
 }
 
+function waitForPlaylistPoll(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError(signal.reason));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError(signal.reason));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function isKnownEmptyHls(header, tags, response, contentType) {
+  if (header !== '#EXTM3U' || response.status === 206) return false;
+  if (!contentType.includes('mpegurl') && !contentType.startsWith('text/')) return false;
+  if (tags.length === 0) return true;
+  // The relay sends Content-Length for a full playlist. A sparse response
+  // with only timing tags and no declared length is inconclusive.
+  if (tags.every((tag) => /^#EXT-X-(?:TARGETDURATION:|ENDLIST$)/i.test(tag))) {
+    return Number(response.headers?.get?.('content-length')) > 0;
+  }
+  return tags.some((tag) => /^#EXT-X-(?:KEY|MAP|MEDIA-SEQUENCE|PART|PART-INF|PLAYLIST-TYPE|PRELOAD-HINT|SERVER-CONTROL|VERSION):/i.test(tag));
+}
+
 async function probeHls(relayUrl, options) {
   let current = relayUrl;
-  for (let depth = 0; depth < 4; depth++) {
+  let emptySince = null;
+  for (let depth = 0; depth < 4;) {
     const response = await fetchProbe(current, 'bytes=0-', options);
     const contentType = response.headers?.get?.('content-type')?.toLowerCase() || '';
     if (depth > 0 && !contentType.includes('mpegurl')) {
@@ -238,8 +262,35 @@ async function probeHls(relayUrl, options) {
       error.code = 'INVALID_HLS_MANIFEST';
       throw error;
     }
-    const resources = hlsResources(text).map(localRelayResource).filter(Boolean);
-    const isMaster = /#EXT-X-(?:STREAM-INF|MEDIA)\s*:/i.test(text);
+    const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const tags = lines.filter((line) => /^#EXT/i.test(line) && line !== '#EXTM3U');
+    const variantTags = tags.filter((tag) => /^#EXT-X-(?:STREAM-INF|MEDIA|I-FRAME-STREAM-INF|IMAGE-STREAM-INF)\s*:/i.test(tag));
+    const isMaster = variantTags.length > 0;
+    const ended = tags.some((tag) => /^#EXT-X-ENDLIST$/i.test(tag));
+    const media = lines.flatMap((line) => {
+      if (!line.startsWith('#')) return [line];
+      if (!isMaster && !ended && /^#EXT-X-PART:/i.test(line)) {
+        const part = firstHlsAttributeResource(line);
+        if (part) return [part];
+      }
+      return [];
+    });
+    if (!isMaster && !media.length && typeof text === 'string'
+        && isKnownEmptyHls(lines[0], tags, response, contentType)) {
+      if (emptySince === null) {
+        emptySince = Date.now();
+        options.onEmptyPlaylist?.();
+      }
+      const remaining = EMPTY_HLS_WAIT_MS - (Date.now() - emptySince);
+      if (remaining <= 0) {
+        const error = new Error('The HLS playlist did not provide any media.');
+        error.code = 'EMPTY_HLS_MANIFEST';
+        throw error;
+      }
+      await waitForPlaylistPoll(Math.min(HLS_POLL_MS, remaining), options.signal);
+      continue;
+    }
+    const resources = media.map(localRelayResource).filter(Boolean);
     if (!isMaster && resources.length) {
       // Short live playlists commonly evict their oldest fragment while the
       // master/child manifests are being fetched. Probe the newest fragment,
@@ -257,9 +308,12 @@ async function probeHls(relayUrl, options) {
       }
       throw lastError || new Error('No HLS media segment was reachable.');
     }
-    const next = resources[0] || localRelayResource(firstHlsAttributeResource(text));
+    const variant = variantTags.map((tag) => localRelayResource(firstHlsAttributeResource(tag))).find(Boolean);
+    const next = resources[0] || variant || localRelayResource(firstHlsAttributeResource(text));
     if (!next) return true;
     current = next;
+    emptySince = null;
+    depth++;
   }
   return true;
 }
@@ -270,7 +324,7 @@ export async function probeMediaRelay(relay, candidate, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch is unavailable');
   if (!relay?.relay_url) throw new TypeError('Media relay URL is missing');
-  if (candidate.kind === 'hls') return probeHls(relay.relay_url, { fetchImpl, signal: options.signal });
+  if (candidate.kind === 'hls') return probeHls(relay.relay_url, { ...options, fetchImpl });
   const response = await fetchProbe(
     relay.relay_url,
     candidate.kind === 'dash' ? 'bytes=0-' : 'bytes=0-0',
@@ -298,10 +352,23 @@ async function connectCandidate(item, candidate, index, options, shouldProbe) {
   const onAbort = () => controller.abort(abortError(options.signal?.reason));
   if (options.signal?.aborted) onAbort();
   else options.signal?.addEventListener('abort', onAbort, { once: true });
-  const timer = (options.setTimer || setTimeout)(
-    () => controller.abort(abortError('Media connection timed out.')),
-    options.timeoutMs,
-  );
+  const setTimer = options.setTimer || setTimeout;
+  const clearTimer = options.clearTimer || clearTimeout;
+  const timeOut = () => controller.abort(abortError('Media connection timed out.'));
+  const deadline = Date.now() + options.timeoutMs;
+  let timer = setTimer(timeOut, options.timeoutMs);
+  let allowanceUsed = false;
+  const onEmptyPlaylist = () => {
+    if (allowanceUsed) return;
+    allowanceUsed = true;
+    // Registration and the first manifest fetch can take most of the usual
+    // connection limit. Give an empty live playlist its own polling window.
+    const remaining = deadline - Date.now();
+    const pollBudget = EMPTY_HLS_WAIT_MS + HLS_POLL_MS;
+    if (remaining >= pollBudget) return;
+    clearTimer(timer);
+    timer = setTimer(timeOut, pollBudget);
+  };
   let relay = null;
   try {
     const candidateItem = {
@@ -321,6 +388,7 @@ async function connectCandidate(item, candidate, index, options, shouldProbe) {
         await options.probeImpl(relay, candidate, {
           fetchImpl: options.fetchImpl,
           signal: controller.signal,
+          onEmptyPlaylist,
         });
         if (relay && typeof relay === 'object') probedRelays.add(relay);
       } catch (error) {
@@ -340,7 +408,7 @@ async function connectCandidate(item, candidate, index, options, shouldProbe) {
     }
     throw error;
   } finally {
-    (options.clearTimer || clearTimeout)(timer);
+    clearTimer(timer);
     options.signal?.removeEventListener('abort', onAbort);
   }
 }

@@ -16,6 +16,9 @@ export const EQ_FILTER_TYPES = Object.freeze([
   'lowshelf', 'peaking', 'peaking', 'peaking', 'peaking',
   'peaking', 'peaking', 'peaking', 'peaking', 'highshelf',
 ]);
+const IDLE_SUSPEND_MS = 3000;
+const ACTIVE_MEDIA_EVENTS = ['play', 'playing'];
+const IDLE_MEDIA_EVENTS = ['pause', 'ended', 'emptied'];
 const SHELF_BANDS = [0, EQ_FREQUENCIES.length - 1];
 export const EQ_SMOOTHING_SECONDS = 0.015;
 export const EQ_SIGNAL_RMS_FLOOR = 1e-5;
@@ -48,11 +51,11 @@ function setImmediate(param, value, now = 0) {
   else param.value = value;
 }
 
-function setSmooth(param, value, now = 0) {
+function setSmooth(param, value, now = 0, seconds = EQ_SMOOTHING_SECONDS) {
   if (!param) return;
   if (typeof param.cancelScheduledValues === 'function') param.cancelScheduledValues(now);
   if (typeof param.setTargetAtTime === 'function') {
-    param.setTargetAtTime(value, now, EQ_SMOOTHING_SECONDS);
+    param.setTargetAtTime(value, now, seconds);
   } else {
     param.value = value;
   }
@@ -73,18 +76,24 @@ function configureParam(param, value, now) {
 }
 
 export class AudioEngine {
-  constructor({ contextFactory = defaultContextFactory, onStatus = null } = {}) {
+  constructor({ contextFactory = defaultContextFactory, onStatus = null, isPlaybackPending = () => false } = {}) {
     this.contextFactory = contextFactory;
+    this.isPlaybackPending = isPlaybackPending;
     this.onStatus = typeof onStatus === 'function' ? onStatus : null;
     this.context = null;
     this.graph = null;
     this.sourceNodes = new Map();
+    this.levellingNodes = new Map();
     this.curve = normalizeEqCurve(null);
     this.bypassed = this.curve.bypassed;
     this.state = 'idle';
     this.error = null;
     this.fatal = false;
     this.externalReason = '';
+    this.idleTimer = null;
+    this.suspending = null;
+    this.resuming = null;
+    this.onMediaIdle = () => this.updateIdle();
     this._report();
   }
 
@@ -185,10 +194,84 @@ export class AudioEngine {
     }
   }
 
+  isRunning() { return this.context?.state === 'running' && !this.suspending; }
+
+  _canSuspend() {
+    if (!this.isRunning() || this.resuming || this.isPlaybackPending()) return false;
+    // Waiting for data leaves paused false. It still counts as playback.
+    for (const element of this.sourceNodes.keys()) {
+      if (!element.paused && !element.ended) return false;
+    }
+    return true;
+  }
+
+  _cancelIdleSuspend() {
+    if (this.idleTimer === null) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+  }
+
+  updateIdle() {
+    if (typeof this.context?.suspend !== 'function' || !this._canSuspend()) {
+      this._cancelIdleSuspend();
+      return;
+    }
+    if (this.idleTimer === null) {
+      this.idleTimer = setTimeout(() => {
+        this.idleTimer = null;
+        if (this._canSuspend()) void this._suspend();
+      }, IDLE_SUSPEND_MS);
+    }
+  }
+
+  async _suspend() {
+    const context = this.context;
+    try {
+      this.suspending = context.suspend();
+      await this.suspending;
+      if (this.context === context && context.state === 'suspended') {
+        this.state = 'suspended';
+        this.releaseVisualTap();
+        this._report();
+      }
+    } catch (_) {
+      // A refused suspension leaves playback available.
+    } finally {
+      if (this.context === context) this.suspending = null;
+    }
+  }
+
   async resume({ create = false } = {}) {
     if (!this.context && create && !this._ensureGraph()) return false;
     if (!this.context) return true;
-    if (this.context.state === 'closed') {
+    if (this.isRunning() && !this.resuming) {
+      this.updateIdle();
+      if (this.state !== 'ready' || this.error) {
+        this.state = 'ready';
+        this.error = null;
+        this._report();
+      }
+      return true;
+    }
+    this._cancelIdleSuspend();
+    const operation = this.resuming ??= this._resume(this.context);
+    try {
+      return await operation;
+    } finally {
+      if (this.resuming === operation) {
+        this.resuming = null;
+        this.updateIdle();
+      }
+    }
+  }
+
+  async _resume(context) {
+    // A Play at the idle deadline must win over an in-flight suspension.
+    if (this.suspending) {
+      try { await this.suspending; } catch (_) {}
+    }
+    if (this.context !== context) return false;
+    if (context.state === 'closed') {
       this.error = new Error('The Web Audio context is closed. Restart World Media to use EQ.');
       this.state = 'error';
       this.fatal = true;
@@ -196,10 +279,17 @@ export class AudioEngine {
       return false;
     }
     try {
-      if (this.context.state !== 'running' && typeof this.context.resume === 'function') {
-        await this.context.resume();
+      if (context.state !== 'running' && typeof context.resume === 'function') {
+        // currentTime stopped with any unfinished automation. Commit its
+        // targets before the graph renders again.
+        this._applyParameters(true);
+        for (const { gain, target } of this.levellingNodes.values()) {
+          setImmediate(gain, target, context.currentTime || 0);
+        }
+        await context.resume();
       }
-      if (this.context.state !== 'running') {
+      if (this.context !== context) return false;
+      if (context.state !== 'running') {
         throw new Error('Windows did not allow the equalizer audio context to resume.');
       }
       this.state = 'ready';
@@ -207,6 +297,7 @@ export class AudioEngine {
       this._report();
       return true;
     } catch (error) {
+      if (this.context !== context) return false;
       this.error = error instanceof Error ? error : new Error(String(error));
       this.state = 'suspended';
       this._report();
@@ -232,7 +323,7 @@ export class AudioEngine {
 
   _applyParameters(immediate = false) {
     if (!this.graph || !this.context) return;
-    const setter = immediate ? setImmediate : setSmooth;
+    const setter = immediate || !this.isRunning() ? setImmediate : setSmooth;
     const now = this.context.currentTime || 0;
     const preampDb = clamp(this.curve.preamp, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB);
     setter(this.graph.preamp.gain, dbToGain(preampDb), now);
@@ -250,7 +341,22 @@ export class AudioEngine {
     setter(this.graph.wet.gain, this.bypassed ? 0 : 1, now);
   }
 
-  async attachElement(element, { curve = this.curve } = {}) {
+  setLevellingGain(element, value, { rampSeconds = 0 } = {}) {
+    const level = this.levellingNodes.get(element);
+    if (!level) return;
+    level.target = value;
+    const param = level.gain;
+    const now = this.context.currentTime || 0;
+    if (!rampSeconds || !this.isRunning() || typeof param.linearRampToValueAtTime !== 'function') {
+      setImmediate(param, value, now);
+      return;
+    }
+    // Read the current gain before cancelling an in-progress ramp.
+    setImmediate(param, param.value, now);
+    param.linearRampToValueAtTime(value, now + rampSeconds);
+  }
+
+  async attachElement(element, { curve = this.curve, levelledInput = false } = {}) {
     if (!element) return { processed: false, attached: false, reason: 'No media element was provided.' };
     this.clearExternalUnavailable();
     this.applyCurve(curve, { immediate: !this.graph });
@@ -260,6 +366,30 @@ export class AudioEngine {
     if (!await this.resume()) {
       return { processed: false, attached: false, reason: this.getStatus().reason };
     }
+    return this.connectElement(element, levelledInput);
+  }
+
+  _trackElement(element, source) {
+    const onActive = () => {
+      if (element.paused || element.ended) return;
+      this._cancelIdleSuspend();
+      if (!this.isRunning()) {
+        const context = this.context;
+        this.resume().then((ready) => {
+          if (!ready && this.context === context && !this.isRunning() && !element.paused && !element.ended) {
+            element.pause();
+          }
+        });
+      }
+    };
+    this.sourceNodes.set(element, { source, onActive });
+    for (const name of ACTIVE_MEDIA_EVENTS) element.addEventListener?.(name, onActive);
+    for (const name of IDLE_MEDIA_EVENTS) element.addEventListener?.(name, this.onMediaIdle);
+    this.updateIdle();
+  }
+
+  // Standby preparation uses the running graph without changing the sounding track's EQ.
+  connectElement(element, levelledInput) {
     if (this.sourceNodes.has(element)) {
       this.error = null;
       this.state = 'ready';
@@ -269,8 +399,13 @@ export class AudioEngine {
     let source = null;
     try {
       source = this.context.createMediaElementSource(element);
-      source.connect(this.graph.input);
-      this.sourceNodes.set(element, source);
+      if (levelledInput) {
+        const gain = this.context.createGain();
+        gain.connect(this.graph.input);
+        source.connect(gain);
+        this.levellingNodes.set(element, { gain: gain.gain, target: 1 });
+      } else source.connect(this.graph.input);
+      this._trackElement(element, source);
       this.error = null;
       this.state = 'ready';
       this._report();
@@ -281,7 +416,7 @@ export class AudioEngine {
       if (source) {
         try {
           source.connect(this.context.destination);
-          this.sourceNodes.set(element, source);
+          this._trackElement(element, source);
         } catch (_) {}
       }
       this.error = error instanceof Error ? error : new Error(String(error));
@@ -297,7 +432,8 @@ export class AudioEngine {
   getAnalyserData(target = null) {
     if (!this.graph?.analyser) return null;
     const data = target || new Float32Array(this.graph.analyser.fftSize || 2048);
-    this.graph.analyser.getFloatTimeDomainData(data);
+    if (this.isRunning()) this.graph.analyser.getFloatTimeDomainData(data);
+    else data.fill(0);
     return data;
   }
 
@@ -317,6 +453,7 @@ export class AudioEngine {
     sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   } = {}) {
     if (!this.isAttached(element) || !this.graph?.analyser) return null;
+    if (!isCurrent() || element.paused || element.ended || element.muted || Number(element.volume) === 0) return null;
     // A live stream can spend long enough buffering for Windows/WebView2 to
     // suspend an otherwise valid context. Resume at the point media is really
     // playing so buffering is not misreported as a broken EQ signal.
@@ -346,7 +483,7 @@ export class AudioEngine {
    *  until releaseVisualTap(). */
   visualTapFor(element) {
     if (!element || !this.graph || !this.context || this.fatal || this.externalReason) return null;
-    if (this.state !== 'ready' || this.context.state !== 'running' || !this.isAttached(element)) return null;
+    if (this.state !== 'ready' || !this.isRunning() || !this.isAttached(element)) return null;
     if (this.graph.visual) return this.graph.visual;
     try {
       const tap = this.context.createAnalyser();
@@ -376,15 +513,21 @@ export class AudioEngine {
   }
 
   async destroy() {
-    for (const source of this.sourceNodes.values()) {
+    this._cancelIdleSuspend();
+    for (const [element, { source, onActive }] of this.sourceNodes) {
+      for (const name of ACTIVE_MEDIA_EVENTS) element.removeEventListener?.(name, onActive);
+      for (const name of IDLE_MEDIA_EVENTS) element.removeEventListener?.(name, this.onMediaIdle);
       try { source.disconnect(); } catch (_) {}
     }
     this.sourceNodes.clear();
-    if (this.context && this.context.state !== 'closed' && typeof this.context.close === 'function') {
-      try { await this.context.close(); } catch (_) {}
-    }
+    this.levellingNodes.clear();
+    const context = this.context;
     this.context = null;
     this.graph = null;
+    this.suspending = this.resuming = null;
+    if (context && context.state !== 'closed' && typeof context.close === 'function') {
+      try { await context.close(); } catch (_) {}
+    }
     this.state = 'idle';
     this.error = null;
     this.fatal = false;
